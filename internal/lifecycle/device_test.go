@@ -1,0 +1,238 @@
+package lifecycle_test
+
+import (
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+)
+
+func TestLoginPairsStoresTheTokenAndResumesRecording(t *testing.T) {
+	e := newUnpairedEnv(t)
+	e.pairable()
+	e.sandbox.Pause("signed_out")
+
+	if err := e.machine().Login(e.io()); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if !e.machine().Paired() {
+		t.Error("device not paired after login")
+	}
+	if reason := e.sandbox.PausedReason(); reason != "" {
+		t.Errorf("pause %q survived login", reason)
+	}
+	if !claudesettings.HasHook(claudesettings.UserSettingsPath(e.deps.Home), claudesettings.DiscoveryMarker) {
+		t.Error("discovery hint not installed")
+	}
+	if !strings.Contains(e.stdout.String(), "example.com/pair") {
+		t.Errorf("stdout = %q, want the verification link", e.stdout)
+	}
+}
+
+func TestLoginOnAlreadyPairedDeviceStillReachesTheSignedInState(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.Pause("signed_out")
+
+	if err := e.machine().Login(e.io()); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if !strings.Contains(e.stdout.String(), "already paired") {
+		t.Errorf("stdout = %q", e.stdout)
+	}
+	if reason := e.sandbox.PausedReason(); reason != "" {
+		t.Errorf("pause %q survived a re-login", reason)
+	}
+}
+
+func TestLoginReportsAnExpiredPairingLink(t *testing.T) {
+	e := newUnpairedEnv(t)
+	e.service.Stub("POST", "/v1/pairings", fakeplatform.JSON(200, map[string]any{
+		"pairing_id":       "pair-1",
+		"verification_url": "https://example.com/pair/pair-1",
+		"poll_interval_ms": 1,
+	}))
+	e.service.Stub("GET", "/v1/pairings/pair-1", fakeplatform.JSON(200, map[string]any{"status": "expired"}))
+
+	err := e.machine().Login(e.io())
+	if err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Errorf("login = %v, want the expired link reported", err)
+	}
+	if e.machine().Paired() {
+		t.Error("device paired despite an expired link")
+	}
+}
+
+func TestLogoutRevokesPausesAndKeepsGrants(t *testing.T) {
+	e := newEnv(t)
+	e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(200, map[string]any{}))
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	grant, ok := e.activeGrant()
+	if !ok {
+		t.Fatal("project not enabled")
+	}
+
+	if err := e.machine().Logout(e.io()); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if e.machine().Paired() {
+		t.Error("device token survived logout")
+	}
+	reqs := e.service.Requests()
+	last := reqs[len(reqs)-1]
+	if last.URL != "/v1/device/revoke" || last.Header.Get("Authorization") != "Bearer dev-tok-fake" {
+		t.Errorf("revocation request = %+v", last)
+	}
+	if reason := e.sandbox.PausedReason(); reason != "signed_out" {
+		t.Errorf("pause = %q, want signed_out", reason)
+	}
+	if known, recording := e.sandbox.Recording(grant.Token); !known || recording {
+		t.Error("signing out must keep grants resolvable for forwarding, with recording off")
+	}
+}
+
+func TestLogoutWithAnUnreachableServiceStillSignsOutLocally(t *testing.T) {
+	e := newEnv(t)
+	// No stub for revoke, so the service answers with a loud failure.
+	if err := e.machine().Logout(e.io()); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if !strings.Contains(e.stderr.String(), "account page") {
+		t.Errorf("stderr = %q, want a manual-revocation warning", e.stderr)
+	}
+	if e.machine().Paired() {
+		t.Error("device token kept after an offline logout")
+	}
+	if reason := e.sandbox.PausedReason(); reason != "signed_out" {
+		t.Errorf("pause = %q", reason)
+	}
+}
+
+func TestLogoutWhenNotPairedIsANoop(t *testing.T) {
+	e := newUnpairedEnv(t)
+	if err := e.machine().Logout(e.io()); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if !strings.Contains(e.stdout.String(), "not paired") {
+		t.Errorf("stdout = %q", e.stdout)
+	}
+	if reason := e.sandbox.PausedReason(); reason != "" {
+		t.Errorf("an unpaired logout paused recording: %q", reason)
+	}
+}
+
+func TestEnableOnAnUnpairedDevicePairsFirst(t *testing.T) {
+	e := newUnpairedEnv(t)
+	e.pairable()
+	e.startProxy()
+
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if !strings.Contains(e.stdout.String(), "not paired yet") {
+		t.Errorf("stdout = %q, want the pairing step announced", e.stdout)
+	}
+	if !e.machine().Paired() {
+		t.Error("device not paired after enable")
+	}
+	if _, ok := e.activeGrant(); !ok {
+		t.Error("project not enabled after pairing")
+	}
+}
+
+func TestPurgeSendsADeletionRequestForThisProjectOnly(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	grant, _ := e.activeGrant()
+	e.service.Stub("POST", "/v1/data-deletions", fakeplatform.JSON(202, map[string]any{}))
+
+	if err := e.machine().Disable(e.project, true, e.io()); err != nil {
+		t.Fatalf("disable --purge: %v", err)
+	}
+	reqs := e.service.Requests()
+	last := reqs[len(reqs)-1]
+	if last.URL != "/v1/data-deletions" {
+		t.Fatalf("last request = %+v, want the deletion", last)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(last.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["project_id_hash"] != grant.ProjectIDHash {
+		t.Errorf("deletion hash = %q, want %q", body["project_id_hash"], grant.ProjectIDHash)
+	}
+}
+
+func TestPurgeWithoutAPairedDeviceStillDisablesLocally(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.deps.Tokens.Delete("device"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := e.machine().Disable(e.project, true, e.io())
+	if err == nil || !strings.Contains(err.Error(), "trajector login") {
+		t.Errorf("disable --purge = %v, want the missing pairing explained", err)
+	}
+	if _, ok := e.activeGrant(); ok {
+		t.Error("the local disable did not happen")
+	}
+}
+
+func TestUninstallRemovesEveryInjectionAndKeepsDataByDefault(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Login(e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.machine().Uninstall(false, e.io()); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if _, ok := claudesettings.InjectedBaseURL(e.settingsPath()); ok {
+		t.Error("project injection survived uninstall")
+	}
+	if claudesettings.HasHook(claudesettings.UserSettingsPath(e.deps.Home), claudesettings.DiscoveryMarker) {
+		t.Error("discovery hint survived uninstall")
+	}
+	if !e.machine().Paired() {
+		t.Error("device token removed despite keeping data")
+	}
+	if _, err := os.Stat(e.layout().RoutingTable()); err != nil {
+		t.Errorf("configuration removed despite keeping data: %v", err)
+	}
+}
+
+func TestUninstallDeletesEverythingWhenAsked(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.machine().Uninstall(true, e.io()); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	for _, dir := range e.layout().Roots() {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("%s still exists after confirmed cleanup", dir)
+		}
+	}
+	if e.machine().Paired() {
+		t.Error("device token survived confirmed cleanup")
+	}
+}
