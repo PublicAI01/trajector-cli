@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +103,35 @@ func TestServeProxyHostsCaptureAndTheFlushEndpoint(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("served proxy did not exit after a drain")
+	}
+}
+
+func TestProjectSurfacesAnUnreadableTable(t *testing.T) {
+	e := newEnv(t)
+	if err := os.MkdirAll(filepath.Dir(e.deps.Layout.RoutingTable()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.deps.Layout.RoutingTable(), []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := e.machine().Project(e.project); err == nil {
+		t.Error("Project with an unreadable table = nil, want the error surfaced")
+	}
+}
+
+func TestAnUnreadableTokenStoreReadsAsSignedOut(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not block reads on windows")
+	}
+	e := newEnv(t)
+	if err := os.Chmod(e.deps.Layout.SecretsDir(), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(e.deps.Layout.SecretsDir(), 0o700) })
+
+	if e.machine().Paired() {
+		t.Error("an unreadable token store reported the device as paired")
 	}
 }
 

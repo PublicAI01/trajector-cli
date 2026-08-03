@@ -36,7 +36,7 @@ func TestEnableUsesWallClockWhenNowUnset(t *testing.T) {
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	route, ok := e.activeGrant()
+	route, ok := e.sandbox.ActiveGrant(e.canonicalRoot())
 	if !ok || route.GrantedAt == "" {
 		t.Errorf("route = %+v, ok = %v", route, ok)
 	}
@@ -71,7 +71,7 @@ func TestEnableRollsBackWhenSettingsFileIsMalformed(t *testing.T) {
 	if readErr != nil || string(data) != malformed {
 		t.Errorf("settings after rollback = %q, %v", data, readErr)
 	}
-	if _, ok := e.activeGrant(); ok {
+	if e.status().Enabled {
 		t.Error("routing grant survived rollback")
 	}
 }
@@ -109,7 +109,7 @@ func TestEnableFailsWhenSpoolUnwritable(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "spool") {
 		t.Fatalf("err = %v", err)
 	}
-	if _, ok := e.activeGrant(); ok {
+	if e.status().Enabled {
 		t.Error("routing grant survived rollback")
 	}
 }

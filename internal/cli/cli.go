@@ -53,7 +53,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "uninstall":
 		return a.uninstallCmd(args[1:])
 	case "upload":
-		return uploadCmd(args[1:], stdout, stderr)
+		return a.uploadCmd(args[1:])
 	case "hook":
 		return a.hookCmd(args[1:])
 	case proxylife.Command:

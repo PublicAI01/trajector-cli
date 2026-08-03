@@ -123,9 +123,16 @@ func (e *env) settingsPath() string {
 	return claudesettings.ProjectLocalPath(e.canonicalRoot())
 }
 
-func (e *env) activeGrant() (proxytest.Grant, bool) {
+// status is the machine's own answer about the project, the read half
+// every assertion goes through instead of re-deriving state from the
+// underlying stores.
+func (e *env) status() lifecycle.ProjectStatus {
 	e.t.Helper()
-	return e.sandbox.ActiveGrant(e.canonicalRoot())
+	st, err := e.machine().Project(e.project)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return st
 }
 
 func (e *env) consentStore() *consent.Store {

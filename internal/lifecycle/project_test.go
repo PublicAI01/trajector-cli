@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 )
 
@@ -21,40 +20,33 @@ func TestEnableInjectsRoutesAndSelfChecks(t *testing.T) {
 		t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 	}
 
-	route, ok := e.activeGrant()
-	if !ok {
+	st := e.status()
+	if !st.Enabled {
 		t.Fatal("no active route after enable")
 	}
-	if len(route.Token) != 32 {
-		t.Errorf("token %q is not a 128-bit hex value", route.Token)
+	if len(st.Token) != 32 {
+		t.Errorf("token %q is not a 128-bit hex value", st.Token)
 	}
-	if route.Upstream != "https://api.anthropic.com" {
-		t.Errorf("upstream = %q", route.Upstream)
+	if st.Upstream != "https://api.anthropic.com" {
+		t.Errorf("upstream = %q", st.Upstream)
 	}
-	if route.ProjectIDHash != consent.ProjectIDHash(e.canonicalRoot()) {
+	if st.GrantHash != st.Hash {
 		t.Error("route hash does not match the project hash")
 	}
-
-	url, ok := claudesettings.InjectedBaseURL(e.settingsPath())
-	if !ok {
+	if st.InjectedBaseURL == "" {
 		t.Fatal("no injected base URL")
 	}
-	token, _ := claudesettings.TokenFromBaseURL(url)
-	if token != route.Token {
+	if st.InjectedToken != st.Token {
 		t.Error("injected token differs from the routed token")
 	}
-	if !claudesettings.HasHook(e.settingsPath(), claudesettings.EnsureProxyMarker) {
+	if !st.HookInstalled {
 		t.Error("ensure-proxy hooks missing")
 	}
-
-	consents := e.consentStore()
-	version, _, err := consents.AcceptedVersion()
-	if err != nil || version != consent.AgreementVersion {
-		t.Errorf("accepted agreement = %q, %v", version, err)
+	if st.AgreementVersion != consent.AgreementVersion {
+		t.Errorf("accepted agreement = %q", st.AgreementVersion)
 	}
-	state, ok, err := consents.ProjectState(route.ProjectIDHash)
-	if err != nil || !ok || state != consent.StateGranted {
-		t.Errorf("project consent = %q, %v, %v", state, ok, err)
+	if st.ConsentState != consent.StateGranted {
+		t.Errorf("project consent = %q", st.ConsentState)
 	}
 
 	if !strings.Contains(e.stdout.String(), "Self-check passed") {
@@ -68,14 +60,14 @@ func TestEnableIsIdempotentAndKeepsToken(t *testing.T) {
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	first, _ := e.activeGrant()
+	first := e.status()
 
 	e.stdin = ""
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatalf("second enable: %v", err)
 	}
-	second, ok := e.activeGrant()
-	if !ok || second.Token != first.Token {
+	second := e.status()
+	if !second.Enabled || second.Token != first.Token {
 		t.Errorf("token changed on re-enable: %q -> %q", first.Token, second.Token)
 	}
 
@@ -105,7 +97,7 @@ func TestEnableDeclinedLeavesNoTrace(t *testing.T) {
 	if _, err := os.Stat(e.settingsPath()); !os.IsNotExist(err) {
 		t.Error("settings file created despite declined agreement")
 	}
-	if _, ok := e.activeGrant(); ok {
+	if e.status().Enabled {
 		t.Error("route granted despite declined agreement")
 	}
 }
@@ -173,9 +165,9 @@ func TestEnableChainsThirdPartyUpstream(t *testing.T) {
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	route, ok := e.activeGrant()
-	if !ok || route.Upstream != "https://relay.example.com" {
-		t.Errorf("route = %+v, ok = %v", route, ok)
+	st := e.status()
+	if !st.Enabled || st.Upstream != "https://relay.example.com" {
+		t.Errorf("status = %+v", st)
 	}
 	if !strings.Contains(e.stdout.String(), "third-party") {
 		t.Errorf("no third-party notice in output: %q", e.stdout)
@@ -196,15 +188,14 @@ func TestEnableRollsBackWhenPortIsForeign(t *testing.T) {
 	if _, err := os.Stat(e.settingsPath()); !os.IsNotExist(err) {
 		t.Error("settings injection survived rollback")
 	}
-	if _, ok := e.activeGrant(); ok {
+	st := e.status()
+	if st.Enabled {
 		t.Error("routing grant survived rollback")
 	}
-	consents := e.consentStore()
-	if _, ok, _ := consents.ProjectState(consent.ProjectIDHash(e.canonicalRoot())); ok {
+	if st.ConsentState != "" {
 		t.Error("project consent record survived rollback")
 	}
-	version, _, _ := consents.AcceptedVersion()
-	if version != consent.AgreementVersion {
+	if st.AgreementVersion != consent.AgreementVersion {
 		t.Error("agreement acceptance must survive rollback: the user did accept it")
 	}
 }
@@ -249,7 +240,7 @@ func TestEnableRollsBackWhenProxyCannotStart(t *testing.T) {
 	if _, err := os.Stat(e.settingsPath()); !os.IsNotExist(err) {
 		t.Error("settings injection survived rollback")
 	}
-	if _, ok := e.activeGrant(); ok {
+	if e.status().Enabled {
 		t.Error("routing grant survived rollback")
 	}
 }
@@ -260,35 +251,34 @@ func TestDisableRemovesInjectionRevokesAndDeletesProjectData(t *testing.T) {
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	route, _ := e.activeGrant()
+	route := e.status()
 	seeded := time.Date(2026, 8, 2, 11, 0, 0, 0, time.UTC)
-	e.sandbox.SeedRawcall("req-mine", route.ProjectIDHash, seeded)
+	e.sandbox.SeedRawcall("req-mine", route.GrantHash, seeded)
 	e.sandbox.SeedRawcall("req-other", "hash-other-project", seeded)
 
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 
-	if _, ok := claudesettings.InjectedBaseURL(e.settingsPath()); ok {
+	after := e.status()
+	if after.InjectedBaseURL != "" {
 		t.Error("base URL still injected")
 	}
-	if claudesettings.HasHook(e.settingsPath(), claudesettings.EnsureProxyMarker) {
+	if after.HookInstalled {
 		t.Error("hooks still injected")
 	}
-	if _, ok := e.activeGrant(); ok {
+	if after.Enabled {
 		t.Error("route still active")
 	}
 	if known, recording := e.sandbox.Recording(route.Token); !known || recording {
 		t.Error("revoked token must stay resolvable for forwarding, with recording off")
 	}
-
-	state, ok, err := e.consentStore().ProjectState(route.ProjectIDHash)
-	if err != nil || !ok || state != consent.StateDenied {
-		t.Errorf("consent state = %q, %v, %v", state, ok, err)
+	if after.ConsentState != consent.StateDenied {
+		t.Errorf("consent state = %q, want denied", after.ConsentState)
 	}
 
 	remaining := e.sandbox.ProjectsWithRawcalls()
-	if remaining[route.ProjectIDHash] != 0 {
+	if remaining[route.GrantHash] != 0 {
 		t.Error("this project's rawcalls not deleted")
 	}
 	if remaining["hash-other-project"] != 1 {
@@ -326,7 +316,7 @@ func TestDisableAlsoDeletesRejectedRawcallsOfTheProject(t *testing.T) {
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	route, _ := e.activeGrant()
+	route := e.status()
 
 	batchDir := filepath.Join(e.layout().RejectedDir(), "b-test")
 	if err := os.MkdirAll(batchDir, 0o700); err != nil {
@@ -344,7 +334,7 @@ func TestDisableAlsoDeletesRejectedRawcallsOfTheProject(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("req-mine", route.ProjectIDHash)
+	write("req-mine", route.GrantHash)
 	write("req-other", "hash-other-project")
 
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {

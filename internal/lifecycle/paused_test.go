@@ -117,7 +117,7 @@ func TestPurgeReportsAFailedDeletionRequestWithoutUndoingTheLocalDisable(t *test
 	if err == nil || !strings.Contains(err.Error(), "disabled locally") {
 		t.Errorf("disable --purge = %v, want the local disable confirmed and the request reported", err)
 	}
-	if _, ok := e.activeGrant(); ok {
+	if e.status().Enabled {
 		t.Error("the local disable was undone by the failed request")
 	}
 }
@@ -129,7 +129,7 @@ func TestEnableRefusesAnUnreachableService(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "starting pairing") {
 		t.Errorf("enable = %v, want the pairing failure", err)
 	}
-	if _, ok := e.activeGrant(); ok {
+	if e.status().Enabled {
 		t.Error("a project was enabled without a paired device")
 	}
 }

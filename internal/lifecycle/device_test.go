@@ -65,6 +65,15 @@ func TestLoginReportsAnExpiredPairingLink(t *testing.T) {
 	}
 }
 
+func TestLoginSurfacesAPairingStartFailure(t *testing.T) {
+	e := newUnpairedEnv(t)
+	e.service.Stub("POST", "/v1/pairings", fakeplatform.JSON(500, map[string]any{"error": "down"}))
+
+	if err := e.machine().Login(e.io()); err == nil || !strings.Contains(err.Error(), "starting pairing") {
+		t.Errorf("login with a failing pairing start = %v, want the start failure surfaced", err)
+	}
+}
+
 func TestLogoutRevokesPausesAndKeepsGrants(t *testing.T) {
 	e := newEnv(t)
 	e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(200, map[string]any{}))
@@ -72,8 +81,8 @@ func TestLogoutRevokesPausesAndKeepsGrants(t *testing.T) {
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	grant, ok := e.activeGrant()
-	if !ok {
+	grant := e.status()
+	if !grant.Enabled {
 		t.Fatal("project not enabled")
 	}
 
@@ -140,7 +149,7 @@ func TestEnableOnAnUnpairedDevicePairsFirst(t *testing.T) {
 	if !e.machine().Paired() {
 		t.Error("device not paired after enable")
 	}
-	if _, ok := e.activeGrant(); !ok {
+	if !e.status().Enabled {
 		t.Error("project not enabled after pairing")
 	}
 }
@@ -151,7 +160,7 @@ func TestPurgeSendsADeletionRequestForThisProjectOnly(t *testing.T) {
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	grant, _ := e.activeGrant()
+	grant := e.status()
 	e.service.Stub("POST", "/v1/data-deletions", fakeplatform.JSON(202, map[string]any{}))
 
 	if err := e.machine().Disable(e.project, true, e.io()); err != nil {
@@ -166,8 +175,8 @@ func TestPurgeSendsADeletionRequestForThisProjectOnly(t *testing.T) {
 	if err := json.Unmarshal(last.Body, &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["project_id_hash"] != grant.ProjectIDHash {
-		t.Errorf("deletion hash = %q, want %q", body["project_id_hash"], grant.ProjectIDHash)
+	if body["project_id_hash"] != grant.GrantHash {
+		t.Errorf("deletion hash = %q, want %q", body["project_id_hash"], grant.GrantHash)
 	}
 }
 
@@ -185,7 +194,7 @@ func TestPurgeWithoutAPairedDeviceStillDisablesLocally(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "trajector login") {
 		t.Errorf("disable --purge = %v, want the missing pairing explained", err)
 	}
-	if _, ok := e.activeGrant(); ok {
+	if e.status().Enabled {
 		t.Error("the local disable did not happen")
 	}
 }
@@ -203,7 +212,7 @@ func TestUninstallRemovesEveryInjectionAndKeepsDataByDefault(t *testing.T) {
 	if err := e.machine().Uninstall(false, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
-	if _, ok := claudesettings.InjectedBaseURL(e.settingsPath()); ok {
+	if e.status().InjectedBaseURL != "" {
 		t.Error("project injection survived uninstall")
 	}
 	if claudesettings.HasHook(claudesettings.UserSettingsPath(e.deps.Home), claudesettings.DiscoveryMarker) {

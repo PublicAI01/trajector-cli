@@ -11,7 +11,6 @@ import (
 	"syscall"
 
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
-	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 func proxyCmd(args []string, stdout, stderr io.Writer) int {
@@ -28,60 +27,25 @@ func proxyCmd(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-// uploadCmd triggers a flush through the proxy — the machine's one
-// flusher — starting it if nothing is listening.
-func uploadCmd(args []string, stdout, stderr io.Writer) int {
+// uploadCmd triggers a flush through the machine's one flusher.
+func (a *app) uploadCmd(args []string) int {
 	force := false
 	switch {
 	case len(args) == 0:
 	case len(args) == 1 && args[0] == "--force":
 		force = true
 	default:
-		fmt.Fprintln(stderr, "usage: trajector upload [--force]")
+		fmt.Fprintln(a.stderr, "usage: trajector upload [--force]")
 		return 2
 	}
-	env, err := resolveEnv()
+	m, err := a.machine()
 	if err != nil {
-		fmt.Fprintf(stderr, "trajector: %v\n", err)
+		fmt.Fprintf(a.stderr, "trajector: %v\n", err)
 		return 1
 	}
-	proxy := proxylife.For(env.layout, version, env.execPath, env.proxyAddr)
-	if err := proxy.Ensure(); err != nil {
-		fmt.Fprintf(stderr, "trajector: %v\n", err)
+	if err := m.Upload(force, a.io()); err != nil {
+		fmt.Fprintf(a.stderr, "trajector: %v\n", err)
 		return 1
-	}
-	reply, err := proxy.Flush(force)
-	if err != nil {
-		fmt.Fprintf(stderr, "trajector: %v\n", err)
-		return 1
-	}
-	if reply.Error != "" {
-		if reply.Batches > 0 {
-			fmt.Fprintf(stdout, "Uploaded %d batch(es), %d rawcall(s) before failing.\n", reply.Batches, reply.Records)
-		}
-		fmt.Fprintf(stderr, "trajector: %s\n", reply.Error)
-		return 1
-	}
-	switch reply.Outcome {
-	case upload.Uploaded:
-		fmt.Fprintf(stdout, "Uploaded %d batch(es), %d rawcall(s).\n", reply.Batches, reply.Records)
-	case upload.Empty:
-		fmt.Fprintln(stdout, "Nothing to upload.")
-	case upload.BelowThreshold:
-		fmt.Fprintln(stdout, "Below the upload thresholds; use --force to upload anyway.")
-	case upload.Paused:
-		fmt.Fprintln(stdout, "Not signed in; run `trajector login` first. Captured data is kept.")
-	case upload.UpgradeRequired:
-		if v := upload.LoadHandshake(env.layout.UploadDir()).MinClientVersion; v != "" {
-			fmt.Fprintf(stdout, "Uploads are paused: the service requires trajector %s or newer (this is %s).\n", v, version)
-		} else {
-			fmt.Fprintln(stdout, "Uploads are paused: the service requires a newer trajector version.")
-		}
-		fmt.Fprintln(stdout, "Captured data is kept. Upgrade trajector to resume, or retry with --force.")
-	case upload.Deferred:
-		fmt.Fprintln(stdout, "The service asked to slow down; uploads resume automatically. Use --force to try now.")
-	default:
-		fmt.Fprintf(stdout, "Flush finished: %s\n", reply.Outcome)
 	}
 	return 0
 }

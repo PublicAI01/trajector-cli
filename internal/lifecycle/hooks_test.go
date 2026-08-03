@@ -81,16 +81,16 @@ func TestEnsureProxyFollowsUpstreamDrift(t *testing.T) {
 	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	grant, ok := e.activeGrant()
-	if !ok || grant.Upstream != "https://relay.example.com" {
-		t.Errorf("grant = %+v, ok = %v, want the relay picked up", grant, ok)
+	grant := e.status()
+	if !grant.Enabled || grant.Upstream != "https://relay.example.com" {
+		t.Errorf("grant = %+v, want the relay picked up", grant)
 	}
 
 	delete(e.environ, "ANTHROPIC_BASE_URL")
 	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	grant, _ = e.activeGrant()
+	grant = e.status()
 	if grant.Upstream != "https://api.anthropic.com" {
 		t.Errorf("upstream after the relay is removed = %q, want the official one", grant.Upstream)
 	}
