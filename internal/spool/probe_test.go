@@ -28,7 +28,7 @@ func TestWritableFailsOnUnwritableDirectory(t *testing.T) {
 	}
 }
 
-func TestDeleteWhereSkipsUnparsableIndexLines(t *testing.T) {
+func TestDeleteProjectSkipsUnparsableIndexLines(t *testing.T) {
 	dir := t.TempDir()
 	s, err := spool.Create(dir, 0)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestDeleteWhereSkipsUnparsableIndexLines(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := s.DeleteWhere(matchProject("hash-a")); err != nil {
+	if _, err := s.DeleteProject("hash-a"); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.ReadFile(indexPath)
@@ -74,7 +74,7 @@ func TestDeleteWhereIgnoresForeignFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deleted, err := s.DeleteWhere(func(spool.Rawcall) bool { return true })
+	deleted, err := s.DeleteWhere(func(string) bool { return true })
 	if err != nil || deleted != 1 {
 		t.Fatalf("DeleteWhere = %d, %v", deleted, err)
 	}
@@ -83,7 +83,7 @@ func TestDeleteWhereIgnoresForeignFiles(t *testing.T) {
 	}
 }
 
-func TestDeleteWhereWithoutIndexStillDeletes(t *testing.T) {
+func TestDeleteProjectWithoutIndexStillDeletes(t *testing.T) {
 	dir := t.TempDir()
 	s, err := spool.Create(dir, 0)
 	if err != nil {
@@ -95,9 +95,9 @@ func TestDeleteWhereWithoutIndexStillDeletes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deleted, err := s.DeleteWhere(matchProject("hash-a"))
+	deleted, err := s.DeleteProject("hash-a")
 	if err != nil || deleted != 1 {
-		t.Errorf("DeleteWhere = %d, %v", deleted, err)
+		t.Errorf("DeleteProject = %d, %v", deleted, err)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestDeleteWhereOnVanishedSpoolDirDeletesNothing(t *testing.T) {
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
 	}
-	deleted, err := s.DeleteWhere(func(spool.Rawcall) bool { return true })
+	deleted, err := s.DeleteWhere(func(string) bool { return true })
 	if err != nil || deleted != 0 {
 		t.Errorf("DeleteWhere = %d, %v, want 0, nil: a spool holding nothing has nothing to withdraw", deleted, err)
 	}

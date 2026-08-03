@@ -5,7 +5,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
@@ -73,8 +72,5 @@ func deleteProjectRawcalls(dir, projectIDHash string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return sp.DeleteWhere(func(r spool.Rawcall) bool {
-		hash, ok := envelope.ProjectIDHashOf(r.Data)
-		return ok && hash == projectIDHash
-	})
+	return sp.DeleteProject(projectIDHash)
 }

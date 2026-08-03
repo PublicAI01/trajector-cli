@@ -70,7 +70,7 @@ func (e *uploadEnv) seedRawcall(t *testing.T, id string, at time.Time) {
 		At:                at,
 		Upstream:          "https://api.anthropic.com",
 		OfficialUpstream:  "https://api.anthropic.com",
-		Request:           []byte(`{"model":"m","messages":[{"role":"user","content":"hello"}]}`),
+		Request:           []byte(`{"model":"m","metadata":{"user_id":"sess"},"messages":[{"role":"user","content":"hello"}]}`),
 		RequestComplete:   true,
 		Response:          []byte(`{"id":"` + id + `","type":"message"}`),
 		ResponseComplete:  true,
@@ -84,7 +84,7 @@ func (e *uploadEnv) seedRawcall(t *testing.T, id string, at time.Time) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sp.Write(spool.Entry{RequestID: env.RequestID(), SessionKey: "sess", Timestamp: at}, env.Bytes()); err != nil {
+	if err := sp.Write(env); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -72,7 +72,7 @@ func (f *fixture) storeRawcall(t *testing.T, id string, at time.Time) {
 		At:                at,
 		Upstream:          "https://api.anthropic.com",
 		OfficialUpstream:  "https://api.anthropic.com",
-		Request:           []byte(`{"model":"m","messages":[{"role":"user","content":"hello"}]}`),
+		Request:           []byte(`{"model":"m","metadata":{"user_id":"sess-1"},"messages":[{"role":"user","content":"hello"}]}`),
 		RequestComplete:   true,
 		Response:          []byte(`{"id":"` + id + `","type":"message"}`),
 		ResponseComplete:  true,
@@ -82,8 +82,7 @@ func (f *fixture) storeRawcall(t *testing.T, id string, at time.Time) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := spool.Entry{RequestID: env.RequestID(), SessionKey: "sess-1", Timestamp: at}
-	if err := f.spool.Write(entry, env.Bytes()); err != nil {
+	if err := f.spool.Write(env); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -329,7 +328,7 @@ func TestAPendingBatchWhoseRecordsWereWithdrawnIsReleased(t *testing.T) {
 	if _, err := f.uploader.Flush(true); err == nil {
 		t.Fatal("first flush against a failing service did not error")
 	}
-	if _, err := f.spool.DeleteWhere(func(spool.Rawcall) bool { return true }); err != nil {
+	if _, err := f.spool.DeleteWhere(func(string) bool { return true }); err != nil {
 		t.Fatal(err)
 	}
 

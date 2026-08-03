@@ -37,23 +37,15 @@ var ErrQuotaExceeded = errors.New("spool: quota exceeded")
 // indexName is the per-day sidecar index file name.
 const indexName = "index.jsonl"
 
-// Entry describes one rawcall being written.
-type Entry struct {
-	RequestID string
-	// SessionKey groups records of the same coding session so upload
-	// batching can lay them out adjacently. Empty when the request body
-	// carried no session identity.
-	SessionKey string
-	// Timestamp selects the day directory.
-	Timestamp time.Time
-}
-
-// indexLine is one record in the sidecar index.
+// indexLine is one record in the sidecar index. SessionKey groups
+// records of the same coding session so upload batching can lay them
+// out adjacently; ProjectIDHash lets consent withdrawal find a
+// project's records without reading them.
 type indexLine struct {
-	RequestID  string `json:"request_id"`
-	SessionKey string `json:"session_key,omitempty"`
-	Timestamp  string `json:"timestamp"`
-	Size       int64  `json:"size"`
+	RequestID     string `json:"request_id"`
+	SessionKey    string `json:"session_key,omitempty"`
+	Timestamp     string `json:"timestamp"`
+	ProjectIDHash string `json:"project_id_hash,omitempty"`
 }
 
 // Spool is a bounded rawcall store, safe for concurrent writers. The
@@ -158,18 +150,26 @@ func (s *Spool) refreshLocked() {
 	s.sig = sig
 }
 
-// Write stores one serialized envelope atomically and appends it to the
-// day's index.
-func (s *Spool) Write(e Entry, data []byte) error {
+// Write stores one rawcall atomically and appends it to the day's
+// index. Every indexed fact — id, session key, timestamp, project — is
+// derived here from the envelope itself, so the index can never
+// disagree with the record it describes.
+func (s *Spool) Write(env envelope.Envelope) error {
+	id := env.RequestID()
 	// The spool builds a file path from the id and must not trust it.
-	if !envelope.ValidRequestID(e.RequestID) {
-		return fmt.Errorf("spool: invalid request id %q", e.RequestID)
+	if !envelope.ValidRequestID(id) {
+		return fmt.Errorf("spool: invalid request id %q", id)
 	}
+	at := env.Timestamp()
+	if at.IsZero() {
+		return fmt.Errorf("spool: rawcall %s carries no capture timestamp", id)
+	}
+	data := env.Bytes()
 	line, err := json.Marshal(indexLine{
-		RequestID:  e.RequestID,
-		SessionKey: e.SessionKey,
-		Timestamp:  e.Timestamp.UTC().Format(time.RFC3339Nano),
-		Size:       int64(len(data)),
+		RequestID:     id,
+		SessionKey:    env.SessionKey(),
+		Timestamp:     at.UTC().Format(time.RFC3339Nano),
+		ProjectIDHash: env.ProjectIDHash(),
 	})
 	if err != nil {
 		return err
@@ -180,9 +180,9 @@ func (s *Spool) Write(e Entry, data []byte) error {
 	defer s.mu.Unlock()
 	s.refreshLocked()
 
-	day := e.Timestamp.UTC().Format("20060102")
+	day := at.UTC().Format("20060102")
 	dayDir := filepath.Join(s.dir, day)
-	final := filepath.Join(dayDir, e.RequestID+".json")
+	final := filepath.Join(dayDir, id+".json")
 	var replaced int64
 	if info, err := os.Stat(final); err == nil {
 		replaced = info.Size()
@@ -194,7 +194,7 @@ func (s *Spool) Write(e Entry, data []byte) error {
 	if err := os.MkdirAll(dayDir, 0o700); err != nil {
 		return err
 	}
-	tmp := filepath.Join(dayDir, "."+e.RequestID+".json.tmp")
+	tmp := filepath.Join(dayDir, "."+id+".json.tmp")
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}

@@ -60,7 +60,7 @@ func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, rawcalls []s
 	for _, rc := range rawcalls {
 		moved[rc.RequestID] = true
 	}
-	_, err = sp.DeleteWhere(func(r spool.Rawcall) bool { return moved[r.RequestID] })
+	_, err = sp.DeleteWhere(func(id string) bool { return moved[id] })
 	return err
 }
 

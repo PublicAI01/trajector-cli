@@ -266,7 +266,7 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result)
 	for _, rid := range b.RequestIDs {
 		uploaded[rid] = true
 	}
-	if _, err := u.deps.Spool.DeleteWhere(func(r spool.Rawcall) bool { return uploaded[r.RequestID] }); err != nil {
+	if _, err := u.deps.Spool.DeleteWhere(func(id string) bool { return uploaded[id] }); err != nil {
 		// The batch is acknowledged but its records are still on disk.
 		// The pending record must survive so the next flush retries under
 		// the same id and the service ignores the duplicate.

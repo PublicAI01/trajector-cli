@@ -2,40 +2,25 @@ package spool_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 func writeRawcall(t *testing.T, s *spool.Spool, id, projectHash string, day time.Time) []byte {
 	t.Helper()
-	data, err := json.Marshal(map[string]any{
-		"request_id": id,
-		"capture":    map[string]any{"project_id_hash": projectHash},
-	})
-	if err != nil {
+	env := storedRawcall(t, id, "sess", projectHash, day)
+	if err := s.Write(env); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Write(spool.Entry{RequestID: id, SessionKey: "sess", Timestamp: day}, data); err != nil {
-		t.Fatal(err)
-	}
-	return data
+	return env.Bytes()
 }
 
-func matchProject(hash string) func(spool.Rawcall) bool {
-	return func(r spool.Rawcall) bool {
-		stored, ok := envelope.ProjectIDHashOf(r.Data)
-		return ok && stored == hash
-	}
-}
-
-func TestDeleteWhereRemovesOnlyMatchingRawcalls(t *testing.T) {
+func TestDeleteProjectRemovesOnlyMatchingRawcalls(t *testing.T) {
 	dir := t.TempDir()
 	s, err := spool.Create(dir, 0)
 	if err != nil {
@@ -47,7 +32,7 @@ func TestDeleteWhereRemovesOnlyMatchingRawcalls(t *testing.T) {
 	writeRawcall(t, s, "req-a2", "hash-a", day2)
 	keep := writeRawcall(t, s, "req-b1", "hash-b", day1)
 
-	deleted, err := s.DeleteWhere(matchProject("hash-a"))
+	deleted, err := s.DeleteProject("hash-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +63,7 @@ func TestDeleteWhereRemovesOnlyMatchingRawcalls(t *testing.T) {
 	}
 }
 
-func TestDeleteWhereFreesQuota(t *testing.T) {
+func TestDeleteProjectFreesQuota(t *testing.T) {
 	dir := t.TempDir()
 	s, err := spool.Create(dir, 0)
 	if err != nil {
@@ -87,7 +72,7 @@ func TestDeleteWhereFreesQuota(t *testing.T) {
 	day := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	writeRawcall(t, s, "req-a1", "hash-a", day)
 	before := s.Usage()
-	if _, err := s.DeleteWhere(matchProject("hash-a")); err != nil {
+	if _, err := s.DeleteProject("hash-a"); err != nil {
 		t.Fatal(err)
 	}
 	if s.Usage() >= before {
@@ -110,13 +95,13 @@ func TestForeignDeleteFreesQuotaForAnOpenHandle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := writeRawcall(t, seed, "req-a1", "hash-a", day)
+	writeRawcall(t, seed, "req-a1", "hash-a", day)
 
 	writer, err := spool.Open(dir, seed.Usage())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Write(spool.Entry{RequestID: "req-a2", Timestamp: day}, data); !errors.Is(err, spool.ErrQuotaExceeded) {
+	if err := writer.Write(storedRawcall(t, "req-a2", "sess", "hash-a", day)); !errors.Is(err, spool.ErrQuotaExceeded) {
 		t.Fatalf("write on a full spool = %v, want ErrQuotaExceeded", err)
 	}
 
@@ -124,14 +109,14 @@ func TestForeignDeleteFreesQuotaForAnOpenHandle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := deleter.DeleteWhere(matchProject("hash-a")); err != nil {
+	if _, err := deleter.DeleteProject("hash-a"); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := writer.Writable(); err != nil {
 		t.Errorf("Writable after a foreign delete = %v, want nil", err)
 	}
-	if err := writer.Write(spool.Entry{RequestID: "req-a2", Timestamp: day}, data); err != nil {
+	if err := writer.Write(storedRawcall(t, "req-a2", "sess", "hash-a", day)); err != nil {
 		t.Errorf("Write after a foreign delete = %v, want success", err)
 	}
 	fresh, err := spool.Open(dir, 0)
@@ -168,9 +153,55 @@ func TestDeleteWhereNoMatchesTouchesNothing(t *testing.T) {
 	}
 	day := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
 	writeRawcall(t, s, "req-b1", "hash-b", day)
-	deleted, err := s.DeleteWhere(matchProject("hash-a"))
+	deleted, err := s.DeleteProject("hash-a")
 	if err != nil || deleted != 0 {
-		t.Errorf("DeleteWhere = %d, %v", deleted, err)
+		t.Errorf("DeleteProject = %d, %v", deleted, err)
+	}
+}
+
+func TestDeleteProjectNeedsNoRecordBodies(t *testing.T) {
+	dir := t.TempDir()
+	s, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	writeRawcall(t, s, "req-a1", "hash-a", day)
+	if err := os.WriteFile(filepath.Join(dir, "20260801", "req-a1.json"), []byte("not json at all"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := s.DeleteProject("hash-a")
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteProject = %d, %v, want the corrupted record deleted via the index", deleted, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "20260801", "req-a1.json")); !os.IsNotExist(err) {
+		t.Error("the corrupted record is still present")
+	}
+}
+
+func TestDeleteProjectAttributesUnindexedRecordsFromTheirBytes(t *testing.T) {
+	dir := t.TempDir()
+	s, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	writeRawcall(t, s, "req-a1", "hash-a", day)
+	if err := os.Remove(filepath.Join(dir, "20260801", indexName)); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(dir, "20260801", "req-x1.json")
+	if err := os.WriteFile(orphan, []byte("unattributable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := s.DeleteProject("hash-a")
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteProject = %d, %v, want the unindexed record attributed from its bytes", deleted, err)
+	}
+	if _, err := os.Stat(orphan); err != nil {
+		t.Error("a record attributable to no project was deleted")
 	}
 }
 

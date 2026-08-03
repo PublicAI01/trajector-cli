@@ -115,8 +115,7 @@ func (s *Sandbox) SeedRawcall(id, projectIDHash string, at time.Time) {
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	entry := spool.Entry{RequestID: env.RequestID(), SessionKey: env.SessionKey(), Timestamp: at}
-	if err := sp.Write(entry, env.Bytes()); err != nil {
+	if err := sp.Write(env); err != nil {
 		s.t.Fatal(err)
 	}
 }

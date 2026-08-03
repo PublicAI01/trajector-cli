@@ -11,7 +11,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
-	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 // DefaultMaxRecordBytes bounds how much of one exchange the recorder
@@ -207,12 +206,7 @@ func (r *recorder) write(ctx context.Context) {
 			r.abandon("%v", err)
 			return
 		}
-		entry := spool.Entry{
-			RequestID:  env.RequestID(),
-			SessionKey: env.SessionKey(),
-			Timestamp:  obs.At,
-		}
-		if err := r.s.cfg.Spool.Write(entry, env.Bytes()); err != nil {
+		if err := r.s.cfg.Spool.Write(env); err != nil {
 			r.abandon("spooling rawcall: %v", err)
 			return
 		}

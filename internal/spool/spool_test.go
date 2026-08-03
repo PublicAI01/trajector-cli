@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
@@ -20,14 +21,52 @@ var noon = time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 // tests are where that layout is pinned.
 const indexName = "index.jsonl"
 
+// storedRawcall builds one rawcall in stored form through the
+// envelope's own writer, so these tests never spell the serialized
+// layout themselves.
+func storedRawcall(t *testing.T, id, sessionKey, projectHash string, at time.Time) envelope.Envelope {
+	t.Helper()
+	env, err := envelope.Record(envelope.Observation{
+		ProjectIDHash:    projectHash,
+		At:               at,
+		Request:          []byte(`{"metadata":{"user_id":"` + sessionKey + `"}}`),
+		RequestComplete:  true,
+		Response:         []byte(`{"id":"` + id + `"}`),
+		ResponseComplete: true,
+		ContentType:      "application/json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env
+}
+
+// parsedRawcall hand-writes a stored record and reads it back through
+// Parse, for ids and timestamps the envelope's own writer would never
+// emit.
+func parsedRawcall(t *testing.T, id, timestamp string) envelope.Envelope {
+	t.Helper()
+	quoted, err := json.Marshal(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"schema_version":"1","request_id":` + string(quoted) + `,"capture":{"timestamp":"` + timestamp + `"}}`
+	env, err := envelope.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env
+}
+
 func TestWriteStoresEnvelopeUnderDayDirectory(t *testing.T) {
 	dir := t.TempDir()
 	s, err := spool.Create(dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := []byte(`{"schema_version":"1"}`)
-	if err := s.Write(spool.Entry{RequestID: "msg_01", SessionKey: "sess-a", Timestamp: noon}, data); err != nil {
+	env := storedRawcall(t, "msg_01", "sess-a", "hash-a", noon)
+	data := env.Bytes()
+	if err := s.Write(env); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,10 +104,10 @@ func TestWriteAppendsSidecarIndexLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Write(spool.Entry{RequestID: "msg_01", SessionKey: "sess-a", Timestamp: noon}, []byte(`{"a":1}`)); err != nil {
+	if err := s.Write(storedRawcall(t, "msg_01", "sess-a", "hash-a", noon)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Write(spool.Entry{RequestID: "msg_02", Timestamp: noon}, []byte(`{"b":2}`)); err != nil {
+	if err := s.Write(storedRawcall(t, "msg_02", "", "", noon)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,10 +117,10 @@ func TestWriteAppendsSidecarIndexLines(t *testing.T) {
 	}
 	defer f.Close()
 	type line struct {
-		RequestID  string `json:"request_id"`
-		SessionKey string `json:"session_key"`
-		Timestamp  string `json:"timestamp"`
-		Size       int64  `json:"size"`
+		RequestID     string `json:"request_id"`
+		SessionKey    string `json:"session_key"`
+		Timestamp     string `json:"timestamp"`
+		ProjectIDHash string `json:"project_id_hash"`
 	}
 	var lines []line
 	sc := bufio.NewScanner(f)
@@ -95,26 +134,26 @@ func TestWriteAppendsSidecarIndexLines(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("index has %d lines, want 2", len(lines))
 	}
-	want := line{RequestID: "msg_01", SessionKey: "sess-a", Timestamp: "2026-08-01T12:00:00Z", Size: 7}
+	want := line{RequestID: "msg_01", SessionKey: "sess-a", Timestamp: "2026-08-01T12:00:00Z", ProjectIDHash: "hash-a"}
 	if lines[0] != want {
 		t.Errorf("first index line = %+v, want %+v", lines[0], want)
 	}
-	if lines[1].RequestID != "msg_02" || lines[1].SessionKey != "" {
+	if lines[1].RequestID != "msg_02" || lines[1].SessionKey != "" || lines[1].ProjectIDHash != "" {
 		t.Errorf("second index line = %+v", lines[1])
 	}
 }
 
 func TestQuotaStopsWritesWithoutEvicting(t *testing.T) {
 	dir := t.TempDir()
-	s, err := spool.Create(dir, 200)
+	s, err := spool.Create(dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := []byte(strings.Repeat("a", 60))
-	if err := s.Write(spool.Entry{RequestID: "msg_01", Timestamp: noon}, first); err != nil {
+	if err := s.Write(storedRawcall(t, "msg_01", "", "", noon)); err != nil {
 		t.Fatal(err)
 	}
-	err = s.Write(spool.Entry{RequestID: "msg_02", Timestamp: noon}, []byte(strings.Repeat("b", 60)))
+	s.SetQuota(s.Usage())
+	err = s.Write(storedRawcall(t, "msg_02", "", "", noon))
 	if !errors.Is(err, spool.ErrQuotaExceeded) {
 		t.Fatalf("second write error = %v, want ErrQuotaExceeded", err)
 	}
@@ -132,7 +171,7 @@ func TestOpenRecomputesUsageFromDisk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Write(spool.Entry{RequestID: "msg_01", Timestamp: noon}, []byte(`{"a":1}`)); err != nil {
+	if err := s.Write(storedRawcall(t, "msg_01", "", "", noon)); err != nil {
 		t.Fatal(err)
 	}
 	usage := s.Usage()
@@ -155,11 +194,10 @@ func TestOverwritingSameRequestIDDoesNotInflateUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := spool.Entry{RequestID: "msg_01", Timestamp: noon}
-	if err := s.Write(entry, []byte(strings.Repeat("a", 40))); err != nil {
+	if err := s.Write(storedRawcall(t, "msg_01", "short", "", noon)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Write(entry, []byte(strings.Repeat("b", 40))); err != nil {
+	if err := s.Write(storedRawcall(t, "msg_01", "a-much-longer-session-key", "", noon)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -178,14 +216,24 @@ func TestWriteRefusesRequestIDsThatCouldEscapeTheDayDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"msg_01AB", "req-1.2", "local-abcdef"} {
-		if err := s.Write(spool.Entry{RequestID: id, Timestamp: noon}, []byte("{}")); err != nil {
+		if err := s.Write(parsedRawcall(t, id, "2026-08-01T12:00:00Z")); err != nil {
 			t.Errorf("Write(%q) = %v, want accepted", id, err)
 		}
 	}
 	for _, id := range []string{"", "../escape", "a/b", ".hidden"} {
-		if err := s.Write(spool.Entry{RequestID: id, Timestamp: noon}, []byte("{}")); err == nil {
+		if err := s.Write(parsedRawcall(t, id, "2026-08-01T12:00:00Z")); err == nil {
 			t.Errorf("Write(%q) = nil, want refused", id)
 		}
+	}
+}
+
+func TestWriteRefusesARawcallWithoutACaptureTimestamp(t *testing.T) {
+	s, err := spool.Create(t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Write(parsedRawcall(t, "msg_01", "")); err == nil {
+		t.Error("a rawcall with no capture timestamp was accepted")
 	}
 }
 
@@ -234,11 +282,11 @@ func TestOpenCreatesNothingAndReadsBackAnUnwrittenSpool(t *testing.T) {
 	}); err != nil {
 		t.Errorf("Each = %v", err)
 	}
-	deleted, err := s.DeleteWhere(func(spool.Rawcall) bool { return true })
+	deleted, err := s.DeleteWhere(func(string) bool { return true })
 	if err != nil || deleted != 0 {
 		t.Errorf("DeleteWhere = %d, %v, want 0, nil", deleted, err)
 	}
-	if err := s.Write(spool.Entry{RequestID: "msg_01", Timestamp: noon}, []byte("{}")); err != nil {
+	if err := s.Write(storedRawcall(t, "msg_01", "", "", noon)); err != nil {
 		t.Errorf("Write after a non-creating Open = %v", err)
 	}
 }
@@ -253,7 +301,7 @@ func TestWriteSurfacesFilesystemFailures(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "20260801"), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.Write(spool.Entry{RequestID: "msg_01", Timestamp: noon}, []byte("{}")); err == nil {
+		if err := s.Write(storedRawcall(t, "msg_01", "", "", noon)); err == nil {
 			t.Error("Write succeeded with the day directory blocked")
 		}
 	})
@@ -266,7 +314,7 @@ func TestWriteSurfacesFilesystemFailures(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(dir, "20260801", indexName), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.Write(spool.Entry{RequestID: "msg_01", Timestamp: noon}, []byte("{}")); err == nil {
+		if err := s.Write(storedRawcall(t, "msg_01", "", "", noon)); err == nil {
 			t.Error("Write succeeded with the index unwritable")
 		}
 	})
@@ -278,7 +326,7 @@ func TestWriteRejectsUnsafeRequestIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"", "../escape", "a/b", ".hidden", "-dash-first", "id with space"} {
-		if err := s.Write(spool.Entry{RequestID: id, Timestamp: noon}, []byte("{}")); err == nil {
+		if err := s.Write(parsedRawcall(t, id, "2026-08-01T12:00:00Z")); err == nil {
 			t.Errorf("request id %q accepted", id)
 		}
 	}
@@ -286,22 +334,22 @@ func TestWriteRejectsUnsafeRequestIDs(t *testing.T) {
 
 func TestSetQuotaGovernsSubsequentWrites(t *testing.T) {
 	dir := t.TempDir()
-	s, err := spool.Create(dir, 200)
+	s, err := spool.Create(dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Write(spool.Entry{RequestID: "msg_01", Timestamp: noon}, []byte(strings.Repeat("a", 60))); err != nil {
+	if err := s.Write(storedRawcall(t, "msg_01", "", "", noon)); err != nil {
 		t.Fatal(err)
 	}
 
 	s.SetQuota(s.Usage())
-	err = s.Write(spool.Entry{RequestID: "msg_02", Timestamp: noon}, []byte("b"))
+	err = s.Write(storedRawcall(t, "msg_02", "", "", noon))
 	if !errors.Is(err, spool.ErrQuotaExceeded) {
 		t.Fatalf("write after shrinking the quota = %v, want ErrQuotaExceeded", err)
 	}
 
 	s.SetQuota(1 << 20)
-	if err := s.Write(spool.Entry{RequestID: "msg_02", Timestamp: noon}, []byte("b")); err != nil {
+	if err := s.Write(storedRawcall(t, "msg_02", "", "", noon)); err != nil {
 		t.Fatalf("write after raising the quota = %v", err)
 	}
 	if got := s.Quota(); got != 1<<20 {
