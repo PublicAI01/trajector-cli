@@ -36,7 +36,7 @@ func (s fileStore) Load(name string) ([]byte, error) {
 	}
 	secret, err := os.ReadFile(s.path(name))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, ErrNotFound
+		return nil, errNotFound
 	}
 	return secret, err
 }
@@ -47,7 +47,7 @@ func (s fileStore) Delete(name string) error {
 	}
 	err := os.Remove(s.path(name))
 	if errors.Is(err, fs.ErrNotExist) {
-		return ErrNotFound
+		return errNotFound
 	}
 	return err
 }

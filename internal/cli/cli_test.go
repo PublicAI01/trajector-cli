@@ -105,7 +105,7 @@ func TestEnableExplainsAPausedDevice(t *testing.T) {
 	t.Setenv("TRAJECTOR_PROXY_ADDR", proxy.Addr())
 
 	// A paired device whose recording is paused device-wide.
-	if err := tokenstore.Files(e.Layout().SecretsDir()).Save("device", []byte("dev-tok-fake")); err != nil {
+	if err := tokenstore.Files(e.Layout().SecretsDir()).SetDeviceToken("dev-tok-fake"); err != nil {
 		t.Fatal(err)
 	}
 	e.Sandbox().Pause("signed_out")

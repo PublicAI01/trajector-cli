@@ -36,7 +36,7 @@ func newUploadEnvWithoutStubs(t *testing.T) *uploadEnv {
 	t.Helper()
 	e := &uploadEnv{Env: clitest.New(t), service: fakeplatform.New(t)}
 	t.Setenv("TRAJECTOR_PLATFORM_URL", e.service.URL())
-	if err := tokenstore.Files(e.Layout().SecretsDir()).Save(tokenstore.DeviceTokenName, []byte("dev-tok-fake")); err != nil {
+	if err := tokenstore.Files(e.Layout().SecretsDir()).SetDeviceToken("dev-tok-fake"); err != nil {
 		t.Fatal(err)
 	}
 	return e
@@ -198,7 +198,7 @@ func TestUploadWithoutForceRespectsThresholds(t *testing.T) {
 
 func TestUploadWhileSignedOutPausesAndKeepsData(t *testing.T) {
 	e := newUploadEnv(t)
-	if err := tokenstore.Files(e.Layout().SecretsDir()).Delete(tokenstore.DeviceTokenName); err != nil {
+	if err := tokenstore.Files(e.Layout().SecretsDir()).ClearDeviceToken(); err != nil {
 		t.Fatal(err)
 	}
 	e.seedRawcall(t, "req-1", time.Now().UTC())

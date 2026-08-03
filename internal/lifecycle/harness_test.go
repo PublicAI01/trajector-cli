@@ -70,7 +70,7 @@ func newEnv(t *testing.T) *env {
 func newUnpairedEnv(t *testing.T) *env {
 	t.Helper()
 	e := newEnv(t)
-	if err := e.deps.Tokens.Delete("device"); err != nil {
+	if err := e.deps.Tokens.ClearDeviceToken(); err != nil {
 		t.Fatal(err)
 	}
 	return e
@@ -169,7 +169,7 @@ func (e *env) pairable() {
 
 func (e *env) seedDeviceToken() {
 	e.t.Helper()
-	if err := e.deps.Tokens.Save("device", []byte("dev-tok-fake")); err != nil {
+	if err := e.deps.Tokens.SetDeviceToken("dev-tok-fake"); err != nil {
 		e.t.Fatal(err)
 	}
 }

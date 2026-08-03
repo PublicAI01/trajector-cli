@@ -15,6 +15,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/cli"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -51,7 +52,7 @@ func New(t *testing.T) *Env {
 	// The file token backend keeps tests away from the developer's OS
 	// keyring, and the unroutable service URL fails fast if a test
 	// forgets to point at a fake platform server.
-	t.Setenv("TRAJECTOR_TOKEN_STORE", "file")
+	t.Setenv(tokenstore.BackendEnv, "file")
 	t.Setenv("TRAJECTOR_PLATFORM_URL", "http://127.0.0.1:1")
 	t.Setenv("TRAJECTOR_PROXY_ADDR", "")
 	return e

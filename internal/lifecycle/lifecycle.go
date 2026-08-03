@@ -31,7 +31,7 @@ const (
 // Deps is everything the machine needs from the world outside it.
 type Deps struct {
 	Layout   userdirs.Layout
-	Tokens   tokenstore.Store
+	Tokens   *tokenstore.Store
 	Platform *platform.Client
 	Version  string
 	// ExecPath is this binary, injected into session hooks and used to
@@ -90,11 +90,11 @@ func (m *Machine) Paired() bool {
 }
 
 func (m *Machine) deviceToken() (string, bool) {
-	secret, err := m.deps.Tokens.Load(tokenstore.DeviceTokenName)
-	if err != nil || len(secret) == 0 {
+	token, ok, err := m.deps.Tokens.DeviceToken()
+	if err != nil {
 		return "", false
 	}
-	return string(secret), true
+	return token, ok
 }
 
 func (m *Machine) now() string { return m.deps.Now().UTC().Format(time.RFC3339) }

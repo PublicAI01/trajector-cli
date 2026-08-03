@@ -12,6 +12,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -105,7 +106,7 @@ func runProxy(mode string, args []string, stdout, stderr io.Writer) int {
 		env.proxyAddr = *addr
 	}
 	proxy := proxylife.For(env.layout, version, env.execPath, env.proxyAddr)
-	proxy.Uploads(platform.New(env.platformURL, version), secretStore(env.layout))
+	proxy.Uploads(platform.New(env.platformURL, version), tokenstore.Open(env.layout.SecretsDir()))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

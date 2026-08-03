@@ -23,7 +23,7 @@ func (keyringStore) Load(name string) ([]byte, error) {
 	}
 	secret, err := keyring.Get(keyringService, name)
 	if errors.Is(err, keyring.ErrNotFound) {
-		return nil, ErrNotFound
+		return nil, errNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -37,7 +37,7 @@ func (keyringStore) Delete(name string) error {
 	}
 	err := keyring.Delete(keyringService, name)
 	if errors.Is(err, keyring.ErrNotFound) {
-		return ErrNotFound
+		return errNotFound
 	}
 	return err
 }

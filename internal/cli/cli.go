@@ -25,11 +25,6 @@ var version = "dev"
 // setups. Production always uses the fixed address.
 const ProxyAddrEnv = "TRAJECTOR_PROXY_ADDR"
 
-// SecretsInFilesEnv set to "file" keeps secrets in trajector's own
-// directory instead of the OS keyring, for headless hosts and for tests,
-// which must never touch the developer's real credential store.
-const SecretsInFilesEnv = "TRAJECTOR_TOKEN_STORE"
-
 type app struct {
 	stdin  io.Reader
 	stdout io.Writer
@@ -133,7 +128,7 @@ func (a *app) machine() (*lifecycle.Machine, error) {
 	}
 	return lifecycle.Open(lifecycle.Deps{
 		Layout:    env.layout,
-		Tokens:    secretStore(env.layout),
+		Tokens:    tokenstore.Open(env.layout.SecretsDir()),
 		Platform:  platform.New(env.platformURL, version),
 		Version:   version,
 		ExecPath:  env.execPath,
@@ -141,14 +136,6 @@ func (a *app) machine() (*lifecycle.Machine, error) {
 		Home:      env.home,
 		Getenv:    os.Getenv,
 	})
-}
-
-func secretStore(layout userdirs.Layout) tokenstore.Store {
-	dir := layout.SecretsDir()
-	if os.Getenv(SecretsInFilesEnv) == "file" {
-		return tokenstore.Files(dir)
-	}
-	return tokenstore.Open(dir, tokenstore.OSKeyring())
 }
 
 // io hands the machine this invocation's streams.

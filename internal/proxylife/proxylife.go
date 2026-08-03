@@ -83,7 +83,7 @@ type Proxy struct {
 	addr     string
 
 	service *platform.Client
-	tokens  tokenstore.Store
+	tokens  *tokenstore.Store
 }
 
 // For describes the proxy this binary would start on this machine.
@@ -97,7 +97,7 @@ func For(layout userdirs.Layout, version, execPath, addr string) *Proxy {
 // Uploads arranges for a proxy served by Run to host the uploader,
 // draining the spool to service against the device token in tokens.
 // Without it a served proxy only captures.
-func (p *Proxy) Uploads(service *platform.Client, tokens tokenstore.Store) {
+func (p *Proxy) Uploads(service *platform.Client, tokens *tokenstore.Store) {
 	p.service = service
 	p.tokens = tokens
 }
@@ -349,14 +349,8 @@ func periodicFlush(ctx context.Context, served chan struct{}, uploader *upload.U
 // missing token is the signed-out state, reported as empty so uploads
 // pause rather than fail.
 func (p *Proxy) deviceToken() (string, error) {
-	secret, err := p.tokens.Load(tokenstore.DeviceTokenName)
-	if errors.Is(err, tokenstore.ErrNotFound) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	return string(secret), nil
+	token, _, err := p.tokens.DeviceToken()
+	return token, err
 }
 
 // Flush asks a running proxy to upload now and reports what it did.
