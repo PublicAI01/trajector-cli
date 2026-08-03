@@ -267,7 +267,8 @@ func (p *Proxy) Run(ctx context.Context, idle time.Duration, stdout, stderr io.W
 	cfg := apiproxy.Config{
 		Version:         p.version,
 		Table:           routing.New(p.layout.RoutingTable(), 0),
-		DefaultUpstream: capture.OfficialUpstream,
+		Dialect:         capture.Anthropic,
+		DefaultUpstream: capture.Anthropic.OfficialUpstream,
 		Spool:           sp,
 		IdleTimeout:     idle,
 		Logf:            logf,

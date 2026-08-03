@@ -90,17 +90,26 @@ type Observation struct {
 	ContentType     string
 	ContentEncoding string
 
-	// Assemble reassembles a complete event stream into the equivalent
-	// non-streaming object, or fails so the raw stream is kept verbatim.
-	// AssemblyRules names the rules it applied.
-	Assemble      func(stream []byte) ([]byte, error)
-	AssemblyRules string
+	// Assembler reassembles a complete event stream, or fails so the raw
+	// stream is kept verbatim. The zero value performs no assembly.
+	Assembler Assembler
 
 	// UpstreamRequestID is the id the upstream reported for this
 	// exchange, used when the response body carries none.
 	UpstreamRequestID string
 
 	Hints FormatHints
+}
+
+// Assembler reassembles a complete event stream under named rules. The
+// function and the rules version travel as one value, so a record can
+// never claim rules that were not applied.
+type Assembler struct {
+	// Rules names the reassembly rules Assemble applies.
+	Rules string
+	// Assemble returns the equivalent non-streaming object, or fails so
+	// the raw stream is stored verbatim instead.
+	Assemble func(stream []byte) (json.RawMessage, error)
 }
 
 // wire is the serialized rawcall. Every JSON tag here is part of the
@@ -284,11 +293,11 @@ func (obs Observation) classifyResponse() (body json.RawMessage, assembly wireAs
 		// An encoding the transport could not transparently decode.
 		return jsonString(obs.Response), assembly, false, true
 	case strings.HasPrefix(obs.ContentType, "text/event-stream"):
-		if obs.ResponseComplete && obs.Assemble != nil {
-			if assembled, err := obs.Assemble(obs.Response); err == nil {
+		if obs.ResponseComplete && obs.Assembler.Assemble != nil {
+			if assembled, err := obs.Assembler.Assemble(obs.Response); err == nil {
 				assembly.By = assembledByClient
-				assembly.RulesVersion = obs.AssemblyRules
-				return json.RawMessage(assembled), assembly, true, false
+				assembly.RulesVersion = obs.Assembler.Rules
+				return assembled, assembly, true, false
 			}
 		}
 		return jsonString(obs.Response), assembly, false, true

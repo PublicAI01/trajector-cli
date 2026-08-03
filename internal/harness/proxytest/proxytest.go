@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeupstream"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -35,6 +36,7 @@ type options struct {
 	haveLayout bool
 	addr       string
 	version    string
+	official   string
 	quota      int64
 	idle       time.Duration
 	drain      time.Duration
@@ -56,6 +58,14 @@ func WithAddr(addr string) Option { return func(o *options) { o.addr = addr } }
 
 // WithVersion sets the version the proxy reports as its own.
 func WithVersion(v string) Option { return func(o *options) { o.version = v } }
+
+// WithOfficialUpstream declares what counts as the provider's own
+// origin, independently of where unrouted traffic is forwarded. The
+// default is the sandbox upstream, so recorded exchanges classify as
+// official unless a test says otherwise.
+func WithOfficialUpstream(url string) Option {
+	return func(o *options) { o.official = url }
+}
 
 // WithFullSpool starts the proxy with a spool that has no room left, so
 // every capture fails on the write.
@@ -116,9 +126,15 @@ func New(t *testing.T, opts ...Option) *Env {
 		t.Fatal(err)
 	}
 
+	dialect := capture.Anthropic
+	dialect.OfficialUpstream = e.Upstream.URL()
+	if o.official != "" {
+		dialect.OfficialUpstream = o.official
+	}
 	server, err := apiproxy.New(apiproxy.Config{
 		Version:         o.version,
 		Table:           routing.New(o.layout.RoutingTable(), time.Millisecond),
+		Dialect:         dialect,
 		DefaultUpstream: e.Upstream.URL(),
 		Spool:           sp,
 		IdleTimeout:     o.idle,

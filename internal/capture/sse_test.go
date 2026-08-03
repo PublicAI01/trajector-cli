@@ -181,7 +181,7 @@ func TestShouldRecordMatchesExactEndpointOnly(t *testing.T) {
 		{"POST", "/v1/models", false},
 	}
 	for _, tt := range tests {
-		if got := capture.ShouldRecord(tt.method, tt.path); got != tt.want {
+		if got := capture.Anthropic.ShouldRecord(tt.method, tt.path); got != tt.want {
 			t.Errorf("ShouldRecord(%s %s) = %v, want %v", tt.method, tt.path, got, tt.want)
 		}
 	}

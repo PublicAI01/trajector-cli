@@ -408,6 +408,26 @@ func TestThirdPartyUpstreamChainedAndTagged(t *testing.T) {
 	}
 }
 
+func TestOriginOracleIndependentOfDefaultUpstream(t *testing.T) {
+	e := proxytest.New(t, proxytest.WithOfficialUpstream("https://api.example.com"))
+	e.WriteTable(activeTable("tok1", e.Upstream.URL()))
+
+	e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_o1"}`)})
+	resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	stored := e.WaitRawcalls(1)
+	env := readEnvelope(t, stored[0])
+	if env.UpstreamOrigin() != "third_party" {
+		t.Errorf("upstream_origin = %s, want third_party when the official origin differs", env.UpstreamOrigin())
+	}
+	if sc := e.Selfcheck("tok1"); sc.UpstreamOrigin != "third_party" {
+		t.Errorf("selfcheck upstream_origin = %s, want third_party", sc.UpstreamOrigin)
+	}
+}
+
 func TestCompressedResponseRecordedDecoded(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream

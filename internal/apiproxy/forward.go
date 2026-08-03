@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
@@ -64,7 +63,7 @@ func (s *Server) decide(r *http.Request) *decision {
 		}
 		if verdict.Records() {
 			s.touchAuthorized()
-			record = capture.ShouldRecord(r.Method, rest)
+			record = s.cfg.Dialect.ShouldRecord(r.Method, rest)
 		}
 	}
 

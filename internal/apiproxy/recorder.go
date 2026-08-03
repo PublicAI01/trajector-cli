@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -229,8 +228,9 @@ func (r *recorder) observation() (envelope.Observation, bool) {
 	if r.dropped {
 		return envelope.Observation{}, false
 	}
+	dialect := r.s.cfg.Dialect
 	return envelope.Observation{
-		Provider:      capture.Provider,
+		Provider:      dialect.Provider,
 		Endpoint:      r.endpoint,
 		HTTPStatus:    r.status,
 		ClientVersion: r.s.cfg.Version,
@@ -238,7 +238,7 @@ func (r *recorder) observation() (envelope.Observation, bool) {
 		At:            time.Now(),
 
 		Upstream:         r.route.Upstream,
-		OfficialUpstream: r.s.cfg.DefaultUpstream,
+		OfficialUpstream: dialect.OfficialUpstream,
 
 		Request:          bytes.Clone(r.req.Bytes()),
 		RequestComplete:  r.reqComplete,
@@ -248,8 +248,10 @@ func (r *recorder) observation() (envelope.Observation, bool) {
 		ContentType:     r.contentType,
 		ContentEncoding: r.encoding,
 
-		Assemble:      func(stream []byte) ([]byte, error) { return capture.Assemble(stream) },
-		AssemblyRules: capture.AssemblyRulesVersion,
+		Assembler: envelope.Assembler{
+			Rules:    dialect.AssemblyRules,
+			Assemble: dialect.Assemble,
+		},
 
 		UpstreamRequestID: r.upstreamID,
 		Hints:             r.hints,

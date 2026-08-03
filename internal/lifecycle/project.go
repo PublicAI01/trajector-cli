@@ -149,7 +149,7 @@ func (m *Machine) refreshUpstreamDrift(projectDir string) {
 	if err != nil || !ok {
 		return
 	}
-	want := capture.OfficialUpstream
+	want := capture.Anthropic.OfficialUpstream
 	if external, _, found := claudesettings.ExternalBaseURL(root, m.deps.Home, m.deps.Getenv); found {
 		want = external
 	}

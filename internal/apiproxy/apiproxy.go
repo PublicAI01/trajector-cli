@@ -15,11 +15,18 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/batch"
+	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
+
+// httpURL reports whether s can serve as a forwarding or classification
+// origin.
+func httpURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
 
 // Addr is the production listen address. The port is fixed: injected
 // project settings embed it, so a fallback port would strand every
@@ -108,6 +115,11 @@ const (
 type Config struct {
 	Version string
 	Table   *routing.Table
+	// Dialect is the provider profile this proxy captures. Its
+	// OfficialUpstream is the origin-classification oracle; it is a
+	// separate fact from DefaultUpstream, so pointing the fallback
+	// somewhere else can never silently relabel what gets recorded.
+	Dialect capture.Dialect
 	// DefaultUpstream receives traffic that carries no valid consent
 	// token. Such traffic is forwarded untouched and never recorded.
 	DefaultUpstream string
@@ -156,8 +168,14 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Table == nil || cfg.Spool == nil {
 		return nil, fmt.Errorf("apiproxy: routing table and spool are required")
 	}
-	if !strings.HasPrefix(cfg.DefaultUpstream, "http://") && !strings.HasPrefix(cfg.DefaultUpstream, "https://") {
+	if cfg.Dialect.Provider == "" || cfg.Dialect.ShouldRecord == nil {
+		return nil, fmt.Errorf("apiproxy: a capture dialect is required")
+	}
+	if !httpURL(cfg.DefaultUpstream) {
 		return nil, fmt.Errorf("apiproxy: default upstream %q is not an http(s) URL", cfg.DefaultUpstream)
+	}
+	if !httpURL(cfg.Dialect.OfficialUpstream) {
+		return nil, fmt.Errorf("apiproxy: official upstream %q is not an http(s) URL", cfg.Dialect.OfficialUpstream)
 	}
 	if cfg.IdleTimeout == 0 {
 		cfg.IdleTimeout = defaultIdleTimeout
@@ -333,7 +351,7 @@ func (s *Server) serveTokenInternal(w http.ResponseWriter, r *http.Request, toke
 		Decision:       string(verdict.Decision),
 		PauseReason:    verdict.PauseReason,
 		ProjectIDHash:  route.ProjectIDHash,
-		UpstreamOrigin: envelope.Origin(upstream, s.cfg.DefaultUpstream),
+		UpstreamOrigin: envelope.Origin(upstream, s.cfg.Dialect.OfficialUpstream),
 		SpoolWritable:  s.cfg.Spool.Writable() == nil,
 	})
 }

@@ -15,8 +15,11 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
-func assembled(obj string) func([]byte) ([]byte, error) {
-	return func([]byte) ([]byte, error) { return []byte(obj), nil }
+func assembled(obj string) envelope.Assembler {
+	return envelope.Assembler{
+		Rules:    "1",
+		Assemble: func([]byte) (json.RawMessage, error) { return json.RawMessage(obj), nil },
+	}
 }
 
 // quoted is how a body that is not valid JSON is stored: as a JSON
@@ -29,8 +32,13 @@ func quoted(raw string) string {
 	return string(encoded)
 }
 
-func degraded() func([]byte) ([]byte, error) {
-	return func([]byte) ([]byte, error) { return nil, errors.New("stream cannot be represented faithfully") }
+func degraded() envelope.Assembler {
+	return envelope.Assembler{
+		Rules: "1",
+		Assemble: func([]byte) (json.RawMessage, error) {
+			return nil, errors.New("stream cannot be represented faithfully")
+		},
+	}
 }
 
 func TestRecordMatchesGoldenSchemaV1(t *testing.T) {
@@ -48,8 +56,7 @@ func TestRecordMatchesGoldenSchemaV1(t *testing.T) {
 		Response:         []byte("event: message_stop\ndata: {}\n\n"),
 		ResponseComplete: true,
 		ContentType:      "text/event-stream",
-		Assemble:         assembled(`{"id":"msg_01ABCDEF","model":"claude-fable-5","usage":{"output_tokens":9}}`),
-		AssemblyRules:    "1",
+		Assembler:        assembled(`{"id":"msg_01ABCDEF","model":"claude-fable-5","usage":{"output_tokens":9}}`),
 		Hints: envelope.FormatHints{
 			AnthropicVersion: "2023-06-01",
 			AnthropicBeta:    []string{"beta-a", "beta-b"},
@@ -108,7 +115,7 @@ func TestGarbledClassification(t *testing.T) {
 			name: "a complete stream is assembled",
 			obs: envelope.Observation{
 				Response: []byte(stream), ResponseComplete: true,
-				ContentType: "text/event-stream", Assemble: assembled(validJSON), AssemblyRules: "1",
+				ContentType: "text/event-stream", Assembler: assembled(validJSON),
 			},
 			wantBy:     "client",
 			wantStored: validJSON,
@@ -117,7 +124,7 @@ func TestGarbledClassification(t *testing.T) {
 			name: "a malformed stream is kept as raw text",
 			obs: envelope.Observation{
 				Response: []byte(stream), ResponseComplete: true,
-				ContentType: "text/event-stream", Assemble: degraded(), AssemblyRules: "1",
+				ContentType: "text/event-stream", Assembler: degraded(),
 			},
 			wantGarbled: true,
 			wantBy:      "none",
@@ -127,7 +134,7 @@ func TestGarbledClassification(t *testing.T) {
 			name: "a truncated stream is never assembled",
 			obs: envelope.Observation{
 				Response: []byte(stream), ResponseComplete: false,
-				ContentType: "text/event-stream", Assemble: assembled(validJSON), AssemblyRules: "1",
+				ContentType: "text/event-stream", Assembler: assembled(validJSON),
 			},
 			wantGarbled: true,
 			wantBy:      "none",

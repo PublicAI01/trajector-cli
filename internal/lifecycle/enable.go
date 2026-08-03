@@ -46,7 +46,7 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		return fmt.Errorf("%s is set: Bedrock and Vertex channels are not supported and nothing was injected", key)
 	}
 
-	upstream := capture.OfficialUpstream
+	upstream := capture.Anthropic.OfficialUpstream
 	external, source, thirdParty := claudesettings.ExternalBaseURL(root, m.deps.Home, m.deps.Getenv)
 	if thirdParty {
 		upstream = external

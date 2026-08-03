@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// AssemblyRulesVersion identifies the reassembly rules recorded in each
+// assemblyRulesVersion identifies the reassembly rules recorded in each
 // envelope, so degraded records can be re-run under newer rules later.
-const AssemblyRulesVersion = "1"
+const assemblyRulesVersion = "1"
 
 // Assemble parses a complete Anthropic event stream and returns the
 // equivalent non-streaming message object. Numbers are preserved as
