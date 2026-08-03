@@ -37,8 +37,8 @@ func firstEnv(projectRoot, home, key string, getenv func(string) string, accept 
 	return "", "", false
 }
 
-// EffectiveEnv resolves key to the value Claude Code would see.
-func EffectiveEnv(projectRoot, home, key string, getenv func(string) string) (string, Source, bool) {
+// effectiveEnv resolves key to the value Claude Code would see.
+func effectiveEnv(projectRoot, home, key string, getenv func(string) string) (string, Source, bool) {
 	return firstEnv(projectRoot, home, key, getenv, func(string) bool { return true })
 }
 
@@ -47,8 +47,8 @@ func EffectiveEnv(projectRoot, home, key string, getenv func(string) string) (st
 // trajector-injected values skipped, so re-running enable sees through
 // its own injection to the user's real configuration.
 func ExternalBaseURL(projectRoot, home string, getenv func(string) string) (string, Source, bool) {
-	return firstEnv(projectRoot, home, EnvBaseURL, getenv, func(value string) bool {
-		return !IsProxyBaseURL(value)
+	return firstEnv(projectRoot, home, envBaseURL, getenv, func(value string) bool {
+		return !isProxyBaseURL(value)
 	})
 }
 
@@ -58,7 +58,7 @@ func ExternalBaseURL(projectRoot, home string, getenv func(string) string) (stri
 // must refuse.
 func UnsupportedChannel(projectRoot, home string, getenv func(string) string) (string, bool) {
 	for _, key := range []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"} {
-		if value, _, ok := EffectiveEnv(projectRoot, home, key, getenv); ok && truthy(value) {
+		if value, _, ok := effectiveEnv(projectRoot, home, key, getenv); ok && truthy(value) {
 			return key, true
 		}
 	}

@@ -16,15 +16,15 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
-// EnvBaseURL is the environment key Claude Code reads for its API base
+// envBaseURL is the environment key Claude Code reads for its API base
 // URL; injecting it is how a project's traffic is routed through the
 // local proxy.
-const EnvBaseURL = "ANTHROPIC_BASE_URL"
+const envBaseURL = "ANTHROPIC_BASE_URL"
 
 // Hook events used for injection.
 const (
-	EventSessionStart     = "SessionStart"
-	EventUserPromptSubmit = "UserPromptSubmit"
+	eventSessionStart     = "SessionStart"
+	eventUserPromptSubmit = "UserPromptSubmit"
 )
 
 // Marker substrings identifying trajector-injected hook commands, so
@@ -34,11 +34,16 @@ const (
 	DiscoveryMarker   = "hook discovery"
 )
 
+// ProjectLocalRel is the injected settings file's path relative to the
+// project root, in slash form for gitignore entries and user-facing
+// messages. Every spelling of the name derives from this one.
+const ProjectLocalRel = ".claude/settings.local.json"
+
 // ProjectLocalPath locates the project-scoped settings file that
 // receives the injection. It is local (never committed) by Claude Code
 // convention; enable additionally verifies gitignore coverage.
 func ProjectLocalPath(projectRoot string) string {
-	return filepath.Join(projectRoot, ".claude", "settings.local.json")
+	return filepath.Join(projectRoot, filepath.FromSlash(ProjectLocalRel))
 }
 
 // UserSettingsPath locates the user-scoped settings file that receives
@@ -52,9 +57,9 @@ func UserSettingsPath(home string) string {
 // never mistake a user's own relay URL for our injection.
 var proxyBaseURL = regexp.MustCompile(`^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]+/t/([A-Za-z0-9._-]+)$`)
 
-// IsProxyBaseURL reports whether value is a trajector-injected base
+// isProxyBaseURL reports whether value is a trajector-injected base
 // URL.
-func IsProxyBaseURL(value string) bool { return proxyBaseURL.MatchString(value) }
+func isProxyBaseURL(value string) bool { return proxyBaseURL.MatchString(value) }
 
 // TokenFromBaseURL extracts the consent token from an injected base
 // URL.
@@ -74,11 +79,11 @@ func InjectProject(path, baseURL, hookCommand string) error {
 		if err != nil {
 			return err
 		}
-		env[EnvBaseURL] = baseURL
-		if err := addHook(root, EventSessionStart, hookCommand); err != nil {
+		env[envBaseURL] = baseURL
+		if err := addHook(root, eventSessionStart, hookCommand); err != nil {
 			return err
 		}
-		return addHook(root, EventUserPromptSubmit, hookCommand)
+		return addHook(root, eventUserPromptSubmit, hookCommand)
 	})
 }
 
@@ -100,8 +105,8 @@ func InjectedBaseURL(path string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	value, _ := env[EnvBaseURL].(string)
-	if !IsProxyBaseURL(value) {
+	value, _ := env[envBaseURL].(string)
+	if !isProxyBaseURL(value) {
 		return "", false
 	}
 	return value, true
@@ -111,7 +116,7 @@ func InjectedBaseURL(path string) (string, bool) {
 // at path.
 func InjectUserHook(path, hookCommand string) error {
 	return edit(path, func(root map[string]any) error {
-		return addHook(root, EventSessionStart, hookCommand)
+		return addHook(root, eventSessionStart, hookCommand)
 	})
 }
 
@@ -164,8 +169,8 @@ func removeInjection(path string, dropEnv bool, marker string) error {
 	return edit(path, func(root map[string]any) error {
 		if dropEnv {
 			if env, ok := root["env"].(map[string]any); ok {
-				if value, _ := env[EnvBaseURL].(string); IsProxyBaseURL(value) {
-					delete(env, EnvBaseURL)
+				if value, _ := env[envBaseURL].(string); isProxyBaseURL(value) {
+					delete(env, envBaseURL)
 				}
 				if len(env) == 0 {
 					delete(root, "env")

@@ -94,12 +94,12 @@ func (m *Machine) installAndVerify(io IO, root, hash, upstream, settingsPath str
 	}
 	fmt.Fprintf(io.Out, "Injected %s (base URL and session hooks)\n", settingsPath)
 
-	action, err := claudesettings.EnsureGitIgnored(root, ".claude/settings.local.json")
+	action, err := claudesettings.EnsureGitIgnored(root, claudesettings.ProjectLocalRel)
 	if err != nil {
 		return fmt.Errorf("ensuring .gitignore covers the injected settings: %w", err)
 	}
 	if action == claudesettings.IgnoreAppended {
-		fmt.Fprintln(io.Out, "Added .claude/settings.local.json to .gitignore")
+		fmt.Fprintf(io.Out, "Added %s to .gitignore\n", claudesettings.ProjectLocalRel)
 	}
 
 	if err := m.selfCheck(token); err != nil {

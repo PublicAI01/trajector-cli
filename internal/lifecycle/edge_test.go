@@ -11,6 +11,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 func TestInjectedHookQuotesBinaryPathsWithSpaces(t *testing.T) {
@@ -79,7 +80,7 @@ func TestEnableRollsBackWhenSettingsFileIsMalformed(t *testing.T) {
 func TestEnableFailsWhileCapturePaused(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	e.sandbox.Pause("signed_out")
+	e.sandbox.Pause(proxytest.PausedSignedOut)
 
 	err := e.machine().Enable(e.project, e.io())
 	if err == nil || !strings.Contains(err.Error(), "trajector login") {
@@ -139,7 +140,7 @@ func TestEnableAppendsGitIgnoreInsideRepo(t *testing.T) {
 		t.Errorf("stdout = %q, want a .gitignore note", e.stdout)
 	}
 	ignore, err := os.ReadFile(filepath.Join(e.canonicalRoot(), ".gitignore"))
-	if err != nil || !strings.Contains(string(ignore), ".claude/settings.local.json") {
+	if err != nil || !strings.Contains(string(ignore), claudesettings.ProjectLocalRel) {
 		t.Errorf(".gitignore = %q, %v", ignore, err)
 	}
 }

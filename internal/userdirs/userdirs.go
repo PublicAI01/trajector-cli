@@ -89,6 +89,20 @@ func (l Layout) SecretsDir() string { return filepath.Join(l.config, secretsDirN
 // ProxyLog is where a supervised proxy's output is appended.
 func (l Layout) ProxyLog() string { return filepath.Join(l.state, proxyLogName) }
 
+// Isolate points every environment variable a Layout resolution reads
+// at paths inside home, through setenv. It lives beside the resolvers
+// so a new platform variable cannot be added without the harness pin
+// list growing in the same place.
+func Isolate(setenv func(key, value string), home string) {
+	setenv("HOME", home)
+	setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+	setenv("USERPROFILE", home)
+	setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+	setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+}
+
 // EnsureOwnerDir creates dir for trajector's own state. Everything
 // trajector stores is private to the user, so the mode is decided here
 // once, not by each package that happens to create a directory first.

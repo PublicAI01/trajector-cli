@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/cli"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
@@ -26,9 +25,9 @@ type Env struct {
 	project string
 }
 
-// New isolates the process environment and returns the harness. Every
-// variable the CLI reads must be pinned here; add new variables in this
-// one place when commands grow new environment inputs.
+// New isolates the process environment and returns the harness. The
+// user-directory variables are pinned by userdirs itself; only the
+// variables the CLI reads on top of them are restated here.
 func New(t *testing.T) *Env {
 	t.Helper()
 	home := t.TempDir()
@@ -41,13 +40,7 @@ func New(t *testing.T) *Env {
 	}
 	e := &Env{t: t, home: home, project: project}
 
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
-	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
-	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+	userdirs.Isolate(t.Setenv, home)
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 	// The file token backend keeps tests away from the developer's OS
 	// keyring, and the unroutable service URL fails fast if a test
@@ -64,27 +57,15 @@ func (e *Env) Home() string { return e.home }
 // Project is the temp directory standing in for a working project.
 func (e *Env) Project() string { return e.project }
 
-// CanonicalRoot is the project root as the CLI resolves it, which is
-// what every project hash and routing entry is keyed on.
-func (e *Env) CanonicalRoot() string {
+// ProjectHash is this project's identifier in stored records.
+func (e *Env) ProjectHash() string {
 	e.t.Helper()
 	root, err := consent.CanonicalRoot(e.project)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return root
+	return consent.ProjectIDHash(root)
 }
-
-// ProjectHash is this project's identifier in stored records.
-func (e *Env) ProjectHash() string { return consent.ProjectIDHash(e.CanonicalRoot()) }
-
-// ProjectSettings is the settings file `trajector enable` injects.
-func (e *Env) ProjectSettings() string {
-	return claudesettings.ProjectLocalPath(e.CanonicalRoot())
-}
-
-// UserSettings is the settings file holding the discovery hook.
-func (e *Env) UserSettings() string { return claudesettings.UserSettingsPath(e.home) }
 
 // Layout is where this environment keeps its trajector files, resolved
 // exactly as the CLI will resolve them.

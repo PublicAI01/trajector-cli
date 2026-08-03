@@ -195,7 +195,7 @@ func pausedTable(upstream, reason string) string {
 func TestPausedDeviceForwardsWithoutRecording(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(pausedTable(upstream.URL(), "signed_out"))
+	e.WriteTable(pausedTable(upstream.URL(), proxytest.PausedSignedOut))
 
 	respBody := `{"id":"msg_paused"}`
 	upstream.Enqueue(fakeupstream.Response{Body: []byte(respBody)})
@@ -217,13 +217,13 @@ func TestPausedDeviceForwardsWithoutRecording(t *testing.T) {
 
 func TestSelfcheckCarriesThePauseReason(t *testing.T) {
 	e := proxytest.New(t)
-	e.WriteTable(pausedTable(e.Upstream.URL(), "signed_out"))
+	e.WriteTable(pausedTable(e.Upstream.URL(), proxytest.PausedSignedOut))
 
 	reply := e.Selfcheck("tok1")
 	if !reply.TokenKnown || reply.Recording {
 		t.Fatalf("selfcheck = %+v, want a known token that is not recording", reply)
 	}
-	if reply.Decision != "paused" || reply.PauseReason != "signed_out" {
+	if reply.Decision != "paused" || reply.PauseReason != proxytest.PausedSignedOut {
 		t.Errorf("decision/reason = %q/%q, want the pause to survive the seam", reply.Decision, reply.PauseReason)
 	}
 }

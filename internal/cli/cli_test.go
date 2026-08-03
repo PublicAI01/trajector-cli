@@ -108,7 +108,7 @@ func TestEnableExplainsAPausedDevice(t *testing.T) {
 	if err := tokenstore.Files(e.Layout().SecretsDir()).SetDeviceToken("dev-tok-fake"); err != nil {
 		t.Fatal(err)
 	}
-	e.Sandbox().Pause("signed_out")
+	e.Sandbox().Pause(proxytest.PausedSignedOut)
 
 	got := e.InProjectInput("yes\n", "enable")
 	if got.Exit != 1 {

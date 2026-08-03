@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
@@ -42,8 +43,8 @@ func TestEnableExplainsWhyRecordingIsPaused(t *testing.T) {
 	tests := []struct {
 		name, reason, want string
 	}{
-		{"signed out", "signed_out", "trajector login"},
-		{"agreement needs reconfirming", "consent_reconfirm", "data agreement changed"},
+		{"signed out", proxytest.PausedSignedOut, "trajector login"},
+		{"agreement needs reconfirming", proxytest.PausedConsentReconfirm, "data agreement changed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

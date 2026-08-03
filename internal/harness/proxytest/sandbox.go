@@ -28,26 +28,28 @@ func Open(t *testing.T, layout userdirs.Layout) *Sandbox {
 func (e *Env) Sandbox() *Sandbox { return Open(e.t, e.layout) }
 
 // Grant is what the routing table records for one enabled project.
-type Grant struct {
-	Token         string
-	ProjectIDHash string
-	RootPath      string
-	Upstream      string
-	GrantedAt     string
-}
+// The harness reads and writes the table through routing's own type:
+// it does not redeclare the contract.
+type Grant = routing.Grant
+
+// The two device-wide pause reasons the machine writes, restated here
+// so tests can seed paused state without driving the machine.
+// Production keeps them unexported: the machine is the only thing that
+// both sets and clears them.
+const (
+	PausedSignedOut        = "signed_out"
+	PausedConsentReconfirm = "consent_reconfirm"
+)
 
 // GrantProject records a project as enabled, as `trajector enable`
-// would.
+// would. An empty GrantedAt gets a fixed timestamp: most tests do not
+// care when.
 func (s *Sandbox) GrantProject(g Grant) {
 	s.t.Helper()
-	err := routing.OpenStore(s.layout.RoutingTable()).Grant(routing.Grant{
-		Token:         g.Token,
-		ProjectIDHash: g.ProjectIDHash,
-		RootPath:      g.RootPath,
-		Upstream:      g.Upstream,
-		GrantedAt:     "2026-08-01T00:00:00Z",
-	})
-	if err != nil {
+	if g.GrantedAt == "" {
+		g.GrantedAt = "2026-08-01T00:00:00Z"
+	}
+	if err := routing.OpenStore(s.layout.RoutingTable()).Grant(g); err != nil {
 		s.t.Fatal(err)
 	}
 }
@@ -59,16 +61,7 @@ func (s *Sandbox) ActiveGrant(root string) (Grant, bool) {
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	if !ok {
-		return Grant{}, false
-	}
-	return Grant{
-		Token:         g.Token,
-		ProjectIDHash: g.ProjectIDHash,
-		RootPath:      g.RootPath,
-		Upstream:      g.Upstream,
-		GrantedAt:     g.GrantedAt,
-	}, true
+	return g, ok
 }
 
 // PausedReason reports why recording is suspended device-wide, or empty

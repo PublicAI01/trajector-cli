@@ -8,12 +8,13 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 func TestLoginPairsStoresTheTokenAndResumesRecording(t *testing.T) {
 	e := newUnpairedEnv(t)
 	e.pairable()
-	e.sandbox.Pause("signed_out")
+	e.sandbox.Pause(proxytest.PausedSignedOut)
 
 	if err := e.machine().Login(e.io()); err != nil {
 		t.Fatalf("login: %v", err)
@@ -34,7 +35,7 @@ func TestLoginPairsStoresTheTokenAndResumesRecording(t *testing.T) {
 
 func TestLoginOnAlreadyPairedDeviceStillReachesTheSignedInState(t *testing.T) {
 	e := newEnv(t)
-	e.sandbox.Pause("signed_out")
+	e.sandbox.Pause(proxytest.PausedSignedOut)
 
 	if err := e.machine().Login(e.io()); err != nil {
 		t.Fatalf("login: %v", err)
@@ -49,12 +50,7 @@ func TestLoginOnAlreadyPairedDeviceStillReachesTheSignedInState(t *testing.T) {
 
 func TestLoginReportsAnExpiredPairingLink(t *testing.T) {
 	e := newUnpairedEnv(t)
-	e.service.Stub("POST", "/v1/pairings", fakeplatform.JSON(200, map[string]any{
-		"pairing_id":       "pair-1",
-		"verification_url": "https://example.com/pair/pair-1",
-		"poll_interval_ms": 1,
-	}))
-	e.service.Stub("GET", "/v1/pairings/pair-1", fakeplatform.JSON(200, map[string]any{"status": "expired"}))
+	e.service.PairingExpires("pair-1")
 
 	err := e.machine().Login(e.io())
 	if err == nil || !strings.Contains(err.Error(), "expired") {
@@ -97,7 +93,7 @@ func TestLogoutRevokesPausesAndKeepsGrants(t *testing.T) {
 	if last.URL != "/v1/device/revoke" || last.Header.Get("Authorization") != "Bearer dev-tok-fake" {
 		t.Errorf("revocation request = %+v", last)
 	}
-	if reason := e.sandbox.PausedReason(); reason != "signed_out" {
+	if reason := e.sandbox.PausedReason(); reason != proxytest.PausedSignedOut {
 		t.Errorf("pause = %q, want signed_out", reason)
 	}
 	if known, recording := e.sandbox.Recording(grant.Token); !known || recording {
@@ -117,7 +113,7 @@ func TestLogoutWithAnUnreachableServiceStillSignsOutLocally(t *testing.T) {
 	if e.machine().Paired() {
 		t.Error("device token kept after an offline logout")
 	}
-	if reason := e.sandbox.PausedReason(); reason != "signed_out" {
+	if reason := e.sandbox.PausedReason(); reason != proxytest.PausedSignedOut {
 		t.Errorf("pause = %q", reason)
 	}
 }

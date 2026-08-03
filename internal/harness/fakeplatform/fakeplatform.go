@@ -14,6 +14,8 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
 // Request is one recorded call to the fake service.
@@ -31,6 +33,35 @@ type Response struct {
 	Status int
 	Header http.Header
 	Body   []byte
+}
+
+// PairableAs scripts a complete pairing flow that ends paired as
+// deviceToken. The bodies are the client's own wire structs, so a
+// renamed field breaks here at compile time instead of at decode time
+// in every test that spelled the shape by hand.
+func (s *Server) PairableAs(pairingID, deviceToken string) {
+	s.Stub("POST", "/v1/pairings", JSON(200, platform.Pairing{
+		PairingID:       pairingID,
+		VerificationURL: "https://example.com/pair/" + pairingID,
+		UserCode:        "ABCD-1234",
+		PollIntervalMS:  1,
+	}))
+	s.Stub("GET", "/v1/pairings/"+pairingID, JSON(200, platform.PairingResult{
+		Status:      platform.PairingPaired,
+		DeviceToken: deviceToken,
+	}))
+}
+
+// PairingExpires scripts a pairing whose link expires before approval.
+func (s *Server) PairingExpires(pairingID string) {
+	s.Stub("POST", "/v1/pairings", JSON(200, platform.Pairing{
+		PairingID:       pairingID,
+		VerificationURL: "https://example.com/pair/" + pairingID,
+		PollIntervalMS:  1,
+	}))
+	s.Stub("GET", "/v1/pairings/"+pairingID, JSON(200, platform.PairingResult{
+		Status: platform.PairingExpired,
+	}))
 }
 
 // JSON builds a response with a JSON-encoded body.

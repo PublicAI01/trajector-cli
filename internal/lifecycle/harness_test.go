@@ -162,16 +162,7 @@ func (e *env) consentFileContents() string {
 // pairable stubs a complete pairing flow on the fake service.
 func (e *env) pairable() {
 	e.t.Helper()
-	e.service.Stub("POST", "/v1/pairings", fakeplatform.JSON(200, map[string]any{
-		"pairing_id":       "pair-1",
-		"verification_url": "https://example.com/pair/pair-1",
-		"user_code":        "ABCD-1234",
-		"poll_interval_ms": 1,
-	}))
-	e.service.Stub("GET", "/v1/pairings/pair-1", fakeplatform.JSON(200, map[string]any{
-		"status":       "paired",
-		"device_token": "dev-tok-fake",
-	}))
+	e.service.PairableAs("pair-1", "dev-tok-fake")
 }
 
 func (e *env) seedDeviceToken() {

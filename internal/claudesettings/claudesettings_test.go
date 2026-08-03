@@ -1,4 +1,4 @@
-package claudesettings_test
+package claudesettings
 
 import (
 	"encoding/json"
@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
-
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 )
 
 const (
@@ -31,19 +29,19 @@ func readJSON(t *testing.T, path string) map[string]any {
 
 func TestInjectProjectCreatesFileWithEnvAndBothHooks(t *testing.T) {
 	root := t.TempDir()
-	path := claudesettings.ProjectLocalPath(root)
-	if err := claudesettings.InjectProject(path, testBaseURL, testHookCmd); err != nil {
+	path := ProjectLocalPath(root)
+	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
 		t.Fatal(err)
 	}
 
 	settings := readJSON(t, path)
 	env := settings["env"].(map[string]any)
-	if env[claudesettings.EnvBaseURL] != testBaseURL {
+	if env[envBaseURL] != testBaseURL {
 		t.Errorf("env = %v", env)
 	}
 	hooks := settings["hooks"].(map[string]any)
-	for _, event := range []string{claudesettings.EventSessionStart, claudesettings.EventUserPromptSubmit} {
-		if !claudesettings.HasHook(path, claudesettings.EnsureProxyMarker) {
+	for _, event := range []string{eventSessionStart, eventUserPromptSubmit} {
+		if !HasHook(path, EnsureProxyMarker) {
 			t.Fatalf("missing ensure-proxy hook for %s", event)
 		}
 		if _, ok := hooks[event]; !ok {
@@ -62,7 +60,7 @@ func TestInjectProjectCreatesFileWithEnvAndBothHooks(t *testing.T) {
 
 func TestInjectProjectPreservesUserContent(t *testing.T) {
 	root := t.TempDir()
-	path := claudesettings.ProjectLocalPath(root)
+	path := ProjectLocalPath(root)
 	original := `{
 		"permissions": {"allow": ["Bash(npm test)"]},
 		"env": {"MY_VAR": "keep-me"},
@@ -82,13 +80,13 @@ func TestInjectProjectPreservesUserContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := claudesettings.InjectProject(path, testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
 		t.Fatal(err)
 	}
 
 	settings := readJSON(t, path)
 	env := settings["env"].(map[string]any)
-	if env["MY_VAR"] != "keep-me" || env[claudesettings.EnvBaseURL] != testBaseURL {
+	if env["MY_VAR"] != "keep-me" || env[envBaseURL] != testBaseURL {
 		t.Errorf("env = %v", env)
 	}
 	if _, ok := settings["permissions"]; !ok {
@@ -106,22 +104,22 @@ func TestInjectProjectPreservesUserContent(t *testing.T) {
 
 func TestInjectProjectIsIdempotent(t *testing.T) {
 	root := t.TempDir()
-	path := claudesettings.ProjectLocalPath(root)
+	path := ProjectLocalPath(root)
 	for i := 0; i < 3; i++ {
-		if err := claudesettings.InjectProject(path, testBaseURL, testHookCmd); err != nil {
+		if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
 			t.Fatal(err)
 		}
 	}
 	settings := readJSON(t, path)
 	hooks := settings["hooks"].(map[string]any)
-	if starts := hooks[claudesettings.EventSessionStart].([]any); len(starts) != 1 {
+	if starts := hooks[eventSessionStart].([]any); len(starts) != 1 {
 		t.Errorf("SessionStart groups after repeat injection = %d, want 1", len(starts))
 	}
 }
 
 func TestRemoveProjectRestoresOriginalShape(t *testing.T) {
 	root := t.TempDir()
-	path := claudesettings.ProjectLocalPath(root)
+	path := ProjectLocalPath(root)
 	original := map[string]any{
 		"permissions": map[string]any{"allow": []any{"Bash(npm test)"}},
 		"env":         map[string]any{"MY_VAR": "keep-me"},
@@ -139,10 +137,10 @@ func TestRemoveProjectRestoresOriginalShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := claudesettings.InjectProject(path, testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
 		t.Fatal(err)
 	}
-	if err := claudesettings.RemoveProject(path); err != nil {
+	if err := RemoveProject(path); err != nil {
 		t.Fatal(err)
 	}
 
@@ -153,11 +151,11 @@ func TestRemoveProjectRestoresOriginalShape(t *testing.T) {
 
 func TestRemoveProjectOnPureInjectionLeavesEmptyObject(t *testing.T) {
 	root := t.TempDir()
-	path := claudesettings.ProjectLocalPath(root)
-	if err := claudesettings.InjectProject(path, testBaseURL, testHookCmd); err != nil {
+	path := ProjectLocalPath(root)
+	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
 		t.Fatal(err)
 	}
-	if err := claudesettings.RemoveProject(path); err != nil {
+	if err := RemoveProject(path); err != nil {
 		t.Fatal(err)
 	}
 	if settings := readJSON(t, path); len(settings) != 0 {
@@ -167,7 +165,7 @@ func TestRemoveProjectOnPureInjectionLeavesEmptyObject(t *testing.T) {
 
 func TestRemoveProjectKeepsForeignBaseURL(t *testing.T) {
 	root := t.TempDir()
-	path := claudesettings.ProjectLocalPath(root)
+	path := ProjectLocalPath(root)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -175,49 +173,49 @@ func TestRemoveProjectKeepsForeignBaseURL(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := claudesettings.RemoveProject(path); err != nil {
+	if err := RemoveProject(path); err != nil {
 		t.Fatal(err)
 	}
 	env := readJSON(t, path)["env"].(map[string]any)
-	if env[claudesettings.EnvBaseURL] != "https://relay.example.com" {
+	if env[envBaseURL] != "https://relay.example.com" {
 		t.Errorf("user's own base URL removed: %v", env)
 	}
 }
 
 func TestRemoveProjectMissingFileIsNoop(t *testing.T) {
-	if err := claudesettings.RemoveProject(filepath.Join(t.TempDir(), "absent.json")); err != nil {
+	if err := RemoveProject(filepath.Join(t.TempDir(), "absent.json")); err != nil {
 		t.Errorf("RemoveProject on missing file = %v", err)
 	}
 }
 
 func TestInjectRefusesMalformedSections(t *testing.T) {
 	root := t.TempDir()
-	path := claudesettings.ProjectLocalPath(root)
+	path := ProjectLocalPath(root)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(`{"env": "not-an-object"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := claudesettings.InjectProject(path, testBaseURL, testHookCmd); err == nil {
+	if err := InjectProject(path, testBaseURL, testHookCmd); err == nil {
 		t.Error("injection over a malformed env block did not fail")
 	}
 }
 
 func TestInjectedBaseURLAndTokenRoundTrip(t *testing.T) {
 	root := t.TempDir()
-	path := claudesettings.ProjectLocalPath(root)
-	if _, ok := claudesettings.InjectedBaseURL(path); ok {
+	path := ProjectLocalPath(root)
+	if _, ok := InjectedBaseURL(path); ok {
 		t.Error("injected URL reported before injection")
 	}
-	if err := claudesettings.InjectProject(path, testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
 		t.Fatal(err)
 	}
-	url, ok := claudesettings.InjectedBaseURL(path)
+	url, ok := InjectedBaseURL(path)
 	if !ok || url != testBaseURL {
 		t.Fatalf("InjectedBaseURL = %q, %v", url, ok)
 	}
-	token, ok := claudesettings.TokenFromBaseURL(url)
+	token, ok := TokenFromBaseURL(url)
 	if !ok || token != "tok-abc123" {
 		t.Errorf("TokenFromBaseURL = %q, %v", token, ok)
 	}
@@ -232,26 +230,26 @@ func TestIsProxyBaseURLStaysNarrow(t *testing.T) {
 		"http://127.0.0.1:41100/":         false,
 		"http://evil.example.com/t/tok":   false,
 	} {
-		if got := claudesettings.IsProxyBaseURL(value); got != want {
-			t.Errorf("IsProxyBaseURL(%q) = %v, want %v", value, got, want)
+		if got := isProxyBaseURL(value); got != want {
+			t.Errorf("isProxyBaseURL(%q) = %v, want %v", value, got, want)
 		}
 	}
 }
 
 func TestUserHookInjectAndRemove(t *testing.T) {
 	home := t.TempDir()
-	path := claudesettings.UserSettingsPath(home)
+	path := UserSettingsPath(home)
 	cmd := `"/usr/local/bin/trajector" hook discovery`
-	if err := claudesettings.InjectUserHook(path, cmd); err != nil {
+	if err := InjectUserHook(path, cmd); err != nil {
 		t.Fatal(err)
 	}
-	if !claudesettings.HasHook(path, claudesettings.DiscoveryMarker) {
+	if !HasHook(path, DiscoveryMarker) {
 		t.Fatal("discovery hook not present after injection")
 	}
-	if err := claudesettings.RemoveUserHook(path); err != nil {
+	if err := RemoveUserHook(path); err != nil {
 		t.Fatal(err)
 	}
-	if claudesettings.HasHook(path, claudesettings.DiscoveryMarker) {
+	if HasHook(path, DiscoveryMarker) {
 		t.Error("discovery hook still present after removal")
 	}
 }
@@ -269,7 +267,7 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 	}
 	shell := func(value string) func(string) string {
 		return func(key string) string {
-			if key == claudesettings.EnvBaseURL {
+			if key == envBaseURL {
 				return value
 			}
 			return ""
@@ -281,7 +279,7 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 		setup      func(t *testing.T, project, home string)
 		getenv     func(string) string
 		wantValue  string
-		wantSource claudesettings.Source
+		wantSource Source
 		wantOK     bool
 	}{
 		{
@@ -295,39 +293,39 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 			setup:      func(t *testing.T, project, home string) {},
 			getenv:     shell("https://relay.example.com"),
 			wantValue:  "https://relay.example.com",
-			wantSource: claudesettings.SourceShell,
+			wantSource: SourceShell,
 			wantOK:     true,
 		},
 		{
 			name: "user settings beat shell",
 			setup: func(t *testing.T, project, home string) {
-				writeSettings(t, claudesettings.UserSettingsPath(home), claudesettings.EnvBaseURL, "https://user.example.com")
+				writeSettings(t, UserSettingsPath(home), envBaseURL, "https://user.example.com")
 			},
 			getenv:     shell("https://shell.example.com"),
 			wantValue:  "https://user.example.com",
-			wantSource: claudesettings.SourceUser,
+			wantSource: SourceUser,
 			wantOK:     true,
 		},
 		{
 			name: "project settings beat user settings",
 			setup: func(t *testing.T, project, home string) {
-				writeSettings(t, claudesettings.UserSettingsPath(home), claudesettings.EnvBaseURL, "https://user.example.com")
-				writeSettings(t, filepath.Join(project, ".claude", "settings.json"), claudesettings.EnvBaseURL, "https://project.example.com")
+				writeSettings(t, UserSettingsPath(home), envBaseURL, "https://user.example.com")
+				writeSettings(t, filepath.Join(project, ".claude", "settings.json"), envBaseURL, "https://project.example.com")
 			},
 			getenv:     shell(""),
 			wantValue:  "https://project.example.com",
-			wantSource: claudesettings.SourceProject,
+			wantSource: SourceProject,
 			wantOK:     true,
 		},
 		{
 			name: "project local beats everything",
 			setup: func(t *testing.T, project, home string) {
-				writeSettings(t, filepath.Join(project, ".claude", "settings.json"), claudesettings.EnvBaseURL, "https://project.example.com")
-				writeSettings(t, claudesettings.ProjectLocalPath(project), claudesettings.EnvBaseURL, "https://local.example.com")
+				writeSettings(t, filepath.Join(project, ".claude", "settings.json"), envBaseURL, "https://project.example.com")
+				writeSettings(t, ProjectLocalPath(project), envBaseURL, "https://local.example.com")
 			},
 			getenv:     shell(""),
 			wantValue:  "https://local.example.com",
-			wantSource: claudesettings.SourceProjectLocal,
+			wantSource: SourceProjectLocal,
 			wantOK:     true,
 		},
 	}
@@ -335,9 +333,9 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			project, home := t.TempDir(), t.TempDir()
 			tt.setup(t, project, home)
-			value, source, ok := claudesettings.EffectiveEnv(project, home, claudesettings.EnvBaseURL, tt.getenv)
+			value, source, ok := effectiveEnv(project, home, envBaseURL, tt.getenv)
 			if ok != tt.wantOK || value != tt.wantValue || source != tt.wantSource {
-				t.Errorf("EffectiveEnv = %q, %q, %v; want %q, %q, %v", value, source, ok, tt.wantValue, tt.wantSource, tt.wantOK)
+				t.Errorf("effectiveEnv = %q, %q, %v; want %q, %q, %v", value, source, ok, tt.wantValue, tt.wantSource, tt.wantOK)
 			}
 		})
 	}
@@ -345,22 +343,22 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 
 func TestExternalBaseURLSkipsOwnInjection(t *testing.T) {
 	project, home := t.TempDir(), t.TempDir()
-	if err := claudesettings.InjectProject(claudesettings.ProjectLocalPath(project), testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(ProjectLocalPath(project), testBaseURL, testHookCmd); err != nil {
 		t.Fatal(err)
 	}
 	getenv := func(key string) string {
-		if key == claudesettings.EnvBaseURL {
+		if key == envBaseURL {
 			return "https://relay.example.com"
 		}
 		return ""
 	}
-	value, source, ok := claudesettings.ExternalBaseURL(project, home, getenv)
-	if !ok || value != "https://relay.example.com" || source != claudesettings.SourceShell {
+	value, source, ok := ExternalBaseURL(project, home, getenv)
+	if !ok || value != "https://relay.example.com" || source != SourceShell {
 		t.Errorf("ExternalBaseURL = %q, %q, %v", value, source, ok)
 	}
 
 	noShell := func(string) string { return "" }
-	if _, _, ok := claudesettings.ExternalBaseURL(project, home, noShell); ok {
+	if _, _, ok := ExternalBaseURL(project, home, noShell); ok {
 		t.Error("own injection reported as an external base URL")
 	}
 }
@@ -373,7 +371,7 @@ func TestUnsupportedChannelDetection(t *testing.T) {
 		}
 		return ""
 	}
-	key, found := claudesettings.UnsupportedChannel(project, home, getenv)
+	key, found := UnsupportedChannel(project, home, getenv)
 	if !found || key != "CLAUDE_CODE_USE_BEDROCK" {
 		t.Errorf("UnsupportedChannel = %q, %v", key, found)
 	}
@@ -383,7 +381,7 @@ func TestUnsupportedChannelDetection(t *testing.T) {
 		}
 		return ""
 	}
-	if _, found := claudesettings.UnsupportedChannel(project, home, off); found {
+	if _, found := UnsupportedChannel(project, home, off); found {
 		t.Error("disabled channel flag reported as unsupported")
 	}
 }
@@ -417,18 +415,18 @@ func initRepo(t *testing.T) string {
 
 func TestEnsureGitIgnoredAppendsWhenUncovered(t *testing.T) {
 	root := initRepo(t)
-	action, err := claudesettings.EnsureGitIgnored(root, ".claude/settings.local.json")
+	action, err := EnsureGitIgnored(root, ".claude/settings.local.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action != claudesettings.IgnoreAppended {
+	if action != IgnoreAppended {
 		t.Errorf("action = %q, want appended", action)
 	}
-	again, err := claudesettings.EnsureGitIgnored(root, ".claude/settings.local.json")
+	again, err := EnsureGitIgnored(root, ".claude/settings.local.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again != claudesettings.IgnoreCovered {
+	if again != IgnoreCovered {
 		t.Errorf("second run action = %q, want covered", again)
 	}
 }
@@ -438,22 +436,22 @@ func TestEnsureGitIgnoredRespectsExistingCoverage(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".claude/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	action, err := claudesettings.EnsureGitIgnored(root, ".claude/settings.local.json")
+	action, err := EnsureGitIgnored(root, ".claude/settings.local.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action != claudesettings.IgnoreCovered {
+	if action != IgnoreCovered {
 		t.Errorf("action = %q, want covered", action)
 	}
 }
 
 func TestEnsureGitIgnoredSkipsOutsideRepo(t *testing.T) {
 	gitAvailable(t)
-	action, err := claudesettings.EnsureGitIgnored(t.TempDir(), ".claude/settings.local.json")
+	action, err := EnsureGitIgnored(t.TempDir(), ".claude/settings.local.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if action != claudesettings.IgnoreSkipped {
+	if action != IgnoreSkipped {
 		t.Errorf("action = %q, want skipped", action)
 	}
 }

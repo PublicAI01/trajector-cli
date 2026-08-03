@@ -62,7 +62,7 @@ func TestEnsureProxyPausesRecordingOnAStaleAgreement(t *testing.T) {
 	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
 		t.Fatalf("ensure-proxy: %v", err)
 	}
-	if reason := e.sandbox.PausedReason(); reason != "consent_reconfirm" {
+	if reason := e.sandbox.PausedReason(); reason != proxytest.PausedConsentReconfirm {
 		t.Errorf("pause = %q, want the reconfirmation pause", reason)
 	}
 	if !strings.Contains(e.stderr.String(), "agreement changed") {
