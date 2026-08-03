@@ -72,6 +72,15 @@ func uploadCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "Below the upload thresholds; use --force to upload anyway.")
 	case upload.Paused:
 		fmt.Fprintln(stdout, "Not signed in; run `trajector login` first. Captured data is kept.")
+	case upload.UpgradeRequired:
+		if v := upload.LoadHandshake(env.layout.UploadDir()).MinClientVersion; v != "" {
+			fmt.Fprintf(stdout, "Uploads are paused: the service requires trajector %s or newer (this is %s).\n", v, version)
+		} else {
+			fmt.Fprintln(stdout, "Uploads are paused: the service requires a newer trajector version.")
+		}
+		fmt.Fprintln(stdout, "Captured data is kept. Upgrade trajector to resume, or retry with --force.")
+	case upload.Deferred:
+		fmt.Fprintln(stdout, "The service asked to slow down; uploads resume automatically. Use --force to try now.")
 	default:
 		fmt.Fprintf(stdout, "Flush finished: %s\n", reply.Outcome)
 	}

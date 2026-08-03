@@ -15,6 +15,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 // uploadEnv is a clitest environment with a fake service, a stored
@@ -26,8 +27,23 @@ type uploadEnv struct {
 
 func newUploadEnv(t *testing.T) *uploadEnv {
 	t.Helper()
+	e := newUploadEnvWithoutStubs(t)
+	e.stubEchoAck(t)
+	return e
+}
+
+func newUploadEnvWithoutStubs(t *testing.T) *uploadEnv {
+	t.Helper()
 	e := &uploadEnv{Env: clitest.New(t), service: fakeplatform.New(t)}
 	t.Setenv("TRAJECTOR_PLATFORM_URL", e.service.URL())
+	if err := tokenstore.Files(e.Layout().SecretsDir()).Save(tokenstore.DeviceTokenName, []byte("dev-tok-fake")); err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+func (e *uploadEnv) stubEchoAck(t *testing.T) {
+	t.Helper()
 	e.service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
 		parts, err := fakeplatform.Parts(r)
 		if err != nil {
@@ -41,10 +57,6 @@ func newUploadEnv(t *testing.T) *uploadEnv {
 		}
 		return fakeplatform.JSON(200, map[string]any{"batch_id": env.BatchID})
 	})
-	if err := tokenstore.Files(e.Layout().SecretsDir()).Save(tokenstore.DeviceTokenName, []byte("dev-tok-fake")); err != nil {
-		t.Fatal(err)
-	}
-	return e
 }
 
 func (e *uploadEnv) seedRawcall(t *testing.T, id string, at time.Time) {
@@ -226,6 +238,28 @@ func TestIdleExitRunsAFinalFlush(t *testing.T) {
 	}
 	if uploads != 1 {
 		t.Errorf("service saw %d uploads, want the final flush", uploads)
+	}
+}
+
+func TestUploadSurfacesARejectedBatchLoudly(t *testing.T) {
+	e := newUploadEnvWithoutStubs(t)
+	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(400, map[string]any{"error": "bad multipart"}))
+	e.seedRawcall(t, "req-1", time.Now().UTC())
+	addr, stopped := e.startProxy(t)
+	defer stopProxy(t, addr, stopped)
+
+	got := e.Run("upload", "--force")
+	if got.Exit != 1 {
+		t.Fatalf("exit = %d (stdout: %q)", got.Exit, got.Stdout)
+	}
+	if !strings.Contains(got.Stderr, "rejected") || !strings.Contains(got.Stderr, "moved to") {
+		t.Errorf("stderr = %q, want a loud rejection notice naming the rejected store", got.Stderr)
+	}
+	if n := e.storedRawcalls(t); n != 0 {
+		t.Errorf("spool still holds %d rawcalls; the rejected batch must move aside", n)
+	}
+	if n, err := upload.RejectedCount(e.Layout().RejectedDir()); err != nil || n != 1 {
+		t.Errorf("rejected store holds %d records (%v), want 1", n, err)
 	}
 }
 

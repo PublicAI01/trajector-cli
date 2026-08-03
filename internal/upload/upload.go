@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -26,6 +27,11 @@ const (
 	DefaultFlushBytes int64 = 10 << 20
 	DefaultFlushAge         = 24 * time.Hour
 )
+
+// maxRetryAfter caps how long a Retry-After can silence automatic
+// flushes, so a service misconfiguration cannot mute every client
+// indefinitely.
+const maxRetryAfter = time.Hour
 
 // Outcome names the terminal states of one Flush call.
 type Outcome string
@@ -41,6 +47,13 @@ const (
 	// Paused means no device token is stored; nothing was attempted.
 	// Capture continues — pairing again resumes uploads.
 	Paused Outcome = "paused"
+	// UpgradeRequired means the service refused this client version;
+	// automatic flushes stop for this process. Data is untouched, and a
+	// forced flush may still try.
+	UpgradeRequired Outcome = "upgrade_required"
+	// Deferred means the service asked to slow down and the pause has
+	// not elapsed. A forced flush ignores it.
+	Deferred Outcome = "deferred"
 )
 
 // Result reports what one Flush call did. Batches and Records count
@@ -63,6 +76,9 @@ type Deps struct {
 	Version     string
 	// Dir holds the uploader's bookkeeping files.
 	Dir string
+	// RejectedDir is where the records of a service-rejected batch are
+	// moved so they stop blocking the uploads behind them.
+	RejectedDir string
 	// Run supplies the capture runtime metadata each batch carries. Nil
 	// means batches carry zero counters.
 	Run  func() batch.Run
@@ -77,12 +93,19 @@ type Deps struct {
 type Uploader struct {
 	deps Deps
 	mu   sync.Mutex
+
+	// Both gates suppress automatic flushes only; a forced flush walks
+	// straight past them. They reset on any acknowledged upload and are
+	// deliberately not persisted: a fresh process (post-upgrade, or just
+	// restarted) gets to find out for itself.
+	upgradeRequired bool
+	notBefore       time.Time
 }
 
 // New validates the wiring and builds an uploader.
 func New(deps Deps) (*Uploader, error) {
-	if deps.Spool == nil || deps.Service == nil || deps.DeviceToken == nil || deps.Dir == "" {
-		return nil, fmt.Errorf("upload: spool, service, device token source, and state dir are required")
+	if deps.Spool == nil || deps.Service == nil || deps.DeviceToken == nil || deps.Dir == "" || deps.RejectedDir == "" {
+		return nil, fmt.Errorf("upload: spool, service, device token source, state dir, and rejected dir are required")
 	}
 	if deps.Run == nil {
 		deps.Run = func() batch.Run { return batch.Run{} }
@@ -114,6 +137,16 @@ func (u *Uploader) Flush(force bool) (Result, error) {
 	if token == "" {
 		res.Outcome = Paused
 		return res, nil
+	}
+	if !force {
+		if u.upgradeRequired {
+			res.Outcome = UpgradeRequired
+			return res, nil
+		}
+		if u.deps.Now().Before(u.notBefore) {
+			res.Outcome = Deferred
+			return res, nil
+		}
 	}
 
 	// A pending batch is finished before anything else: its id was
@@ -224,8 +257,10 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result)
 	ack, err := u.deps.Service.UploadBatch(token, b.ID, b.Envelope, b.Records)
 	u.noteAttempt(err)
 	if err != nil {
-		return fmt.Errorf("upload: batch %s: %w", id, err)
+		return u.settleFailure(id, rawcalls, err)
 	}
+	u.upgradeRequired = false
+	u.notBefore = time.Time{}
 
 	uploaded := map[string]bool{}
 	for _, rid := range b.RequestIDs {
@@ -251,6 +286,51 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result)
 		At:      u.deps.Now().UTC(),
 	})
 	return nil
+}
+
+// settleFailure turns one failed upload into the behavior its class
+// demands. The default — and the only option for auth failures,
+// timeouts, and network errors — is to change nothing: the spool and
+// the pending record stay, and the next flush retries.
+func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error) error {
+	var upgrade *platform.UpgradeRequiredError
+	var limited *platform.RateLimitedError
+	var rejected *platform.BatchRejectedError
+	switch {
+	case errors.As(err, &upgrade):
+		// The data is fine; this client is too old. Automatic flushes
+		// stop so the batch is not re-uploaded pointlessly every minute.
+		u.upgradeRequired = true
+		u.noteUpgradeRequired(upgrade.MinClientVersion)
+	case errors.As(err, &limited):
+		pause := limited.RetryAfter
+		if pause > maxRetryAfter {
+			pause = maxRetryAfter
+		}
+		if pause > 0 {
+			u.notBefore = u.deps.Now().Add(pause)
+		}
+	case errors.As(err, &rejected):
+		// The service says this batch can never be accepted. Move its
+		// records aside so the uploads behind it flow again; nothing is
+		// deleted, and status/doctor keep pointing at it.
+		details := rejected.Status
+		if rejected.Details != "" {
+			details += ": " + rejected.Details
+		}
+		rej := Rejection{BatchID: id, Records: len(rawcalls), Details: details, At: u.deps.Now().UTC()}
+		if qerr := quarantine(u.deps.RejectedDir, u.deps.Spool, rej, rawcalls); qerr != nil {
+			// The batch stays pending: the next flush hits the same
+			// rejection and tries the move again.
+			return fmt.Errorf("upload: batch %s was rejected and could not be set aside: %v (%w)", id, qerr, err)
+		}
+		if cerr := clearPending(u.deps.Dir); cerr != nil {
+			return fmt.Errorf("upload: releasing rejected batch %s: %w", id, cerr)
+		}
+		u.noteRejection(rej)
+		return &errRejected{rej: rej, dir: filepath.Join(u.deps.RejectedDir, id)}
+	}
+	return fmt.Errorf("upload: batch %s: %w", id, err)
 }
 
 // applyHandshake persists what the service said and puts the spool

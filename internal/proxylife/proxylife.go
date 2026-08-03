@@ -288,6 +288,7 @@ func (p *Proxy) Run(ctx context.Context, idle time.Duration, stdout, stderr io.W
 			DeviceToken: p.deviceToken,
 			Version:     p.version,
 			Dir:         p.layout.UploadDir(),
+			RejectedDir: p.layout.RejectedDir(),
 			Run:         server.RunMetadata,
 			Logf:        logf,
 		})

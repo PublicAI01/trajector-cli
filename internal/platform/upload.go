@@ -8,6 +8,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -34,6 +36,49 @@ type Handshake struct {
 type BatchAck struct {
 	BatchID   string
 	Handshake Handshake
+}
+
+// UpgradeRequiredError reports a 426: the service refuses uploads from
+// this client version. Nothing is wrong with the data; the caller keeps
+// it and stops offering it until the client is upgraded.
+type UpgradeRequiredError struct {
+	MinClientVersion string
+}
+
+func (e *UpgradeRequiredError) Error() string {
+	if e.MinClientVersion == "" {
+		return "the service requires a newer client version"
+	}
+	return "the service requires client version " + e.MinClientVersion + " or newer"
+}
+
+// RateLimitedError reports a 429. RetryAfter is the service's requested
+// pause, zero when it named none.
+type RateLimitedError struct {
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitedError) Error() string {
+	if e.RetryAfter <= 0 {
+		return "the service asked to slow down"
+	}
+	return fmt.Sprintf("the service asked to retry after %s", e.RetryAfter)
+}
+
+// BatchRejectedError reports a 4xx that is neither auth, timeout,
+// version, nor rate limiting: the service says this batch will never be
+// accepted as it stands.
+type BatchRejectedError struct {
+	Status  string
+	Details string
+}
+
+func (e *BatchRejectedError) Error() string {
+	msg := "the service rejected the batch: " + e.Status
+	if e.Details != "" {
+		msg += ": " + e.Details
+	}
+	return msg
 }
 
 // UploadBatch posts one batch: the uncompressed envelope and the
@@ -74,7 +119,7 @@ func (c *Client) UploadBatch(deviceToken, batchID string, envelope, records []by
 		return BatchAck{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return BatchAck{}, fmt.Errorf("platform: POST %s: %s", BatchesPath, resp.Status)
+		return BatchAck{}, classifyUploadFailure(resp, data)
 	}
 
 	var reply struct {
@@ -88,6 +133,59 @@ func (c *Client) UploadBatch(deviceToken, batchID string, envelope, records []by
 		return BatchAck{}, fmt.Errorf("platform: acknowledgement names batch %q, uploaded %q", reply.BatchID, batchID)
 	}
 	return BatchAck{BatchID: reply.BatchID, Handshake: reply.Handshake}, nil
+}
+
+// classifyUploadFailure maps a non-2xx batch upload response onto the
+// failure classes the uploader acts on. Auth failures and timeouts stay
+// plain errors — transient, keep and retry — matching how every other
+// failure without its own class is treated.
+func classifyUploadFailure(resp *http.Response, body []byte) error {
+	switch {
+	case resp.StatusCode == http.StatusUpgradeRequired:
+		var deny struct {
+			MinClientVersion string `json:"min_client_version"`
+		}
+		// Best-effort detail: a 426 without a parseable body still gates.
+		_ = json.Unmarshal(body, &deny)
+		return &UpgradeRequiredError{MinClientVersion: deny.MinClientVersion}
+	case resp.StatusCode == http.StatusTooManyRequests:
+		return &RateLimitedError{RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusRequestTimeout:
+		return fmt.Errorf("platform: POST %s: %s", BatchesPath, resp.Status)
+	case resp.StatusCode >= 400 && resp.StatusCode < 500:
+		return &BatchRejectedError{Status: resp.Status, Details: trimDetails(body)}
+	default:
+		return fmt.Errorf("platform: POST %s: %s", BatchesPath, resp.Status)
+	}
+}
+
+// retryAfter reads a Retry-After value in either of its two forms:
+// delta-seconds or an HTTP date. Absent or unreadable reads as zero —
+// no requested pause.
+func retryAfter(value string) time.Duration {
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	if at, err := http.ParseTime(value); err == nil {
+		if d := time.Until(at); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+func trimDetails(body []byte) string {
+	s := strings.TrimSpace(string(body))
+	if len(s) > 500 {
+		s = s[:500]
+	}
+	return s
 }
 
 func writePart(mw *multipart.Writer, field, filename, contentType string, data []byte) error {

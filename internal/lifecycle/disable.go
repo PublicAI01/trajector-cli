@@ -7,6 +7,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 // Disable withdraws a project's consent: injection removed, token
@@ -53,6 +54,13 @@ func (m *Machine) disableProject(projectDir string, io IO) (projectIDHash string
 	if err != nil {
 		return "", fmt.Errorf("deleting local unuploaded data: %w", err)
 	}
+	// Rejected batches are still local unuploaded data; withdrawal must
+	// reach them too.
+	rejected, err := upload.PurgeRejected(m.deps.Layout.RejectedDir(), hash)
+	if err != nil {
+		return "", fmt.Errorf("deleting local unuploaded data: %w", err)
+	}
+	deleted += rejected
 	if deleted > 0 {
 		fmt.Fprintf(io.Out, "Deleted %d unuploaded rawcall(s) for this project.\n", deleted)
 	}

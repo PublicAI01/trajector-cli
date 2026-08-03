@@ -319,3 +319,42 @@ func TestDisableTwiceIsIdempotent(t *testing.T) {
 		t.Fatalf("second disable: %v", err)
 	}
 }
+
+func TestDisableAlsoDeletesRejectedRawcallsOfTheProject(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	route, _ := e.activeGrant()
+
+	batchDir := filepath.Join(e.layout().RejectedDir(), "b-test")
+	if err := os.MkdirAll(batchDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, projectIDHash string) {
+		data, err := json.Marshal(map[string]any{
+			"request_id": name,
+			"capture":    map[string]any{"project_id_hash": projectIDHash},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(batchDir, name+".json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("req-mine", route.ProjectIDHash)
+	write("req-other", "hash-other-project")
+
+	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(batchDir, "req-mine.json")); !os.IsNotExist(err) {
+		t.Error("this project's rejected rawcall survived disable")
+	}
+	if _, err := os.Stat(filepath.Join(batchDir, "req-other.json")); err != nil {
+		t.Errorf("another project's rejected rawcall was touched: %v", err)
+	}
+}

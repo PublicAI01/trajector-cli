@@ -2,10 +2,14 @@ package platform_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
@@ -82,6 +86,79 @@ func TestUploadBatchSurfacesServiceFailure(t *testing.T) {
 	server.Stub("POST", "/v1/batches", ackStub(503, "batch-1"))
 	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), []byte("z")); err == nil {
 		t.Error("503 response did not fail")
+	}
+}
+
+func upload4xx(t *testing.T, status int, header http.Header, body map[string]any) error {
+	t.Helper()
+	c, server := client(t)
+	resp := fakeplatform.JSON(status, body)
+	for k, vs := range header {
+		resp.Header[k] = vs
+	}
+	server.Stub("POST", "/v1/batches", resp)
+	_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), []byte("z"))
+	if err == nil {
+		t.Fatalf("status %d did not fail", status)
+	}
+	return err
+}
+
+func TestUploadBatch426ReportsUpgradeRequired(t *testing.T) {
+	err := upload4xx(t, 426, nil, map[string]any{"min_client_version": "2.0.0"})
+	var upgrade *platform.UpgradeRequiredError
+	if !errors.As(err, &upgrade) || upgrade.MinClientVersion != "2.0.0" {
+		t.Fatalf("error = %v, want UpgradeRequiredError with the version", err)
+	}
+}
+
+func TestUploadBatch429CarriesRetryAfterSeconds(t *testing.T) {
+	h := http.Header{}
+	h.Set("Retry-After", "7")
+	err := upload4xx(t, 429, h, map[string]any{})
+	var limited *platform.RateLimitedError
+	if !errors.As(err, &limited) || limited.RetryAfter != 7*time.Second {
+		t.Fatalf("error = %v, want RateLimitedError with 7s", err)
+	}
+}
+
+func TestUploadBatch429CarriesRetryAfterDate(t *testing.T) {
+	h := http.Header{}
+	h.Set("Retry-After", time.Now().Add(time.Minute).UTC().Format(http.TimeFormat))
+	err := upload4xx(t, 429, h, map[string]any{})
+	var limited *platform.RateLimitedError
+	if !errors.As(err, &limited) || limited.RetryAfter <= 0 || limited.RetryAfter > time.Minute {
+		t.Fatalf("error = %v, want RateLimitedError with a positive pause under a minute", err)
+	}
+}
+
+func TestUploadBatch429WithoutRetryAfterAsksNoPause(t *testing.T) {
+	err := upload4xx(t, 429, nil, map[string]any{})
+	var limited *platform.RateLimitedError
+	if !errors.As(err, &limited) || limited.RetryAfter != 0 {
+		t.Fatalf("error = %v, want RateLimitedError without a pause", err)
+	}
+}
+
+func TestUploadBatchOther4xxReportsRejection(t *testing.T) {
+	for _, status := range []int{400, 413, 422} {
+		err := upload4xx(t, status, nil, map[string]any{"error": "bad multipart"})
+		var rejected *platform.BatchRejectedError
+		if !errors.As(err, &rejected) || !strings.Contains(rejected.Details, "bad multipart") {
+			t.Fatalf("status %d error = %v, want BatchRejectedError with details", status, err)
+		}
+	}
+}
+
+func TestUploadBatchAuthAndTimeoutFailuresStayTransient(t *testing.T) {
+	for _, status := range []int{401, 408} {
+		err := upload4xx(t, status, nil, map[string]any{})
+		var rejected *platform.BatchRejectedError
+		var upgrade *platform.UpgradeRequiredError
+		var limited *platform.RateLimitedError
+		if errors.As(err, &rejected) || errors.As(err, &upgrade) || errors.As(err, &limited) {
+			t.Fatalf("status %d error = %v, want a plain transient error", status, err)
+		}
 	}
 }
 

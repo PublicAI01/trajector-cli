@@ -3,6 +3,7 @@ package upload_test
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,15 +22,20 @@ type fixture struct {
 	server   *fakeplatform.Server
 	uploader *upload.Uploader
 	dir      string
+	rejected string
 	token    string
+	// now is the uploader's clock; tests advance it to cross gates.
+	now time.Time
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{
-		server: fakeplatform.New(t),
-		dir:    filepath.Join(t.TempDir(), "upload"),
-		token:  "dev-tok-fake",
+		server:   fakeplatform.New(t),
+		dir:      filepath.Join(t.TempDir(), "upload"),
+		rejected: filepath.Join(t.TempDir(), "rawcalls-rejected"),
+		token:    "dev-tok-fake",
+		now:      time.Now().UTC(),
 	}
 	sp, err := spool.Create(filepath.Join(t.TempDir(), "rawcalls"), 0)
 	if err != nil {
@@ -42,9 +48,11 @@ func newFixture(t *testing.T) *fixture {
 		DeviceToken: func() (string, error) { return f.token, nil },
 		Version:     "1.0.0",
 		Dir:         f.dir,
+		RejectedDir: f.rejected,
 		Run: func() batch.Run {
 			return batch.Run{RecordedToday: 5, SpoolUsageBytes: sp.Usage(), SpoolQuotaBytes: sp.Quota()}
 		},
+		Now: func() time.Time { return f.now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -370,6 +378,7 @@ func TestATokenSourceFailureStopsTheFlush(t *testing.T) {
 		DeviceToken: func() (string, error) { return "", errors.New("keyring unavailable") },
 		Version:     "1.0.0",
 		Dir:         f.dir,
+		RejectedDir: f.rejected,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -383,5 +392,200 @@ func TestATokenSourceFailureStopsTheFlush(t *testing.T) {
 func TestNewRejectsMissingWiring(t *testing.T) {
 	if _, err := upload.New(upload.Deps{}); err == nil {
 		t.Fatal("an uploader without wiring was built")
+	}
+}
+
+func rejectStub(status int, detail string) fakeplatform.Response {
+	return fakeplatform.JSON(status, map[string]any{"error": detail})
+}
+
+func (f *fixture) uploadCount() int {
+	return len(f.server.Requests())
+}
+
+func TestARejectedBatchIsQuarantinedAndUnblocksUploads(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", rejectStub(400, "bad multipart"))
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	_, err := f.uploader.Flush(true)
+	if err == nil || !strings.Contains(err.Error(), "moved to") {
+		t.Fatalf("flush error = %v, want a rejection notice naming the rejected dir", err)
+	}
+	if f.spool.Usage() != 0 {
+		t.Fatal("rejected records were left in the spool")
+	}
+	if n, err := upload.RejectedCount(f.rejected); err != nil || n != 1 {
+		t.Fatalf("rejected store holds %d records (%v), want 1", n, err)
+	}
+	st := upload.LoadState(f.dir)
+	if st.LastRejected == nil || st.LastRejected.Records != 1 || !strings.Contains(st.LastRejected.Details, "bad multipart") {
+		t.Fatalf("state.LastRejected = %+v", st.LastRejected)
+	}
+	batchDir := filepath.Join(f.rejected, st.LastRejected.BatchID)
+	if _, err := os.Stat(filepath.Join(batchDir, "req-1.json")); err != nil {
+		t.Errorf("quarantined record missing: %v", err)
+	}
+	var reason upload.Rejection
+	raw, err := os.ReadFile(filepath.Join(batchDir, "reason.json"))
+	if err != nil {
+		t.Fatalf("reason file missing: %v", err)
+	}
+	if err := json.Unmarshal(raw, &reason); err != nil || reason.BatchID != st.LastRejected.BatchID {
+		t.Errorf("reason = %+v (%v)", reason, err)
+	}
+
+	f.storeRawcall(t, "req-2", time.Now().UTC())
+	res, err := f.uploader.Flush(true)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("flush after quarantine = %+v, %v; the queue must be unblocked", res, err)
+	}
+	if f.uploadCount() != 2 {
+		t.Errorf("service saw %d requests, want 2", f.uploadCount())
+	}
+}
+
+func TestARejectedBatchIsNotRetriedAutomatically(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", rejectStub(422, "unacceptable"))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("rejection did not surface")
+	}
+	res, err := f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.Empty {
+		t.Fatalf("flush after quarantine = %+v, %v", res, err)
+	}
+	if f.uploadCount() != 1 {
+		t.Errorf("service saw %d requests, want only the rejected attempt", f.uploadCount())
+	}
+}
+
+func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	if _, err := f.uploader.Flush(true); err == nil || !strings.Contains(err.Error(), "9.9.9") {
+		t.Fatalf("426 flush error = %v, want the required version", err)
+	}
+	if f.spool.Usage() == 0 {
+		t.Fatal("data was touched by a version refusal")
+	}
+	if n, _ := upload.RejectedCount(f.rejected); n != 0 {
+		t.Fatal("a version refusal quarantined valid data")
+	}
+	if got := upload.LoadHandshake(f.dir).MinClientVersion; got != "9.9.9" {
+		t.Errorf("persisted min client version = %q", got)
+	}
+
+	res, err := f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.UpgradeRequired {
+		t.Fatalf("automatic flush under the gate = %+v, %v", res, err)
+	}
+	if f.uploadCount() != 1 {
+		t.Fatalf("automatic flush uploaded despite the gate")
+	}
+
+	res, err = f.uploader.Flush(true)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("forced flush past the gate = %+v, %v", res, err)
+	}
+	if res2, err := f.uploader.Flush(false); err != nil || res2.Outcome != upload.Empty {
+		t.Fatalf("flush after a success = %+v, %v; the gate must have lifted", res2, err)
+	}
+}
+
+func TestRateLimitingDefersAutomaticFlushes(t *testing.T) {
+	f := newFixture(t)
+	limited := fakeplatform.JSON(429, map[string]any{})
+	limited.Header.Set("Retry-After", "120")
+	f.server.Stub("POST", "/v1/batches", limited)
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("429 did not surface")
+	}
+	res, err := f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.Deferred {
+		t.Fatalf("automatic flush during the pause = %+v, %v", res, err)
+	}
+	if f.uploadCount() != 1 {
+		t.Fatal("automatic flush uploaded during the pause")
+	}
+
+	f.now = f.now.Add(121 * time.Second)
+	res, err = f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("flush after the pause = %+v, %v", res, err)
+	}
+}
+
+func TestAForcedFlushIgnoresTheRateLimitPause(t *testing.T) {
+	f := newFixture(t)
+	limited := fakeplatform.JSON(429, map[string]any{})
+	limited.Header.Set("Retry-After", "3600")
+	f.server.Stub("POST", "/v1/batches", limited)
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("429 did not surface")
+	}
+	res, err := f.uploader.Flush(true)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("forced flush during the pause = %+v, %v", res, err)
+	}
+}
+
+func TestTheRetryAfterPauseIsCapped(t *testing.T) {
+	f := newFixture(t)
+	limited := fakeplatform.JSON(429, map[string]any{})
+	limited.Header.Set("Retry-After", "86400")
+	f.server.Stub("POST", "/v1/batches", limited)
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("429 did not surface")
+	}
+	f.now = f.now.Add(time.Hour + time.Second)
+	res, err := f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("flush an hour into a day-long pause = %+v, %v; the cap must apply", res, err)
+	}
+}
+
+func TestPurgeRejectedRemovesOnlyThatProject(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", rejectStub(400, "nope"))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("rejection did not surface")
+	}
+
+	if n, err := upload.PurgeRejected(f.rejected, "hash-other"); err != nil || n != 0 {
+		t.Fatalf("purging another project = %d, %v", n, err)
+	}
+	if n, _ := upload.RejectedCount(f.rejected); n != 1 {
+		t.Fatal("another project's purge touched the record")
+	}
+
+	if n, err := upload.PurgeRejected(f.rejected, "hash-p1"); err != nil || n != 1 {
+		t.Fatalf("purging the project = %d, %v", n, err)
+	}
+	if n, _ := upload.RejectedCount(f.rejected); n != 0 {
+		t.Fatal("the record survived its project's purge")
+	}
+	entries, err := os.ReadDir(f.rejected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("emptied batch directory was kept: %v", entries)
 	}
 }

@@ -37,13 +37,14 @@ type Receipt struct {
 }
 
 // State is what the uploader remembers between flushes for surfaces
-// like status to read: the last attempt, the last failure, and the last
-// acknowledged upload.
+// like status to read: the last attempt, the last failure, the last
+// acknowledged upload, and the last rejected batch.
 type State struct {
-	LastAttemptAt time.Time `json:"last_attempt_at,omitzero"`
-	LastError     string    `json:"last_error,omitempty"`
-	LastErrorAt   time.Time `json:"last_error_at,omitzero"`
-	LastUpload    *Receipt  `json:"last_upload,omitempty"`
+	LastAttemptAt time.Time  `json:"last_attempt_at,omitzero"`
+	LastError     string     `json:"last_error,omitempty"`
+	LastErrorAt   time.Time  `json:"last_error_at,omitzero"`
+	LastUpload    *Receipt   `json:"last_upload,omitempty"`
+	LastRejected  *Rejection `json:"last_rejected,omitempty"`
 }
 
 // storedHandshake is the last service handshake with when it arrived.
@@ -123,6 +124,30 @@ func (u *Uploader) noteUpload(r Receipt) {
 	st := LoadState(u.deps.Dir)
 	st.LastUpload = &r
 	u.writeState(st)
+}
+
+// noteRejection records the last rejected batch for status and doctor
+// to point at. Best-effort.
+func (u *Uploader) noteRejection(rej Rejection) {
+	st := LoadState(u.deps.Dir)
+	st.LastRejected = &rej
+	u.writeState(st)
+}
+
+// noteUpgradeRequired keeps the refused-until version where status and
+// doctor read the handshake, preserving the rest of it. Best-effort.
+func (u *Uploader) noteUpgradeRequired(minVersion string) {
+	if minVersion == "" {
+		return
+	}
+	h := LoadHandshake(u.deps.Dir)
+	h.MinClientVersion = minVersion
+	if err := saveHandshake(u.deps.Dir, storedHandshake{
+		Handshake:  h,
+		ReceivedAt: u.deps.Now().UTC(),
+	}); err != nil {
+		u.deps.Logf("upload: persisting the required client version: %v", err)
+	}
 }
 
 func (u *Uploader) writeState(st State) {

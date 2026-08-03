@@ -18,6 +18,7 @@ const (
 	routingTableName = "proxy_projects.json"
 	consentFileName  = "consent.json"
 	spoolDirName     = "rawcalls"
+	rejectedDirName  = "rawcalls-rejected"
 	secretsDirName   = "secrets"
 	proxyLogName     = "proxy.log"
 	uploadDirName    = "upload"
@@ -76,6 +77,11 @@ func (l Layout) SpoolDir() string { return filepath.Join(l.data, spoolDirName) }
 // UploadDir holds the uploader's bookkeeping: the pending batch, the
 // last attempt, and the service handshake.
 func (l Layout) UploadDir() string { return filepath.Join(l.data, uploadDirName) }
+
+// RejectedDir holds rawcalls of batches the service rejected as
+// unacceptable, moved out of the spool so one bad batch cannot block
+// every upload behind it.
+func (l Layout) RejectedDir() string { return filepath.Join(l.data, rejectedDirName) }
 
 // SecretsDir backs the file token store.
 func (l Layout) SecretsDir() string { return filepath.Join(l.config, secretsDirName) }
