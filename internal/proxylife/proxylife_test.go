@@ -14,13 +14,17 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // serveProxy is the only behavior the spawned process tree needs: parse
-// the argv proxylife itself constructs, and be the proxy. Registering it
-// directly keeps these process-level tests from depending on the CLI.
+// the argv proxylife itself constructs, and be the proxy through the
+// composition root, the same assembly the CLI would run. The service
+// URL is unroutable, so the resident uploader never reaches a network.
 func serveProxy(args []string) int {
 	if len(args) < 4 || args[0] != proxylife.Command {
 		return 96
@@ -34,12 +38,22 @@ func serveProxy(args []string) int {
 	if err != nil {
 		return 95
 	}
-	p := proxylife.For(layout, "dev", exe, addr)
+	m, err := lifecycle.Open(lifecycle.Deps{
+		Layout:    layout,
+		Tokens:    tokenstore.Files(layout.SecretsDir()),
+		Platform:  platform.New("http://127.0.0.1:1", "dev"),
+		Version:   "dev",
+		ExecPath:  exe,
+		ProxyAddr: addr,
+	})
+	if err != nil {
+		return 94
+	}
 	ctx := context.Background()
 	if args[1] == proxylife.Supervise {
-		err = p.Supervise(ctx, 30*time.Second, os.Stdout, os.Stderr)
+		err = m.SuperviseProxy(ctx, 30*time.Second, os.Stdout, os.Stderr)
 	} else {
-		err = p.Run(ctx, 30*time.Second, os.Stdout, os.Stderr)
+		err = m.ServeProxy(ctx, 30*time.Second, os.Stdout, os.Stderr)
 	}
 	if err != nil {
 		return 1

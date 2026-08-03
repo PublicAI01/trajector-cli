@@ -122,9 +122,18 @@ func resolveEnv() (runtimeEnv, error) {
 
 // machine assembles the lifecycle machine for this invocation.
 func (a *app) machine() (*lifecycle.Machine, error) {
+	return machineAt("")
+}
+
+// machineAt is machine with the proxy address overridden, for the
+// serve modes that take an --addr flag.
+func machineAt(addr string) (*lifecycle.Machine, error) {
 	env, err := resolveEnv()
 	if err != nil {
 		return nil, err
+	}
+	if addr != "" {
+		env.proxyAddr = addr
 	}
 	return lifecycle.Open(lifecycle.Deps{
 		Layout:    env.layout,

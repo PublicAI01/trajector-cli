@@ -1,8 +1,10 @@
-// Package proxylife owns the capture proxy's life: starting it when
-// traffic needs one, assembling and running it, asking it to stop, and
-// answering what it is currently doing. It is the only place that knows
-// how to invoke this binary as a proxy, so no caller has to spell the
-// argv, the endpoints, or the takeover dance itself.
+// Package proxylife is the capture proxy as seen from outside the
+// process that serves it: starting one when traffic needs it, asking
+// it about itself, telling it to flush or stop. It is the only place
+// that knows how to invoke this binary as a proxy, so no caller has to
+// spell the argv, the endpoints, or the takeover dance itself.
+// Assembling the served proxy is the composition root's job, not this
+// package's.
 package proxylife
 
 import (
@@ -17,11 +19,6 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
-	"github.com/PublicAI01/trajector-cli/internal/capture"
-	"github.com/PublicAI01/trajector-cli/internal/platform"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
-	"github.com/PublicAI01/trajector-cli/internal/spool"
-	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
@@ -40,9 +37,8 @@ const (
 	idleFlag = "--idle-timeout"
 )
 
-// Addr is the address a production proxy listens on. The port is fixed:
-// injected project settings embed it, so a fallback port would strand
-// every enabled project.
+// Addr is the address a production proxy listens on; apiproxy.Addr
+// explains why the port is fixed.
 const Addr = apiproxy.Addr
 
 // ErrPortOccupied reports that the proxy's port is held by something
@@ -57,10 +53,6 @@ const (
 	startTimeout = 10 * time.Second
 	drainTimeout = 20 * time.Second
 )
-
-// flushInterval is how often a served proxy checks the upload
-// thresholds.
-const flushInterval = time.Minute
 
 // flushTimeout bounds one requested flush as seen by the CLI. A drain
 // of a long offline backlog uploads many batches in one call.
@@ -81,9 +73,6 @@ type Proxy struct {
 	version  string
 	execPath string
 	addr     string
-
-	service *platform.Client
-	tokens  *tokenstore.Store
 }
 
 // For describes the proxy this binary would start on this machine.
@@ -92,14 +81,6 @@ func For(layout userdirs.Layout, version, execPath, addr string) *Proxy {
 		addr = apiproxy.Addr
 	}
 	return &Proxy{layout: layout, version: version, execPath: execPath, addr: addr}
-}
-
-// Uploads arranges for a proxy served by Run to host the uploader,
-// draining the spool to service against the device token in tokens.
-// Without it a served proxy only captures.
-func (p *Proxy) Uploads(service *platform.Client, tokens *tokenstore.Store) {
-	p.service = service
-	p.tokens = tokens
 }
 
 // Addr is where the proxy listens.
@@ -245,132 +226,24 @@ func (p *Proxy) Supervise(ctx context.Context, idle time.Duration, stdout, stder
 	})
 }
 
-// Run assembles and serves the proxy itself. Losing the port bind to a
-// healthy proxy is the normal concurrent-start outcome and exits
-// quietly; losing it to anything else is a loud failure — never a
-// fallback to another port, which would strand every injected base URL.
-func (p *Proxy) Run(ctx context.Context, idle time.Duration, stdout, stderr io.Writer) error {
-	logf := func(format string, a ...any) {
-		fmt.Fprintf(stderr, format+"\n", a...)
-	}
-	// The spool quota is whatever the service last said in the upload
-	// handshake; a machine that never uploaded runs on the default.
-	sp, err := spool.Create(p.layout.SpoolDir(), upload.LoadHandshake(p.layout.UploadDir()).SpoolQuotaBytes)
-	if err != nil {
-		return fmt.Errorf("opening spool: %w", err)
-	}
-
-	// The server's flush hook and the uploader's run metadata refer to
-	// each other; the uploader is assembled second and published through
-	// this variable before the server starts serving.
-	var uploader *upload.Uploader
-	cfg := apiproxy.Config{
-		Version:         p.version,
-		Table:           routing.New(p.layout.RoutingTable(), 0),
-		Dialect:         capture.Anthropic,
-		DefaultUpstream: capture.Anthropic.OfficialUpstream,
-		Spool:           sp,
-		IdleTimeout:     idle,
-		Logf:            logf,
-	}
-	if p.service != nil {
-		cfg.Flush = func(force bool) (upload.Result, error) {
-			return uploader.Flush(force)
-		}
-	}
-	server, err := apiproxy.New(cfg)
-	if err != nil {
-		return err
-	}
-	if p.service != nil {
-		uploader, err = upload.New(upload.Deps{
-			Spool:       sp,
-			Service:     p.service,
-			DeviceToken: p.deviceToken,
-			Version:     p.version,
-			Dir:         p.layout.UploadDir(),
-			RejectedDir: p.layout.RejectedDir(),
-			Run:         server.RunMetadata,
-			Logf:        logf,
-		})
-		if err != nil {
-			return err
-		}
-	}
-
-	l, err := net.Listen("tcp", p.addr)
-	if err != nil {
-		if h, running := p.Health(); running && h.Service == apiproxy.ServiceName {
-			fmt.Fprintf(stdout, "proxy already running at %s (version %s)\n", p.addr, h.Version)
-			return nil
-		}
-		return fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
-	}
-
-	var served chan struct{}
-	if uploader != nil {
-		served = make(chan struct{})
-		go periodicFlush(ctx, served, uploader, logf)
-	}
-	err = server.Serve(ctx, l)
-	if uploader != nil {
-		close(served)
-		// One last threshold check on the way out: the proxy is the only
-		// resident process, so anything it leaves unflushed waits for the
-		// next session.
-		if _, ferr := uploader.Flush(false); ferr != nil {
-			logf("final flush: %v", ferr)
-		}
-	}
-	return err
-}
-
-// periodicFlush checks the upload thresholds on a cadence while the
-// proxy serves. Failures are logged and retried on the next tick; the
-// spool keeps everything until a batch is acknowledged.
-func periodicFlush(ctx context.Context, served chan struct{}, uploader *upload.Uploader, logf func(string, ...any)) {
-	ticker := time.NewTicker(flushInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-served:
-			return
-		case <-ticker.C:
-			if _, err := uploader.Flush(false); err != nil {
-				logf("flush: %v", err)
-			}
-		}
-	}
-}
-
-// deviceToken reads the device pairing token for the uploader. A
-// missing token is the signed-out state, reported as empty so uploads
-// pause rather than fail.
-func (p *Proxy) deviceToken() (string, error) {
-	token, _, err := p.tokens.DeviceToken()
-	return token, err
-}
-
 // Flush asks a running proxy to upload now and reports what it did.
-func (p *Proxy) Flush(force bool) (apiproxy.FlushReply, error) {
-	flushURL := "http://" + p.addr + apiproxy.FlushPath
+func (p *Proxy) Flush(force bool) (upload.FlushReply, error) {
+	flushURL := "http://" + p.addr + upload.FlushPath
 	if force {
 		flushURL += "?" + url.Values{"force": {"1"}}.Encode()
 	}
 	client := &http.Client{Timeout: flushTimeout}
 	resp, err := client.Post(flushURL, "", nil)
 	if err != nil {
-		return apiproxy.FlushReply{}, err
+		return upload.FlushReply{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return apiproxy.FlushReply{}, fmt.Errorf("proxy at %s answered %s to a flush request", p.addr, resp.Status)
+		return upload.FlushReply{}, fmt.Errorf("proxy at %s answered %s to a flush request", p.addr, resp.Status)
 	}
-	var reply apiproxy.FlushReply
+	var reply upload.FlushReply
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&reply); err != nil {
-		return apiproxy.FlushReply{}, err
+		return upload.FlushReply{}, err
 	}
 	return reply, nil
 }

@@ -42,6 +42,7 @@ type options struct {
 	drain      time.Duration
 	maxRecord  int64
 	logf       func(format string, args ...any)
+	internal   http.Handler
 }
 
 // Option configures one sandbox.
@@ -65,6 +66,12 @@ func WithVersion(v string) Option { return func(o *options) { o.version = v } }
 // official unless a test says otherwise.
 func WithOfficialUpstream(url string) Option {
 	return func(o *options) { o.official = url }
+}
+
+// WithInternal mounts handler under the proxy's reserved prefix, the
+// way the composition root mounts the uploader's flush endpoint.
+func WithInternal(h http.Handler) Option {
+	return func(o *options) { o.internal = h }
 }
 
 // WithFullSpool starts the proxy with a spool that has no room left, so
@@ -136,6 +143,7 @@ func New(t *testing.T, opts ...Option) *Env {
 		DrainTimeout:    o.drain,
 		MaxRecordBytes:  o.maxRecord,
 		Logf:            o.logf,
+		Internal:        o.internal,
 	})
 	if err != nil {
 		t.Fatal(err)

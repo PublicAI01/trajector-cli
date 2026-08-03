@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -549,10 +550,55 @@ func TestIdleProxyExitsOnItsOwn(t *testing.T) {
 	}
 }
 
-func TestFlushEndpointIsAbsentWithoutAnUploader(t *testing.T) {
+func TestReservedPathsAnswerNotFoundWithoutAMount(t *testing.T) {
 	e := proxytest.New(t)
-	resp := e.Post(apiproxy.FlushPath, "", nil)
+	resp := e.Post("/trajector/flush", "", nil)
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("flush status = %d, want 404 when no uploader is hosted", resp.StatusCode)
+		t.Fatalf("status = %d, want 404 when nothing is mounted", resp.StatusCode)
+	}
+}
+
+func TestMountedInternalHandlerServesUnderReservedPrefix(t *testing.T) {
+	e := proxytest.New(t, proxytest.WithInternal(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("mounted:" + r.URL.Path))
+	})))
+
+	resp := e.Post("/trajector/flush", "", nil)
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || string(body) != "mounted:/trajector/flush" {
+		t.Errorf("mounted endpoint = %d %q", resp.StatusCode, body)
+	}
+
+	// The proxy's own built-ins stay its own: a mount must not be able
+	// to impersonate healthz.
+	h := e.Healthz()
+	if h.Service != "trajector-proxy" {
+		t.Errorf("healthz shadowed by the mount: %+v", h)
+	}
+}
+
+func TestMountedCallDoesNotHoldTheProxyOpen(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	e := proxytest.New(t,
+		proxytest.WithIdleTimeout(100*time.Millisecond),
+		proxytest.WithInternal(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			once.Do(func() { close(entered) })
+			<-release
+		})),
+	)
+	defer close(release)
+
+	go func() {
+		resp, err := http.Post(e.BaseURL()+"/trajector/flush", "", nil)
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+	<-entered
+
+	if err := e.WaitStopped(5 * time.Second); err != nil {
+		t.Errorf("Serve returned %v with a mounted call in flight, want a clean idle exit", err)
 	}
 }

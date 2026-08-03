@@ -10,9 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
-	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -64,7 +62,7 @@ func uploadCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "trajector: %s\n", reply.Error)
 		return 1
 	}
-	switch upload.Outcome(reply.Outcome) {
+	switch reply.Outcome {
 	case upload.Uploaded:
 		fmt.Fprintf(stdout, "Uploaded %d batch(es), %d rawcall(s).\n", reply.Batches, reply.Records)
 	case upload.Empty:
@@ -97,23 +95,18 @@ func runProxy(mode string, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	env, err := resolveEnv()
+	m, err := machineAt(*addr)
 	if err != nil {
 		fmt.Fprintf(stderr, "trajector: %v\n", err)
 		return 1
 	}
-	if *addr != "" {
-		env.proxyAddr = *addr
-	}
-	proxy := proxylife.For(env.layout, version, env.execPath, env.proxyAddr)
-	proxy.Uploads(platform.New(env.platformURL, version), tokenstore.Open(env.layout.SecretsDir()))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if mode == proxylife.Supervise {
-		err = proxy.Supervise(ctx, *idle, stdout, stderr)
+		err = m.SuperviseProxy(ctx, *idle, stdout, stderr)
 	} else {
-		err = proxy.Run(ctx, *idle, stdout, stderr)
+		err = m.ServeProxy(ctx, *idle, stdout, stderr)
 	}
 	switch {
 	case err == nil || errors.Is(err, context.Canceled):
