@@ -119,12 +119,7 @@ func New(t *testing.T, opts ...Option) *Env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Reading back what the proxy stored must not share the writer's
-	// quota bookkeeping, so readers open the same directory separately.
-	e.spool, err = spool.Open(o.layout.SpoolDir(), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e.spool = sp
 
 	dialect := capture.Anthropic
 	dialect.OfficialUpstream = e.Upstream.URL()

@@ -56,13 +56,21 @@ type indexLine struct {
 	Size       int64  `json:"size"`
 }
 
-// Spool is a bounded rawcall store, safe for concurrent writers.
+// Spool is a bounded rawcall store, safe for concurrent writers. The
+// bound belongs to the directory, not to this handle: usage converges
+// on what is actually on disk, so records deleted through another
+// handle — even in another process — free quota here too.
 type Spool struct {
 	dir   string
 	quota int64
 
 	mu    sync.Mutex
 	usage int64
+	// sig fingerprints the directory state usage was derived from. Any
+	// other handle's mutation creates, removes, or renames a file, which
+	// updates its day directory's name set or mtime; a mismatch means
+	// usage must be re-derived before the next quota decision.
+	sig string
 }
 
 // Create prepares the spool rooted at dir, creating the directory if
@@ -82,6 +90,17 @@ func Open(dir string, quota int64) (*Spool, error) {
 	if quota == 0 {
 		quota = DefaultQuota
 	}
+	sig := dirSignature(dir)
+	usage, err := walkUsage(dir)
+	if err != nil {
+		return nil, err
+	}
+	return &Spool{dir: dir, quota: quota, usage: usage, sig: sig}, nil
+}
+
+// walkUsage derives total spool size from disk, the authority the
+// in-memory figure must always converge on.
+func walkUsage(dir string) (int64, error) {
 	var usage int64
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -95,9 +114,48 @@ func Open(dir string, quota int64) (*Spool, error) {
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
-		return nil, err
+		return 0, err
 	}
-	return &Spool{dir: dir, quota: quota, usage: usage}, nil
+	return usage, nil
+}
+
+// dirSignature fingerprints the day directories by name and mtime. It
+// is deliberately cheap — one directory listing plus one stat per day —
+// so quota decisions can verify it without walking every record.
+func dirSignature(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var b []byte
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		b = fmt.Appendf(b, "%s/%d;", e.Name(), info.ModTime().UnixNano())
+	}
+	return string(b)
+}
+
+// refreshLocked re-derives usage when another handle has changed the
+// directory. A change that lands between this handle's own mutation and
+// its signature snapshot is missed once, but the very next mutation by
+// any handle changes the signature again, so usage always converges.
+func (s *Spool) refreshLocked() {
+	sig := dirSignature(s.dir)
+	if sig == s.sig {
+		return
+	}
+	usage, err := walkUsage(s.dir)
+	if err != nil {
+		return
+	}
+	s.usage = usage
+	s.sig = sig
 }
 
 // Write stores one serialized envelope atomically and appends it to the
@@ -120,6 +178,7 @@ func (s *Spool) Write(e Entry, data []byte) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.refreshLocked()
 
 	day := e.Timestamp.UTC().Format("20060102")
 	dayDir := filepath.Join(s.dir, day)
@@ -158,6 +217,7 @@ func (s *Spool) Write(e Entry, data []byte) error {
 		return cerr
 	}
 	s.usage += int64(len(line))
+	s.sig = dirSignature(s.dir)
 	return nil
 }
 
@@ -166,6 +226,7 @@ func (s *Spool) Write(e Entry, data []byte) error {
 // file never becomes visible to readers.
 func (s *Spool) Writable() error {
 	s.mu.Lock()
+	s.refreshLocked()
 	usage, quota := s.usage, s.quota
 	s.mu.Unlock()
 	if usage >= quota {
@@ -219,6 +280,7 @@ func (s *Spool) rewriteIndexLocked(dayDir string, removed map[string]bool) error
 func (s *Spool) Usage() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.refreshLocked()
 	return s.usage
 }
 

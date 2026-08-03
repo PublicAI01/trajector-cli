@@ -103,6 +103,63 @@ func TestDeleteWhereFreesQuota(t *testing.T) {
 	}
 }
 
+func TestForeignDeleteFreesQuotaForAnOpenHandle(t *testing.T) {
+	dir := t.TempDir()
+	day := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	seed, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := writeRawcall(t, seed, "req-a1", "hash-a", day)
+
+	writer, err := spool.Open(dir, seed.Usage())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Write(spool.Entry{RequestID: "req-a2", Timestamp: day}, data); !errors.Is(err, spool.ErrQuotaExceeded) {
+		t.Fatalf("write on a full spool = %v, want ErrQuotaExceeded", err)
+	}
+
+	deleter, err := spool.Open(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deleter.DeleteWhere(matchProject("hash-a")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writer.Writable(); err != nil {
+		t.Errorf("Writable after a foreign delete = %v, want nil", err)
+	}
+	if err := writer.Write(spool.Entry{RequestID: "req-a2", Timestamp: day}, data); err != nil {
+		t.Errorf("Write after a foreign delete = %v, want success", err)
+	}
+	fresh, err := spool.Open(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writer.Usage() != fresh.Usage() {
+		t.Errorf("open handle usage = %d, freshly derived usage = %d", writer.Usage(), fresh.Usage())
+	}
+}
+
+func TestForeignWriteCountsAgainstAnOpenHandleQuota(t *testing.T) {
+	dir := t.TempDir()
+	day := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	a, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := spool.Open(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRawcall(t, b, "req-b1", "hash-b", day)
+	if a.Usage() != b.Usage() {
+		t.Errorf("handle A usage = %d after a foreign write, handle B usage = %d", a.Usage(), b.Usage())
+	}
+}
+
 func TestDeleteWhereNoMatchesTouchesNothing(t *testing.T) {
 	dir := t.TempDir()
 	s, err := spool.Create(dir, 0)

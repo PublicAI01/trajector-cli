@@ -41,6 +41,7 @@ func (s *Spool) Each(visit func(Rawcall) error) error {
 func (s *Spool) DeleteWhere(match func(Rawcall) bool) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.refreshLocked()
 
 	deleted := 0
 	perDay := map[string]map[string]bool{}
@@ -68,6 +69,7 @@ func (s *Spool) DeleteWhere(match func(Rawcall) bool) (int, error) {
 			return deleted, err
 		}
 	}
+	s.sig = dirSignature(s.dir)
 	return deleted, nil
 }
 
