@@ -48,14 +48,14 @@ type Server struct {
 	HTTP *httptest.Server
 
 	mu       sync.Mutex
-	stubs    map[string][]Response
+	stubs    map[string][]func(Request) Response
 	requests []Request
 }
 
 // New starts the fake service and shuts it down with the test.
 func New(t *testing.T) *Server {
 	t.Helper()
-	s := &Server{stubs: map[string][]Response{}}
+	s := &Server{stubs: map[string][]func(Request) Response{}}
 	s.HTTP = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.HTTP.Close)
 	return s
@@ -68,10 +68,17 @@ func (s *Server) URL() string { return s.HTTP.URL }
 // the same endpoint are consumed in FIFO order; the last one is sticky
 // so steady-state endpoints need a single stub.
 func (s *Server) Stub(method, path string, resp Response) {
+	s.StubFunc(method, path, func(Request) Response { return resp })
+}
+
+// StubFunc queues a response computed from the request, for endpoints
+// whose reply must echo request content. Consumption order matches
+// Stub.
+func (s *Server) StubFunc(method, path string, respond func(Request) Response) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := method + " " + path
-	s.stubs[key] = append(s.stubs[key], resp)
+	s.stubs[key] = append(s.stubs[key], respond)
 }
 
 // Requests returns a snapshot of everything received so far.
@@ -87,19 +94,20 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("fakeplatform: reading body: %v", err), 590)
 		return
 	}
-	s.mu.Lock()
-	s.requests = append(s.requests, Request{
+	recorded := Request{
 		Method: r.Method,
 		URL:    r.URL.RequestURI(),
 		Header: r.Header.Clone(),
 		Body:   body,
-	})
+	}
+	s.mu.Lock()
+	s.requests = append(s.requests, recorded)
 	key := r.Method + " " + r.URL.Path
 	queue := s.stubs[key]
-	var resp Response
+	var respond func(Request) Response
 	found := len(queue) > 0
 	if found {
-		resp = queue[0]
+		respond = queue[0]
 		if len(queue) > 1 {
 			s.stubs[key] = queue[1:]
 		}
@@ -110,6 +118,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("fakeplatform: no stub for %s", key), 590)
 		return
 	}
+	resp := respond(recorded)
 	for k, vs := range resp.Header {
 		w.Header()[k] = vs
 	}

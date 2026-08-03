@@ -1,7 +1,7 @@
 // Package platform is the HTTP client for the trajector service API:
-// device pairing, device revocation, and data-deletion requests. The
-// capture proxy never uses this client; forwarding has its own
-// transport and its own upstreams.
+// device pairing, device revocation, data-deletion requests, and batch
+// uploads. The capture proxy never uses this client; forwarding has its
+// own transport and its own upstreams.
 package platform
 
 import (
