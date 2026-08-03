@@ -7,7 +7,7 @@ REPO_MIN=75
 CORE_MIN=85
 # Core packages (capture and SSE reassembly, redaction, routing, spool,
 # upload, consent lifecycle) are added here as they land.
-CORE_PACKAGES="internal/apiproxy internal/capture internal/envelope internal/routing internal/spool internal/lifecycle"
+CORE_PACKAGES="internal/apiproxy internal/capture internal/envelope internal/routing internal/spool internal/lifecycle internal/redact"
 
 go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 
