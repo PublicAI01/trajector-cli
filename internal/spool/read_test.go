@@ -154,3 +154,40 @@ func TestEachIgnoresForeignFilesAndStopsOnVisitorError(t *testing.T) {
 		t.Errorf("Each = %v after %d visits, want the visitor error immediately", err, visited)
 	}
 }
+
+func TestOldestReportsTheEarliestCaptureWithoutReadingData(t *testing.T) {
+	dir := t.TempDir()
+	s, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.Oldest(); ok {
+		t.Fatal("an empty spool reported an oldest rawcall")
+	}
+	early := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	late := time.Date(2026, 8, 2, 9, 0, 0, 0, time.UTC)
+	writeRawcall(t, s, "req-late", "hash-a", late)
+	writeRawcall(t, s, "req-early", "hash-a", early)
+
+	oldest, ok := s.Oldest()
+	if !ok || !oldest.Equal(early) {
+		t.Fatalf("Oldest = %v, %v, want %v", oldest, ok, early)
+	}
+}
+
+func TestOldestFallsBackToFileTimeWhenTheIndexIsGone(t *testing.T) {
+	dir := t.TempDir()
+	s, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	writeRawcall(t, s, "req-1", "hash-a", day)
+	if err := os.Remove(filepath.Join(dir, "20260801", "index.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	oldest, ok := s.Oldest()
+	if !ok || oldest.IsZero() {
+		t.Fatalf("Oldest = %v, %v, want a file-time fallback", oldest, ok)
+	}
+}

@@ -4,9 +4,12 @@
 package fakeplatform
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -79,6 +82,33 @@ func (s *Server) StubFunc(method, path string, respond func(Request) Response) {
 	defer s.mu.Unlock()
 	key := method + " " + path
 	s.stubs[key] = append(s.stubs[key], respond)
+}
+
+// Parts decodes a recorded multipart request body by form field name.
+func Parts(r Request) (map[string][]byte, error) {
+	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, fmt.Errorf("fakeplatform: parsing content type: %w", err)
+	}
+	if mediaType != "multipart/form-data" {
+		return nil, fmt.Errorf("fakeplatform: content type %q is not multipart/form-data", mediaType)
+	}
+	mr := multipart.NewReader(bytes.NewReader(r.Body), params["boundary"])
+	parts := map[string][]byte{}
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			return parts, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("fakeplatform: reading multipart: %w", err)
+		}
+		data, err := io.ReadAll(p)
+		if err != nil {
+			return nil, fmt.Errorf("fakeplatform: reading part %q: %w", p.FormName(), err)
+		}
+		parts[p.FormName()] = data
+	}
 }
 
 // Requests returns a snapshot of everything received so far.

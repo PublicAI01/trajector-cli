@@ -20,6 +20,7 @@ const (
 	spoolDirName     = "rawcalls"
 	secretsDirName   = "secrets"
 	proxyLogName     = "proxy.log"
+	uploadDirName    = "upload"
 )
 
 // Env is the machine a Layout is resolved against.
@@ -71,6 +72,10 @@ func (l Layout) ConsentFile() string { return filepath.Join(l.config, consentFil
 
 // SpoolDir is the capture spool root.
 func (l Layout) SpoolDir() string { return filepath.Join(l.data, spoolDirName) }
+
+// UploadDir holds the uploader's bookkeeping: the pending batch, the
+// last attempt, and the service handshake.
+func (l Layout) UploadDir() string { return filepath.Join(l.data, uploadDirName) }
 
 // SecretsDir backs the file token store.
 func (l Layout) SecretsDir() string { return filepath.Join(l.config, secretsDirName) }

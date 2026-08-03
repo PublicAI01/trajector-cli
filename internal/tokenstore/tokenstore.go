@@ -20,6 +20,11 @@ type Store interface {
 	Delete(name string) error
 }
 
+// DeviceTokenName is the entry holding the device pairing token. Login
+// writes it, logout deletes it, and the uploader reads it; the name
+// lives here so all three agree on it.
+const DeviceTokenName = "device"
+
 // keyringService namespaces trajector entries in the OS keyring.
 const keyringService = "trajector"
 

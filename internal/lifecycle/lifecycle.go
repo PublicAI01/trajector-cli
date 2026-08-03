@@ -28,10 +28,6 @@ const (
 	pauseConsent   = "consent_reconfirm"
 )
 
-// deviceTokenName is the token store entry holding the device pairing
-// token.
-const deviceTokenName = "device"
-
 // Deps is everything the machine needs from the world outside it.
 type Deps struct {
 	Layout   userdirs.Layout
@@ -94,7 +90,7 @@ func (m *Machine) Paired() bool {
 }
 
 func (m *Machine) deviceToken() (string, bool) {
-	secret, err := m.deps.Tokens.Load(deviceTokenName)
+	secret, err := m.deps.Tokens.Load(tokenstore.DeviceTokenName)
 	if err != nil || len(secret) == 0 {
 		return "", false
 	}

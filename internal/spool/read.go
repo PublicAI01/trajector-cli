@@ -126,6 +126,58 @@ func (s *Spool) eachLocked(visit func(r Rawcall, path string) error) error {
 	return nil
 }
 
+// Oldest reports when the oldest stored rawcall was captured, so a
+// caller can weigh the spool's age without reading any record data. It
+// consults only the earliest day that holds records: its index leads
+// and file modification times settle records the index missed.
+func (s *Spool) Oldest() (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	days, err := os.ReadDir(s.dir)
+	if err != nil {
+		return time.Time{}, false
+	}
+	for _, day := range days {
+		if !day.IsDir() {
+			continue
+		}
+		dayDir := filepath.Join(s.dir, day.Name())
+		indexed, err := readIndex(dayDir)
+		if err != nil {
+			return time.Time{}, false
+		}
+		files, err := os.ReadDir(dayDir)
+		if err != nil {
+			return time.Time{}, false
+		}
+		var oldest time.Time
+		found := false
+		for _, f := range files {
+			name := f.Name()
+			if f.IsDir() || name == indexName || filepath.Ext(name) != ".json" {
+				continue
+			}
+			var ts time.Time
+			if line, ok := indexed[strings.TrimSuffix(name, ".json")]; ok {
+				ts, _ = time.Parse(time.RFC3339Nano, line.Timestamp)
+			}
+			if ts.IsZero() {
+				if info, err := f.Info(); err == nil {
+					ts = info.ModTime().UTC()
+				}
+			}
+			if !found || ts.Before(oldest) {
+				oldest = ts
+				found = true
+			}
+		}
+		if found {
+			return oldest, true
+		}
+	}
+	return time.Time{}, false
+}
+
 // readIndex loads a day's sidecar index. A missing index is the
 // rebuild-from-disk case, not a failure, and an unreadable line costs
 // only the metadata it carried.

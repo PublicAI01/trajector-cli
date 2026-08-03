@@ -283,3 +283,33 @@ func TestWriteRejectsUnsafeRequestIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestSetQuotaGovernsSubsequentWrites(t *testing.T) {
+	dir := t.TempDir()
+	s, err := spool.Create(dir, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Write(spool.Entry{RequestID: "msg_01", Timestamp: noon}, []byte(strings.Repeat("a", 60))); err != nil {
+		t.Fatal(err)
+	}
+
+	s.SetQuota(s.Usage())
+	err = s.Write(spool.Entry{RequestID: "msg_02", Timestamp: noon}, []byte("b"))
+	if !errors.Is(err, spool.ErrQuotaExceeded) {
+		t.Fatalf("write after shrinking the quota = %v, want ErrQuotaExceeded", err)
+	}
+
+	s.SetQuota(1 << 20)
+	if err := s.Write(spool.Entry{RequestID: "msg_02", Timestamp: noon}, []byte("b")); err != nil {
+		t.Fatalf("write after raising the quota = %v", err)
+	}
+	if got := s.Quota(); got != 1<<20 {
+		t.Errorf("Quota = %d, want %d", got, 1<<20)
+	}
+
+	s.SetQuota(0)
+	if got := s.Quota(); got != 1<<20 {
+		t.Errorf("Quota after SetQuota(0) = %d, want unchanged %d", got, 1<<20)
+	}
+}

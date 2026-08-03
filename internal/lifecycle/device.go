@@ -44,7 +44,7 @@ func (m *Machine) Pair(io IO) error {
 		}
 		switch result.Status {
 		case platform.PairingPaired:
-			if err := m.deps.Tokens.Save(deviceTokenName, []byte(result.DeviceToken)); err != nil {
+			if err := m.deps.Tokens.Save(tokenstore.DeviceTokenName, []byte(result.DeviceToken)); err != nil {
 				return fmt.Errorf("storing the device token: %w", err)
 			}
 			fmt.Fprintln(io.Out, "Device paired.")
@@ -87,7 +87,7 @@ func (m *Machine) Logout(io IO) error {
 	if err := m.deps.Platform.RevokeDevice(token); err != nil {
 		fmt.Fprintf(io.Err, "trajector: warning: could not revoke the token with the service (%v); it was removed locally, revoke it from your account page as well\n", err)
 	}
-	if err := m.deps.Tokens.Delete(deviceTokenName); err != nil && !errors.Is(err, tokenstore.ErrNotFound) {
+	if err := m.deps.Tokens.Delete(tokenstore.DeviceTokenName); err != nil && !errors.Is(err, tokenstore.ErrNotFound) {
 		return fmt.Errorf("removing the device token: %w", err)
 	}
 	if err := m.routes.Pause(pauseSignedOut); err != nil {

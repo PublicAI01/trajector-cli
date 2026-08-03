@@ -94,7 +94,7 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 		fmt.Fprintln(io.Out, "Local data kept.")
 		return nil
 	}
-	if err := m.deps.Tokens.Delete(deviceTokenName); err != nil && !errors.Is(err, tokenstore.ErrNotFound) {
+	if err := m.deps.Tokens.Delete(tokenstore.DeviceTokenName); err != nil && !errors.Is(err, tokenstore.ErrNotFound) {
 		fmt.Fprintf(io.Err, "trajector: warning: could not remove the device token: %v\n", err)
 	}
 	for _, dir := range m.deps.Layout.Roots() {

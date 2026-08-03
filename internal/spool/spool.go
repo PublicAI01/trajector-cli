@@ -166,9 +166,9 @@ func (s *Spool) Write(e Entry, data []byte) error {
 // file never becomes visible to readers.
 func (s *Spool) Writable() error {
 	s.mu.Lock()
-	usage := s.usage
+	usage, quota := s.usage, s.quota
 	s.mu.Unlock()
-	if usage >= s.quota {
+	if usage >= quota {
 		return ErrQuotaExceeded
 	}
 	f, err := os.CreateTemp(s.dir, ".writable-*")
@@ -223,4 +223,21 @@ func (s *Spool) Usage() int64 {
 }
 
 // Quota reports the configured limit in bytes.
-func (s *Spool) Quota() int64 { return s.quota }
+func (s *Spool) Quota() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.quota
+}
+
+// SetQuota adjusts the limit for subsequent writes; the service tunes
+// it through the upload handshake. A non-positive quota is ignored:
+// nothing may turn the bound off, and shrinking below current usage
+// only stops recording — it never evicts what was captured.
+func (s *Spool) SetQuota(quota int64) {
+	if quota <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.quota = quota
+}
