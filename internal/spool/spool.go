@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
 // DefaultQuota bounds total spool size. When the quota is reached the
@@ -194,12 +195,7 @@ func (s *Spool) Write(env envelope.Envelope) error {
 	if err := os.MkdirAll(dayDir, 0o700); err != nil {
 		return err
 	}
-	tmp := filepath.Join(dayDir, "."+id+".json.tmp")
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, final); err != nil {
-		os.Remove(tmp)
+	if err := fsatomic.WriteFile(final, data, 0o600); err != nil {
 		return err
 	}
 	s.usage += int64(len(data)) - replaced
@@ -264,12 +260,7 @@ func (s *Spool) rewriteIndexLocked(dayDir string, removed map[string]bool) error
 		kept = append(kept, line...)
 		kept = append(kept, '\n')
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, kept, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
+	if err := fsatomic.WriteFile(path, kept, 0o600); err != nil {
 		return err
 	}
 	s.usage += int64(len(kept)) - int64(len(data))

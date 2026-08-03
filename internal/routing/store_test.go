@@ -1,7 +1,9 @@
 package routing_test
 
 import (
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -183,5 +185,39 @@ func TestStoreStartsFromMissingFile(t *testing.T) {
 	grant(t, store, "tok", "/home/dev/p")
 	if _, ok, err := store.Active("/home/dev/p"); err != nil || !ok {
 		t.Errorf("Active after first grant = %v, %v", ok, err)
+	}
+}
+
+func TestConcurrentGrantsAllSurvive(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routes-under-test.json")
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			suffix := fmt.Sprintf("%02d", i)
+			errs[i] = routing.OpenStore(path).Grant(routing.Grant{
+				Token:         "tok-" + suffix,
+				ProjectIDHash: "hash-" + suffix,
+				RootPath:      "/project/" + suffix,
+				Upstream:      "https://api.anthropic.com",
+				GrantedAt:     "2026-08-01T00:00:00Z",
+			})
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("grant %d: %v", i, err)
+		}
+	}
+	grants, err := routing.OpenStore(path).All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(grants) != n {
+		t.Errorf("%d grants survived %d concurrent enables, want all of them", len(grants), n)
 	}
 }

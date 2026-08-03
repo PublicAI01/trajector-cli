@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -26,25 +27,7 @@ func (s fileStore) Save(name string, secret []byte) error {
 	if err := userdirs.EnsureOwnerDir(s.dir); err != nil {
 		return err
 	}
-	// Write-then-rename keeps the stored secret intact if the process
-	// dies mid-write.
-	tmp, err := os.CreateTemp(s.dir, name+".tmp-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(secret); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), s.path(name))
+	return fsatomic.WriteFile(s.path(name), secret, 0o600)
 }
 
 func (s fileStore) Load(name string) ([]byte, error) {

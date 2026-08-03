@@ -120,16 +120,22 @@ func (s *Store) MarkPrompted(projectIDHash string) (first bool, err error) {
 }
 
 func (s *Store) read() (storeFile, error) {
-	f := storeFile{Projects: map[string]projectRecord{}}
 	data, err := os.ReadFile(s.path)
 	if os.IsNotExist(err) {
+		data = nil
+	} else if err != nil {
+		return storeFile{Projects: map[string]projectRecord{}}, err
+	}
+	return parseStoreFile(s.path, data)
+}
+
+func parseStoreFile(path string, data []byte) (storeFile, error) {
+	f := storeFile{Projects: map[string]projectRecord{}}
+	if len(data) == 0 {
 		return f, nil
 	}
-	if err != nil {
-		return f, err
-	}
 	if err := json.Unmarshal(data, &f); err != nil {
-		return f, fmt.Errorf("consent: parsing %s: %w", s.path, err)
+		return f, fmt.Errorf("consent: parsing %s: %w", path, err)
 	}
 	if f.Projects == nil {
 		f.Projects = map[string]projectRecord{}
@@ -137,19 +143,22 @@ func (s *Store) read() (storeFile, error) {
 	return f, nil
 }
 
+// update rewrites the store under fsatomic's cross-process lock, so
+// concurrent commands never lose each other's consent decisions.
 func (s *Store) update(mutate func(*storeFile)) error {
-	f, err := s.read()
-	if err != nil {
-		return err
-	}
-	mutate(&f)
-	data, err := json.MarshalIndent(f, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
 	if err := userdirs.EnsureOwnerDir(filepath.Dir(s.path)); err != nil {
 		return err
 	}
-	return fsatomic.WriteFile(s.path, data, 0o600)
+	return fsatomic.Update(s.path, 0o600, func(old []byte) ([]byte, error) {
+		f, err := parseStoreFile(s.path, old)
+		if err != nil {
+			return nil, err
+		}
+		mutate(&f)
+		data, err := json.MarshalIndent(f, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		return append(data, '\n'), nil
+	})
 }

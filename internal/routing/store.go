@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // Store is the CLI-side writer for the routing table. The proxy only
@@ -147,33 +148,43 @@ func (s *Store) All() ([]Grant, error) {
 	return grants, nil
 }
 
+// update rewrites the table under fsatomic's cross-process lock: enable
+// hooks and commands run as concurrent short-lived processes, and one
+// project's grant must never be lost to another's.
 func (s *Store) update(mutate func(*tableFile)) error {
-	f, err := readTableFile(s.path)
-	if err != nil {
+	if err := userdirs.EnsureOwnerDir(filepath.Dir(s.path)); err != nil {
 		return err
 	}
-	mutate(&f)
-	data, err := json.MarshalIndent(f, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
-	}
-	return fsatomic.WriteFile(s.path, data, 0o600)
+	return fsatomic.Update(s.path, 0o600, func(old []byte) ([]byte, error) {
+		f, err := parseTableFile(s.path, old)
+		if err != nil {
+			return nil, err
+		}
+		mutate(&f)
+		data, err := json.MarshalIndent(f, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		return append(data, '\n'), nil
+	})
 }
 
 // readTableFile loads the on-disk table; a missing file is the normal
 // nothing-enabled state and yields an empty table.
 func readTableFile(path string) (tableFile, error) {
-	f := tableFile{Projects: map[string]projectRecord{}}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return f, nil
+		data = nil
+	} else if err != nil {
+		return tableFile{Projects: map[string]projectRecord{}}, err
 	}
-	if err != nil {
-		return f, err
+	return parseTableFile(path, data)
+}
+
+func parseTableFile(path string, data []byte) (tableFile, error) {
+	f := tableFile{Projects: map[string]projectRecord{}}
+	if len(data) == 0 {
+		return f, nil
 	}
 	if err := json.Unmarshal(data, &f); err != nil {
 		return f, fmt.Errorf("routing: parsing %s: %w", path, err)
