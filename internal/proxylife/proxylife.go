@@ -13,12 +13,16 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/capture"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
+	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -54,6 +58,14 @@ const (
 	drainTimeout = 20 * time.Second
 )
 
+// flushInterval is how often a served proxy checks the upload
+// thresholds.
+const flushInterval = time.Minute
+
+// flushTimeout bounds one requested flush as seen by the CLI. A drain
+// of a long offline backlog uploads many batches in one call.
+const flushTimeout = 10 * time.Minute
+
 // Health is the proxy's self-report. The proxy that writes it and the
 // callers that read it share this type, so the wire contract is checked
 // by the compiler.
@@ -69,6 +81,9 @@ type Proxy struct {
 	version  string
 	execPath string
 	addr     string
+
+	service *platform.Client
+	tokens  tokenstore.Store
 }
 
 // For describes the proxy this binary would start on this machine.
@@ -77,6 +92,14 @@ func For(layout userdirs.Layout, version, execPath, addr string) *Proxy {
 		addr = apiproxy.Addr
 	}
 	return &Proxy{layout: layout, version: version, execPath: execPath, addr: addr}
+}
+
+// Uploads arranges for a proxy served by Run to host the uploader,
+// draining the spool to service against the device token in tokens.
+// Without it a served proxy only captures.
+func (p *Proxy) Uploads(service *platform.Client, tokens tokenstore.Store) {
+	p.service = service
+	p.tokens = tokens
 }
 
 // Addr is where the proxy listens.
@@ -227,22 +250,50 @@ func (p *Proxy) Supervise(ctx context.Context, idle time.Duration, stdout, stder
 // quietly; losing it to anything else is a loud failure — never a
 // fallback to another port, which would strand every injected base URL.
 func (p *Proxy) Run(ctx context.Context, idle time.Duration, stdout, stderr io.Writer) error {
-	sp, err := spool.Create(p.layout.SpoolDir(), 0)
+	logf := func(format string, a ...any) {
+		fmt.Fprintf(stderr, format+"\n", a...)
+	}
+	// The spool quota is whatever the service last said in the upload
+	// handshake; a machine that never uploaded runs on the default.
+	sp, err := spool.Create(p.layout.SpoolDir(), upload.LoadHandshake(p.layout.UploadDir()).SpoolQuotaBytes)
 	if err != nil {
 		return fmt.Errorf("opening spool: %w", err)
 	}
-	server, err := apiproxy.New(apiproxy.Config{
+
+	// The server's flush hook and the uploader's run metadata refer to
+	// each other; the uploader is assembled second and published through
+	// this variable before the server starts serving.
+	var uploader *upload.Uploader
+	cfg := apiproxy.Config{
 		Version:         p.version,
 		Table:           routing.New(p.layout.RoutingTable(), 0),
 		DefaultUpstream: capture.OfficialUpstream,
 		Spool:           sp,
 		IdleTimeout:     idle,
-		Logf: func(format string, a ...any) {
-			fmt.Fprintf(stderr, format+"\n", a...)
-		},
-	})
+		Logf:            logf,
+	}
+	if p.service != nil {
+		cfg.Flush = func(force bool) (upload.Result, error) {
+			return uploader.Flush(force)
+		}
+	}
+	server, err := apiproxy.New(cfg)
 	if err != nil {
 		return err
+	}
+	if p.service != nil {
+		uploader, err = upload.New(upload.Deps{
+			Spool:       sp,
+			Service:     p.service,
+			DeviceToken: p.deviceToken,
+			Version:     p.version,
+			Dir:         p.layout.UploadDir(),
+			Run:         server.RunMetadata,
+			Logf:        logf,
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	l, err := net.Listen("tcp", p.addr)
@@ -254,5 +305,76 @@ func (p *Proxy) Run(ctx context.Context, idle time.Duration, stdout, stderr io.W
 		return fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
 	}
 
-	return server.Serve(ctx, l)
+	var served chan struct{}
+	if uploader != nil {
+		served = make(chan struct{})
+		go periodicFlush(ctx, served, uploader, logf)
+	}
+	err = server.Serve(ctx, l)
+	if uploader != nil {
+		close(served)
+		// One last threshold check on the way out: the proxy is the only
+		// resident process, so anything it leaves unflushed waits for the
+		// next session.
+		if _, ferr := uploader.Flush(false); ferr != nil {
+			logf("final flush: %v", ferr)
+		}
+	}
+	return err
+}
+
+// periodicFlush checks the upload thresholds on a cadence while the
+// proxy serves. Failures are logged and retried on the next tick; the
+// spool keeps everything until a batch is acknowledged.
+func periodicFlush(ctx context.Context, served chan struct{}, uploader *upload.Uploader, logf func(string, ...any)) {
+	ticker := time.NewTicker(flushInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-served:
+			return
+		case <-ticker.C:
+			if _, err := uploader.Flush(false); err != nil {
+				logf("flush: %v", err)
+			}
+		}
+	}
+}
+
+// deviceToken reads the device pairing token for the uploader. A
+// missing token is the signed-out state, reported as empty so uploads
+// pause rather than fail.
+func (p *Proxy) deviceToken() (string, error) {
+	secret, err := p.tokens.Load(tokenstore.DeviceTokenName)
+	if errors.Is(err, tokenstore.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return string(secret), nil
+}
+
+// Flush asks a running proxy to upload now and reports what it did.
+func (p *Proxy) Flush(force bool) (apiproxy.FlushReply, error) {
+	flushURL := "http://" + p.addr + apiproxy.FlushPath
+	if force {
+		flushURL += "?" + url.Values{"force": {"1"}}.Encode()
+	}
+	client := &http.Client{Timeout: flushTimeout}
+	resp, err := client.Post(flushURL, "", nil)
+	if err != nil {
+		return apiproxy.FlushReply{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return apiproxy.FlushReply{}, fmt.Errorf("proxy at %s answered %s to a flush request", p.addr, resp.Status)
+	}
+	var reply apiproxy.FlushReply
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&reply); err != nil {
+		return apiproxy.FlushReply{}, err
+	}
+	return reply, nil
 }

@@ -57,6 +57,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return a.disableCmd(args[1:])
 	case "uninstall":
 		return a.uninstallCmd(args[1:])
+	case "upload":
+		return uploadCmd(args[1:], stdout, stderr)
 	case "hook":
 		return a.hookCmd(args[1:])
 	case proxylife.Command:
@@ -77,6 +79,7 @@ commands:
   enable       start contributing data from the current project
   disable      stop contributing from the current project [--purge]
   uninstall    remove every injection and optionally local data
+  upload       upload captured data now [--force]
   version      print the trajector version
   proxy run    run the local proxy (internal; started automatically)
   hook         session hook entry points (internal; injected by enable)

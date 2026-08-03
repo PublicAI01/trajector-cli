@@ -14,9 +14,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 // Addr is the production listen address. The port is fixed: injected
@@ -35,6 +37,12 @@ const HealthzPath = "/trajector/healthz"
 // DrainPath asks the proxy to drain in-flight requests and exit; a
 // newer binary uses it to take over the port.
 const DrainPath = "/trajector/drain"
+
+// FlushPath asks the proxy to run one upload flush and report the
+// result. The uploader lives in the proxy process — the machine's one
+// flusher — so the CLI triggers uploads here instead of running its
+// own.
+const FlushPath = "/trajector/flush"
 
 // SelfcheckPath, requested under a token prefix (/t/<token> +
 // SelfcheckPath), reports whether that token would be routed and
@@ -79,6 +87,17 @@ type Selfcheck struct {
 // probes can tell it apart from a foreign process squatting the port.
 const ServiceName = "trajector-proxy"
 
+// FlushReply is what the proxy reports about one requested flush. The
+// proxy that writes it and the CLI that reads it share this type, so
+// the wire contract is checked by the compiler.
+type FlushReply struct {
+	Service string `json:"service"`
+	Outcome string `json:"outcome"`
+	Batches int    `json:"batches"`
+	Records int    `json:"records"`
+	Error   string `json:"error,omitempty"`
+}
+
 // Defaults for the lazy lifecycle.
 const (
 	DefaultIdleTimeout  = 30 * time.Minute
@@ -103,6 +122,10 @@ type Config struct {
 	// in memory. Zero selects DefaultMaxRecordBytes.
 	MaxRecordBytes int64
 	Logf           func(format string, args ...any)
+	// Flush runs one upload flush when the flush endpoint is asked to.
+	// Nil means this proxy hosts no uploader and the endpoint answers
+	// not-found.
+	Flush func(force bool) (upload.Result, error)
 }
 
 // Server is one proxy instance.
@@ -254,8 +277,40 @@ func (s *Server) serveInternal(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == DrainPath && r.Method == http.MethodPost:
 		w.WriteHeader(http.StatusAccepted)
 		s.drainOnce.Do(func() { close(s.drainCh) })
+	case r.URL.Path == FlushPath && r.Method == http.MethodPost && s.cfg.Flush != nil:
+		s.serveFlush(w, r)
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+// serveFlush runs one flush synchronously; the caller wants the
+// outcome, and the uploader itself serializes concurrent requests.
+func (s *Server) serveFlush(w http.ResponseWriter, r *http.Request) {
+	result, err := s.cfg.Flush(r.URL.Query().Get("force") == "1")
+	reply := FlushReply{
+		Service: ServiceName,
+		Outcome: string(result.Outcome),
+		Batches: result.Batches,
+		Records: result.Records,
+	}
+	if err != nil {
+		reply.Error = err.Error()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(reply)
+}
+
+// RunMetadata reports this proxy's capture counters and spool state in
+// the form a batch carries them.
+func (s *Server) RunMetadata() batch.Run {
+	snap := s.stats.snapshot()
+	return batch.Run{
+		RecordedToday:    snap.recorded,
+		SSEDegradedToday: snap.degraded,
+		CapturesDropped:  snap.dropped,
+		SpoolUsageBytes:  s.cfg.Spool.Usage(),
+		SpoolQuotaBytes:  s.cfg.Spool.Quota(),
 	}
 }
 

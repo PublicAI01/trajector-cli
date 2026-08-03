@@ -528,3 +528,11 @@ func TestIdleProxyExitsOnItsOwn(t *testing.T) {
 		t.Errorf("Serve returned %v on idle exit, want nil", err)
 	}
 }
+
+func TestFlushEndpointIsAbsentWithoutAnUploader(t *testing.T) {
+	e := proxytest.New(t)
+	resp := e.Post(apiproxy.FlushPath, "", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("flush status = %d, want 404 when no uploader is hosted", resp.StatusCode)
+	}
+}
