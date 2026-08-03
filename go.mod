@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/betterleaks/betterleaks v1.5.0
+	github.com/klauspost/compress v1.18.6
 	github.com/zalando/go-keyring v0.2.8
 )
 
@@ -32,7 +33,6 @@ require (
 	github.com/h2non/filetype v1.1.3 // indirect
 	github.com/hashicorp/go-version v1.7.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
-	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
