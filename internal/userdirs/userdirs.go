@@ -89,6 +89,13 @@ func (l Layout) SecretsDir() string { return filepath.Join(l.config, secretsDirN
 // ProxyLog is where a supervised proxy's output is appended.
 func (l Layout) ProxyLog() string { return filepath.Join(l.state, proxyLogName) }
 
+// EnsureOwnerDir creates dir for trajector's own state. Everything
+// trajector stores is private to the user, so the mode is decided here
+// once, not by each package that happens to create a directory first.
+func EnsureOwnerDir(dir string) error {
+	return os.MkdirAll(dir, 0o700)
+}
+
 // Roots lists every directory holding trajector files, deduplicated:
 // the config, data, and state directories collapse to one path on some
 // platforms, and deleting the same tree twice must not be mistaken for

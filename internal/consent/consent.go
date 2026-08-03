@@ -12,6 +12,7 @@ import (
 	"sort"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // ProjectState is a project's recorded decision.
@@ -147,7 +148,7 @@ func (s *Store) update(mutate func(*storeFile)) error {
 		return err
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+	if err := userdirs.EnsureOwnerDir(filepath.Dir(s.path)); err != nil {
 		return err
 	}
 	return fsatomic.WriteFile(s.path, data, 0o600)

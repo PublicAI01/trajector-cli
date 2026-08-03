@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // fileStore keeps each secret in its own owner-only file so that a
@@ -21,7 +23,7 @@ func (s fileStore) Save(name string, secret []byte) error {
 	if err := checkName(name); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+	if err := userdirs.EnsureOwnerDir(s.dir); err != nil {
 		return err
 	}
 	// Write-then-rename keeps the stored secret intact if the process
