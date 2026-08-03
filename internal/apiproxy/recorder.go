@@ -87,9 +87,8 @@ func (r *recorder) observeRequest(req *http.Request) {
 func (r *recorder) observeResponse(resp *http.Response) {
 	r.guard(func() {
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			// Error responses are counted but never stored: they have no
-			// value and only widen the privacy surface.
-			r.s.stats.countNon2xx()
+			// Error responses are never stored: they have no value and
+			// only widen the privacy surface.
 			r.drop()
 			return
 		}

@@ -100,8 +100,8 @@ type FlushReply struct {
 
 // Defaults for the lazy lifecycle.
 const (
-	DefaultIdleTimeout  = 30 * time.Minute
-	DefaultDrainTimeout = 15 * time.Second
+	defaultIdleTimeout  = 30 * time.Minute
+	defaultDrainTimeout = 15 * time.Second
 )
 
 // Config wires the proxy's collaborators.
@@ -113,10 +113,10 @@ type Config struct {
 	DefaultUpstream string
 	Spool           *spool.Spool
 	// IdleTimeout is how long authorized traffic may be silent before
-	// the proxy exits on its own. Zero selects DefaultIdleTimeout.
+	// the proxy exits on its own. Zero selects a default.
 	IdleTimeout time.Duration
 	// DrainTimeout bounds how long shutdown waits for in-flight
-	// requests. Zero selects DefaultDrainTimeout.
+	// requests. Zero selects a default.
 	DrainTimeout time.Duration
 	// MaxRecordBytes bounds how much of one exchange the recorder holds
 	// in memory. Zero selects DefaultMaxRecordBytes.
@@ -160,10 +160,10 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("apiproxy: default upstream %q is not an http(s) URL", cfg.DefaultUpstream)
 	}
 	if cfg.IdleTimeout == 0 {
-		cfg.IdleTimeout = DefaultIdleTimeout
+		cfg.IdleTimeout = defaultIdleTimeout
 	}
 	if cfg.DrainTimeout == 0 {
-		cfg.DrainTimeout = DefaultDrainTimeout
+		cfg.DrainTimeout = defaultDrainTimeout
 	}
 	if cfg.MaxRecordBytes == 0 {
 		cfg.MaxRecordBytes = DefaultMaxRecordBytes
@@ -360,7 +360,6 @@ type stats struct {
 	day              string
 	recordedToday    int
 	degradedToday    int
-	non2xx           int
 	dropped          int
 	unusableUpstream int
 	recentErrors     []string
@@ -392,12 +391,6 @@ func (st *stats) recorded(now time.Time, degraded bool) {
 	if degraded {
 		st.degradedToday++
 	}
-}
-
-func (st *stats) countNon2xx() {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	st.non2xx++
 }
 
 // countDropped records a capture the guarded region gave up on.
