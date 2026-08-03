@@ -1,0 +1,21 @@
+# Build output
+/trajector
+/trajector.exe
+dist/
+
+# Test and coverage artifacts
+*.test
+*.out
+coverage.html
+
+# Local-only Go workspace files
+go.work
+go.work.sum
+
+# OS noise
+.DS_Store
+
+# Editor state
+.idea/
+.vscode/
+*.swp
