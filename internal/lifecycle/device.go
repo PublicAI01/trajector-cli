@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -84,7 +85,16 @@ func (m *Machine) Logout(io IO) error {
 		return nil
 	}
 	if err := m.deps.Platform.RevokeDevice(token); err != nil {
-		fmt.Fprintf(io.Err, "trajector: warning: could not revoke the token with the service (%v); it was removed locally, revoke it from your account page as well\n", err)
+		var status *platform.StatusError
+		switch {
+		case errors.As(err, &status) && status.StatusCode == http.StatusUnauthorized:
+			// The service no longer honors this token: it is already
+			// revoked, which is exactly the goal state.
+		case errors.As(err, &status) && status.Temporary():
+			fmt.Fprintf(io.Err, "trajector: warning: the service could not revoke the token right now (%v); it was removed locally — retry `trajector logout` later or revoke it from your account page\n", err)
+		default:
+			fmt.Fprintf(io.Err, "trajector: warning: could not revoke the token with the service (%v); it was removed locally, revoke it from your account page as well\n", err)
+		}
 	}
 	if err := m.deps.Tokens.ClearDeviceToken(); err != nil {
 		return fmt.Errorf("removing the device token: %w", err)

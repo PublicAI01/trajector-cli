@@ -122,6 +122,49 @@ func TestLogoutWithAnUnreachableServiceStillSignsOutLocally(t *testing.T) {
 	}
 }
 
+func TestLogoutTellsAnAlreadyRevokedTokenFromAServiceOutage(t *testing.T) {
+	t.Run("an already-revoked token is the goal state, not a warning", func(t *testing.T) {
+		e := newEnv(t)
+		e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(401, map[string]any{"error": "unknown token"}))
+		if err := e.machine().Logout(e.io()); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(e.stderr.String(), "account page") {
+			t.Errorf("stderr = %q, want no manual-revocation advice for a token that is already gone", e.stderr)
+		}
+	})
+	t.Run("a service outage advises retrying later", func(t *testing.T) {
+		e := newEnv(t)
+		e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(503, map[string]any{"error": "down"}))
+		if err := e.machine().Logout(e.io()); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(e.stderr.String(), "retry `trajector logout` later") {
+			t.Errorf("stderr = %q, want retry-later guidance", e.stderr)
+		}
+	})
+}
+
+func TestPurgeRefusedByTheServiceDoesNotAdviseRetrying(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	e.service.Stub("POST", "/v1/data-deletions", fakeplatform.JSON(400, map[string]any{"error": "malformed"}))
+
+	err := e.machine().Disable(e.project, true, e.io())
+	if err == nil {
+		t.Fatal("a refused deletion request reported success")
+	}
+	if strings.Contains(err.Error(), "retry with") {
+		t.Errorf("err = %v, want no retry advice for a request that cannot succeed", err)
+	}
+	if !strings.Contains(err.Error(), "account page") {
+		t.Errorf("err = %v, want the account-page fallback", err)
+	}
+}
+
 func TestLogoutWhenNotPairedIsANoop(t *testing.T) {
 	e := newUnpairedEnv(t)
 	if err := e.machine().Logout(e.io()); err != nil {

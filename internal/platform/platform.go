@@ -28,6 +28,29 @@ const (
 	PairingExpired = "expired"
 )
 
+// StatusError reports a non-2xx answer from the service, carrying the
+// status and body so a caller can distinguish already-done from
+// try-again-later instead of guessing from a flattened string. Every
+// operation without a more specific error class returns it.
+type StatusError struct {
+	StatusCode int
+	Status     string
+	Method     string
+	Path       string
+	Body       []byte
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("platform: %s %s: %s", e.Method, e.Path, e.Status)
+}
+
+// Temporary reports whether retrying the same call later could
+// succeed: service-side failures and rate limits are temporary, client
+// errors are not.
+func (e *StatusError) Temporary() bool {
+	return e.StatusCode >= 500 || e.StatusCode == http.StatusTooManyRequests || e.StatusCode == http.StatusRequestTimeout
+}
+
 // Client calls the trajector service.
 type Client struct {
 	baseURL string
@@ -137,7 +160,7 @@ func (c *Client) call(method, path, bearer string, reqBody, respBody any) error 
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("platform: %s %s: %s", method, path, resp.Status)
+		return &StatusError{StatusCode: resp.StatusCode, Status: resp.Status, Method: method, Path: path, Body: data}
 	}
 	if respBody == nil {
 		return nil

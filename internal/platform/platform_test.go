@@ -2,7 +2,10 @@ package platform_test
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
@@ -125,10 +128,40 @@ func TestCallsIdentifyThisTrajectorBuild(t *testing.T) {
 	}
 }
 
-func TestNon2xxSurfacesAsError(t *testing.T) {
-	c, server := client(t)
-	server.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(503, map[string]any{"error": "down"}))
-	if err := c.RevokeDevice("dev-tok-fake"); err == nil {
-		t.Error("503 response did not fail")
+func TestNon2xxCarriesItsStatusAndBody(t *testing.T) {
+	t.Run("a 503 is temporary", func(t *testing.T) {
+		c, server := client(t)
+		server.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(503, map[string]any{"error": "down"}))
+
+		err := c.RevokeDevice("dev-tok-fake")
+		var status *platform.StatusError
+		if !errors.As(err, &status) {
+			t.Fatalf("err = %v, want a StatusError", err)
+		}
+		if status.StatusCode != 503 || !status.Temporary() {
+			t.Errorf("status = %d, Temporary = %v, want a temporary 503", status.StatusCode, status.Temporary())
+		}
+		if !strings.Contains(string(status.Body), "down") {
+			t.Errorf("body = %q, want the service's own words kept", status.Body)
+		}
+	})
+	t.Run("a 401 is permanent", func(t *testing.T) {
+		c, server := client(t)
+		server.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(401, map[string]any{"error": "unknown token"}))
+
+		err := c.RevokeDevice("dev-tok-fake")
+		var status *platform.StatusError
+		if !errors.As(err, &status) || status.StatusCode != 401 || status.Temporary() {
+			t.Errorf("err = %v, want a permanent 401 StatusError", err)
+		}
+	})
+}
+
+func TestPollIntervalFloorsMissingSuggestions(t *testing.T) {
+	if got := (platform.Pairing{}).PollInterval(); got != 2*time.Second {
+		t.Errorf("PollInterval with no suggestion = %v, want the 2s floor", got)
+	}
+	if got := (platform.Pairing{PollIntervalMS: 250}).PollInterval(); got != 250*time.Millisecond {
+		t.Errorf("PollInterval = %v, want the service's suggestion", got)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 )
 
@@ -50,6 +51,12 @@ func (m *Machine) Disable(projectDir string, purge bool, io IO) error {
 		return fmt.Errorf("%w: --purge needs one to authenticate the deletion request; run `trajector login` and retry `trajector disable --purge`", ErrNotPaired)
 	}
 	if err := m.deps.Platform.RequestDeletion(token, hash); err != nil {
+		var status *platform.StatusError
+		if errors.As(err, &status) && !status.Temporary() {
+			// Retrying the same request cannot succeed; do not tell the
+			// user to.
+			return fmt.Errorf("the project is disabled locally, but the service refused the deletion request: %w; request deletion from your account page", err)
+		}
 		return fmt.Errorf("the project is disabled locally, but the deletion request failed: %w; retry with `trajector disable --purge`", err)
 	}
 	fmt.Fprintln(io.Out, "Requested deletion of this project's uploaded, undelivered data.")

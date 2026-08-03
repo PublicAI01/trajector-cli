@@ -151,11 +151,11 @@ func classifyUploadFailure(resp *http.Response, body []byte) error {
 	case resp.StatusCode == http.StatusTooManyRequests:
 		return &RateLimitedError{RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusRequestTimeout:
-		return fmt.Errorf("platform: POST %s: %s", BatchesPath, resp.Status)
+		return &StatusError{StatusCode: resp.StatusCode, Status: resp.Status, Method: http.MethodPost, Path: BatchesPath, Body: body}
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		return &BatchRejectedError{Status: resp.Status, Details: trimDetails(body)}
 	default:
-		return fmt.Errorf("platform: POST %s: %s", BatchesPath, resp.Status)
+		return &StatusError{StatusCode: resp.StatusCode, Status: resp.Status, Method: http.MethodPost, Path: BatchesPath, Body: body}
 	}
 }
 
