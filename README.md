@@ -46,16 +46,20 @@ Design commitments:
 | Package | Responsibility |
 |---|---|
 | `internal/apiproxy` | The local proxy: forwards traffic, and records eligible calls inside one guarded region |
-| `internal/proxylife` | The proxy's life outside the process that runs it: start, run, probe, stop |
-| `internal/lifecycle` | Device and project consent: pairing, enable, disable, uninstall, session hooks |
+| `internal/proxylife` | The proxy as seen from outside its process: start, probe, flush, stop |
+| `internal/lifecycle` | Device and project consent, and the composition root: pairing, enable, disable, uninstall, session hooks, serving the proxy |
 | `internal/routing` | Which token routes where, and whether this exchange may be recorded |
 | `internal/consent` | The durable record of what the user agreed to |
 | `internal/capture` | Which calls are eligible, and reassembly of streamed responses |
 | `internal/envelope` | What a stored rawcall is: written, classified, and read back |
 | `internal/spool` | The bounded on-disk store between capture and upload |
+| `internal/redact` | Masking secrets on this machine before anything is uploaded |
+| `internal/batch` | A set of rawcalls prepared for one upload |
+| `internal/upload` | Draining the spool to the service in acknowledged batches |
 | `internal/claudesettings` | Reading and writing Claude Code's own settings files |
 | `internal/userdirs` | Where trajector's files live on this machine |
 | `internal/platform` | The client for the trajector service API |
-| `internal/tokenstore` | Small secrets, in the OS keyring or owner-only files |
+| `internal/tokenstore` | The device pairing secret, in the OS keyring or owner-only files |
+| `internal/fsatomic` | Atomic file writes, and updates serialized across processes |
 | `internal/cli` | argv, exit codes, and what the user reads |
 | `internal/harness` | Test doubles and sandboxes: a fake upstream, a fake service, a real proxy in a temp directory |

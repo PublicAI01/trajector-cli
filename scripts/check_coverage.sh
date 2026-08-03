@@ -3,7 +3,7 @@
 # lowered.
 set -eu
 
-REPO_MIN=75
+REPO_MIN=80
 CORE_MIN=85
 # Core packages (capture and SSE reassembly, redaction, routing, spool,
 # upload, consent lifecycle) are added here as they land.
