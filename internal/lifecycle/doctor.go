@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
-	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
@@ -169,26 +168,18 @@ func (m *Machine) doctorInjection(r *doctorReport, st ProjectStatus) error {
 	return nil
 }
 
-// doctorUpstream re-reads the user's own base-URL configuration and
-// updates the routing table when it moved, the same self-heal the
-// session hook performs.
+// doctorUpstream reconciles the recorded upstream, the same self-heal
+// the session hook performs, and reports what it did or could not do.
 func (m *Machine) doctorUpstream(r *doctorReport, st ProjectStatus) {
-	if key, found := claudesettings.UnsupportedChannel(st.Root, m.deps.Home, m.deps.Getenv); found {
-		r.problem("%s is set: Bedrock and Vertex channels are not supported, so this project's traffic is not being captured.", key)
-		return
+	want, moved, err := m.reconcileUpstream(st.Root, st.Upstream)
+	switch {
+	case want.unsupportedKey != "":
+		r.problem("%s is set: Bedrock and Vertex channels are not supported, so this project's traffic is not being captured.", want.unsupportedKey)
+	case err != nil:
+		r.problem("this project's base URL moved to %s but the routing table could not be updated: %v", want.upstream, err)
+	case moved:
+		r.fixed("updated this project's upstream to %s (its base-URL configuration moved)", want.upstream)
 	}
-	want := capture.Anthropic.OfficialUpstream
-	if external, _, found := claudesettings.ExternalBaseURL(st.Root, m.deps.Home, m.deps.Getenv); found {
-		want = external
-	}
-	if want == st.Upstream {
-		return
-	}
-	if err := m.routes.SetUpstream(st.Root, want); err != nil {
-		r.problem("this project's base URL moved to %s but the routing table could not be updated: %v", want, err)
-		return
-	}
-	r.fixed("updated this project's upstream to %s (its base-URL configuration moved)", want)
 }
 
 // doctorDiscoveryHint re-adds the user-level discovery hook a paired

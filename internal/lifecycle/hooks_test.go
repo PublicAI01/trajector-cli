@@ -96,6 +96,42 @@ func TestEnsureProxyFollowsUpstreamDrift(t *testing.T) {
 	}
 }
 
+func TestUnsupportedChannelIsReportedNotRewritten(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.environ["ANTHROPIC_BASE_URL"] = "https://relay.example.com"
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	// The user moves the project to Bedrock after enabling it. From here
+	// on there is one answer to "where should traffic go": the channel is
+	// unsupported, so nothing may rewrite what enable recorded.
+	delete(e.environ, "ANTHROPIC_BASE_URL")
+	e.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"
+
+	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.status().Upstream; got != "https://relay.example.com" {
+		t.Errorf("the session hook rewrote the upstream to %q", got)
+	}
+
+	e.stdout.Reset()
+	problems, err := e.machine().Doctor(e.project, e.io())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems == 0 {
+		t.Error("doctor found no problem on a Bedrock channel")
+	}
+	if !strings.Contains(e.stdout.String(), "CLAUDE_CODE_USE_BEDROCK") {
+		t.Errorf("doctor output does not name the Bedrock setting: %s", e.stdout)
+	}
+	if got := e.status().Upstream; got != "https://relay.example.com" {
+		t.Errorf("doctor rewrote the upstream to %q", got)
+	}
+}
+
 func TestEnsureProxyRefusesAForeignPortHolder(t *testing.T) {
 	e := newEnv(t)
 	e.occupyPort()

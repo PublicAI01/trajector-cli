@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
-	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
@@ -42,15 +41,12 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		return err
 	}
 
-	if key, found := claudesettings.UnsupportedChannel(root, m.deps.Home, m.deps.Getenv); found {
-		return fmt.Errorf("%s is set: Bedrock and Vertex channels are not supported and nothing was injected", key)
+	want := m.desiredUpstream(root)
+	if want.unsupportedKey != "" {
+		return fmt.Errorf("%s is set: Bedrock and Vertex channels are not supported and nothing was injected", want.unsupportedKey)
 	}
-
-	upstream := capture.Anthropic.OfficialUpstream
-	external, source, thirdParty := claudesettings.ExternalBaseURL(root, m.deps.Home, m.deps.Getenv)
-	if thirdParty {
-		upstream = external
-		fmt.Fprintf(io.Out, "Detected an existing base URL (%s): %s\n", source, external)
+	if want.external {
+		fmt.Fprintf(io.Out, "Detected an existing base URL (%s): %s\n", want.source, want.upstream)
 		fmt.Fprintln(io.Out, "Your traffic will keep flowing through it unchanged. Records from this")
 		fmt.Fprintln(io.Out, "project are marked as third-party origin; reward terms are the same")
 		fmt.Fprintln(io.Out, "regardless of origin.")
@@ -75,7 +71,7 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		return err
 	}
 
-	if err := m.installAndVerify(io, root, hash, upstream, settingsPath); err != nil {
+	if err := m.installAndVerify(io, root, hash, want.upstream, settingsPath); err != nil {
 		restoreErr := errors.Join(snap.restore(), m.routes.RestoreGrants(grants), m.consent.RestoreProject(decision))
 		if restoreErr != nil {
 			return fmt.Errorf("%w (rollback incomplete: %v)", err, restoreErr)

@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 
-	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
@@ -145,7 +144,8 @@ func (m *Machine) pauseIfAgreementStale(io IO) {
 // refreshUpstreamDrift re-resolves the user's own base-URL configuration
 // for a project and updates the routing table when it moved, so a
 // chained relay keeps working after the user reconfigures it. The hook's
-// own injected value is invisible here by design.
+// own injected value is invisible here by design; a hook has no voice,
+// so what it cannot fix silently it leaves for doctor to report.
 func (m *Machine) refreshUpstreamDrift(projectDir string) {
 	root, err := consent.CanonicalRoot(projectDir)
 	if err != nil {
@@ -155,13 +155,7 @@ func (m *Machine) refreshUpstreamDrift(projectDir string) {
 	if err != nil || !ok {
 		return
 	}
-	want := capture.Anthropic.OfficialUpstream
-	if external, _, found := claudesettings.ExternalBaseURL(root, m.deps.Home, m.deps.Getenv); found {
-		want = external
-	}
-	if want != grant.Upstream {
-		_ = m.routes.SetUpstream(root, want)
-	}
+	_, _, _ = m.reconcileUpstream(root, grant.Upstream)
 }
 
 // Discovery prints the one-time onboarding hint for a project that is
