@@ -581,75 +581,151 @@ func jsonlContentImpl(content string, redactor func(string) string) (string, err
 }
 
 // applyJSONReplacements applies collected (original, redacted) string pairs
-// to the raw JSON text, replacing JSON-encoded originals with their redacted forms.
-// Returns s unchanged if repls is empty.
+// to the raw JSON text, replacing the string tokens whose *decoded* value
+// matches a collected original. Returns s unchanged if repls is empty or if
+// nothing matched, preserving the original formatting byte for byte.
+//
+// Matching must be on the decoded value, never on a re-encoded form of the
+// original: collectJSONLReplacements works on values decoded by
+// encoding/json, while the raw text is free to spell any of them differently
+// — `—` for an em dash, `\/` for a slash, upper- or lower-case hex. A byte
+// search for one spelling silently misses the others, and a silent miss here
+// is a secret leaving the machine unmasked.
 func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 	if len(repls) == 0 {
 		return s, nil
 	}
+
+	// keyed replacements apply only to the value of that exact key; unkeyed
+	// ones apply to any string token, which is what the previous ReplaceAll
+	// did and what array elements (collected with an empty key) rely on.
+	keyed := make(map[string]map[string]string)
+	unkeyed := make(map[string]string, len(repls))
 	for _, r := range repls {
-		origJSON, err := jsonEncodeString(r.original)
-		if err != nil {
-			return "", err
-		}
 		replJSON, err := jsonEncodeString(r.redacted)
 		if err != nil {
 			return "", err
 		}
 		if r.key == "" {
-			s = strings.ReplaceAll(s, origJSON, replJSON)
+			unkeyed[r.original] = replJSON
 			continue
 		}
-		keyJSON, err := jsonEncodeString(r.key)
-		if err != nil {
-			return "", err
+		byValue := keyed[r.key]
+		if byValue == nil {
+			byValue = make(map[string]string)
+			keyed[r.key] = byValue
 		}
-		s = replaceKeyedJSONValue(s, keyJSON, origJSON, replJSON)
+		byValue[r.original] = replJSON
 	}
-	return s, nil
+
+	// The enclosing containers. The top of the stack tells a value token which
+	// key owns it; a token directly inside an array has no owning key, which is
+	// how array elements stay restricted to the unkeyed replacements.
+	type frame struct {
+		isObject bool
+		key      string
+	}
+	var stack []frame
+
+	var b strings.Builder
+	i, written := 0, 0
+	for i < len(s) {
+		switch s[i] {
+		case '{':
+			stack = append(stack, frame{isObject: true})
+			i++
+		case '[':
+			stack = append(stack, frame{})
+			i++
+		case '}', ']':
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			i++
+		case '"':
+			end, ok := jsonStringEnd(s, i)
+			if !ok {
+				// Unterminated string: the text is not the valid JSON the
+				// caller parsed. Leave the remainder alone rather than risk
+				// mangling it.
+				i = len(s)
+				continue
+			}
+			value, decoded := decodeJSONStringToken(s[i:end])
+			// In valid JSON only an object key can be followed by ':'.
+			isKey := false
+			if p := skipJSONWhitespace(s, end); p < len(s) && s[p] == ':' {
+				isKey = true
+			}
+			inObject := len(stack) > 0 && stack[len(stack)-1].isObject
+			if isKey && inObject && decoded {
+				stack[len(stack)-1].key = value
+			}
+			if decoded {
+				replJSON, found := "", false
+				if !isKey && inObject {
+					replJSON, found = keyed[stack[len(stack)-1].key][value]
+				}
+				if !found {
+					replJSON, found = unkeyed[value]
+				}
+				if found {
+					if written == 0 {
+						b.Grow(len(s))
+					}
+					b.WriteString(s[written:i])
+					b.WriteString(replJSON)
+					written = end
+				}
+			}
+			i = end
+		default:
+			i++
+		}
+	}
+	if written == 0 {
+		return s, nil
+	}
+	b.WriteString(s[written:])
+	return b.String(), nil
 }
 
-// replaceKeyedJSONValue replaces every occurrence of origJSON that follows
-// keyJSON + optional whitespace + ':' + optional whitespace. Restricts
-// substitution to value positions so a key's own redacted text is not
-// rewritten when it collides with another field's value.
-func replaceKeyedJSONValue(s, keyJSON, origJSON, replJSON string) string {
-	if !strings.Contains(s, keyJSON) {
-		return s
+// jsonStringEnd returns the index just past the closing quote of the JSON
+// string token that starts at s[start], which must be '"'.
+func jsonStringEnd(s string, start int) (int, bool) {
+	for i := start + 1; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++ // skip the escaped byte; the loop's i++ steps past it
+		case '"':
+			return i + 1, true
+		}
 	}
-	var b strings.Builder
-	b.Grow(len(s))
-	i := 0
-	for i < len(s) {
-		j := strings.Index(s[i:], keyJSON)
-		if j < 0 {
-			b.WriteString(s[i:])
-			break
-		}
-		keyEnd := i + j + len(keyJSON)
-		b.WriteString(s[i : i+j])
-		b.WriteString(keyJSON)
-		p := keyEnd
-		for p < len(s) && isJSONWhitespace(s[p]) {
-			p++
-		}
-		if p >= len(s) || s[p] != ':' {
-			i = keyEnd
-			continue
-		}
-		p++
-		for p < len(s) && isJSONWhitespace(s[p]) {
-			p++
-		}
-		if p+len(origJSON) <= len(s) && s[p:p+len(origJSON)] == origJSON {
-			b.WriteString(s[keyEnd:p])
-			b.WriteString(replJSON)
-			i = p + len(origJSON)
-			continue
-		}
-		i = keyEnd
+	return 0, false
+}
+
+// decodeJSONStringToken decodes a complete JSON string token (quotes included)
+// to its Go string value. Tokens without escapes — the overwhelming majority —
+// take a substring instead of a round trip through encoding/json.
+func decodeJSONStringToken(tok string) (string, bool) {
+	if len(tok) < 2 {
+		return "", false
 	}
-	return b.String()
+	if strings.IndexByte(tok, '\\') < 0 {
+		return tok[1 : len(tok)-1], true
+	}
+	var v string
+	if err := json.Unmarshal([]byte(tok), &v); err != nil {
+		return "", false
+	}
+	return v, true
+}
+
+func skipJSONWhitespace(s string, i int) int {
+	for i < len(s) && isJSONWhitespace(s[i]) {
+		i++
+	}
+	return i
 }
 
 func isJSONWhitespace(c byte) bool {
