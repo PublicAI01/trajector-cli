@@ -176,6 +176,58 @@ func RejectedCount(rejectedDir string) (int, error) {
 	return count, nil
 }
 
+// Requeue moves one quarantined batch's records back into the spool so
+// the next flush repacks them under a fresh batch id (the rejected id
+// was never acknowledged, so no idempotency is at stake). Each record
+// is spooled before its quarantined copy is removed, mirroring
+// quarantine's crash safety in reverse. A record that no longer parses
+// as a rawcall envelope cannot re-enter a spool whose index derives
+// from the envelope: it stays quarantined with reason.json while every
+// readable record still moves, and the error reports what stayed.
+func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, int, error) {
+	dir := filepath.Join(rejectedDir, batchID)
+	files, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Rejection{}, 0, fmt.Errorf("no rejected batch %s", batchID)
+	}
+	if err != nil {
+		return Rejection{}, 0, err
+	}
+	var rej Rejection
+	readJSON(filepath.Join(dir, reasonName), &rej)
+
+	moved := 0
+	var stuck []error
+	for _, f := range files {
+		name := f.Name()
+		if f.IsDir() || name == reasonName || filepath.Ext(name) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			stuck = append(stuck, err)
+			continue
+		}
+		env, err := envelope.Parse(data)
+		if err != nil {
+			stuck = append(stuck, fmt.Errorf("record %s is not a readable rawcall and stays quarantined: %w", name, err))
+			continue
+		}
+		if err := sp.Write(env); err != nil {
+			return rej, moved, err
+		}
+		if err := os.Remove(path); err != nil {
+			return rej, moved, err
+		}
+		moved++
+	}
+	if len(stuck) > 0 {
+		return rej, moved, errors.Join(stuck...)
+	}
+	return rej, moved, os.RemoveAll(dir)
+}
+
 // errRejected is what a flush returns after quarantining a batch: the
 // flush stops, but the queue behind the batch is no longer blocked.
 type errRejected struct {
