@@ -12,7 +12,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
-	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -44,9 +43,7 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 	// prose to be safe against observed values.
 	redact.ConfigurePII(redact.PIIEmail, redact.PIIPhone)
 	layout := m.deps.Layout
-	// The spool quota is whatever the service last said in the upload
-	// handshake; a machine that never uploaded runs on the default.
-	sp, err := spool.Create(layout.SpoolDir(), upload.LoadHandshake(layout.UploadDir()).SpoolQuotaBytes)
+	sp, err := m.spool()
 	if err != nil {
 		return fmt.Errorf("opening spool: %w", err)
 	}

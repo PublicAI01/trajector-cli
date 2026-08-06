@@ -9,7 +9,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
-	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -212,8 +211,7 @@ func (m *Machine) doctorDiscoveryHint(r *doctorReport) {
 
 // doctorSpool verifies the capture spool accepts writes within quota.
 func (m *Machine) doctorSpool(r *doctorReport) error {
-	quota := upload.LoadHandshake(m.deps.Layout.UploadDir()).SpoolQuotaBytes
-	sp, err := spool.Create(m.deps.Layout.SpoolDir(), quota)
+	sp, err := m.spool()
 	if err != nil {
 		r.problem("the capture spool at %s is not usable: %v", m.deps.Layout.SpoolDir(), err)
 		return nil
@@ -263,7 +261,7 @@ func (m *Machine) doctorRejected(r *doctorReport) error {
 // parses the version — it cannot judge whether this build satisfies it
 // — so both fields are shown verbatim and count toward nothing.
 func (m *Machine) doctorService(r *doctorReport) {
-	h := upload.LoadHandshake(m.deps.Layout.UploadDir())
+	h := m.handshake()
 	if h.MinClientVersion != "" {
 		r.note("the service requires client version %s or newer; this build is %s", h.MinClientVersion, m.deps.Version)
 	}

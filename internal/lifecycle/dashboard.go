@@ -6,7 +6,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/capture"
-	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -63,8 +62,7 @@ func (m *Machine) Status(dir string, io IO) error {
 		fmt.Fprintln(io.Out, "  Not running; it starts on demand with the next session.")
 	}
 
-	handshake := upload.LoadHandshake(m.deps.Layout.UploadDir())
-	sp, err := spool.Open(m.deps.Layout.SpoolDir(), handshake.SpoolQuotaBytes)
+	sp, err := m.spool()
 	if err != nil {
 		return err
 	}
@@ -94,6 +92,7 @@ func (m *Machine) Status(dir string, io IO) error {
 		fmt.Fprintln(io.Out, "  Run `trajector doctor` to inspect and requeue them.")
 	}
 
+	handshake := m.handshake()
 	if handshake.MinClientVersion != "" || handshake.Notice != "" {
 		fmt.Fprintln(io.Out, "\nService")
 		if handshake.MinClientVersion != "" {

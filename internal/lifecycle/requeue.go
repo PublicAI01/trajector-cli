@@ -3,17 +3,12 @@ package lifecycle
 import (
 	"errors"
 	"fmt"
-	"math"
 
-	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 // RequeueRejected moves quarantined batches back into the spool so the
-// next flush uploads them again. The user asked for this by name, so
-// the spool quota does not apply: the quota bounds what recording may
-// accumulate, not what already-captured data may return, and refusing
-// here would strand records that can only leave through the spool.
+// next flush uploads them again.
 func (m *Machine) RequeueRejected(batchID string, all bool, io IO) error {
 	ids := []string{batchID}
 	if all {
@@ -31,7 +26,7 @@ func (m *Machine) RequeueRejected(batchID string, all bool, io IO) error {
 		}
 	}
 
-	sp, err := spool.Create(m.deps.Layout.SpoolDir(), math.MaxInt64)
+	sp, err := m.spoolUnbounded()
 	if err != nil {
 		return err
 	}

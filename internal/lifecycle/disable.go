@@ -5,7 +5,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -52,7 +51,11 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 		return w, fmt.Errorf("recording withdrawal: %w", err)
 	}
 
-	if w.spooled, err = deleteProjectRawcalls(m.deps.Layout.SpoolDir(), st.Hash); err != nil {
+	sp, err := m.spool()
+	if err != nil {
+		return w, fmt.Errorf("deleting local unuploaded data: %w", err)
+	}
+	if w.spooled, err = sp.DeleteProject(st.Hash); err != nil {
 		return w, fmt.Errorf("deleting local unuploaded data: %w", err)
 	}
 	// Rejected batches are still local unuploaded data; withdrawal must
@@ -66,12 +69,4 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 	}
 	fmt.Fprintln(io.Out, "This project no longer contributes data.")
 	return w, nil
-}
-
-func deleteProjectRawcalls(dir, projectIDHash string) (int, error) {
-	sp, err := spool.Open(dir, 0)
-	if err != nil {
-		return 0, err
-	}
-	return sp.DeleteProject(projectIDHash)
 }
