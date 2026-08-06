@@ -28,11 +28,6 @@ const (
 	DefaultFlushAge         = 24 * time.Hour
 )
 
-// maxRetryAfter caps how long a Retry-After can silence automatic
-// flushes, so a service misconfiguration cannot mute every client
-// indefinitely.
-const maxRetryAfter = time.Hour
-
 // Outcome names the terminal states of one Flush call.
 type Outcome string
 
@@ -303,12 +298,9 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 		u.upgradeRequired = true
 		u.noteUpgradeRequired(upgrade.MinClientVersion)
 	case errors.As(err, &limited):
-		pause := limited.RetryAfter
-		if pause > maxRetryAfter {
-			pause = maxRetryAfter
-		}
-		if pause > 0 {
-			u.notBefore = u.deps.Now().Add(pause)
+		// RetryAfter arrives already capped at platform.MaxRetryAfter.
+		if limited.RetryAfter > 0 {
+			u.notBefore = u.deps.Now().Add(limited.RetryAfter)
 		}
 	case errors.As(err, &rejected):
 		// The service says this batch can never be accepted. Move its

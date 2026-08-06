@@ -52,8 +52,16 @@ func (e *UpgradeRequiredError) Error() string {
 	return "the service requires client version " + e.MinClientVersion + " or newer"
 }
 
-// RateLimitedError reports a 429. RetryAfter is the service's requested
-// pause, zero when it named none.
+// MaxRetryAfter caps how long a Retry-After can silence automatic
+// flushes, so a service misconfiguration cannot mute every client
+// indefinitely. The cap is applied once, where the 429 is classified,
+// so the pause the uploader takes and the one the error message reports
+// can never drift apart.
+const MaxRetryAfter = time.Hour
+
+// RateLimitedError reports a 429. RetryAfter is the pause the client
+// will actually take — the service's request capped at MaxRetryAfter —
+// and zero when the service named none.
 type RateLimitedError struct {
 	RetryAfter time.Duration
 }
@@ -149,7 +157,11 @@ func classifyUploadFailure(resp *http.Response, body []byte) error {
 		_ = json.Unmarshal(body, &deny)
 		return &UpgradeRequiredError{MinClientVersion: deny.MinClientVersion}
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return &RateLimitedError{RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
+		pause := retryAfter(resp.Header.Get("Retry-After"))
+		if pause > MaxRetryAfter {
+			pause = MaxRetryAfter
+		}
+		return &RateLimitedError{RetryAfter: pause}
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusRequestTimeout:
 		return &StatusError{StatusCode: resp.StatusCode, Status: resp.Status, Method: http.MethodPost, Path: BatchesPath, Body: body}
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
