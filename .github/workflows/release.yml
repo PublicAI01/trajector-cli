@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  # A tag can be pushed at a commit CI never ran on. Nothing is published
+  # until the same checks that guard main have passed on the tagged tree.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The attestation is what lets a user prove a downloaded archive was
+      # built by this workflow from this repository's source.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/trajector_checksums.txt

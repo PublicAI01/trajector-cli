@@ -1,0 +1,48 @@
+# Release pipeline configuration. Builds are reproducible on purpose
+# (-trimpath, commit timestamps): the provenance attestation is only as
+# convincing as the build is repeatable.
+version: 2
+
+project_name: trajector
+
+builds:
+  - main: ./cmd/trajector
+    binary: trajector
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/PublicAI01/trajector-cli/internal/cli.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - name_template: "trajector_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - THIRD_PARTY_NOTICES
+      - README.md
+      - PRIVACY.md
+
+# The README's verification instructions name this file; keep them in sync.
+checksum:
+  name_template: trajector_checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+
+# Stated explicitly so validation does not depend on a configured git
+# remote; this repository builds locally long before it is pushed.
+release:
+  github:
+    owner: PublicAI01
+    name: trajector-cli

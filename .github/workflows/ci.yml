@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Callable so the release workflow gates on these exact checks rather
+  # than a second copy of them that can drift.
+  workflow_call:
 
 permissions:
   contents: read
@@ -30,6 +33,23 @@ jobs:
         run: ./scripts/check_vocabulary.sh
       - name: tests with coverage gate
         run: ./scripts/check_coverage.sh
+
+  release-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          install-only: true
+      - name: goreleaser config check
+        run: goreleaser check
+      - name: snapshot build
+        run: goreleaser build --snapshot --clean
 
   build-and-test:
     strategy:
