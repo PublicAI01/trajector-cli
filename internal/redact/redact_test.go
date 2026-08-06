@@ -1,11 +1,12 @@
-package redact
+package redact_test
 
 import (
 	"bytes"
 	"encoding/json"
-	"slices"
 	"strings"
 	"testing"
+
+	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
 
 // highEntropySecret is a string with Shannon entropy > 4.5 that will trigger redaction.
@@ -28,49 +29,101 @@ func openSSHPrivateKeyMarker(kind string) string {
 	return "-----" + kind + " " + "OPEN" + "SSH" + " " + "PRIVATE" + " KEY-----"
 }
 
+// redactedString feeds raw text through JSONLBytes. Text that is not
+// valid JSON takes the raw-line path, so this exercises the full
+// layered scan the way a malformed transcript line would.
+func redactedString(t testing.TB, s string) string {
+	t.Helper()
+	rb, err := redact.JSONLBytes([]byte(s))
+	if err != nil {
+		t.Fatalf("JSONLBytes: %v", err)
+	}
+	return string(rb.Bytes())
+}
+
+// redactedField wraps s as the "content" field of a JSON document, runs
+// JSONLBytes, and returns the decoded value of "content" afterwards.
+// This drives the production field-aware path end to end.
+func redactedField(t testing.TB, s string) string {
+	t.Helper()
+	doc, err := json.Marshal(map[string]string{"content": s})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb, err := redact.JSONLBytes(doc)
+	if err != nil {
+		t.Fatalf("JSONLBytes: %v", err)
+	}
+	var out map[string]string
+	if err := json.Unmarshal(rb.Bytes(), &out); err != nil {
+		t.Fatalf("redacted output is not valid JSON: %v", err)
+	}
+	return out["content"]
+}
+
 type stringRedactionCase struct {
 	name  string
 	input string
 	want  string
 }
 
-func assertStringRedactionCases(t *testing.T, tests []stringRedactionCase) {
+// assertFieldRedactionCases runs each case's input through the field-aware
+// JSONL path via redactedField.
+func assertFieldRedactionCases(t *testing.T, tests []stringRedactionCase) {
+	t.Helper()
+	assertRedactionCases(t, redactedField, tests)
+}
+
+// assertRawRedactionCases runs each case's input through the raw-line
+// fall-back path via redactedString.
+func assertRawRedactionCases(t *testing.T, tests []stringRedactionCase) {
+	t.Helper()
+	assertRedactionCases(t, redactedString, tests)
+}
+
+func assertRedactionCases(t *testing.T, fn func(testing.TB, string) string, tests []stringRedactionCase) {
 	t.Helper()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := String(tt.input)
+			got := fn(t, tt.input)
 			if got != tt.want {
-				t.Errorf("String(%q) = %q, want %q", tt.input, got, tt.want)
+				t.Errorf("redacted %q = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestBytes_NoSecrets(t *testing.T) {
+func TestJSONLBytes_RawTextNoSecrets(t *testing.T) {
 	input := []byte("hello world, this is normal text")
-	result := Bytes(input)
-	if string(result) != string(input) {
-		t.Errorf("expected unchanged input, got %q", result)
+	result, err := redact.JSONLBytes(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(result.Bytes()) != string(input) {
+		t.Errorf("expected unchanged input, got %q", result.Bytes())
 	}
 	// Should return the original slice when no changes
-	if &result[0] != &input[0] {
+	if &result.Bytes()[0] != &input[0] {
 		t.Error("expected same underlying slice when no redaction needed")
 	}
 }
 
-func TestBytes_WithSecret(t *testing.T) {
+func TestJSONLBytes_RawTextWithSecret(t *testing.T) {
 	input := []byte("my key is " + highEntropySecret + " ok")
-	result := Bytes(input)
+	result, err := redact.JSONLBytes(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	expected := []byte("my key is REDACTED ok")
-	if !bytes.Equal(result, expected) {
-		t.Errorf("got %q, want %q", result, expected)
+	if !bytes.Equal(result.Bytes(), expected) {
+		t.Errorf("got %q, want %q", result.Bytes(), expected)
 	}
 }
 
 func TestJSONLBytes_NoSecrets(t *testing.T) {
 	input := []byte(`{"type":"text","content":"hello"}`)
-	result, err := JSONLBytes(input)
+	result, err := redact.JSONLBytes(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -84,7 +137,7 @@ func TestJSONLBytes_NoSecrets(t *testing.T) {
 
 func TestJSONLBytes_WithSecret(t *testing.T) {
 	input := []byte(`{"type":"text","content":"key=` + highEntropySecret + `"}`)
-	result, err := JSONLBytes(input)
+	result, err := redact.JSONLBytes(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,7 +150,7 @@ func TestJSONLBytes_WithSecret(t *testing.T) {
 func TestRedactedBytes_Bytes(t *testing.T) {
 	t.Parallel()
 	input := []byte(`{"type":"text","content":"hello"}`)
-	rb := AlreadyRedacted(input)
+	rb := redact.AlreadyRedacted(input)
 	if !bytes.Equal(rb.Bytes(), input) {
 		t.Errorf("Bytes() = %q, want %q", rb.Bytes(), input)
 	}
@@ -106,7 +159,7 @@ func TestRedactedBytes_Bytes(t *testing.T) {
 func TestRedactedBytes_Len(t *testing.T) {
 	t.Parallel()
 	input := []byte(`some data`)
-	rb := AlreadyRedacted(input)
+	rb := redact.AlreadyRedacted(input)
 	if rb.Len() != len(input) {
 		t.Errorf("Len() = %d, want %d", rb.Len(), len(input))
 	}
@@ -115,37 +168,31 @@ func TestRedactedBytes_Len(t *testing.T) {
 func TestAlreadyRedacted(t *testing.T) {
 	t.Parallel()
 	input := []byte(`some data`)
-	rb := AlreadyRedacted(input)
+	rb := redact.AlreadyRedacted(input)
 	if !bytes.Equal(rb.Bytes(), input) {
 		t.Errorf("AlreadyRedacted() = %q, want %q", rb.Bytes(), input)
 	}
 }
 
-func TestJSONLContent_TopLevelArray(t *testing.T) {
+func TestJSONLBytes_TopLevelArray(t *testing.T) {
 	// Top-level JSON arrays are valid JSONL and should be redacted.
 	input := `["` + highEntropySecret + `","normal text"]`
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 	expected := `["REDACTED","normal text"]`
 	if result != expected {
 		t.Errorf("got %q, want %q", result, expected)
 	}
 }
 
-func TestJSONLContent_TopLevelArrayNoSecrets(t *testing.T) {
+func TestJSONLBytes_TopLevelArrayNoSecrets(t *testing.T) {
 	input := `["hello","world"]`
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 	if result != input {
 		t.Errorf("expected unchanged input, got %q", result)
 	}
 }
 
-func TestJSONLContent_MultipleObjects_AllRedacted(t *testing.T) {
+func TestJSONLBytes_MultipleObjects_AllRedacted(t *testing.T) {
 	t.Parallel()
 	// Regression test: JSONL with multiple top-level JSON objects must redact
 	// secrets in ALL objects, not just the first. The single-JSON fast path must
@@ -154,10 +201,7 @@ func TestJSONLContent_MultipleObjects_AllRedacted(t *testing.T) {
 {"content":"key=` + highEntropySecret + `","id":"def"}
 {"content":"also safe","id":"ghi"}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 
 	// The secret in the second line should be redacted.
 	if strings.Contains(result, highEntropySecret) {
@@ -183,35 +227,24 @@ func TestJSONLContent_MultipleObjects_AllRedacted(t *testing.T) {
 	}
 }
 
-func TestJSONLContent_InvalidJSONLine(t *testing.T) {
+func TestJSONLBytes_InvalidJSONLine(t *testing.T) {
 	// Lines that aren't valid JSON should be processed with normal string redaction.
 	input := `{"type":"text", "invalid ` + highEntropySecret + " json"
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 	expected := `{"type":"text", "invalid REDACTED json`
 	if result != expected {
 		t.Errorf("got %q, want %q", result, expected)
 	}
 }
 
-func TestCollectJSONLReplacements_Succeeds(t *testing.T) {
-	obj := map[string]any{
-		"content": "token=" + highEntropySecret,
-	}
-	repls := collectJSONLReplacements(obj)
-	// expect one replacement for high-entropy secret
-	want := []jsonReplacement{{key: "content", original: "token=" + highEntropySecret, redacted: "REDACTED"}}
-	if !slices.Equal(repls, want) {
-		t.Errorf("got %q, want %q", repls, want)
-	}
-}
-
-func TestShouldSkipJSONLField(t *testing.T) {
+func TestJSONLBytes_FieldSkipPolicy(t *testing.T) {
+	t.Parallel()
+	// For each key, a document {"<key>":"<high-entropy secret>"} is run through
+	// JSONLBytes. Protected keys (signatures, IDs, paths) must keep the value
+	// verbatim; every other key must have it masked.
 	tests := []struct {
-		key  string
-		want bool
+		key     string
+		skipped bool
 	}{
 		// Fields ending in "id" should be skipped.
 		{"id", true},
@@ -253,22 +286,35 @@ func TestShouldSkipJSONLField(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
-			got := shouldSkipJSONLField(tt.key)
-			if got != tt.want {
-				t.Errorf("shouldSkipJSONLField(%q) = %v, want %v", tt.key, got, tt.want)
+			t.Parallel()
+			doc, err := json.Marshal(map[string]string{tt.key: highEntropySecret})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rb, err := redact.JSONLBytes(doc)
+			if err != nil {
+				t.Fatalf("JSONLBytes: %v", err)
+			}
+			var out map[string]string
+			if err := json.Unmarshal(rb.Bytes(), &out); err != nil {
+				t.Fatalf("redacted output is not valid JSON: %v", err)
+			}
+			want := "REDACTED"
+			if tt.skipped {
+				want = highEntropySecret
+			}
+			if out[tt.key] != want {
+				t.Errorf("value of %q = %q, want %q", tt.key, out[tt.key], want)
 			}
 		})
 	}
 }
 
-func TestJSONLContent_SkippedFieldValueCollision(t *testing.T) {
+func TestJSONLBytes_SkippedFieldValueCollision(t *testing.T) {
 	t.Parallel()
 	input := `{"session_id":"` + highEntropySecret + `","content":"` + highEntropySecret + `"}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 
 	if !strings.Contains(result, `"session_id":"`+highEntropySecret+`"`) {
 		t.Fatalf("expected skipped session_id to be preserved, got: %s", result)
@@ -287,11 +333,7 @@ func TestJSONLBytes_ArrayElementCollisionPreservesProtectedFields(t *testing.T) 
 	// rewritten. Only the array copy is masked.
 	input := `{"file_path":"` + highEntropySecret + `","cwd":"` + highEntropySecret + `","thinkingSignature":"` + highEntropySecret + `","session_id":"` + highEntropySecret + `","attachments":["` + highEntropySecret + `"]}`
 
-	result, err := JSONLBytes([]byte(input))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	got := string(result.Bytes())
+	got := redactedString(t, input)
 	for _, field := range []string{"file_path", "cwd", "thinkingSignature", "session_id"} {
 		if !strings.Contains(got, `"`+field+`":"`+highEntropySecret+`"`) {
 			t.Errorf("protected field %q was rewritten: %s", field, got)
@@ -309,11 +351,7 @@ func TestJSONLBytes_ArrayUnderSkippedKeyPreserved(t *testing.T) {
 	// the same value is masked in an unprotected position.
 	input := `{"session_ids":["` + highEntropySecret + `"],"content":"` + highEntropySecret + `"}`
 
-	result, err := JSONLBytes([]byte(input))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	got := string(result.Bytes())
+	got := redactedString(t, input)
 	if !strings.Contains(got, `"session_ids":["`+highEntropySecret+`"]`) {
 		t.Errorf("element of protected ids array was rewritten: %s", got)
 	}
@@ -329,11 +367,7 @@ func TestJSONLBytes_ObjectKeyNeverReplaced(t *testing.T) {
 	// shape instead of hiding a secret.
 	input := `{"items":["` + highEntropySecret + `"],"` + highEntropySecret + `":"safe"}`
 
-	result, err := JSONLBytes([]byte(input))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	got := string(result.Bytes())
+	got := redactedString(t, input)
 	if !strings.Contains(got, `"`+highEntropySecret+`":"safe"`) {
 		t.Errorf("object key was rewritten: %s", got)
 	}
@@ -342,30 +376,24 @@ func TestJSONLBytes_ObjectKeyNeverReplaced(t *testing.T) {
 	}
 }
 
-func TestJSONLContent_PreservesThinkingSignature(t *testing.T) {
+func TestJSONLBytes_PreservesThinkingSignature(t *testing.T) {
 	t.Parallel()
 	// Extended-thinking signatures are stored under keys like
 	// "thinkingSignature". Their base64 value is high-entropy; redacting it
 	// corrupts the signature, which must be preserved verbatim.
 	input := `{"type":"thinking","thinking":"plan","thinkingSignature":"` + highEntropySecret + `"}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 	if !strings.Contains(result, `"thinkingSignature":"`+highEntropySecret+`"`) {
 		t.Fatalf("expected thinkingSignature to be preserved verbatim, got: %s", result)
 	}
 }
 
-func TestString_PatternDetection(t *testing.T) {
-	// These secrets have entropy below 4.5 so entropy-only detection misses them.
-	// Betterleaks pattern matching should catch them.
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
+func TestPatternDetection(t *testing.T) {
+	// These secrets have entropy ~3.9, below the 4.5 threshold, so
+	// entropy-only detection misses them. Betterleaks pattern matching
+	// should catch them.
+	assertFieldRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "AWS access key (entropy ~3.9, below 4.5 threshold)",
 			input: "key=AKIAYRWQG5EJLPZLBYNP",
@@ -381,23 +409,7 @@ func TestString_PatternDetection(t *testing.T) {
 			input: "key=AKIAYRWQG5EJLPZLBYNPAKIAYRWQG5EJLPZLBYNP",
 			want:  "key=REDACTED",
 		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Verify entropy is below threshold (proving entropy-only would miss this).
-			for _, loc := range secretPattern.FindAllStringIndex(tt.input, -1) {
-				e := shannonEntropy(tt.input[loc[0]:loc[1]])
-				if e > entropyThreshold {
-					t.Fatalf("test secret has entropy %.2f > %.1f; this test is meant for low-entropy secrets", e, entropyThreshold)
-				}
-			}
-
-			got := String(tt.input)
-			if got != tt.want {
-				t.Errorf("String(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
+	})
 }
 
 // supabaseSecretPrefix, supabasePersonalPrefix, and supabasePublishablePrefix
@@ -410,22 +422,23 @@ func supabaseSecretPrefix() string      { return "sb" + "_secret_" }
 func supabasePersonalPrefix() string    { return "sb" + "p_" }
 func supabasePublishablePrefix() string { return "sb" + "_publishable_" }
 
-// TestString_SupabaseProviderTokens covers issue #1716: Supabase sb_secret_
+// TestSupabaseProviderTokens covers issue #1716: Supabase sb_secret_
 // API keys and sbp_ personal access tokens are low-entropy and, captured in
-// isolation, are missed by the entropy layer (threshold 4.5). betterleaks
-// coverage differs per prefix: its sb_secret_ rule is a composite rule that
-// only fires when a *.supabase.co URL is co-present, so a bare sb_secret_
-// value never reaches its filter at all; its sbp_ rule fires standalone but
-// requires an exact 40-character lowercase body, so bodies of another length
-// (like the probe values below) never match its regex regardless of entropy.
-// The deterministic provider-prefix layer must catch both regardless of
-// entropy, body length, or the surrounding variable name.
-func TestString_SupabaseProviderTokens(t *testing.T) {
+// isolation, are missed by the entropy layer (threshold 4.5; the issue reports
+// entropy 4.199 for the sb_secret_ probe value). betterleaks coverage differs
+// per prefix: its sb_secret_ rule is a composite rule that only fires when a
+// *.supabase.co URL is co-present, so a bare sb_secret_ value never reaches
+// its filter at all; its sbp_ rule fires standalone but requires an exact
+// 40-character lowercase body, so bodies of another length (like the probe
+// values below) never match its regex regardless of entropy. The deterministic
+// provider-prefix layer must catch both regardless of entropy, body length, or
+// the surrounding variable name.
+func TestSupabaseProviderTokens(t *testing.T) {
 	t.Parallel()
 
-	secret := supabaseSecretPrefix() + "probe_20260710_7f91c2d8e4a6b3f0" // entropy 4.199
+	secret := supabaseSecretPrefix() + "probe_20260710_7f91c2d8e4a6b3f0" // entropy 4.199, below the 4.5 threshold
 	realSecret := supabaseSecretPrefix() + "9uM4GhB0STF5R4K3HxQtlg_bzWW6DRj"
-	sbpToken := supabasePersonalPrefix() + "test_probe_20260710_test_probe_2026071"
+	sbpToken := supabasePersonalPrefix() + "test_probe_20260710_test_probe_2026071" // also below the entropy threshold
 	// Real Supabase key bodies are base64url, which includes '-'. No other
 	// fixture in this test contains a hyphen, so the charset's '-' member is
 	// otherwise unpinned: narrowing [A-Za-z0-9_-] / [a-z0-9_-] to drop the
@@ -436,15 +449,7 @@ func TestString_SupabaseProviderTokens(t *testing.T) {
 	secretWithHyphen := supabaseSecretPrefix() + "probe-20260710-7f91c2d8e4a6b3f0"
 	sbpTokenWithHyphen := supabasePersonalPrefix() + "probe-20260710-7f91c2d8e4a6b3f0"
 
-	// Both probe values sit below the entropy threshold, proving entropy-only
-	// detection would miss them (the issue reports entropy 4.199 for sb_secret_).
-	for _, low := range []string{secret, sbpToken} {
-		if e := shannonEntropy(low); e > entropyThreshold {
-			t.Fatalf("value %q has entropy %.3f > %.1f; not a low-entropy regression case", low, e, entropyThreshold)
-		}
-	}
-
-	assertStringRedactionCases(t, []stringRedactionCase{
+	assertFieldRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "sb_secret_ standalone (issue #1716 repro value)",
 			input: secret,
@@ -462,7 +467,7 @@ func TestString_SupabaseProviderTokens(t *testing.T) {
 		},
 		{
 			// Canonical .env form. The chosen token value is low-entropy
-			// (quoting has no effect on secretPattern matching), so the
+			// (quoting has no effect on entropy-layer matching), so the
 			// entropy layer misses it, isolating the deterministic provider
 			// layer.
 			name:  "sb_secret_ in env-style double-quoted assignment",
@@ -502,7 +507,7 @@ func TestString_SupabaseProviderTokens(t *testing.T) {
 	})
 }
 
-// TestString_SupabaseProviderTokenLengthBoundaries pins the {20,} body-length
+// TestSupabaseProviderTokenLengthBoundaries pins the {20,} body-length
 // floor shared by both provider patterns as an explicit boundary rather than
 // an emergent property of an unrelated fixture: a body of exactly 20 chars
 // must redact, and a body of exactly 19 chars must be preserved. Before this
@@ -510,7 +515,7 @@ func TestString_SupabaseProviderTokens(t *testing.T) {
 // (sb_secret_) happening to have a 20-char body, with no equivalent coverage
 // for sbp_ at all. Each case fails if either pattern's minimum is tightened
 // to {21,}.
-func TestString_SupabaseProviderTokenLengthBoundaries(t *testing.T) {
+func TestSupabaseProviderTokenLengthBoundaries(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -526,7 +531,7 @@ func TestString_SupabaseProviderTokenLengthBoundaries(t *testing.T) {
 	sbp20 := supabasePersonalPrefix() + body20
 	sbp19 := supabasePersonalPrefix() + body19
 
-	assertStringRedactionCases(t, []stringRedactionCase{
+	assertFieldRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "sb_secret_ with exactly 20-char body redacts",
 			input: secret20,
@@ -550,23 +555,23 @@ func TestString_SupabaseProviderTokenLengthBoundaries(t *testing.T) {
 	})
 }
 
-// TestString_SupabaseProviderTokenOverRedactionGuards pins that the
+// TestSupabaseProviderTokenOverRedactionGuards pins that the
 // deterministic provider layer does not over-redact. Publishable keys are
 // designed to be embedded in client code and are intentionally not targeted by
 // this layer (a low-entropy publishable value therefore passes through it; a
 // high-entropy real one would still be caught by the entropy layer). A bare
 // prefix or a prefix with a too-short body is not a credential.
-func TestString_SupabaseProviderTokenOverRedactionGuards(t *testing.T) {
+func TestSupabaseProviderTokenOverRedactionGuards(t *testing.T) {
 	t.Parallel()
 
 	publishable := supabasePublishablePrefix() + "probe_20260710_7f91c2d8e4a6b3f0"
 	shortSecret := supabaseSecretPrefix() + "short"
 	shortToken := supabasePersonalPrefix() + "short"
 
-	assertStringRedactionCases(t, []stringRedactionCase{
+	assertFieldRedactionCases(t, []stringRedactionCase{
 		{
 			// The publishable fixture is low-entropy (quoting has no effect on
-			// secretPattern matching), so the entropy layer does not flag it,
+			// entropy-layer matching), so the entropy layer does not flag it,
 			// proving the provider layer itself does not target publishable
 			// keys.
 			name:  "publishable key is not targeted by the provider layer",
@@ -591,7 +596,7 @@ func TestString_SupabaseProviderTokenOverRedactionGuards(t *testing.T) {
 	})
 }
 
-// TestString_SupabaseProviderTokenLongIdentifierOverRedaction documents a
+// TestSupabaseProviderTokenLongIdentifierOverRedaction documents a
 // known, accepted false-positive class: because the body charset includes
 // underscore and the length check is {20,} with no upper bound, sufficiently
 // long snake_case identifiers that merely start with a provider prefix are
@@ -601,10 +606,10 @@ func TestString_SupabaseProviderTokenOverRedactionGuards(t *testing.T) {
 // and reintroducing a \b anchor or a body-length cap to "fix" this would
 // reopen the low-entropy under-redaction gap the provider layer exists to
 // close. This test pins the tradeoff so it isn't silently reversed.
-func TestString_SupabaseProviderTokenLongIdentifierOverRedaction(t *testing.T) {
+func TestSupabaseProviderTokenLongIdentifierOverRedaction(t *testing.T) {
 	t.Parallel()
 
-	assertStringRedactionCases(t, []stringRedactionCase{
+	assertFieldRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "long snake_case identifier starting with sb_secret_ is over-redacted",
 			input: "func " + supabaseSecretPrefix() + "key_rotation_handler() {}",
@@ -618,17 +623,14 @@ func TestString_SupabaseProviderTokenLongIdentifierOverRedaction(t *testing.T) {
 	})
 }
 
-// TestJSONLContent_SupabaseSecretRedacted drives the secret through the
+// TestJSONLBytes_SupabaseSecretRedacted drives the secret through the
 // field-aware JSONL path, mirroring a Claude Code transcript line where
 // the secret lives in a message-content leaf.
-func TestJSONLContent_SupabaseSecretRedacted(t *testing.T) {
+func TestJSONLBytes_SupabaseSecretRedacted(t *testing.T) {
 	t.Parallel()
 	secret := supabaseSecretPrefix() + "probe_20260710_7f91c2d8e4a6b3f0"
 	line := `{"type":"user","message":{"role":"user","content":"the service_role key is ` + secret + ` now"}}`
-	got, err := JSONLContent(line)
-	if err != nil {
-		t.Fatalf("JSONLContent error: %v", err)
-	}
+	got := redactedString(t, line)
 	if strings.Contains(got, secret) {
 		t.Fatalf("secret survived JSONL redaction: %q", got)
 	}
@@ -637,23 +639,23 @@ func TestJSONLContent_SupabaseSecretRedacted(t *testing.T) {
 	}
 }
 
-// TestString_SupabaseProviderTokenBoundaries pins that the provider layer
+// TestSupabaseProviderTokenBoundaries pins that the provider layer
 // redacts a Supabase secret even when the prefix abuts a preceding *word*
 // character. A \b anchor before the prefix only fires after a non-word
 // character, so a secret glued to a preceding letter/digit/underscore — an
-// underscore-joined name, or (in the raw redact.Bytes / JSONL fall-back path
-// that runs String on undecoded text) a JSON escape whose trailing letter sits
-// against the prefix, e.g. "…line1\nsb_secret_…" where the byte before "sb" is
-// the literal 'n' — would slip past. These bodies are deliberately low-entropy,
-// so no other layer backs the provider layer up: a miss reaches the blob raw.
-// Each case fails if the leading \b anchor is reintroduced.
-func TestString_SupabaseProviderTokenBoundaries(t *testing.T) {
+// underscore-joined name, or (in the JSONL raw-line fall-back path that scans
+// undecoded text) a JSON escape whose trailing letter sits against the prefix,
+// e.g. "…line1\nsb_secret_…" where the byte before "sb" is the literal 'n' —
+// would slip past. These bodies are deliberately low-entropy, so no other
+// layer backs the provider layer up: a miss reaches the blob raw. Each case
+// fails if the leading \b anchor is reintroduced.
+func TestSupabaseProviderTokenBoundaries(t *testing.T) {
 	t.Parallel()
 
 	secret := supabaseSecretPrefix() + "probe_20260710_7f91c2d8e4a6b3f0"
 	sbpToken := supabasePersonalPrefix() + "test_probe_20260710_test_probe_2026071"
 
-	assertStringRedactionCases(t, []stringRedactionCase{
+	assertRawRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "sb_secret_ glued to a preceding word char",
 			input: "x" + secret,
@@ -661,8 +663,8 @@ func TestString_SupabaseProviderTokenBoundaries(t *testing.T) {
 		},
 		{
 			// Raw-text fall-back shape: the transcript line failed to parse as
-			// JSON, so String runs on the undecoded bytes where "\n" is a literal
-			// backslash-n and the 'n' abuts the prefix.
+			// JSON, so the scan runs on the undecoded bytes where "\n" is a
+			// literal backslash-n and the 'n' abuts the prefix.
 			name:  "sb_secret_ preceded by a literal JSON escape letter",
 			input: `first line\n` + secret,
 			want:  `first line\nREDACTED`,
@@ -675,22 +677,19 @@ func TestString_SupabaseProviderTokenBoundaries(t *testing.T) {
 	})
 }
 
-// TestJSONLContent_SupabaseSecretMalformedLineFallback drives the secret
-// through the JSONL fall-back branch (JSONLContent runs String on the raw
-// line when json.Unmarshal fails), with the secret glued to
-// a literal "\n" escape so the byte before the prefix is a word char. This is
-// the realistic path by which a malformed/truncated transcript line could leak
-// a low-entropy Supabase secret; it must still be redacted.
-func TestJSONLContent_SupabaseSecretMalformedLineFallback(t *testing.T) {
+// TestJSONLBytes_SupabaseSecretMalformedLineFallback drives the secret
+// through the JSONL fall-back branch (the raw-line scan runs on lines where
+// json.Unmarshal fails), with the secret glued to a literal "\n" escape so
+// the byte before the prefix is a word char. This is the realistic path by
+// which a malformed/truncated transcript line could leak a low-entropy
+// Supabase secret; it must still be redacted.
+func TestJSONLBytes_SupabaseSecretMalformedLineFallback(t *testing.T) {
 	t.Parallel()
 	secret := supabaseSecretPrefix() + "probe_20260710_7f91c2d8e4a6b3f0"
 	// Trailing garbage after the closing brace makes json.Unmarshal fail, forcing
 	// the raw-line fall-back; inside, "\n" is a literal backslash-n before "sb".
 	line := `{"content":"line1\n` + secret + `"} <-- truncated`
-	got, err := JSONLContent(line)
-	if err != nil {
-		t.Fatalf("JSONLContent error: %v", err)
-	}
+	got := redactedString(t, line)
 	if strings.Contains(got, secret) {
 		t.Fatalf("secret survived JSONL fall-back redaction: %q", got)
 	}
@@ -699,12 +698,8 @@ func TestJSONLContent_SupabaseSecretMalformedLineFallback(t *testing.T) {
 	}
 }
 
-func TestString_CredentialedURIs(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
+func TestCredentialedURIs(t *testing.T) {
+	assertFieldRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "postgres URI",
 			input: "DATABASE_URL=postgres://app:pwd123@db.example.com:5432/app",
@@ -745,20 +740,12 @@ func TestString_CredentialedURIs(t *testing.T) {
 			input: "url=https://example.com/a:b@c",
 			want:  "url=https://example.com/a:b@c",
 		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := String(tt.input)
-			if got != tt.want {
-				t.Errorf("String(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
+	})
 }
 
-func TestString_DatabaseConnectionStringRedaction(t *testing.T) {
+func TestDatabaseConnectionStringRedaction(t *testing.T) {
 	t.Parallel()
-	assertStringRedactionCases(t, []stringRedactionCase{
+	assertFieldRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "postgres keyword DSN",
 			input: `dsn="host=db.example.com port=5432 user=svc password=secret dbname=app sslmode=require"`,
@@ -827,53 +814,9 @@ func TestString_DatabaseConnectionStringRedaction(t *testing.T) {
 	})
 }
 
-func TestDatabaseConnectionStringRuleScope(t *testing.T) {
+func TestBoundedCredentialValueRedaction(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name      string
-		candidate string
-		hasSecret func(string) bool
-		want      bool
-	}{
-		{
-			name:      "database URL query password is in scope",
-			candidate: "postgresql://db.example.com:5432/app?user=svc&password=secret&sslmode=require",
-			hasSecret: hasDatabaseURLSecret,
-			want:      true,
-		},
-		{
-			name:      "database URL userinfo password is handled by credentialed URI detection",
-			candidate: "postgresql://svc:secret@db.example.com:5432/app",
-			hasSecret: hasDatabaseURLSecret,
-			want:      false,
-		},
-		{
-			name:      "JDBC query password is in scope",
-			candidate: "jdbc:postgresql://db.example.com:5432/app?user=svc&password=secret",
-			hasSecret: hasJDBCPassword,
-			want:      true,
-		},
-		{
-			name:      "JDBC userinfo password is handled by credentialed URI detection",
-			candidate: "jdbc:postgresql://svc:secret@db.example.com:5432/app",
-			hasSecret: hasJDBCPassword,
-			want:      false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := tt.hasSecret(tt.candidate)
-			if got != tt.want {
-				t.Errorf("hasSecret(%q) = %v, want %v", tt.candidate, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestString_BoundedCredentialValueRedaction(t *testing.T) {
-	t.Parallel()
-	assertStringRedactionCases(t, []stringRedactionCase{
+	assertFieldRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "db password env var",
 			input: "DB_PASSWORD=secret123",
@@ -932,9 +875,9 @@ func TestString_BoundedCredentialValueRedaction(t *testing.T) {
 	})
 }
 
-func TestString_BoundedCredentialValueOverRedactionGuards(t *testing.T) {
+func TestBoundedCredentialValueOverRedactionGuards(t *testing.T) {
 	t.Parallel()
-	assertStringRedactionCases(t, []stringRedactionCase{
+	assertFieldRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "placeholder env var is preserved",
 			input: "DB_PASSWORD=${DB_PASSWORD}",
@@ -1026,10 +969,10 @@ func TestString_BoundedCredentialValueOverRedactionGuards(t *testing.T) {
 // Pins that single-char "masks" and arbitrary <…> wrappers do NOT count as
 // placeholders, so credentials that happen to be short or bracket-wrapped
 // still get redacted. The opposite cases (`***`, `<password>`, etc.) are
-// covered above in TestString_BoundedCredentialValueOverRedactionGuards.
-func TestString_ShortAndOpaquePlaceholdersFallThrough(t *testing.T) {
+// covered above in TestBoundedCredentialValueOverRedactionGuards.
+func TestShortAndOpaquePlaceholdersFallThrough(t *testing.T) {
 	t.Parallel()
-	assertStringRedactionCases(t, []stringRedactionCase{
+	assertFieldRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "single x is not a mask",
 			input: "DB_PASSWORD=x",
@@ -1063,25 +1006,22 @@ func TestString_ShortAndOpaquePlaceholdersFallThrough(t *testing.T) {
 	})
 }
 
-func TestString_OpenSSHPrivateKeyBlock(t *testing.T) {
+func TestOpenSSHPrivateKeyBlock(t *testing.T) {
 	input := "key:\n" + fakeOpenSSHPrivateKey + "\nend"
 	want := "key:\nREDACTED\nend"
 
-	got := String(input)
+	got := redactedField(t, input)
 	if got != want {
-		t.Errorf("String(private key block) = %q, want %q", got, want)
+		t.Errorf("redacted private key block = %q, want %q", got, want)
 	}
 	if strings.Contains(got, openSSHPrivateKeyMarker("BEGIN")) || strings.Contains(got, openSSHPrivateKeyMarker("END")) {
 		t.Errorf("private key block markers should be fully redacted, got %q", got)
 	}
 }
 
-func TestJSONLContent_CredentialedURI(t *testing.T) {
+func TestJSONLBytes_CredentialedURI(t *testing.T) {
 	input := `{"type":"text","content":"DATABASE_URL=postgres://app:pwd123@db.example.com:5432/app"}`
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 
 	if strings.Contains(result, "postgres://app:pwd123@db.example.com:5432/app") {
 		t.Error("credentialed database URI was not redacted")
@@ -1091,17 +1031,14 @@ func TestJSONLContent_CredentialedURI(t *testing.T) {
 	}
 }
 
-func TestJSONLContent_OpenSSHPrivateKeyBlock(t *testing.T) {
+func TestJSONLBytes_OpenSSHPrivateKeyBlock(t *testing.T) {
 	content, err := json.Marshal("key:\n" + fakeOpenSSHPrivateKey + "\nend")
 	if err != nil {
 		t.Fatalf("marshal content: %v", err)
 	}
 	input := `{"type":"text","content":` + string(content) + `}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 	if strings.Contains(result, openSSHPrivateKeyMarker("BEGIN")) || strings.Contains(result, openSSHPrivateKeyMarker("END")) {
 		t.Errorf("private key block markers should be fully redacted, got %q", result)
 	}
@@ -1110,14 +1047,11 @@ func TestJSONLContent_OpenSSHPrivateKeyBlock(t *testing.T) {
 	}
 }
 
-func TestJSONLContent_DatabaseCredentialRedaction(t *testing.T) {
+func TestJSONLBytes_DatabaseCredentialRedaction(t *testing.T) {
 	t.Parallel()
 	input := `{"type":"assistant","message":"dsn host=db.example.com user=svc password=secret dbname=app and env DB_PASSWORD=secret123","session_id":"ses_37273a1fdffegpYbwUTqEkPsQ0","file_path":"/tmp/TestE2E_ExistingFiles/controller.go"}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 	for _, leaked := range []string{"password=secret", "DB_PASSWORD=secret123"} {
 		if strings.Contains(result, leaked) {
 			t.Fatalf("expected %q to be redacted, got: %s", leaked, result)
@@ -1130,14 +1064,11 @@ func TestJSONLContent_DatabaseCredentialRedaction(t *testing.T) {
 	}
 }
 
-func TestJSONLContent_StructuredCredentialFieldsRedacted(t *testing.T) {
+func TestJSONLBytes_StructuredCredentialFieldsRedacted(t *testing.T) {
 	t.Parallel()
 	input := `{"type":"assistant","env":{"DB_PASSWORD":"correct-horse-db","REDIS_PASSWORD":"${REDIS_PASSWORD}","note":"correct-horse-db"},"db":{"password":"correct-horse-db","host":"db.example.com","user":"svc"},"session_id":"ses_37273a1fdffegpYbwUTqEkPsQ0"}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 	for _, leaked := range []string{`"DB_PASSWORD":"correct-horse-db"`, `"password":"correct-horse-db"`} {
 		if strings.Contains(result, leaked) {
 			t.Fatalf("expected structured credential field %q to be redacted, got: %s", leaked, result)
@@ -1158,14 +1089,11 @@ func TestJSONLContent_StructuredCredentialFieldsRedacted(t *testing.T) {
 	}
 }
 
-func TestJSONLContent_NormalizedCredentialKeysRedacted(t *testing.T) {
+func TestJSONLBytes_NormalizedCredentialKeysRedacted(t *testing.T) {
 	t.Parallel()
 	input := `{"type":"assistant","env":{"DB Password":"correct-horse-db","note":"correct-horse-db"},"session_id":"ses_37273a1fdffegpYbwUTqEkPsQ0"}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 	for _, preserved := range []string{
 		`"DB Password":"REDACTED"`,
 		`"note":"correct-horse-db"`,
@@ -1180,14 +1108,11 @@ func TestJSONLContent_NormalizedCredentialKeysRedacted(t *testing.T) {
 	}
 }
 
-func TestJSONLContent_DottedCredentialKeysRedacted(t *testing.T) {
+func TestJSONLBytes_DottedCredentialKeysRedacted(t *testing.T) {
 	t.Parallel()
 	input := `{"config":{"db.password":"correct-horse-db","mysql.root.password":"correct-horse-mysql","note":"correct-horse-db"}}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 	for _, redacted := range []string{
 		`"db.password":"REDACTED"`,
 		`"mysql.root.password":"REDACTED"`,
@@ -1201,14 +1126,11 @@ func TestJSONLContent_DottedCredentialKeysRedacted(t *testing.T) {
 	}
 }
 
-func TestJSONLContent_RootPasswordJSONKeysRedacted(t *testing.T) {
+func TestJSONLBytes_RootPasswordJSONKeysRedacted(t *testing.T) {
 	t.Parallel()
 	input := `{"env":{"MYSQL_ROOT_PASSWORD":"correct-horse-mysql","MONGO_INITDB_ROOT_PASSWORD":"correct-horse-mongo","MSSQL_SA_PASSWORD":"correct-horse-mssql"}}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 	for _, redacted := range []string{
 		`"MYSQL_ROOT_PASSWORD":"REDACTED"`,
 		`"MONGO_INITDB_ROOT_PASSWORD":"REDACTED"`,
@@ -1225,86 +1147,70 @@ func TestJSONLContent_RootPasswordJSONKeysRedacted(t *testing.T) {
 	}
 }
 
-func TestShouldSkipJSONLObject(t *testing.T) {
+func TestJSONLBytes_ObjectSkipPolicy(t *testing.T) {
+	t.Parallel()
+	// Objects with "type":"image", "type":"image_url", or "type":"base64" carry
+	// binary payloads, not text; their high-entropy data must be preserved
+	// verbatim. Any other object has its string values redacted normally.
 	tests := []struct {
-		name string
-		obj  map[string]any
-		want bool
+		name      string
+		input     string
+		preserved bool
 	}{
 		{
-			name: "image type is skipped",
-			obj:  map[string]any{"type": "image", "data": "base64data"},
-			want: true,
+			name:      "image type is skipped",
+			input:     `{"type":"image","data":"` + highEntropySecret + `"}`,
+			preserved: true,
 		},
 		{
-			name: "text type is not skipped",
-			obj:  map[string]any{"type": "text", "content": "hello"},
-			want: false,
+			name:      "image_url type is skipped",
+			input:     `{"type":"image_url","url":"` + highEntropySecret + `"}`,
+			preserved: true,
 		},
 		{
-			name: "no type field is not skipped",
-			obj:  map[string]any{"content": "hello"},
-			want: false,
+			name:      "base64 type is skipped",
+			input:     `{"type":"base64","data":"` + highEntropySecret + `"}`,
+			preserved: true,
 		},
 		{
-			name: "non-string type is not skipped",
-			obj:  map[string]any{"type": 42},
-			want: false,
+			name:      "text type is not skipped",
+			input:     `{"type":"text","content":"` + highEntropySecret + `"}`,
+			preserved: false,
 		},
 		{
-			name: "image_url type is skipped",
-			obj:  map[string]any{"type": "image_url"},
-			want: true,
+			name:      "no type field is not skipped",
+			input:     `{"content":"` + highEntropySecret + `"}`,
+			preserved: false,
 		},
 		{
-			name: "base64 type is skipped",
-			obj:  map[string]any{"type": "base64"},
-			want: true,
+			name:      "non-string type is not skipped",
+			input:     `{"type":42,"content":"` + highEntropySecret + `"}`,
+			preserved: false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldSkipJSONLObject(tt.obj)
-			if got != tt.want {
-				t.Errorf("shouldSkipJSONLObject(%v) = %v, want %v", tt.obj, got, tt.want)
+			t.Parallel()
+			got := redactedString(t, tt.input)
+			if tt.preserved {
+				if !strings.Contains(got, highEntropySecret) {
+					t.Errorf("expected secret to be preserved inside skipped object, got: %s", got)
+				}
+			} else {
+				if strings.Contains(got, highEntropySecret) {
+					t.Errorf("expected secret to be redacted, got: %s", got)
+				}
+				if !strings.Contains(got, "REDACTED") {
+					t.Errorf("expected REDACTED in output, got: %s", got)
+				}
 			}
 		})
 	}
 }
 
-func TestShouldSkipJSONLObject_RedactionBehavior(t *testing.T) {
-	// Verify that secrets inside image objects are NOT redacted.
-	obj := map[string]any{
-		"type": "image",
-		"data": highEntropySecret,
-	}
-	repls := collectJSONLReplacements(obj)
-
-	// expect no replacements, it's an image which is skipped.
-	var wantRepls []jsonReplacement
-	if !slices.Equal(repls, wantRepls) {
-		t.Errorf("got %q, want %q", repls, wantRepls)
-	}
-
-	// Verify that secrets inside non-image objects ARE redacted.
-	obj2 := map[string]any{
-		"type":    "text",
-		"content": highEntropySecret,
-	}
-	repls2 := collectJSONLReplacements(obj2)
-	wantRepls2 := []jsonReplacement{{key: "content", original: highEntropySecret, redacted: "REDACTED"}}
-	if !slices.Equal(repls2, wantRepls2) {
-		t.Errorf("got %q, want %q", repls2, wantRepls2)
-	}
-}
-
-func TestString_FilePaths(t *testing.T) {
+func TestRawLine_FilePaths(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
+	assertRawRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "temp directory path preserves filenames",
 			input: "/tmp/TestE2E_Something3407889464/001/controller.go",
@@ -1330,25 +1236,12 @@ func TestString_FilePaths(t *testing.T) {
 			input: "/tmp/test/controller.go\n/tmp/test/model.go\n/tmp/test/view.go",
 			want:  "/tmp/test/controller.go\n/tmp/test/model.go\n/tmp/test/view.go",
 		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := String(tt.input)
-			if got != tt.want {
-				t.Errorf("String(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
+	})
 }
 
-func TestString_JSONEscapeSequences(t *testing.T) {
+func TestRawLine_JSONEscapeSequences(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
+	assertRawRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "newline escape not corrupted",
 			input: `controller.go\nmodel.go\nview.go`,
@@ -1364,19 +1257,10 @@ func TestString_JSONEscapeSequences(t *testing.T) {
 			input: `C:\\Users\\test\\file.go`,
 			want:  `C:\\Users\\test\\file.go`,
 		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := String(tt.input)
-			if got != tt.want {
-				t.Errorf("String(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
+	})
 }
 
-func TestString_RealSecretsStillCaught(t *testing.T) {
+func TestRealSecretsStillCaught(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
@@ -1398,23 +1282,20 @@ func TestString_RealSecretsStillCaught(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := String(tt.input)
+			got := redactedField(t, tt.input)
 			if !strings.Contains(got, "REDACTED") {
-				t.Errorf("String(%q) = %q, expected REDACTED somewhere", tt.input, got)
+				t.Errorf("redacted %q = %q, expected REDACTED somewhere", tt.input, got)
 			}
 		})
 	}
 }
 
-func TestJSONLContent_PathFieldsPreserved(t *testing.T) {
+func TestJSONLBytes_PathFieldsPreserved(t *testing.T) {
 	t.Parallel()
 	// Simulates a real agent log line with path fields that should NOT be redacted
 	input := `{"session_id":"ses_37273a1fdffegpYbwUTqEkPsQ0","file_path":"/private/var/folders/v4/31cd3cg52_sfrpb1mbtr7q7r0000gn/T/test/controller.go","cwd":"/private/var/folders/v4/31cd3cg52_sfrpb1mbtr7q7r0000gn/T/test","root":"/private/var/folders/v4/31cd3cg52_sfrpb1mbtr7q7r0000gn/T/test","directory":"/tmp/TestE2E_ExistingFiles","content":"normal text here"}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 
 	// Structural fields should be preserved
 	mustContain := []string{
@@ -1435,13 +1316,13 @@ func TestJSONLContent_PathFieldsPreserved(t *testing.T) {
 	}
 }
 
-func TestJSONLContent_PrettyPrintedJSON_IDsPreserved(t *testing.T) {
+func TestJSONLBytes_PrettyPrintedJSON_IDsPreserved(t *testing.T) {
 	t.Parallel()
 	// Simulates OpenCode's pretty-printed JSON export format.
-	// High-entropy IDs (like msg_cb99a444f001Ftd3kTVmr8XQHZ with entropy > 4.5)
-	// must be preserved. Before the fix, line-by-line processing couldn't parse
-	// individual lines of pretty-printed JSON and fell back to entropy-based
-	// redaction, corrupting these IDs.
+	// High-entropy IDs (like msg_cb99a444f001Ftd3kTVmr8XQHZ with entropy > 4.5,
+	// above the redaction threshold) must be preserved. Before the fix,
+	// line-by-line processing couldn't parse individual lines of pretty-printed
+	// JSON and fell back to entropy-based redaction, corrupting these IDs.
 	input := `{
   "info": {
     "id": "ses_309461a8bffeQfY7CYDOUHX6VP",
@@ -1492,17 +1373,7 @@ func TestJSONLContent_PrettyPrintedJSON_IDsPreserved(t *testing.T) {
   ]
 }`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify the entropy threshold: msg_cb99a444f001Ftd3kTVmr8XQHZ has entropy > 4.5
-	// and would be redacted by String() if processed line-by-line.
-	entropy := shannonEntropy("msg_cb99a444f001Ftd3kTVmr8XQHZ")
-	if entropy <= entropyThreshold {
-		t.Fatalf("test assumption broken: msg ID entropy %.2f should be > %.1f", entropy, entropyThreshold)
-	}
+	result := redactedString(t, input)
 
 	// All IDs must be preserved (they're in "id"/"sessionID" fields which are skipped).
 	mustContain := []string{
@@ -1524,7 +1395,7 @@ func TestJSONLContent_PrettyPrintedJSON_IDsPreserved(t *testing.T) {
 	}
 }
 
-func TestJSONLContent_PrettyPrintedJSON_SecretsStillCaught(t *testing.T) {
+func TestJSONLBytes_PrettyPrintedJSON_SecretsStillCaught(t *testing.T) {
 	t.Parallel()
 	// Even in pretty-printed JSON mode, actual secrets in content fields should
 	// still be redacted.
@@ -1549,10 +1420,7 @@ func TestJSONLContent_PrettyPrintedJSON_SecretsStillCaught(t *testing.T) {
   ]
 }`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 
 	// Secret in text content should be redacted.
 	if strings.Contains(result, highEntropySecret) {
@@ -1570,15 +1438,12 @@ func TestJSONLContent_PrettyPrintedJSON_SecretsStillCaught(t *testing.T) {
 	}
 }
 
-func TestJSONLContent_SecretsInContentStillCaught(t *testing.T) {
+func TestJSONLBytes_SecretsInContentStillCaught(t *testing.T) {
 	t.Parallel()
 	// Path fields should be preserved, but secrets in content should be caught
 	input := `{"file_path":"/tmp/test.go","content":"api_key=` + highEntropySecret + `"}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 
 	// file_path should be preserved
 	if !strings.Contains(result, "/tmp/test.go") {
@@ -1596,9 +1461,9 @@ func TestJSONLContent_SecretsInContentStillCaught(t *testing.T) {
 
 // Pins a known gap: shell shorthand `--password=...` is not redacted because
 // no detector matches `--password=` (no DB-prefix, no DSN structure, no URI).
-func TestString_MysqlShellShorthandIsNotRedacted(t *testing.T) {
+func TestMysqlShellShorthandIsNotRedacted(t *testing.T) {
 	t.Parallel()
-	assertStringRedactionCases(t, []stringRedactionCase{
+	assertFieldRedactionCases(t, []stringRedactionCase{
 		{
 			name:  "mysql cli flag",
 			input: "mysql -u svc --password=hunter2 -h db.example.com app",
@@ -1614,7 +1479,7 @@ func TestString_MysqlShellShorthandIsNotRedacted(t *testing.T) {
 
 // Pins f(f(x)) == f(x): once-redacted output must not match any detector on
 // a second pass.
-func TestString_RedactionIsIdempotent(t *testing.T) {
+func TestRedactionIsIdempotent(t *testing.T) {
 	t.Parallel()
 	inputs := []string{
 		"DATABASE_URL=postgres://svc:hunter2@db.example.com/app",
@@ -1626,8 +1491,8 @@ func TestString_RedactionIsIdempotent(t *testing.T) {
 	for _, input := range inputs {
 		t.Run(input, func(t *testing.T) {
 			t.Parallel()
-			once := String(input)
-			twice := String(once)
+			once := redactedField(t, input)
+			twice := redactedField(t, once)
 			if once != twice {
 				t.Errorf("not idempotent for %q:\n  once:  %q\n  twice: %q", input, once, twice)
 			}
@@ -1638,14 +1503,11 @@ func TestString_RedactionIsIdempotent(t *testing.T) {
 // Pins keyed-JSON replacement as (key, value) rather than (path, value): a
 // shared value under the same key name redacts in every context, not just
 // the credential one. Conservative on purpose — flag if changed.
-func TestJSONLContent_CrossContextValueCollision(t *testing.T) {
+func TestJSONLBytes_CrossContextValueCollision(t *testing.T) {
 	t.Parallel()
 	input := `{"db":{"host":"db.example.com","user":"svc","password":"shared-secret"},"misc":{"password":"shared-secret"}}`
 
-	result, err := JSONLContent(input)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	result := redactedString(t, input)
 	if strings.Contains(result, "shared-secret") {
 		t.Errorf("expected shared-secret to be redacted in both contexts, got: %s", result)
 	}

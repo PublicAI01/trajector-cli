@@ -1,10 +1,12 @@
-package redact
+package redact_test
 
 import (
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
 
 // betterleaksEnvCheckChildVar marks the re-executed child half of
@@ -34,7 +36,10 @@ func TestBetterleaksEnvCheckChild(t *testing.T) {
 	if os.Getenv(betterleaksEnvCheckChildVar) != "1" {
 		t.Skip("child-process half of TestBetterleaksDoesNotPoisonGitEnvironment")
 	}
-	_ = String("key=AKIAYRWQG5EJLPZLBYNP")
+	// Force detector initialization through the production entry point.
+	if _, err := redact.JSONLBytes([]byte("key=AKIAYRWQG5EJLPZLBYNP")); err != nil {
+		t.Fatalf("JSONLBytes: %v", err)
+	}
 	for _, name := range []string{
 		"GIT_CONFIG_GLOBAL",
 		"GIT_CONFIG_NOSYSTEM",

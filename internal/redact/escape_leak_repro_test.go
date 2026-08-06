@@ -1,9 +1,11 @@
-package redact
+package redact_test
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
 
 // Overtly fake: the FAKE segment marks it, the random tail keeps the
@@ -36,10 +38,11 @@ func TestEscapedUnicodeDoesNotDefeatRedaction(t *testing.T) {
 		{"nested object", `{"a":{"content":"key ` + secret + ` ` + escDash + `"}}`, []string{"—"}},
 	}
 	for _, c := range cases {
-		out, err := JSONLContent(c.raw)
+		rb, err := redact.JSONLBytes([]byte(c.raw))
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
+		out := string(rb.Bytes())
 		if strings.Contains(out, secret) {
 			t.Errorf("%s: credential left unmasked in %q", c.name, out)
 		}
@@ -76,10 +79,7 @@ func collectStrings(v any, acc []string) []string {
 func TestRedactionPreservesEscapedRunes(t *testing.T) {
 	raw := `{"content":"key ` + fakeHighEntropyKey + ` ` + escDash + ` ` + escHan + ` end","note":"` + escHanUpper + `"}`
 
-	out, err := JSONLContent(raw)
-	if err != nil {
-		t.Fatalf("JSONLContent: %v", err)
-	}
+	out := redactedString(t, raw)
 	var got struct {
 		Content string `json:"content"`
 		Note    string `json:"note"`
@@ -102,10 +102,7 @@ func TestRedactionPreservesEscapedRunes(t *testing.T) {
 
 func TestRedactionLeavesCleanRecordsByteIdentical(t *testing.T) {
 	raw := `{"a":"中文","b":["x",  "y"],"c":{"d":"http:\/\/example.com"},"e":12,"f":"中"}`
-	out, err := JSONLContent(raw)
-	if err != nil {
-		t.Fatalf("JSONLContent: %v", err)
-	}
+	out := redactedString(t, raw)
 	if out != raw {
 		t.Errorf("clean record was rewritten:\n got %q\nwant %q", out, raw)
 	}

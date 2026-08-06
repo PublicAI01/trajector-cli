@@ -141,7 +141,7 @@ func TestBuildRecordsRoundTripThroughTheIndex(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	env := parseEnvelope(t, b)
-	stream := decompress(t, b.Records)
+	stream := decompress(t, b.Records.Bytes())
 	if int64(len(stream)) != env.RecordsSize {
 		t.Fatalf("decompressed %d bytes, envelope says %d", len(stream), env.RecordsSize)
 	}
@@ -172,7 +172,7 @@ func TestBuildMasksSecretsBeforePacking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	stream := decompress(t, b.Records)
+	stream := decompress(t, b.Records.Bytes())
 	if bytes.Contains(stream, []byte(fakeSecret)) {
 		t.Fatal("secret survived into the packed records")
 	}
@@ -190,7 +190,7 @@ func TestBuildPreservesThinkingSignatures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	stream := decompress(t, b.Records)
+	stream := decompress(t, b.Records.Bytes())
 	if !bytes.Contains(stream, []byte(`"signature":"`+fakeSignature+`"`)) {
 		t.Fatal("thinking signature was not preserved verbatim")
 	}
@@ -245,7 +245,7 @@ func TestBuildPacksARecordWhoseEnvelopeCannotBeReadBack(t *testing.T) {
 	if len(env.Records) != 1 || env.Records[0].RequestID != "req-broken" {
 		t.Fatalf("index = %+v", env.Records)
 	}
-	stream := decompress(t, b.Records)
+	stream := decompress(t, b.Records.Bytes())
 	r := env.Records[0]
 	if got := string(stream[r.Offset : r.Offset+r.Size]); got != "not a rawcall at all" {
 		t.Fatalf("packed record = %q", got)

@@ -48,10 +48,11 @@ by your user account (0600/0700), under a bounded disk quota (2 GiB by
 default). A full spool stops recording; it never evicts captured data.
 
 Before anything is uploaded, records pass a **local redaction pass** that
-masks secrets — API keys, tokens, passwords, and other credential-shaped or
-personally identifying strings — while preserving JSON structure, message
-order, tool-call pairing, and thinking signatures. **Unredacted data never
-leaves your machine.**
+masks secrets — API keys, tokens, passwords, and other credential-shaped
+strings — and personally identifying strings — email addresses and phone
+numbers — while preserving JSON structure, message order, tool-call
+pairing, and thinking signatures. **Unredacted data never leaves your
+machine.**
 
 ## What leaves your machine
 

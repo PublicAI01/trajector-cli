@@ -10,6 +10,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/capture"
+	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
@@ -36,6 +37,12 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 	logf := func(format string, a ...any) {
 		fmt.Fprintf(stderr, format+"\n", a...)
 	}
+	// The serve process is the machine's one flusher, so this is the one
+	// place the redaction pass is configured. Email and phone patterns
+	// are the personally identifying strings PRIVACY.md promises to mask;
+	// broader patterns (street addresses) misfire too often on code and
+	// prose to be safe against observed values.
+	redact.ConfigurePII(redact.PIIEmail, redact.PIIPhone)
 	layout := m.deps.Layout
 	// The spool quota is whatever the service last said in the upload
 	// handshake; a machine that never uploaded runs on the default.

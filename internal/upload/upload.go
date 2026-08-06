@@ -277,7 +277,7 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result)
 	u.noteUpload(Receipt{
 		BatchID: ack.BatchID,
 		Records: len(b.RequestIDs),
-		Bytes:   int64(len(b.Envelope) + len(b.Records)),
+		Bytes:   int64(len(b.Envelope) + b.Records.Len()),
 		At:      u.deps.Now().UTC(),
 	})
 	return nil

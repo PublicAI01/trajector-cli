@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
 
 // BatchesPath is the batch upload endpoint.
@@ -91,17 +93,19 @@ func (e *BatchRejectedError) Error() string {
 
 // UploadBatch posts one batch: the uncompressed envelope and the
 // compressed records as two multipart parts, so the service can route
-// on the envelope without unpacking the records. The returned
-// acknowledgement is only trusted when it echoes the batch id — a 2xx
-// that names no batch proves nothing was persisted, and the caller must
-// keep its data.
-func (c *Client) UploadBatch(deviceToken, batchID string, envelope, records []byte) (BatchAck, error) {
+// on the envelope without unpacking the records. The records parameter
+// accepts only data certified by the redaction pass: this signature is
+// what makes "unredacted data never leaves the machine" a compile-time
+// fact. The returned acknowledgement is only trusted when it echoes the
+// batch id — a 2xx that names no batch proves nothing was persisted,
+// and the caller must keep its data.
+func (c *Client) UploadBatch(deviceToken, batchID string, envelope []byte, records redact.RedactedBytes) (BatchAck, error) {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	if err := writePart(mw, "batch", "batch.json", "application/json", envelope); err != nil {
 		return BatchAck{}, fmt.Errorf("platform: assembling batch upload: %w", err)
 	}
-	if err := writePart(mw, "records", "records.zst", "application/zstd", records); err != nil {
+	if err := writePart(mw, "records", "records.zst", "application/zstd", records.Bytes()); err != nil {
 		return BatchAck{}, fmt.Errorf("platform: assembling batch upload: %w", err)
 	}
 	if err := mw.Close(); err != nil {

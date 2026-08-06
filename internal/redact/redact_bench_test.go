@@ -1,10 +1,12 @@
-package redact
+package redact_test
 
 import (
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
 
 var benchmarkOpenSSHPrivateKey = makeFakeOpenSSHPrivateKey(`b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
@@ -22,6 +24,12 @@ func BenchmarkRedactJSONLBytes(b *testing.B) {
 			name: "Synthetic/SessionLog",
 			data: generateBenchmarkJSONL(b, 2500),
 		},
+		{
+			// Lines that fail to parse as JSON take the raw-line fall-back
+			// scan; this pins its throughput separately.
+			name: "Synthetic/RawText",
+			data: generateBenchmarkRawText(2500),
+		},
 	}
 
 	for _, tc := range cases {
@@ -29,7 +37,7 @@ func BenchmarkRedactJSONLBytes(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(tc.data)))
 			for b.Loop() {
-				redacted, err := JSONLBytes(tc.data)
+				redacted, err := redact.JSONLBytes(tc.data)
 				if err != nil {
 					b.Fatalf("redact JSONL: %v", err)
 				}
@@ -65,6 +73,17 @@ func generateBenchmarkJSONL(b *testing.B, lines int) []byte {
 			b.Fatalf("marshal benchmark line: %v", err)
 		}
 		out.Write(encoded)
+		out.WriteByte('\n')
+	}
+	return []byte(out.String())
+}
+
+// generateBenchmarkRawText emits plain-text lines that are not valid JSON,
+// so every line goes through the raw-line redaction path.
+func generateBenchmarkRawText(lines int) []byte {
+	var out strings.Builder
+	for i := range lines {
+		out.WriteString(benchmarkLineContent(i))
 		out.WriteByte('\n')
 	}
 	return []byte(out.String())

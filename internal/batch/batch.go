@@ -69,8 +69,10 @@ type Batch struct {
 	ID string
 	// Envelope is the uncompressed identity, index, and run metadata.
 	Envelope []byte
-	// Records is the zstd-compressed stream of redacted rawcalls.
-	Records []byte
+	// Records is the zstd-compressed stream of redacted rawcalls. The
+	// type carries the proof from the redaction pass to the network exit:
+	// nothing else can flow into an upload.
+	Records redact.RedactedBytes
 	// RequestIDs names every spool record packed into this batch, so an
 	// acknowledged upload can delete exactly what was sent.
 	RequestIDs []string
@@ -133,6 +135,8 @@ func Build(id string, createdAt time.Time, clientVersion string, rawcalls []spoo
 		ids = append(ids, rc.RequestID)
 	}
 
+	// The stream is assembled exclusively from RedactedBytes above, so
+	// its compressed form is still redacted data.
 	compressed, err := compress(stream.Bytes())
 	if err != nil {
 		return Batch{}, fmt.Errorf("batch: compressing records: %w", err)
@@ -151,7 +155,7 @@ func Build(id string, createdAt time.Time, clientVersion string, rawcalls []spoo
 	if err != nil {
 		return Batch{}, fmt.Errorf("batch: serializing envelope: %w", err)
 	}
-	return Batch{ID: id, Envelope: env, Records: compressed, RequestIDs: ids}, nil
+	return Batch{ID: id, Envelope: env, Records: redact.AlreadyRedacted(compressed), RequestIDs: ids}, nil
 }
 
 // index copies what a rawcall's envelope says about it. A record that

@@ -65,8 +65,8 @@ var (
 // and tokens which tend to have entropy well above 5.0.
 const entropyThreshold = 4.5
 
-// RedactedPlaceholder is the replacement text used for redacted secrets.
-const RedactedPlaceholder = "REDACTED"
+// redactedPlaceholder is the replacement text used for redacted secrets.
+const redactedPlaceholder = "REDACTED"
 
 // placeholderSecretValues lists lowercase values that should be treated as
 // non-secrets when they appear as a credential value: prior redactions
@@ -74,7 +74,7 @@ const RedactedPlaceholder = "REDACTED"
 // and obviously-non-real defaults. Values matched by shape (mask runs,
 // `<…>` brackets, `${…}` shell expansion) are handled separately.
 var placeholderSecretValues = func() map[string]struct{} {
-	lower := strings.ToLower(RedactedPlaceholder)
+	lower := strings.ToLower(redactedPlaceholder)
 	values := []string{
 		lower, "[" + lower + "]", "<" + lower + ">",
 		"changeme", "example", "placeholder",
@@ -109,9 +109,10 @@ func (r RedactedBytes) Len() int {
 	return len(r.data)
 }
 
-// AlreadyRedacted wraps bytes known to already be redacted by a prior
-// write path. Use this ONLY for trusted sources such as controlled test
-// fixtures. For fresh input, use JSONLBytes.
+// AlreadyRedacted wraps bytes known to already be redacted: output
+// derived mechanically from RedactedBytes (such as the compressed
+// record stream a batch carries) or controlled test fixtures. For fresh
+// input, use JSONLBytes.
 func AlreadyRedacted(data []byte) RedactedBytes {
 	return RedactedBytes{data: data}
 }
@@ -161,7 +162,7 @@ var connectionStringRules = []connectionStringRule{
 	{pattern: semicolonConnPattern, hasSecret: hasSemicolonConnectionPassword},
 }
 
-// String replaces secrets and PII in s using layered detection:
+// redactString replaces secrets and PII in s using layered detection:
 //  1. Entropy-based: high-entropy alphanumeric sequences (threshold 4.5)
 //  2. Pattern-based: betterleaks regex rules (260+ known secret formats)
 //  3. Provider token prefixes: deterministic prefix rules for credential
@@ -169,10 +170,10 @@ var connectionStringRules = []connectionStringRule{
 //  4. Credentialed URIs: URLs containing userinfo passwords
 //  5. Database connection strings: JDBC, keyword DSNs, and semicolon strings
 //  6. Bounded credential key/value pairs: DB_PASSWORD=...
-//  7. PII detection: email, phone, address patterns (only when configured via ConfigurePII)
+//  7. PII detection: email and phone patterns (only when configured via ConfigurePII)
 //
 // A string is redacted if ANY method flags it.
-func String(s string) string {
+func redactString(s string) string {
 	return applyRegions(s, detectAllLayers(s))
 }
 
@@ -242,7 +243,7 @@ func detectAllLayers(s string) []taggedRegion {
 	regions = append(regions, detectCredentialValues(s)...)
 
 	// 7. PII detection (opt-in — only runs when configured).
-	regions = append(regions, detectPII(getPIIConfig(), s)...)
+	regions = append(regions, detectPII(getPIIPatterns(), s)...)
 
 	return regions
 }
@@ -496,21 +497,11 @@ func normalizeCredentialJSONKey(key string) string {
 	return key
 }
 
-// Bytes is a convenience wrapper around String for []byte content.
-func Bytes(b []byte) []byte {
-	s := string(b)
-	redacted := String(s)
-	if redacted == s {
-		return b
-	}
-	return []byte(redacted)
-}
-
 // JSONLBytes redacts secrets in JSONL-formatted byte content and returns
 // the result as RedactedBytes, certifying the output has been through redaction.
 func JSONLBytes(b []byte) (RedactedBytes, error) {
 	s := string(b)
-	redacted, err := JSONLContent(s)
+	redacted, err := jsonlContent(s)
 	if err != nil {
 		return RedactedBytes{}, err
 	}
@@ -520,7 +511,7 @@ func JSONLBytes(b []byte) (RedactedBytes, error) {
 	return RedactedBytes{data: []byte(redacted)}, nil
 }
 
-// JSONLContent parses each line as JSON to determine which string values
+// jsonlContent parses each line as JSON to determine which string values
 // need redaction, then performs targeted replacements on the raw JSON bytes.
 // Lines with no secrets are returned unchanged, preserving original formatting.
 //
@@ -529,7 +520,7 @@ func JSONLBytes(b []byte) (RedactedBytes, error) {
 // a single JSON value. This ensures field-aware redaction (which skips ID fields)
 // is used instead of falling back to entropy-based detection on raw text lines,
 // which would corrupt high-entropy identifiers.
-func JSONLContent(content string) (string, error) {
+func jsonlContent(content string) (string, error) {
 	// Try parsing the entire content as a single JSON value first.
 	// Uses a streaming decoder to avoid copying the full content into []byte.
 	// After decoding, attempts a second Decode to confirm EOF — if it succeeds,
@@ -562,7 +553,7 @@ func JSONLContent(content string) (string, error) {
 		}
 		var parsed any
 		if err := json.Unmarshal([]byte(lineTrimmed), &parsed); err != nil {
-			b.WriteString(String(line))
+			b.WriteString(redactString(line))
 			continue
 		}
 		result, err := applyJSONReplacements(line, collectJSONLReplacements(parsed))
@@ -794,9 +785,9 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 				walk("", credentialContext, child)
 			}
 		case string:
-			redacted := String(val)
+			redacted := redactString(val)
 			if redacted == val && isCredentialJSONSecretKey(key, credentialContext) && hasNonPlaceholderPasswordValue(val) {
-				redacted = RedactedPlaceholder
+				redacted = redactedPlaceholder
 			}
 			if redacted != val {
 				seenKey := key + "\x00" + val

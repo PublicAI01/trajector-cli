@@ -1,77 +1,58 @@
 package redact
 
 import (
-	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
 )
 
-// PIICategory identifies a category of personally identifiable information.
+// PIICategory identifies a category of personally identifying strings
+// the redaction pass can mask.
 type PIICategory string
 
 const (
-	PIIEmail   PIICategory = "email"
-	PIIPhone   PIICategory = "phone"
-	PIIAddress PIICategory = "address"
+	PIIEmail PIICategory = "email"
+	PIIPhone PIICategory = "phone"
 )
 
-// Label constants used in replacement tokens and pattern matching.
+// Label constants used in replacement tokens.
 const (
-	labelEmail   = "EMAIL"
-	labelPhone   = "PHONE"
-	labelAddress = "ADDRESS"
+	labelEmail = "EMAIL"
+	labelPhone = "PHONE"
 )
-
-// PIIConfig controls which PII categories are detected and redacted.
-type PIIConfig struct {
-	// Enabled globally enables/disables PII redaction.
-	// When false, no PII patterns are checked (secrets still redacted).
-	Enabled bool
-
-	// Categories maps each PII category to whether it is enabled.
-	// Missing keys default to false (disabled).
-	Categories map[PIICategory]bool
-
-	// CustomPatterns allows teams to define additional regex patterns.
-	// Each key is a label used in the replacement token (uppercased),
-	// and each value is a regex pattern string.
-	// Example: {"employee_id": `EMP-\d{6}`} produces [REDACTED_EMPLOYEE_ID].
-	CustomPatterns map[string]string
-
-	// patterns holds pre-compiled patterns, populated by ConfigurePII.
-	// When nil (e.g., in tests constructing PIIConfig directly),
-	// detectPII falls back to compilePIIPatterns.
-	patterns []piiPattern
-}
 
 // piiPattern is a compiled regex with its replacement token label.
 type piiPattern struct {
 	regex *regexp.Regexp
-	label string // e.g., "EMAIL", "PHONE", "ADDRESS"
+	label string // e.g., "EMAIL", "PHONE"
 }
 
 var (
-	piiConfig   *PIIConfig
-	piiConfigMu sync.RWMutex
+	piiPatterns   []piiPattern
+	piiPatternsMu sync.RWMutex
 )
 
-// ConfigurePII sets the global PII redaction configuration.
-// Pre-compiles patterns so the hot path (String → detectPII) does no compilation.
-// Call once at startup after loading settings. Thread-safe.
-func ConfigurePII(cfg PIIConfig) {
-	piiConfigMu.Lock()
-	defer piiConfigMu.Unlock()
-	cfgCopy := cfg
-	cfgCopy.patterns = compilePIIPatterns(&cfgCopy)
-	piiConfig = &cfgCopy
+// ConfigurePII selects which PII categories the redaction pass masks, on
+// top of the always-on secret layers. Matches are replaced with
+// [REDACTED_<CATEGORY>] tokens. Call once at startup; thread-safe.
+func ConfigurePII(categories ...PIICategory) {
+	patterns := make([]piiPattern, 0, len(categories))
+	for _, c := range categories {
+		for _, bp := range builtinPIIPatterns {
+			if bp.category == c {
+				patterns = append(patterns, piiPattern{regex: bp.regex, label: bp.label})
+			}
+		}
+	}
+	piiPatternsMu.Lock()
+	piiPatterns = patterns
+	piiPatternsMu.Unlock()
 }
 
-// getPIIConfig returns the current PII configuration, or nil if not configured.
-func getPIIConfig() *PIIConfig {
-	piiConfigMu.RLock()
-	defer piiConfigMu.RUnlock()
-	return piiConfig
+func getPIIPatterns() []piiPattern {
+	piiPatternsMu.RLock()
+	defer piiPatternsMu.RUnlock()
+	return piiPatterns
 }
 
 // Pre-compiled builtin PII regexes.
@@ -90,7 +71,6 @@ var (
 			`(?:1[-\s])?\d{3}[-\s]\d{3}[-\s]\d{4}` + // bare digits: dash/space only
 			`)`,
 	)
-	addressRegex = regexp.MustCompile(`\d{1,5}\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\s+(?:St(?:reet)?|Ave(?:nue)?|Blvd|Boulevard|Dr(?:ive)?|Ln|Lane|Rd|Road|Ct|Court|Pl(?:ace)?|Way|Cir(?:cle)?|Ter(?:race)?|Pkwy|Parkway)\.?`)
 )
 
 // emailAllowPatterns are email patterns that should NOT be treated as PII.
@@ -135,24 +115,15 @@ type builtinPIIPattern struct {
 	regex    *regexp.Regexp
 }
 
-// builtinPIIPatterns is the set of default PII detection patterns.
+// builtinPIIPatterns is the set of PII detection patterns.
 var builtinPIIPatterns = []builtinPIIPattern{
 	{PIIEmail, labelEmail, emailRegex},
 	{PIIPhone, labelPhone, phoneRegex},
-	{PIIAddress, labelAddress, addressRegex},
 }
 
-// detectPII returns tagged regions for PII matches in s.
-// Returns nil immediately if PII redaction is not configured or not enabled.
-func detectPII(cfg *PIIConfig, s string) []taggedRegion {
-	if cfg == nil || !cfg.Enabled {
-		return nil
-	}
-
-	patterns := cfg.patterns
-	if patterns == nil {
-		patterns = compilePIIPatterns(cfg)
-	}
+// detectPII returns tagged regions for PII matches in s. Returns nil
+// immediately when no categories are configured.
+func detectPII(patterns []piiPattern, s string) []taggedRegion {
 	var regions []taggedRegion
 	for _, p := range patterns {
 		for _, loc := range p.regex.FindAllStringIndex(s, -1) {
@@ -167,27 +138,6 @@ func detectPII(cfg *PIIConfig, s string) []taggedRegion {
 		}
 	}
 	return regions
-}
-
-// compilePIIPatterns builds the pattern list from config.
-// Builtin regexes are pre-compiled package vars; only custom patterns
-// need compilation here.
-func compilePIIPatterns(cfg *PIIConfig) []piiPattern {
-	var patterns []piiPattern
-	for _, bp := range builtinPIIPatterns {
-		if enabled, ok := cfg.Categories[bp.category]; ok && enabled {
-			patterns = append(patterns, piiPattern{regex: bp.regex, label: bp.label})
-		}
-	}
-	for label, pattern := range cfg.CustomPatterns {
-		compiled, err := regexp.Compile(pattern)
-		if err != nil {
-			slog.Warn("skipping invalid custom PII pattern", slog.String("label", label), slog.String("error", err.Error()))
-			continue
-		}
-		patterns = append(patterns, piiPattern{regex: compiled, label: strings.ToUpper(label)})
-	}
-	return patterns
 }
 
 // replacementToken returns the redaction placeholder for a given label.
