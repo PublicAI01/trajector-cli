@@ -104,6 +104,9 @@ type diagnosisWire struct {
 	Rejected   []rejectedWire `json:"rejected"`
 	Handshake  any            `json:"handshake"`
 	TokenStore tokenStoreWire `json:"token_store"`
+	// Selfcheck is the live proxy's answer for the current project,
+	// present only when a proxy of ours answered one.
+	Selfcheck any `json:"selfcheck,omitempty"`
 }
 
 type projectWire struct {
@@ -186,7 +189,17 @@ func renderDiagnosis(d Diagnosis) []byte {
 		Rejected:   rejected,
 		Handshake:  d.Handshake,
 		TokenStore: tokenStoreWire{Paired: d.TokenStore.Paired, Err: errString(d.TokenStore.Err)},
+		Selfcheck:  selfcheckValue(d),
 	})
+}
+
+// selfcheckValue keeps a nil *Selfcheck out of the JSON instead of
+// marshalling it as null.
+func selfcheckValue(d Diagnosis) any {
+	if d.Selfcheck == nil {
+		return nil
+	}
+	return *d.Selfcheck
 }
 
 // summarizeRouting reports the routing table with every token masked.

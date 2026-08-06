@@ -177,20 +177,37 @@ func (m *Machine) selfCheck(token string) error {
 		}
 		return fmt.Errorf("self-check failed: %w", err)
 	}
+	if _, err := m.verifyRoute(token); err != nil {
+		return fmt.Errorf("self-check failed: %v", err)
+	}
+	return nil
+}
 
+// verifyRoute asks the live proxy what it would do with token — routed,
+// recorded, spool writable — over the exact injected base-URL shape and
+// without an upstream call. enable proves a fresh route with it and
+// doctor re-proves an existing one; the returned error is the one
+// explanation both present.
+func (m *Machine) verifyRoute(token string) (proxylife.Selfcheck, error) {
 	reply, err := m.proxy.Selfcheck(token)
 	if err != nil {
-		return fmt.Errorf("self-check request failed: %w", err)
+		return reply, fmt.Errorf("the self-check request failed: %w", err)
 	}
+	return reply, m.explainSelfcheck(reply)
+}
+
+// explainSelfcheck turns a selfcheck reply into the error a user can
+// act on, nil when the route records.
+func (m *Machine) explainSelfcheck(reply proxylife.Selfcheck) error {
 	switch {
 	case !reply.IsOurs():
-		return fmt.Errorf("self-check failed: %s did not answer as a trajector proxy", m.deps.ProxyAddr)
+		return fmt.Errorf("%s did not answer as a trajector proxy", m.deps.ProxyAddr)
 	case !reply.TokenKnown:
-		return fmt.Errorf("self-check failed: the proxy does not know this project's token")
+		return errors.New("the proxy does not know this project's token")
 	case !reply.Recording:
-		return fmt.Errorf("self-check failed: %s", notRecordingReason(reply))
+		return errors.New(notRecordingReason(reply))
 	case !reply.SpoolWritable:
-		return fmt.Errorf("self-check failed: the capture spool at %s is not writable (check disk space and quota)", m.deps.Layout.SpoolDir())
+		return fmt.Errorf("the capture spool at %s is not writable (check disk space and quota)", m.deps.Layout.SpoolDir())
 	}
 	return nil
 }

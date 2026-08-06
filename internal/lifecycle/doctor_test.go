@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -56,6 +57,51 @@ func TestDoctorExplainsADeviceWidePause(t *testing.T) {
 	}
 	if !strings.Contains(out, "trajector login") {
 		t.Errorf("doctor = %q, want the pause explained with its remedy", out)
+	}
+}
+
+func TestDoctorEndsWithTheLiveProxyConfirmation(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	e.stdout.Reset()
+	problems, out := e.doctor()
+	if problems != 0 {
+		t.Fatalf("problems = %d on a healthy project, output:\n%s", problems, out)
+	}
+	if !strings.Contains(out, "live proxy confirms") {
+		t.Errorf("doctor = %q, want the live proxy's own confirmation", out)
+	}
+}
+
+func TestDoctorFlagsALiveProxyThatWillNotRecord(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory write permissions work differently on Windows")
+	}
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	// Every file is consistent, but the machine changed under the live
+	// proxy: its spool no longer accepts writes. Only asking the proxy
+	// itself — the same self-check enable runs — can surface that.
+	spoolDir := e.layout().SpoolDir()
+	if err := os.Chmod(spoolDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(spoolDir, 0o700) })
+
+	e.stdout.Reset()
+	problems, out := e.doctor()
+	if problems == 0 {
+		t.Fatalf("problems = 0 while the live proxy cannot record, output:\n%s", out)
+	}
+	if !strings.Contains(out, "live proxy will not record") {
+		t.Errorf("doctor = %q, want the live proxy's refusal reported", out)
 	}
 }
 

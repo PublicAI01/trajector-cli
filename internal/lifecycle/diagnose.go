@@ -52,6 +52,10 @@ type Diagnosis struct {
 	Rejected   []upload.RejectedBatch
 	Handshake  platform.Handshake
 	TokenStore TokenStoreState
+	// Selfcheck is the live proxy's own answer for this project's
+	// token. It is non-nil only when the project is enabled, our proxy
+	// holds the port, and the proxy answered.
+	Selfcheck *proxylife.Selfcheck
 }
 
 // Diagnose resolves the device's full state. Stores that fail to open
@@ -67,6 +71,11 @@ func (m *Machine) Diagnose(dir string) (Diagnosis, error) {
 
 	h, holder := m.proxy.Health()
 	d.Proxy = ProxyState{Addr: m.proxy.Addr(), Holder: holder, Health: h}
+	if st.Enabled && holder == proxylife.HolderOurs {
+		if reply, err := m.proxy.Selfcheck(st.Token); err == nil {
+			d.Selfcheck = &reply
+		}
+	}
 
 	if sp, err := m.spool(); err != nil {
 		d.Spool = SpoolState{OpenErr: err}

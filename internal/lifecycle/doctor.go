@@ -119,6 +119,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	doctorRejected(r, d.Rejected)
 	doctorService(r, d.Handshake, m.deps.Version)
 	doctorEnvironmentNote(r)
+	m.doctorSelfcheck(r, d)
 
 	r.render(io.Out)
 	fmt.Fprintln(io.Out)
@@ -321,6 +322,25 @@ func doctorService(r *doctorReport, h platform.Handshake, version string) {
 	if h.Notice != "" {
 		r.note("notice from the service: %s", h.Notice)
 	}
+}
+
+// doctorSelfcheck closes an enabled project's diagnosis by asking the
+// live proxy itself — the same self-check enable runs. Files can look
+// right while the running proxy holds a state that will not record;
+// only the proxy's own answer settles it.
+func (m *Machine) doctorSelfcheck(r *doctorReport, d Diagnosis) {
+	if !d.Project.Enabled || d.Proxy.Holder != proxylife.HolderOurs {
+		return
+	}
+	if d.Selfcheck == nil {
+		r.problem("the live proxy did not answer this project's self-check; run `trajector doctor` again once it settles")
+		return
+	}
+	if err := m.explainSelfcheck(*d.Selfcheck); err != nil {
+		r.problem("the files agree, but the live proxy will not record this project: %v", err)
+		return
+	}
+	r.ok("live proxy confirms this project routes and records")
 }
 
 // quarantineHeadline is the one sentence both status and doctor use for
