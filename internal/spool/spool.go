@@ -275,32 +275,38 @@ func (s *Spool) Writable() error {
 
 // rewriteIndexLocked drops removed request ids from a day index. A
 // malformed line is kept as-is: the index is advisory and rebuildable,
-// so losing it would be worse than carrying a stale line.
+// so losing it would be worse than carrying a stale line. The rewrite
+// is a read-modify-write reachable from the resident proxy and from
+// short-lived CLI processes at once, so it runs under fsatomic.Update
+// rather than the in-process mutex alone.
 func (s *Spool) rewriteIndexLocked(dayDir string, removed map[string]bool) error {
 	path := filepath.Join(dayDir, indexName)
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
+	} else if err != nil {
+		return err
 	}
+	var delta int64
+	err := fsatomic.Update(path, 0o600, func(old []byte) ([]byte, error) {
+		var kept []byte
+		for _, line := range bytes.Split(old, []byte("\n")) {
+			if len(line) == 0 {
+				continue
+			}
+			var rec indexLine
+			if err := json.Unmarshal(line, &rec); err == nil && removed[rec.RequestID] {
+				continue
+			}
+			kept = append(kept, line...)
+			kept = append(kept, '\n')
+		}
+		delta = int64(len(kept)) - int64(len(old))
+		return kept, nil
+	})
 	if err != nil {
 		return err
 	}
-	var kept []byte
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		if len(line) == 0 {
-			continue
-		}
-		var rec indexLine
-		if err := json.Unmarshal(line, &rec); err == nil && removed[rec.RequestID] {
-			continue
-		}
-		kept = append(kept, line...)
-		kept = append(kept, '\n')
-	}
-	if err := fsatomic.WriteFile(path, kept, 0o600); err != nil {
-		return err
-	}
-	s.usage += int64(len(kept)) - int64(len(data))
+	s.usage += delta
 	return nil
 }
 
