@@ -9,62 +9,63 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
-// Disable withdraws a project's consent: injection removed, token
-// revoked, consent recorded as denied, and the project's unuploaded
-// rawcalls deleted. It reports the project hash so the caller can
-// forward a deletion request to the service. Steps run in the order
-// that fails safe: a partial disable can only under-collect, never
-// keep routing traffic while looking disabled, and rerunning completes
-// the remainder.
-func (m *Machine) disableProject(projectDir string, io IO) (projectIDHash string, err error) {
-	root, err := consent.CanonicalRoot(projectDir)
-	if err != nil {
-		return "", err
-	}
-	hash := consent.ProjectIDHash(root)
-	settingsPath := claudesettings.ProjectLocalPath(root)
+// withdrawal is what one disable did: the project identity a purge
+// request is scoped by, whether a grant actually stood, and how much
+// local unuploaded data left with it.
+type withdrawal struct {
+	hash       string
+	wasEnabled bool
+	spooled    int
+	rejected   int
+}
 
-	_, injected := claudesettings.InjectedBaseURL(settingsPath)
-	_, active, err := m.routes.Active(root)
+// disableProject withdraws a project's consent: injection removed,
+// token revoked, consent recorded as denied, and the project's
+// unuploaded rawcalls deleted. Steps run in the order that fails safe:
+// a partial disable can only under-collect, never keep routing traffic
+// while looking disabled, and rerunning completes the remainder.
+func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
+	st, err := m.Project(projectDir)
 	if err != nil {
-		return "", err
+		return withdrawal{}, err
 	}
-	if !injected && !active {
+	w := withdrawal{hash: st.Hash, wasEnabled: st.Enabled}
+
+	if !st.Injected() && !st.Enabled {
 		fmt.Fprintln(io.Out, "This project is not enabled; nothing to do.")
-		return hash, nil
+		return w, nil
 	}
 
+	settingsPath := st.SettingsPath()
 	if err := claudesettings.RemoveProject(settingsPath); err != nil {
-		return "", fmt.Errorf("removing injection from %s: %w", settingsPath, err)
+		return w, fmt.Errorf("removing injection from %s: %w", settingsPath, err)
 	}
 	fmt.Fprintf(io.Out, "Removed injection from %s\n", settingsPath)
 
 	now := m.now()
-	if err := m.routes.Revoke(root, now); err != nil {
-		return "", fmt.Errorf("revoking the project token: %w", err)
+	if err := m.routes.Revoke(st.Root, now); err != nil {
+		return w, fmt.Errorf("revoking the project token: %w", err)
 	}
 	fmt.Fprintln(io.Out, "Project token revoked; recording for this project is off.")
 
-	if err := m.consent.SetProjectState(hash, root, consent.StateDenied, now); err != nil {
-		return "", fmt.Errorf("recording withdrawal: %w", err)
+	if err := m.consent.SetProjectState(st.Hash, st.Root, consent.StateDenied, now); err != nil {
+		return w, fmt.Errorf("recording withdrawal: %w", err)
 	}
 
-	spooled, err := deleteProjectRawcalls(m.deps.Layout.SpoolDir(), hash)
-	if err != nil {
-		return "", fmt.Errorf("deleting local unuploaded data: %w", err)
+	if w.spooled, err = deleteProjectRawcalls(m.deps.Layout.SpoolDir(), st.Hash); err != nil {
+		return w, fmt.Errorf("deleting local unuploaded data: %w", err)
 	}
 	// Rejected batches are still local unuploaded data; withdrawal must
 	// reach them too.
-	rejected, err := upload.PurgeRejected(m.deps.Layout.RejectedDir(), hash)
-	if err != nil {
-		return "", fmt.Errorf("deleting local unuploaded data: %w", err)
+	if w.rejected, err = upload.PurgeRejected(m.deps.Layout.RejectedDir(), st.Hash); err != nil {
+		return w, fmt.Errorf("deleting local unuploaded data: %w", err)
 	}
-	if deleted := spooled + rejected; deleted > 0 {
+	if deleted := w.spooled + w.rejected; deleted > 0 {
 		fmt.Fprintf(io.Out, "Deleted %d unuploaded rawcall(s) for this project (%d from the spool, %d from rejected batches).\n",
-			deleted, spooled, rejected)
+			deleted, w.spooled, w.rejected)
 	}
 	fmt.Fprintln(io.Out, "This project no longer contributes data.")
-	return hash, nil
+	return w, nil
 }
 
 func deleteProjectRawcalls(dir, projectIDHash string) (int, error) {

@@ -120,14 +120,13 @@ func (m *Machine) doctorProxy(r *doctorReport, st ProjectStatus) {
 // alone is wrong; disagreements about consent are reported, never
 // guessed at.
 func (m *Machine) doctorInjection(r *doctorReport, st ProjectStatus) error {
-	settingsPath := claudesettings.ProjectLocalPath(st.Root)
-	injected := st.InjectedBaseURL != ""
+	settingsPath := st.SettingsPath()
 	switch {
-	case !st.Enabled && !injected:
+	case !st.Enabled && !st.Injected():
 		r.ok("this project is not enabled; nothing to reconcile")
 		return nil
 
-	case st.Enabled && !injected:
+	case st.Enabled && !st.Injected():
 		// Re-injecting would resume capture the user may have stopped on
 		// purpose by hand-editing; consent questions are theirs to answer.
 		r.problem("the routing table grants this project but its settings inject nothing.")
@@ -135,7 +134,7 @@ func (m *Machine) doctorInjection(r *doctorReport, st ProjectStatus) error {
 		r.detail("to withdraw this project.")
 		return nil
 
-	case !st.Enabled && injected:
+	case !st.Enabled && st.Injected():
 		if err := claudesettings.RemoveProject(settingsPath); err != nil {
 			r.problem("a stale injection points traffic at a token that no longer records, and removing it failed: %v", err)
 			return nil
@@ -144,12 +143,12 @@ func (m *Machine) doctorInjection(r *doctorReport, st ProjectStatus) error {
 		return nil
 	}
 
-	if st.GrantHash != st.Hash {
+	if st.IdentityDisagreement() {
 		r.problem("the routing table and the consent record disagree about this project's identity.")
 		r.detail("Run `trajector disable` and then `trajector enable` to rebuild both.")
 		return nil
 	}
-	if st.InjectedToken != st.Token || !st.HookInstalled {
+	if !st.Consistent() {
 		if err := claudesettings.InjectProject(settingsPath, m.proxy.BaseURL(st.Token), hookCommand(m.deps.ExecPath, "ensure-proxy")); err != nil {
 			return fmt.Errorf("repairing the injection in %s: %w", settingsPath, err)
 		}

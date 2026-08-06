@@ -32,16 +32,15 @@ func hookCommand(execPath, subcommand string) string {
 // half-enabled project routing traffic at a dead port must be
 // impossible.
 func (m *Machine) enableProject(projectDir string, io IO) error {
-	root, err := consent.CanonicalRoot(projectDir)
+	st, err := m.Project(projectDir)
 	if err != nil {
 		return err
 	}
-	hash := consent.ProjectIDHash(root)
 	if err := m.confirmAgreement(io); err != nil {
 		return err
 	}
 
-	want := m.desiredUpstream(root)
+	want := m.desiredUpstream(st.Root)
 	if want.unsupportedKey != "" {
 		return fmt.Errorf("%s is set: Bedrock and Vertex channels are not supported and nothing was injected", want.unsupportedKey)
 	}
@@ -57,21 +56,20 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 	// stores' serialized updates; a byte-for-byte restore would hand a
 	// concurrent enable's grant to the rollback. Only the project-local
 	// files are snapshotted whole.
-	settingsPath := claudesettings.ProjectLocalPath(root)
-	snap, err := takeSnapshots(settingsPath, filepath.Join(root, ".gitignore"))
+	snap, err := takeSnapshots(st.SettingsPath(), filepath.Join(st.Root, ".gitignore"))
 	if err != nil {
 		return err
 	}
-	grants, err := m.routes.SnapshotGrants(root)
+	grants, err := m.routes.SnapshotGrants(st.Root)
 	if err != nil {
 		return err
 	}
-	decision, err := m.consent.SnapshotProject(hash)
+	decision, err := m.consent.SnapshotProject(st.Hash)
 	if err != nil {
 		return err
 	}
 
-	if err := m.installAndVerify(io, root, hash, want.upstream, settingsPath); err != nil {
+	if err := m.installAndVerify(io, st, want.upstream); err != nil {
 		restoreErr := errors.Join(snap.restore(), m.routes.RestoreGrants(grants), m.consent.RestoreProject(decision))
 		if restoreErr != nil {
 			return fmt.Errorf("%w (rollback incomplete: %v)", err, restoreErr)
@@ -81,22 +79,23 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 	return nil
 }
 
-func (m *Machine) installAndVerify(io IO, root, hash, upstream, settingsPath string) error {
-	token, err := m.projectToken(root)
+func (m *Machine) installAndVerify(io IO, st ProjectStatus, upstream string) error {
+	token, err := projectToken(st)
 	if err != nil {
 		return err
 	}
+	settingsPath := st.SettingsPath()
 	now := m.now()
 	if err := m.routes.Grant(routing.Grant{
 		Token:         token,
-		ProjectIDHash: hash,
-		RootPath:      root,
+		ProjectIDHash: st.Hash,
+		RootPath:      st.Root,
 		Upstream:      upstream,
 		GrantedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("updating routing table: %w", err)
 	}
-	if err := m.consent.SetProjectState(hash, root, consent.StateGranted, now); err != nil {
+	if err := m.consent.SetProjectState(st.Hash, st.Root, consent.StateGranted, now); err != nil {
 		return fmt.Errorf("recording project consent: %w", err)
 	}
 	if err := claudesettings.InjectProject(settingsPath, m.proxy.BaseURL(token), hookCommand(m.deps.ExecPath, "ensure-proxy")); err != nil {
@@ -104,7 +103,7 @@ func (m *Machine) installAndVerify(io IO, root, hash, upstream, settingsPath str
 	}
 	fmt.Fprintf(io.Out, "Injected %s (base URL and session hooks)\n", settingsPath)
 
-	action, err := claudesettings.EnsureGitIgnored(root, claudesettings.ProjectLocalRel)
+	action, err := claudesettings.EnsureGitIgnored(st.Root, claudesettings.ProjectLocalRel)
 	if err != nil {
 		return fmt.Errorf("ensuring .gitignore covers the injected settings: %w", err)
 	}
@@ -158,11 +157,9 @@ func (m *Machine) confirmAgreement(io IO) error {
 // projectToken reuses the active token when the project is already
 // enabled — re-running enable must repair, not re-key — and mints a
 // fresh 128-bit token otherwise.
-func (m *Machine) projectToken(root string) (string, error) {
-	if route, ok, err := m.routes.Active(root); err != nil {
-		return "", err
-	} else if ok {
-		return route.Token, nil
+func projectToken(st ProjectStatus) (string, error) {
+	if st.Enabled {
+		return st.Token, nil
 	}
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

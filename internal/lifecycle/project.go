@@ -36,9 +36,12 @@ func (m *Machine) Enable(projectDir string, io IO) error {
 
 // Disable stops contributing from a project. With purge it also asks
 // the service to delete this project's uploaded but undelivered data,
-// which needs a paired device to authenticate the request.
+// which needs a paired device to authenticate the request. The purge
+// request is sent even when no grant stands right now (wasEnabled
+// false): data may have been uploaded under an earlier enable, and the
+// service scopes deletion by project hash, not by the current grant.
 func (m *Machine) Disable(projectDir string, purge bool, io IO) error {
-	hash, err := m.disableProject(projectDir, io)
+	w, err := m.disableProject(projectDir, io)
 	if err != nil {
 		return err
 	}
@@ -49,7 +52,7 @@ func (m *Machine) Disable(projectDir string, purge bool, io IO) error {
 	if !paired {
 		return fmt.Errorf("%w: --purge needs one to authenticate the deletion request; run `trajector login` and retry `trajector disable --purge`", ErrNotPaired)
 	}
-	if err := m.deps.Platform.RequestDeletion(token, hash); err != nil {
+	if err := m.deps.Platform.RequestDeletion(token, w.hash); err != nil {
 		var status *platform.StatusError
 		if errors.As(err, &status) && !status.Temporary() {
 			// Retrying the same request cannot succeed; do not tell the
@@ -147,15 +150,11 @@ func (m *Machine) pauseIfAgreementStale(io IO) {
 // own injected value is invisible here by design; a hook has no voice,
 // so what it cannot fix silently it leaves for doctor to report.
 func (m *Machine) refreshUpstreamDrift(projectDir string) {
-	root, err := consent.CanonicalRoot(projectDir)
-	if err != nil {
+	st, err := m.Project(projectDir)
+	if err != nil || !st.Enabled {
 		return
 	}
-	grant, ok, err := m.routes.Active(root)
-	if err != nil || !ok {
-		return
-	}
-	_, _, _ = m.reconcileUpstream(root, grant.Upstream)
+	_, _, _ = m.reconcileUpstream(st.Root, st.Upstream)
 }
 
 // Discovery prints the one-time onboarding hint for a project that is
@@ -163,14 +162,11 @@ func (m *Machine) refreshUpstreamDrift(projectDir string) {
 // only a project hash — never the path — is recorded as the
 // already-hinted marker.
 func (m *Machine) Discovery(projectDir string, io IO) {
-	root, err := consent.CanonicalRoot(projectDir)
-	if err != nil {
+	st, err := m.Project(projectDir)
+	if err != nil || st.Enabled {
 		return
 	}
-	if _, enabled, err := m.routes.Active(root); err != nil || enabled {
-		return
-	}
-	first, err := m.consent.MarkPrompted(consent.ProjectIDHash(root))
+	first, err := m.consent.MarkPrompted(st.Hash)
 	if err != nil || !first {
 		return
 	}

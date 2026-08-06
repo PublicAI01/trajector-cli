@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
@@ -216,6 +217,36 @@ func TestPurgeSendsADeletionRequestForThisProjectOnly(t *testing.T) {
 	}
 	if body["project_id_hash"] != grant.GrantHash {
 		t.Errorf("deletion hash = %q, want %q", body["project_id_hash"], grant.GrantHash)
+	}
+}
+
+func TestPurgeOnANeverEnabledProjectStillRequestsDeletion(t *testing.T) {
+	e := newEnv(t)
+	e.service.Stub("POST", "/v1/data-deletions", fakeplatform.JSON(202, map[string]any{}))
+
+	// The project was never enabled on this device, but the same root may
+	// have contributed under an earlier enable; deletion is scoped by
+	// project hash, not by the current grant, so the request still goes out.
+	if err := e.machine().Disable(e.project, true, e.io()); err != nil {
+		t.Fatalf("disable --purge: %v", err)
+	}
+	if !strings.Contains(e.stdout.String(), "not enabled") {
+		t.Errorf("stdout = %q, want the no-op local disable explained", e.stdout)
+	}
+	reqs := e.service.Requests()
+	if len(reqs) == 0 {
+		t.Fatal("no deletion request was sent")
+	}
+	last := reqs[len(reqs)-1]
+	if last.URL != "/v1/data-deletions" {
+		t.Fatalf("last request = %+v, want the deletion", last)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(last.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if want := consent.ProjectIDHash(e.canonicalRoot()); body["project_id_hash"] != want {
+		t.Errorf("deletion hash = %q, want %q", body["project_id_hash"], want)
 	}
 }
 

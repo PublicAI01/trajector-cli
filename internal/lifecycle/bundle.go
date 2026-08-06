@@ -87,7 +87,7 @@ func (m *Machine) DoctorBundle(projectDir, outDir string, io IO) (string, error)
 		"project_id_hash":   st.Hash,
 		"enabled":           st.Enabled,
 		"upstream":          st.Upstream,
-		"injected":          st.InjectedBaseURL != "",
+		"injected":          st.Injected(),
 		"injected_token":    maskToken(st.InjectedToken),
 		"token":             maskToken(st.Token),
 		"hooks_installed":   st.HookInstalled,

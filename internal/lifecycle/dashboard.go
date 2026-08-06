@@ -40,14 +40,13 @@ func (m *Machine) Status(dir string, io IO) error {
 	}
 
 	fmt.Fprintf(io.Out, "\nProject %s\n", st.Root)
-	consistent := st.Enabled && st.InjectedToken == st.Token && st.HookInstalled
 	switch {
-	case consistent:
+	case st.Consistent():
 		fmt.Fprintln(io.Out, "  Contributing; recording is on for this project.")
 		if st.Upstream != capture.Anthropic.OfficialUpstream {
 			fmt.Fprintf(io.Out, "  Upstream: %s (third-party origin).\n", st.Upstream)
 		}
-	case !st.Enabled && st.InjectedBaseURL == "":
+	case !st.Enabled && !st.Injected():
 		fmt.Fprintln(io.Out, "  Not enabled. Run `trajector enable` to contribute from this project.")
 	default:
 		fmt.Fprintln(io.Out, "  WARNING: the injected settings and the routing table disagree. Run `trajector doctor`.")
