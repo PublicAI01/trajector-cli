@@ -7,6 +7,7 @@ package platform
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -118,9 +119,21 @@ func (c *Client) PollPairing(pairingID string) (PairingResult, error) {
 	return r, nil
 }
 
-// RevokeDevice revokes the device token server-side.
+// ErrAlreadyRevoked reports a revocation the service refused because
+// it no longer honors the token — the goal state of a revocation, not
+// a failure to retry.
+var ErrAlreadyRevoked = errors.New("platform: the device token is already revoked")
+
+// RevokeDevice revokes the device token server-side. A service that no
+// longer recognizes the token answers ErrAlreadyRevoked; what an HTTP
+// status means for a revocation is decided here, not by callers.
 func (c *Client) RevokeDevice(deviceToken string) error {
-	return c.call(http.MethodPost, "/v1/device/revoke", deviceToken, struct{}{}, nil)
+	err := c.call(http.MethodPost, "/v1/device/revoke", deviceToken, struct{}{}, nil)
+	var status *StatusError
+	if errors.As(err, &status) && status.StatusCode == http.StatusUnauthorized {
+		return ErrAlreadyRevoked
+	}
+	return err
 }
 
 // RequestDeletion asks the service to delete this project's uploaded

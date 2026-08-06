@@ -49,15 +49,21 @@ const (
 	// Deferred means the service asked to slow down and the pause has
 	// not elapsed. A forced flush ignores it.
 	Deferred Outcome = "deferred"
+	// Rejected means the service refused a batch permanently and its
+	// records were quarantined; the flush stopped there.
+	Rejected Outcome = "rejected"
 )
 
 // Result reports what one Flush call did. Batches and Records count
 // acknowledged uploads, so a failed flush can still report the progress
-// it made before failing.
+// it made before failing. MinClientVersion carries the version the
+// service demands when the outcome is UpgradeRequired, so a caller
+// never has to read the handshake file across processes for it.
 type Result struct {
-	Outcome Outcome
-	Batches int
-	Records int
+	Outcome          Outcome
+	Batches          int
+	Records          int
+	MinClientVersion string
 }
 
 // Deps is everything the uploader needs from the world outside it.
@@ -94,7 +100,10 @@ type Uploader struct {
 	// deliberately not persisted: a fresh process (post-upgrade, or just
 	// restarted) gets to find out for itself.
 	upgradeRequired bool
-	notBefore       time.Time
+	// minClientVersion is what the service last demanded alongside the
+	// upgrade gate; it rides out with the gate's outcome.
+	minClientVersion string
+	notBefore        time.Time
 }
 
 // New validates the wiring and builds an uploader.
@@ -136,6 +145,7 @@ func (u *Uploader) Flush(force bool) (Result, error) {
 	if !force {
 		if u.upgradeRequired {
 			res.Outcome = UpgradeRequired
+			res.MinClientVersion = u.minClientVersion
 			return res, nil
 		}
 		if u.deps.Now().Before(u.notBefore) {
@@ -296,6 +306,7 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 		// The data is fine; this client is too old. Automatic flushes
 		// stop so the batch is not re-uploaded pointlessly every minute.
 		u.upgradeRequired = true
+		u.minClientVersion = upgrade.MinClientVersion
 		u.noteUpgradeRequired(upgrade.MinClientVersion)
 	case errors.As(err, &limited):
 		// RetryAfter arrives already capped at platform.MaxRetryAfter.

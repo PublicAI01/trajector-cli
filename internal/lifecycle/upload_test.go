@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -136,6 +138,12 @@ func TestUploadExplainsARequiredUpgrade(t *testing.T) {
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
 	if err := m.Upload(true, e.io()); err == nil {
 		t.Fatal("a refused batch upload reported success")
+	}
+
+	// The required version reaches the user through the flush reply, not
+	// by reading the proxy's handshake file across processes.
+	if err := os.Remove(filepath.Join(e.layout().UploadDir(), "handshake.json")); err != nil {
+		t.Fatal(err)
 	}
 
 	e.stdout.Reset()

@@ -42,9 +42,12 @@ type BatchAck struct {
 
 // UpgradeRequiredError reports a 426: the service refuses uploads from
 // this client version. Nothing is wrong with the data; the caller keeps
-// it and stops offering it until the client is upgraded.
+// it and stops offering it until the client is upgraded. It refines the
+// underlying StatusError rather than replacing it, so errors.As still
+// reaches the status and Temporary stays answerable.
 type UpgradeRequiredError struct {
 	MinClientVersion string
+	status           *StatusError
 }
 
 func (e *UpgradeRequiredError) Error() string {
@@ -52,6 +55,13 @@ func (e *UpgradeRequiredError) Error() string {
 		return "the service requires a newer client version"
 	}
 	return "the service requires client version " + e.MinClientVersion + " or newer"
+}
+
+func (e *UpgradeRequiredError) Unwrap() error {
+	if e.status == nil {
+		return nil
+	}
+	return e.status
 }
 
 // MaxRetryAfter caps how long a Retry-After can silence automatic
@@ -63,9 +73,11 @@ const MaxRetryAfter = time.Hour
 
 // RateLimitedError reports a 429. RetryAfter is the pause the client
 // will actually take — the service's request capped at MaxRetryAfter —
-// and zero when the service named none.
+// and zero when the service named none. It refines the underlying
+// StatusError; unwrapping reaches a Temporary that answers true.
 type RateLimitedError struct {
 	RetryAfter time.Duration
+	status     *StatusError
 }
 
 func (e *RateLimitedError) Error() string {
@@ -75,12 +87,20 @@ func (e *RateLimitedError) Error() string {
 	return fmt.Sprintf("the service asked to retry after %s", e.RetryAfter)
 }
 
+func (e *RateLimitedError) Unwrap() error {
+	if e.status == nil {
+		return nil
+	}
+	return e.status
+}
+
 // BatchRejectedError reports a 4xx that is neither auth, timeout,
 // version, nor rate limiting: the service says this batch will never be
-// accepted as it stands.
+// accepted as it stands. It refines the underlying StatusError.
 type BatchRejectedError struct {
 	Status  string
 	Details string
+	status  *StatusError
 }
 
 func (e *BatchRejectedError) Error() string {
@@ -89,6 +109,13 @@ func (e *BatchRejectedError) Error() string {
 		msg += ": " + e.Details
 	}
 	return msg
+}
+
+func (e *BatchRejectedError) Unwrap() error {
+	if e.status == nil {
+		return nil
+	}
+	return e.status
 }
 
 // UploadBatch posts one batch: the uncompressed envelope and the
@@ -152,6 +179,7 @@ func (c *Client) UploadBatch(deviceToken, batchID string, envelope []byte, recor
 // plain errors — transient, keep and retry — matching how every other
 // failure without its own class is treated.
 func classifyUploadFailure(resp *http.Response, body []byte) error {
+	status := &StatusError{StatusCode: resp.StatusCode, Status: resp.Status, Method: http.MethodPost, Path: BatchesPath, Body: body}
 	switch {
 	case resp.StatusCode == http.StatusUpgradeRequired:
 		var deny struct {
@@ -159,19 +187,19 @@ func classifyUploadFailure(resp *http.Response, body []byte) error {
 		}
 		// Best-effort detail: a 426 without a parseable body still gates.
 		_ = json.Unmarshal(body, &deny)
-		return &UpgradeRequiredError{MinClientVersion: deny.MinClientVersion}
+		return &UpgradeRequiredError{MinClientVersion: deny.MinClientVersion, status: status}
 	case resp.StatusCode == http.StatusTooManyRequests:
 		pause := retryAfter(resp.Header.Get("Retry-After"))
 		if pause > MaxRetryAfter {
 			pause = MaxRetryAfter
 		}
-		return &RateLimitedError{RetryAfter: pause}
+		return &RateLimitedError{RetryAfter: pause, status: status}
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusRequestTimeout:
-		return &StatusError{StatusCode: resp.StatusCode, Status: resp.Status, Method: http.MethodPost, Path: BatchesPath, Body: body}
+		return status
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
-		return &BatchRejectedError{Status: resp.Status, Details: trimDetails(body)}
+		return &BatchRejectedError{Status: resp.Status, Details: trimDetails(body), status: status}
 	default:
-		return &StatusError{StatusCode: resp.StatusCode, Status: resp.Status, Method: http.MethodPost, Path: BatchesPath, Body: body}
+		return status
 	}
 }
 

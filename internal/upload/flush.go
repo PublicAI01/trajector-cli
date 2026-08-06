@@ -2,7 +2,10 @@ package upload
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
 // FlushPath asks the resident uploader to run one flush and report the
@@ -20,7 +23,11 @@ type FlushReply struct {
 	Outcome Outcome `json:"outcome"`
 	Batches int     `json:"batches"`
 	Records int     `json:"records"`
-	Error   string  `json:"error,omitempty"`
+	// MinClientVersion is set when the service gates this client
+	// version, so the caller can name the required version without
+	// reading the handshake file across processes.
+	MinClientVersion string `json:"min_client_version,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 // Handler serves the flush endpoint, for the composition root to mount
@@ -35,13 +42,23 @@ func (u *Uploader) Handler(serviceName string) http.Handler {
 		}
 		result, err := u.Flush(r.URL.Query().Get("force") == "1")
 		reply := FlushReply{
-			Service: serviceName,
-			Outcome: result.Outcome,
-			Batches: result.Batches,
-			Records: result.Records,
+			Service:          serviceName,
+			Outcome:          result.Outcome,
+			Batches:          result.Batches,
+			Records:          result.Records,
+			MinClientVersion: result.MinClientVersion,
 		}
 		if err != nil {
 			reply.Error = err.Error()
+			var upgrade *platform.UpgradeRequiredError
+			var rejection *errRejected
+			switch {
+			case errors.As(err, &upgrade):
+				reply.Outcome = UpgradeRequired
+				reply.MinClientVersion = upgrade.MinClientVersion
+			case errors.As(err, &rejection):
+				reply.Outcome = Rejected
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(reply)

@@ -145,14 +145,23 @@ func TestNon2xxCarriesItsStatusAndBody(t *testing.T) {
 			t.Errorf("body = %q, want the service's own words kept", status.Body)
 		}
 	})
-	t.Run("a 401 is permanent", func(t *testing.T) {
+	t.Run("a 401 on revoke is the already-revoked goal state", func(t *testing.T) {
 		c, server := client(t)
 		server.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(401, map[string]any{"error": "unknown token"}))
 
 		err := c.RevokeDevice("dev-tok-fake")
+		if !errors.Is(err, platform.ErrAlreadyRevoked) {
+			t.Errorf("err = %v, want ErrAlreadyRevoked", err)
+		}
+	})
+	t.Run("a 400 on revoke stays a permanent StatusError", func(t *testing.T) {
+		c, server := client(t)
+		server.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(400, map[string]any{"error": "malformed"}))
+
+		err := c.RevokeDevice("dev-tok-fake")
 		var status *platform.StatusError
-		if !errors.As(err, &status) || status.StatusCode != 401 || status.Temporary() {
-			t.Errorf("err = %v, want a permanent 401 StatusError", err)
+		if !errors.As(err, &status) || status.StatusCode != 400 || status.Temporary() {
+			t.Errorf("err = %v, want a permanent 400 StatusError", err)
 		}
 	})
 }

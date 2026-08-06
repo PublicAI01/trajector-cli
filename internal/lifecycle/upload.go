@@ -34,11 +34,7 @@ func (m *Machine) Upload(force bool, io IO) error {
 	case upload.Paused:
 		fmt.Fprintln(io.Out, "Not signed in; run `trajector login` first. Captured data is kept.")
 	case upload.UpgradeRequired:
-		if v := upload.LoadHandshake(m.deps.Layout.UploadDir()).MinClientVersion; v != "" {
-			fmt.Fprintf(io.Out, "Uploads are paused: the service requires trajector %s or newer (this is %s).\n", v, m.deps.Version)
-		} else {
-			fmt.Fprintln(io.Out, "Uploads are paused: the service requires a newer trajector version.")
-		}
+		fmt.Fprintf(io.Out, "Uploads are paused: the service requires trajector %s or newer (this is %s).\n", reply.MinClientVersion, m.deps.Version)
 		fmt.Fprintln(io.Out, "Captured data is kept. Upgrade trajector to resume, or retry with --force.")
 	case upload.Deferred:
 		fmt.Fprintln(io.Out, "The service asked to slow down; uploads resume automatically. Use --force to try now.")

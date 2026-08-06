@@ -27,6 +27,41 @@ func ackStub(status int, batchID string) fakeplatform.Response {
 	})
 }
 
+func TestEveryUploadFailureClassCarriesItsStatus(t *testing.T) {
+	// One taxonomy: every refined error class unwraps to the underlying
+	// StatusError, so errors.As always reaches a status and Temporary is
+	// answerable for every service failure.
+	tests := []struct {
+		name      string
+		response  fakeplatform.Response
+		temporary bool
+	}{
+		{"426 upgrade required", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}), false},
+		{"429 rate limited", fakeplatform.Response{Status: 429, Body: []byte(`{}`)}, true},
+		{"400 batch rejected", fakeplatform.JSON(400, map[string]any{"error": "malformed"}), false},
+		{"401 unauthorized", fakeplatform.JSON(401, map[string]any{}), false},
+		{"503 service failure", fakeplatform.JSON(503, map[string]any{}), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, server := client(t)
+			server.Stub("POST", "/v1/batches", tt.response)
+
+			_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")))
+			if err == nil {
+				t.Fatal("upload succeeded against a failing service")
+			}
+			var status *platform.StatusError
+			if !errors.As(err, &status) {
+				t.Fatalf("errors.As(%T, *StatusError) failed: %v", err, err)
+			}
+			if status.Temporary() != tt.temporary {
+				t.Errorf("Temporary() = %v, want %v for %v", status.Temporary(), tt.temporary, err)
+			}
+		})
+	}
+}
+
 func TestUploadBatchPostsEnvelopeAndRecordsAsMultipart(t *testing.T) {
 	c, server := client(t)
 	server.Stub("POST", "/v1/batches", ackStub(200, "batch-1"))
