@@ -88,6 +88,29 @@ func (a *app) statusCmd(args []string) int {
 	return 0
 }
 
+func (a *app) doctorCmd(args []string) int {
+	if len(args) != 0 {
+		fmt.Fprintln(a.stderr, "usage: trajector doctor")
+		return 2
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return a.fail(err)
+	}
+	m, err := a.machine()
+	if err != nil {
+		return a.fail(err)
+	}
+	problems, err := m.Doctor(cwd, a.io())
+	if err != nil {
+		return a.fail(err)
+	}
+	if problems > 0 {
+		return 1
+	}
+	return 0
+}
+
 func (a *app) uninstallCmd(args []string) int {
 	if len(args) != 0 {
 		fmt.Fprintln(a.stderr, "usage: trajector uninstall")

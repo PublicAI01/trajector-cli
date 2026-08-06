@@ -54,6 +54,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return a.uninstallCmd(args[1:])
 	case "status":
 		return a.statusCmd(args[1:])
+	case "doctor":
+		return a.doctorCmd(args[1:])
 	case "upload":
 		return a.uploadCmd(args[1:])
 	case "hook":
@@ -77,6 +79,7 @@ commands:
   disable      stop contributing from the current project [--purge]
   uninstall    remove every injection and optionally local data
   status       show pairing, project, proxy, capture, and upload state
+  doctor       diagnose and repair injection, hooks, proxy, and spool issues
   upload       upload captured data now [--force]
   version      print the trajector version
   proxy run    run the local proxy (internal; started automatically)
