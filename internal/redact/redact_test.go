@@ -200,7 +200,7 @@ func TestCollectJSONLReplacements_Succeeds(t *testing.T) {
 	obj := map[string]any{
 		"content": "token=" + highEntropySecret,
 	}
-	repls := collectJSONLReplacements(obj, String)
+	repls := collectJSONLReplacements(obj)
 	// expect one replacement for high-entropy secret
 	want := []jsonReplacement{{key: "content", original: "token=" + highEntropySecret, redacted: "REDACTED"}}
 	if !slices.Equal(repls, want) {
@@ -261,22 +261,6 @@ func TestShouldSkipJSONLField(t *testing.T) {
 	}
 }
 
-func TestShouldSkipJSONLField_RedactionBehavior(t *testing.T) {
-	// Verify that secrets in skipped fields are preserved (not redacted).
-	obj := map[string]any{
-		"session_id": highEntropySecret,
-		"content":    highEntropySecret,
-	}
-	repls := collectJSONLReplacements(obj, String)
-	// Only "content" should produce a replacement; "session_id" should be skipped.
-	if len(repls) != 1 {
-		t.Fatalf("expected 1 replacement, got %d", len(repls))
-	}
-	if repls[0].original != highEntropySecret {
-		t.Errorf("expected replacement for secret in content field, got %q", repls[0].original)
-	}
-}
-
 func TestJSONLContent_SkippedFieldValueCollision(t *testing.T) {
 	t.Parallel()
 	input := `{"session_id":"` + highEntropySecret + `","content":"` + highEntropySecret + `"}`
@@ -291,6 +275,70 @@ func TestJSONLContent_SkippedFieldValueCollision(t *testing.T) {
 	}
 	if !strings.Contains(result, `"content":"REDACTED"`) {
 		t.Fatalf("expected content field to be redacted, got: %s", result)
+	}
+}
+
+func TestJSONLBytes_ArrayElementCollisionPreservesProtectedFields(t *testing.T) {
+	t.Parallel()
+	// An array element is collected without an owning key, so its replacement
+	// applies to any string token with the same decoded value. When that value
+	// collides with the value of a protected field (path, id, signature), the
+	// protected field must stay byte-for-byte intact: observed values are never
+	// rewritten. Only the array copy is masked.
+	input := `{"file_path":"` + highEntropySecret + `","cwd":"` + highEntropySecret + `","thinkingSignature":"` + highEntropySecret + `","session_id":"` + highEntropySecret + `","attachments":["` + highEntropySecret + `"]}`
+
+	result, err := JSONLBytes([]byte(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := string(result.Bytes())
+	for _, field := range []string{"file_path", "cwd", "thinkingSignature", "session_id"} {
+		if !strings.Contains(got, `"`+field+`":"`+highEntropySecret+`"`) {
+			t.Errorf("protected field %q was rewritten: %s", field, got)
+		}
+	}
+	if !strings.Contains(got, `"attachments":["REDACTED"]`) {
+		t.Errorf("array copy of the secret was not masked: %s", got)
+	}
+}
+
+func TestJSONLBytes_ArrayUnderSkippedKeyPreserved(t *testing.T) {
+	t.Parallel()
+	// A container that is the value of a protected field is protected as a
+	// whole: elements of an ids array keep their observed values even though
+	// the same value is masked in an unprotected position.
+	input := `{"session_ids":["` + highEntropySecret + `"],"content":"` + highEntropySecret + `"}`
+
+	result, err := JSONLBytes([]byte(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := string(result.Bytes())
+	if !strings.Contains(got, `"session_ids":["`+highEntropySecret+`"]`) {
+		t.Errorf("element of protected ids array was rewritten: %s", got)
+	}
+	if !strings.Contains(got, `"content":"REDACTED"`) {
+		t.Errorf("content field was not masked: %s", got)
+	}
+}
+
+func TestJSONLBytes_ObjectKeyNeverReplaced(t *testing.T) {
+	t.Parallel()
+	// An object key spelled exactly like a replaced value must never be
+	// rewritten: keys are structure, and masking one changes the document's
+	// shape instead of hiding a secret.
+	input := `{"items":["` + highEntropySecret + `"],"` + highEntropySecret + `":"safe"}`
+
+	result, err := JSONLBytes([]byte(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := string(result.Bytes())
+	if !strings.Contains(got, `"`+highEntropySecret+`":"safe"`) {
+		t.Errorf("object key was rewritten: %s", got)
+	}
+	if !strings.Contains(got, `"items":["REDACTED"]`) {
+		t.Errorf("array copy of the secret was not masked: %s", got)
 	}
 }
 
@@ -628,8 +676,8 @@ func TestString_SupabaseProviderTokenBoundaries(t *testing.T) {
 }
 
 // TestJSONLContent_SupabaseSecretMalformedLineFallback drives the secret
-// through the JSONL fall-back branch (jsonlContentImpl calls the per-leaf
-// redactor on the raw line when json.Unmarshal fails), with the secret glued to
+// through the JSONL fall-back branch (JSONLContent runs String on the raw
+// line when json.Unmarshal fails), with the secret glued to
 // a literal "\n" escape so the byte before the prefix is a word char. This is
 // the realistic path by which a malformed/truncated transcript line could leak
 // a low-entropy Supabase secret; it must still be redacted.
@@ -1230,7 +1278,7 @@ func TestShouldSkipJSONLObject_RedactionBehavior(t *testing.T) {
 		"type": "image",
 		"data": highEntropySecret,
 	}
-	repls := collectJSONLReplacements(obj, String)
+	repls := collectJSONLReplacements(obj)
 
 	// expect no replacements, it's an image which is skipped.
 	var wantRepls []jsonReplacement
@@ -1243,7 +1291,7 @@ func TestShouldSkipJSONLObject_RedactionBehavior(t *testing.T) {
 		"type":    "text",
 		"content": highEntropySecret,
 	}
-	repls2 := collectJSONLReplacements(obj2, String)
+	repls2 := collectJSONLReplacements(obj2)
 	wantRepls2 := []jsonReplacement{{key: "content", original: highEntropySecret, redacted: "REDACTED"}}
 	if !slices.Equal(repls2, wantRepls2) {
 		t.Errorf("got %q, want %q", repls2, wantRepls2)
@@ -1603,5 +1651,37 @@ func TestJSONLContent_CrossContextValueCollision(t *testing.T) {
 	}
 	if strings.Count(result, `"password":"REDACTED"`) != 2 {
 		t.Errorf("expected both password fields redacted, got: %s", result)
+	}
+}
+
+func TestJSONLBytes_ObjectUnderProtectedKeyIsScanned(t *testing.T) {
+	t.Parallel()
+	// A protected key (ends in "id") preserves its own scalar value and an
+	// ids array it owns, but an object value re-enters normal evaluation:
+	// each field is judged on its own name, so a secret nested under a
+	// compound "*_id" key is still masked.
+	input := `{"credentials_by_id":{"api_key":"` + highEntropySecret + `","session_id":"keep-` + highEntropySecret + `"}}`
+	got := redactedString(t, input)
+	if strings.Contains(got, `"api_key":"`+highEntropySecret+`"`) {
+		t.Errorf("secret under a compound id key survived: %s", got)
+	}
+	if !strings.Contains(got, `"session_id":"keep-`+highEntropySecret+`"`) {
+		t.Errorf("a genuine nested id field was rewritten: %s", got)
+	}
+}
+
+func TestJSONLBytes_ImageObjectScansSiblingsButKeepsPayload(t *testing.T) {
+	t.Parallel()
+	// The binary payload (data/url) of an image object is preserved, but a
+	// secret in a sibling field is masked: the skip is scoped to the
+	// payload, not the whole object.
+	const payload = "sk-ant-api03-DIFFERENTvZ9mZ2vL8nQ5rT1wY4bC7dF0gH3jE6"
+	input := `{"type":"image","caption":"` + highEntropySecret + `","source":{"type":"base64","data":"` + payload + `"}}`
+	got := redactedString(t, input)
+	if strings.Contains(got, highEntropySecret) {
+		t.Errorf("sibling secret survived the image skip: %s", got)
+	}
+	if !strings.Contains(got, payload) {
+		t.Errorf("image payload was altered: %s", got)
 	}
 }

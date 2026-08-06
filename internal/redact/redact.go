@@ -530,12 +530,6 @@ func JSONLBytes(b []byte) (RedactedBytes, error) {
 // is used instead of falling back to entropy-based detection on raw text lines,
 // which would corrupt high-entropy identifiers.
 func JSONLContent(content string) (string, error) {
-	return jsonlContentImpl(content, String)
-}
-
-// jsonlContentImpl is the body of JSONLContent parameterized by a per-leaf
-// redactor. JSONLContent passes String.
-func jsonlContentImpl(content string, redactor func(string) string) (string, error) {
 	// Try parsing the entire content as a single JSON value first.
 	// Uses a streaming decoder to avoid copying the full content into []byte.
 	// After decoding, attempts a second Decode to confirm EOF — if it succeeds,
@@ -546,7 +540,7 @@ func jsonlContentImpl(content string, redactor func(string) string) (string, err
 		var parsed any
 		if err := dec.Decode(&parsed); err == nil && isSingleJSONValue(dec) {
 			// Content is a single JSON value (object/array) — redact field-aware.
-			result, err := applyJSONReplacements(content, collectJSONLReplacements(parsed, redactor))
+			result, err := applyJSONReplacements(content, collectJSONLReplacements(parsed))
 			if err != nil {
 				return "", err
 			}
@@ -568,10 +562,10 @@ func jsonlContentImpl(content string, redactor func(string) string) (string, err
 		}
 		var parsed any
 		if err := json.Unmarshal([]byte(lineTrimmed), &parsed); err != nil {
-			b.WriteString(redactor(line))
+			b.WriteString(String(line))
 			continue
 		}
-		result, err := applyJSONReplacements(line, collectJSONLReplacements(parsed, redactor))
+		result, err := applyJSONReplacements(line, collectJSONLReplacements(parsed))
 		if err != nil {
 			return "", err
 		}
@@ -621,21 +615,48 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 	// The enclosing containers. The top of the stack tells a value token which
 	// key owns it; a token directly inside an array has no owning key, which is
 	// how array elements stay restricted to the unkeyed replacements.
+	//
+	// The skip policy is enforced here, on the applying side, so that it holds
+	// for every replacement regardless of where it was collected: a protected
+	// field keeps its observed value even when an unkeyed (array-element)
+	// replacement collides with it. keySkipped marks the value owned by the
+	// current key; skipped marks a container living anywhere inside a
+	// protected field's subtree.
 	type frame struct {
-		isObject bool
-		key      string
+		isObject   bool
+		skipped    bool
+		keySkipped bool
+		key        string
 	}
 	var stack []frame
+	enteringSkipped := func() bool {
+		if len(stack) == 0 {
+			return false
+		}
+		top := stack[len(stack)-1]
+		return top.skipped || top.keySkipped
+	}
+	// A protected key skips its scalar value and an array it owns (an ids
+	// array keeps its elements). An object value, though, re-enters normal
+	// evaluation: its fields carry their own names, so each is judged on its
+	// own key rather than blanket-skipped by an ancestor id/signature/path
+	// key. Only a genuine container-wide skip reaches into a nested object.
+	enteringSkippedObject := func() bool {
+		if len(stack) == 0 {
+			return false
+		}
+		return stack[len(stack)-1].skipped
+	}
 
 	var b strings.Builder
 	i, written := 0, 0
 	for i < len(s) {
 		switch s[i] {
 		case '{':
-			stack = append(stack, frame{isObject: true})
+			stack = append(stack, frame{isObject: true, skipped: enteringSkippedObject()})
 			i++
 		case '[':
-			stack = append(stack, frame{})
+			stack = append(stack, frame{skipped: enteringSkipped()})
 			i++
 		case '}', ']':
 			if len(stack) > 0 {
@@ -660,10 +681,13 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 			inObject := len(stack) > 0 && stack[len(stack)-1].isObject
 			if isKey && inObject && decoded {
 				stack[len(stack)-1].key = value
+				stack[len(stack)-1].keySkipped = shouldSkipJSONLField(value)
 			}
-			if decoded {
+			// Keys are structure, never rewritten; values in skipped
+			// territory keep their observed bytes.
+			if decoded && !isKey && !enteringSkipped() {
 				replJSON, found := "", false
-				if !isKey && inObject {
+				if inObject {
 					replJSON, found = keyed[stack[len(stack)-1].key][value]
 				}
 				if !found {
@@ -743,20 +767,24 @@ func isSingleJSONValue(dec *json.Decoder) bool {
 }
 
 // collectJSONLReplacements walks a parsed JSON value and collects unique
-// string replacements via the supplied per-leaf redactor.
-func collectJSONLReplacements(v any, redactor func(string) string) []jsonReplacement {
+// string replacements. Protected fields are not excluded here: the skip
+// policy lives in applyJSONReplacements, the one place that decides what
+// gets rewritten.
+func collectJSONLReplacements(v any) []jsonReplacement {
 	seen := make(map[string]bool)
 	var repls []jsonReplacement
 	var walk func(key string, credentialContext bool, v any)
 	walk = func(key string, credentialContext bool, v any) {
 		switch val := v.(type) {
 		case map[string]any:
-			if shouldSkipJSONLObject(val) {
-				return
-			}
+			// An image/base64 object carries a binary payload in its data or
+			// url field: that value is preserved verbatim, but the object's
+			// other fields (captions, ids, arbitrary siblings) are still text
+			// and are scanned normally.
+			skipPayload := shouldSkipJSONLObject(val)
 			childCredentialContext := credentialContext || isCredentialJSONObject(val)
 			for k, child := range val {
-				if shouldSkipJSONLField(k) {
+				if skipPayload && (k == "data" || k == "url") {
 					continue
 				}
 				walk(k, childCredentialContext, child)
@@ -766,7 +794,7 @@ func collectJSONLReplacements(v any, redactor func(string) string) []jsonReplace
 				walk("", credentialContext, child)
 			}
 		case string:
-			redacted := redactor(val)
+			redacted := String(val)
 			if redacted == val && isCredentialJSONSecretKey(key, credentialContext) && hasNonPlaceholderPasswordValue(val) {
 				redacted = RedactedPlaceholder
 			}
@@ -783,9 +811,10 @@ func collectJSONLReplacements(v any, redactor func(string) string) []jsonReplace
 	return repls
 }
 
-// shouldSkipJSONLField returns true if a JSON key should be excluded from scanning/redaction.
-// Skips signature fields (any key ending in "signature"), ID fields (ending in "id"/"ids"),
-// and common path/directory fields.
+// shouldSkipJSONLField returns true if the value (subtree included) owned by
+// a JSON key must never be rewritten. Protects signature fields (any key
+// ending in "signature"), ID fields (ending in "id"/"ids"), and common
+// path/directory fields. Enforced by applyJSONReplacements.
 func shouldSkipJSONLField(key string) bool {
 	lower := strings.ToLower(key)
 
@@ -813,7 +842,9 @@ func shouldSkipJSONLField(key string) bool {
 	return false
 }
 
-// shouldSkipJSONLObject returns true if the object has "type":"image" or "type":"image_url".
+// shouldSkipJSONLObject reports whether the object carries a binary
+// payload — "type":"image"/"image_url" or "type":"base64" — whose data or
+// url field is preserved verbatim rather than scanned.
 func shouldSkipJSONLObject(obj map[string]any) bool {
 	t, ok := obj["type"].(string)
 	return ok && (strings.HasPrefix(t, "image") || t == "base64")
