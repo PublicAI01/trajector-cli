@@ -3,6 +3,7 @@ package routing
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -79,6 +80,65 @@ func (s *Store) SetUpstream(rootPath, upstream string) error {
 				rec.Upstream = upstream
 				f.Projects[tok] = rec
 			}
+		}
+	})
+}
+
+// GrantSnapshot captures one root path's table entries so a failed
+// enable can put exactly them back. The value is opaque: only the store
+// that minted it can restore it.
+type GrantSnapshot struct {
+	rootPath string
+	entries  map[string]projectRecord
+}
+
+// SnapshotGrants captures rootPath's current entries, revoked ones
+// included. A root with no entries yields a snapshot that restores to
+// absence.
+func (s *Store) SnapshotGrants(rootPath string) (GrantSnapshot, error) {
+	f, err := readTableFile(s.path)
+	if err != nil {
+		return GrantSnapshot{}, err
+	}
+	snap := GrantSnapshot{rootPath: rootPath, entries: map[string]projectRecord{}}
+	for tok, rec := range f.Projects {
+		if rec.RootPath == rootPath {
+			snap.entries[tok] = rec
+		}
+	}
+	return snap, nil
+}
+
+// RestoreGrants puts the snapshotted root path back to its captured
+// state. Only that root's entries are touched: the restore runs under
+// the same serialized update as every other mutation, so a concurrent
+// process's grant for another project is never lost to a rollback. A
+// table already matching the snapshot is left alone entirely — an
+// enable that failed before writing must be able to roll back even
+// when the table cannot be written.
+func (s *Store) RestoreGrants(snap GrantSnapshot) error {
+	if snap.rootPath == "" {
+		return fmt.Errorf("routing: restoring an empty snapshot")
+	}
+	if current, err := readTableFile(s.path); err == nil {
+		entries := map[string]projectRecord{}
+		for tok, rec := range current.Projects {
+			if rec.RootPath == snap.rootPath {
+				entries[tok] = rec
+			}
+		}
+		if maps.Equal(entries, snap.entries) {
+			return nil
+		}
+	}
+	return s.update(func(f *tableFile) {
+		for tok, rec := range f.Projects {
+			if rec.RootPath == snap.rootPath {
+				delete(f.Projects, tok)
+			}
+		}
+		for tok, rec := range snap.entries {
+			f.Projects[tok] = rec
 		}
 	})
 }

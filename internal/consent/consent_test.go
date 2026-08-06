@@ -122,3 +122,55 @@ func TestAgreementTextNamesItsVersion(t *testing.T) {
 		t.Error("agreement text does not carry its version")
 	}
 }
+
+func TestRestoreProjectLeavesOtherDecisionsAlone(t *testing.T) {
+	s := open(t)
+	if err := s.AcceptAgreement(consent.AgreementVersion, "2026-08-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := s.SnapshotProject("hash-ours")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A concurrent enable records another project while ours is underway.
+	if err := s.SetProjectState("hash-other", "/project/other", consent.StateGranted, "2026-08-01T00:00:01Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetProjectState("hash-ours", "/project/ours", consent.StateGranted, "2026-08-01T00:00:02Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RestoreProject(snap); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := s.ProjectState("hash-ours"); err != nil || ok {
+		t.Errorf("our record survived its own rollback: %v, %v", ok, err)
+	}
+	if state, ok, err := s.ProjectState("hash-other"); err != nil || !ok || state != consent.StateGranted {
+		t.Errorf("the concurrent record did not survive our rollback: %v, %v, %v", state, ok, err)
+	}
+	if version, _, err := s.AcceptedVersion(); err != nil || version != consent.AgreementVersion {
+		t.Errorf("agreement acceptance did not survive rollback: %q, %v", version, err)
+	}
+}
+
+func TestRestoreProjectPutsAPriorDecisionBack(t *testing.T) {
+	s := open(t)
+	if err := s.SetProjectState("hash-p", "/project/p", consent.StateDenied, "2026-08-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := s.SnapshotProject("hash-p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetProjectState("hash-p", "/project/p", consent.StateGranted, "2026-08-01T00:00:01Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RestoreProject(snap); err != nil {
+		t.Fatal(err)
+	}
+	if state, ok, err := s.ProjectState("hash-p"); err != nil || !ok || state != consent.StateDenied {
+		t.Errorf("restored decision = %v, %v, %v; want the prior denied state", state, ok, err)
+	}
+}

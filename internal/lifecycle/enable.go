@@ -56,14 +56,28 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		fmt.Fprintln(io.Out, "regardless of origin.")
 	}
 
+	// The routing table and the consent file are shared with concurrent
+	// processes, so rollback restores them entry-wise through their
+	// stores' serialized updates; a byte-for-byte restore would hand a
+	// concurrent enable's grant to the rollback. Only the project-local
+	// files are snapshotted whole.
 	settingsPath := claudesettings.ProjectLocalPath(root)
-	snap, err := takeSnapshots(settingsPath, m.deps.Layout.RoutingTable(), m.deps.Layout.ConsentFile(), filepath.Join(root, ".gitignore"))
+	snap, err := takeSnapshots(settingsPath, filepath.Join(root, ".gitignore"))
+	if err != nil {
+		return err
+	}
+	grants, err := m.routes.SnapshotGrants(root)
+	if err != nil {
+		return err
+	}
+	decision, err := m.consent.SnapshotProject(hash)
 	if err != nil {
 		return err
 	}
 
 	if err := m.installAndVerify(io, root, hash, upstream, settingsPath); err != nil {
-		if restoreErr := snap.restore(); restoreErr != nil {
+		restoreErr := errors.Join(snap.restore(), m.routes.RestoreGrants(grants), m.consent.RestoreProject(decision))
+		if restoreErr != nil {
 			return fmt.Errorf("%w (rollback incomplete: %v)", err, restoreErr)
 		}
 		return fmt.Errorf("%w (all changes rolled back)", err)

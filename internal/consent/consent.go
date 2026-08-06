@@ -96,6 +96,60 @@ func (s *Store) SetProjectState(projectIDHash, rootPath string, state ProjectSta
 	})
 }
 
+// ProjectSnapshot captures one project's recorded decision so a failed
+// enable can put exactly it back. The value is opaque: only the store
+// that minted it can restore it.
+type ProjectSnapshot struct {
+	hash string
+	rec  *projectRecord
+}
+
+// SnapshotProject captures the project's current record; a project with
+// no record yields a snapshot that restores to absence.
+func (s *Store) SnapshotProject(projectIDHash string) (ProjectSnapshot, error) {
+	if projectIDHash == "" {
+		return ProjectSnapshot{}, fmt.Errorf("consent: project hash is required")
+	}
+	f, err := s.read()
+	if err != nil {
+		return ProjectSnapshot{}, err
+	}
+	snap := ProjectSnapshot{hash: projectIDHash}
+	if rec, ok := f.Projects[projectIDHash]; ok {
+		snap.rec = &rec
+	}
+	return snap, nil
+}
+
+// RestoreProject puts the snapshotted project back to its captured
+// state. Only that project's record is touched: the restore runs under
+// the same serialized update as every other mutation, so a concurrent
+// process's decision about another project is never lost to a rollback.
+// A store already matching the snapshot is left alone entirely — an
+// enable that failed before writing must be able to roll back even
+// when the store cannot be written.
+func (s *Store) RestoreProject(snap ProjectSnapshot) error {
+	if snap.hash == "" {
+		return fmt.Errorf("consent: restoring an empty snapshot")
+	}
+	if current, err := s.read(); err == nil {
+		rec, ok := current.Projects[snap.hash]
+		if !ok && snap.rec == nil {
+			return nil
+		}
+		if ok && snap.rec != nil && rec == *snap.rec {
+			return nil
+		}
+	}
+	return s.update(func(f *storeFile) {
+		if snap.rec == nil {
+			delete(f.Projects, snap.hash)
+			return
+		}
+		f.Projects[snap.hash] = *snap.rec
+	})
+}
+
 // MarkPrompted records that a project has seen the one-time onboarding
 // hint and reports whether this call was the first. Taking only a hash
 // is the guarantee: the hint can never teach this file a project path.

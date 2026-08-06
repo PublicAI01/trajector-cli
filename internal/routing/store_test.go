@@ -221,3 +221,103 @@ func TestConcurrentGrantsAllSurvive(t *testing.T) {
 		t.Errorf("%d grants survived %d concurrent enables, want all of them", len(grants), n)
 	}
 }
+
+func TestRestoreGrantsLeavesAConcurrentGrantAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routes-under-test.json")
+	ours := routing.OpenStore(path)
+
+	// Snapshot taken while the table does not exist yet.
+	snap, err := ours.SnapshotGrants("/project/ours")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A concurrent enable creates the table with another project's grant.
+	grant(t, routing.OpenStore(path), "tok-other", "/project/other")
+
+	// Our enable grants, fails, and rolls back.
+	grant(t, ours, "tok-ours", "/project/ours")
+	if err := ours.RestoreGrants(snap); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := ours.Active("/project/ours"); err != nil || ok {
+		t.Errorf("our grant survived its own rollback: %v, %v", ok, err)
+	}
+	if _, ok, err := ours.Active("/project/other"); err != nil || !ok {
+		t.Errorf("the concurrent grant did not survive our rollback: %v, %v", ok, err)
+	}
+}
+
+func TestRestoreGrantsPutsAPriorGrantBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routes-under-test.json")
+	store := routing.OpenStore(path)
+	grant(t, store, "tok-old", "/project/p")
+
+	snap, err := store.SnapshotGrants("/project/p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant(t, store, "tok-new", "/project/p")
+	if err := store.RestoreGrants(snap); err != nil {
+		t.Fatal(err)
+	}
+
+	g, ok, err := store.Active("/project/p")
+	if err != nil || !ok || g.Token != "tok-old" {
+		t.Errorf("restored grant = %+v, %v, %v; want tok-old active", g, ok, err)
+	}
+}
+
+func TestConcurrentEnableRollbacksLoseNoSurvivingGrant(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routes-under-test.json")
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			suffix := fmt.Sprintf("%02d", i)
+			store := routing.OpenStore(path)
+			root := "/project/" + suffix
+			snap, err := store.SnapshotGrants(root)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			if err := store.Grant(routing.Grant{
+				Token:         "tok-" + suffix,
+				ProjectIDHash: "hash-" + suffix,
+				RootPath:      root,
+				Upstream:      "https://api.anthropic.com",
+				GrantedAt:     "2026-08-01T00:00:00Z",
+			}); err != nil {
+				errs[i] = err
+				return
+			}
+			// Every odd enable fails and rolls back.
+			if i%2 == 1 {
+				errs[i] = store.RestoreGrants(snap)
+			}
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("enable %d: %v", i, err)
+		}
+	}
+	grants, err := routing.OpenStore(path).All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(grants) != n/2 {
+		t.Fatalf("%d grants survived, want the %d successful enables", len(grants), n/2)
+	}
+	for _, g := range grants {
+		if (g.Token[len(g.Token)-1]-'0')%2 == 1 {
+			t.Errorf("rolled-back grant %s survived", g.Token)
+		}
+	}
+}

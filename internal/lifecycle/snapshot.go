@@ -7,7 +7,10 @@ import (
 )
 
 // fileSnapshot remembers one file's exact pre-enable state so rollback
-// can restore it byte for byte, including "did not exist".
+// can restore it byte for byte, including "did not exist". Only files
+// this process exclusively owns belong here (the project-local settings
+// and .gitignore); state shared with concurrent processes is restored
+// entry-wise through its store.
 type fileSnapshot struct {
 	path    string
 	data    []byte
