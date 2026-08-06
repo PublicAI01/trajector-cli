@@ -41,6 +41,24 @@ Design commitments:
 - The client is fully open source, so everything it does on your machine can
   be audited in this repository.
 
+The full behavior description lives in [PRIVACY.md](PRIVACY.md) (what data,
+when, what processing, where it goes) and [ARCHITECTURE.md](ARCHITECTURE.md)
+(how the pieces fit); vulnerabilities go through [SECURITY.md](SECURITY.md).
+
+## Releases and verification
+
+Every release is built by GitHub Actions from this repository and ships with
+a checksum file and a build provenance attestation, so you can verify a
+downloaded binary was produced from this source before running it:
+
+```sh
+shasum -a 256 -c --ignore-missing trajector_checksums.txt
+gh attestation verify trajector_* --repo PublicAI01/trajector-cli
+```
+
+To uninstall, run `trajector uninstall` **before** deleting the binary:
+deleting the binary alone leaves the settings injections behind.
+
 ## Layout
 
 | Package | Responsibility |
