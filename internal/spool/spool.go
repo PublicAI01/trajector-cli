@@ -134,21 +134,56 @@ func dirSignature(dir string) string {
 	return string(b)
 }
 
-// refreshLocked re-derives usage when another handle has changed the
-// directory. A change that lands between this handle's own mutation and
-// its signature snapshot is missed once, but the very next mutation by
-// any handle changes the signature again, so usage always converges.
+// refreshLocked re-derives usage when the signature says another handle
+// has changed the directory. The signature is a cheap approximation and
+// can miss a change, so it is only ever trusted to say "nothing new" on
+// the path where being wrong is harmless — see rederiveLocked for the
+// path where it isn't.
 func (s *Spool) refreshLocked() {
-	sig := dirSignature(s.dir)
-	if sig == s.sig {
+	if dirSignature(s.dir) == s.sig {
 		return
 	}
+	s.rederiveLocked()
+}
+
+// rederiveLocked walks the spool and takes the result as the truth,
+// whatever the signature claims.
+//
+// Directory mtime has the granularity of the kernel's coarse clock, a
+// few milliseconds. A foreign delete landing in the same tick as this
+// handle's last observation leaves the signature identical, so
+// refreshLocked skips the walk and the handle keeps counting bytes that
+// are already gone. On the accept path that costs nothing — usage
+// converges on the next mutation. On the refuse path it is a rawcall
+// dropped for a quota that is not actually full, which is exactly the
+// data loss the quota exists to make orderly.
+//
+// So callers pay for a walk before refusing, and only before refusing:
+// refusal is rare, and being wrong about it is not recoverable.
+func (s *Spool) rederiveLocked() {
+	// Snapshot the signature before the walk, not after: a change that
+	// lands mid-walk then leaves the two disagreeing, and the next
+	// refresh re-derives. Snapshotting after would fold that change into
+	// the signature and strand the stale figure.
+	sig := dirSignature(s.dir)
 	usage, err := walkUsage(s.dir)
 	if err != nil {
 		return
 	}
 	s.usage = usage
 	s.sig = sig
+}
+
+// wouldExceedLocked reports whether extra more bytes would put usage
+// over quota, re-deriving from disk before answering yes: the bytes
+// being counted may have been freed by another handle without the
+// signature noticing, and a wrong yes drops a rawcall.
+func (s *Spool) wouldExceedLocked(extra int64) bool {
+	if s.usage+extra <= s.quota {
+		return false
+	}
+	s.rederiveLocked()
+	return s.usage+extra > s.quota
 }
 
 // Write stores one rawcall atomically and appends it to the day's
@@ -188,7 +223,8 @@ func (s *Spool) Write(env envelope.Envelope) error {
 	if info, err := os.Stat(final); err == nil {
 		replaced = info.Size()
 	}
-	if s.usage-replaced+int64(len(data))+int64(len(line)) > s.quota {
+	needed := int64(len(data)) + int64(len(line))
+	if s.wouldExceedLocked(needed - replaced) {
 		return ErrQuotaExceeded
 	}
 
@@ -223,9 +259,10 @@ func (s *Spool) Write(env envelope.Envelope) error {
 func (s *Spool) Writable() error {
 	s.mu.Lock()
 	s.refreshLocked()
-	usage, quota := s.usage, s.quota
+	// Room for even one more byte is the bar: the quota refuses when full.
+	full := s.wouldExceedLocked(1)
 	s.mu.Unlock()
-	if usage >= quota {
+	if full {
 		return ErrQuotaExceeded
 	}
 	f, err := os.CreateTemp(s.dir, ".writable-*")
