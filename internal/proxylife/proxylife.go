@@ -63,6 +63,35 @@ const flushTimeout = 10 * time.Minute
 // by the compiler.
 type Health = apiproxy.Health
 
+// Holder names what, if anything, holds the proxy port. The
+// discrimination lives here — misreading it touches the invariant that
+// credentials are only ever routed at our own proxy, so no caller
+// re-derives it from the health payload.
+type Holder int
+
+const (
+	// HolderNone: nothing accepted the connection.
+	HolderNone Holder = iota
+	// HolderForeign: something answered, but not as a trajector proxy.
+	// Injected credentials must never be routed at it.
+	HolderForeign
+	// HolderOurs: a trajector proxy answered and Health carries its
+	// self-report.
+	HolderOurs
+)
+
+// String names the holder for diagnostics.
+func (h Holder) String() string {
+	switch h {
+	case HolderForeign:
+		return "foreign"
+	case HolderOurs:
+		return "ours"
+	default:
+		return "none"
+	}
+}
+
 // Selfcheck is what the proxy reports about one project token.
 type Selfcheck = apiproxy.Selfcheck
 
@@ -95,10 +124,10 @@ func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/"
 // because the port bind is the single-instance lock and losers defer to
 // the winner.
 func (p *Proxy) Ensure() error {
-	if h, running := p.Health(); running {
-		if h.Service != apiproxy.ServiceName {
-			return fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
-		}
+	switch h, holder := p.Health(); holder {
+	case HolderForeign:
+		return fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
+	case HolderOurs:
 		if h.Version == p.version {
 			return nil
 		}
@@ -118,21 +147,20 @@ func (p *Proxy) Ensure() error {
 	return p.waitHealthy()
 }
 
-// Health reports the proxy's identity and counters. running is false
-// when nothing accepted the connection; it is true with a zero Health
-// when something answered but not as a trajector proxy.
-func (p *Proxy) Health() (Health, bool) {
+// Health reports who holds the proxy port and, when it is ours, the
+// proxy's self-report. Health is zero unless the holder is HolderOurs.
+func (p *Proxy) Health() (Health, Holder) {
 	conn, err := net.DialTimeout("tcp", p.addr, probeTimeout)
 	if err != nil {
-		return Health{}, false
+		return Health{}, HolderNone
 	}
 	conn.Close()
 
 	var h Health
-	if err := p.get(apiproxy.HealthzPath, &h); err != nil {
-		return Health{}, true
+	if err := p.get(apiproxy.HealthzPath, &h); err != nil || h.Service != apiproxy.ServiceName {
+		return Health{}, HolderForeign
 	}
-	return h, true
+	return h, HolderOurs
 }
 
 // Selfcheck asks the proxy what it would do with token, over the exact
@@ -198,8 +226,8 @@ func (p *Proxy) waitPortFree(within time.Duration) error {
 func (p *Proxy) waitHealthy() error {
 	deadline := time.Now().Add(startTimeout)
 	for {
-		h, running := p.Health()
-		if running && h.Service == apiproxy.ServiceName && h.Version == p.version {
+		h, holder := p.Health()
+		if holder == HolderOurs && h.Version == p.version {
 			return nil
 		}
 		if time.Now().After(deadline) {

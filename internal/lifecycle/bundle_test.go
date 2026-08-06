@@ -55,13 +55,14 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 	})
 
 	out := t.TempDir()
+	t.Chdir(out)
 	e.stdout.Reset()
-	path, err := e.machine().DoctorBundle(e.project, out, e.io())
+	path, err := e.machine().DoctorBundle(e.project, e.io())
 	if err != nil {
 		t.Fatalf("bundle: %v\nstdout: %s", err, e.stdout)
 	}
 	if filepath.Dir(path) != out {
-		t.Errorf("bundle written to %s, want it inside %s", path, out)
+		t.Errorf("bundle written to %s, want it inside the current directory %s", path, out)
 	}
 	if !strings.Contains(e.stdout.String(), filepath.Base(path)) {
 		t.Errorf("stdout = %q, want the bundle path reported", e.stdout)
@@ -69,15 +70,10 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 
 	entries := readBundle(t, path)
 	for name, want := range map[string]string{
-		"info.json":                     "testv",
-		"doctor.txt":                    "trajector testv doctor",
-		"healthz.json":                  "trajector-proxy",
-		"upload/state.json":             "boom",
-		"upload/handshake.json":         "9.9.9",
-		"spool.json":                    "usage_bytes",
-		"rejected/b-poison/reason.json": "413 Request Entity Too Large",
-		"routing.json":                  e.canonicalRoot(),
-		"project.json":                  "hooks_installed",
+		"info.json":             "testv",
+		"upload/state.json":     "boom",
+		"upload/handshake.json": "9.9.9",
+		"routing.json":          e.canonicalRoot(),
 	} {
 		got, ok := entries[name]
 		if !ok {
@@ -86,6 +82,26 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 		}
 		if !strings.Contains(got, want) {
 			t.Errorf("%s = %q, want it to contain %q", name, got, want)
+		}
+	}
+
+	diagnosis, ok := entries["diagnosis.json"]
+	if !ok {
+		t.Fatalf("bundle is missing diagnosis.json (has: %v)", keysOf(entries))
+	}
+	// One serialized Diagnosis carries what used to be scattered over
+	// prose and per-surface files: project, live proxy report, spool
+	// days, and the rejected batch's recorded reason.
+	for _, want := range []string{
+		`"hooks_installed": true`,
+		`"holder": "ours"`,
+		`"service": "trajector-proxy"`,
+		`"usage_bytes"`,
+		`"413 Request Entity Too Large"`,
+		`"min_client_version": "9.9.9"`,
+	} {
+		if !strings.Contains(diagnosis, want) {
+			t.Errorf("diagnosis.json = %s\nwant it to contain %q", diagnosis, want)
 		}
 	}
 }
@@ -103,7 +119,8 @@ func TestDoctorBundleNeverLeaksRecordDataOrTokens(t *testing.T) {
 		"req-1": []byte(`{"request_id":"req-1","request":{"secret":"` + marker + `"}}`),
 	})
 
-	path, err := e.machine().DoctorBundle(e.project, t.TempDir(), e.io())
+	t.Chdir(t.TempDir())
+	path, err := e.machine().DoctorBundle(e.project, e.io())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +131,80 @@ func TestDoctorBundleNeverLeaksRecordDataOrTokens(t *testing.T) {
 		if strings.Contains(data, token) {
 			t.Errorf("bundle entry %s contains the project token in the clear", name)
 		}
+	}
+}
+
+func TestDoctorBundleStripsUpstreamCredentials(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	// A user routes through their own relay and put credentials in the
+	// base URL. The bundle records where traffic went, never the secret.
+	e.environ["ANTHROPIC_BASE_URL"] = "https://user:sekret-pw@relay.example.com/v1?api_key=SECRET-KEY"
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(t.TempDir())
+	path, err := e.machine().DoctorBundle(e.project, e.io())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range readBundle(t, path) {
+		for _, secret := range []string{"sekret-pw", "SECRET-KEY"} {
+			if strings.Contains(data, secret) {
+				t.Errorf("bundle entry %s leaked an upstream credential (%s)", name, secret)
+			}
+		}
+	}
+	// The host must survive so the diagnosis still shows the route.
+	if diag := readBundle(t, path)["diagnosis.json"]; !strings.Contains(diag, "relay.example.com") {
+		t.Errorf("diagnosis.json dropped the upstream host: %s", diag)
+	}
+}
+
+func TestDoctorBundleRepairsNothing(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	// Drift the injected token — exactly what doctor would repair by
+	// rewriting the injection. The bundle records the state, verbatim.
+	settings := e.settingsPath()
+	data, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drifted := strings.Replace(string(data), e.status().Token, "00000000000000000000000000000000", 1)
+	if drifted == string(data) {
+		t.Fatal("test setup: token not found in the injected settings")
+	}
+	if err := os.WriteFile(settings, []byte(drifted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	routingBefore, err := os.ReadFile(e.layout().RoutingTable())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(t.TempDir())
+	if _, err := e.machine().DoctorBundle(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	settingsAfter, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(settingsAfter) != drifted {
+		t.Errorf("the bundle rewrote the project settings:\nbefore: %s\nafter: %s", drifted, settingsAfter)
+	}
+	routingAfter, err := os.ReadFile(e.layout().RoutingTable())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(routingAfter) != string(routingBefore) {
+		t.Errorf("the bundle rewrote the routing table:\nbefore: %s\nafter: %s", routingBefore, routingAfter)
 	}
 }
 
@@ -144,7 +235,8 @@ func TestDoctorBundleIsGitIgnoredInTheProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path, err := e.machine().DoctorBundle(e.project, e.canonicalRoot(), e.io())
+	t.Chdir(e.canonicalRoot())
+	path, err := e.machine().DoctorBundle(e.project, e.io())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +250,7 @@ func TestDoctorBundleIsGitIgnoredInTheProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.machine().DoctorBundle(e.project, e.canonicalRoot(), e.io()); err != nil {
+	if _, err := e.machine().DoctorBundle(e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.ReadFile(filepath.Join(e.canonicalRoot(), ".gitignore"))

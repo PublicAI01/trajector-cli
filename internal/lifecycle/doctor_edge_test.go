@@ -1,7 +1,6 @@
 package lifecycle_test
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -64,13 +63,5 @@ func TestDoctorReportsAnIdentityDisagreement(t *testing.T) {
 	}
 	if !strings.Contains(out, "disagree about this project's identity") {
 		t.Errorf("doctor = %q, want the identity disagreement reported", out)
-	}
-}
-
-func TestDoctorBundleFailsWhenTheOutputDirectoryIsMissing(t *testing.T) {
-	e := newEnv(t)
-	missing := filepath.Join(t.TempDir(), "never-created")
-	if _, err := e.machine().DoctorBundle(e.project, missing, e.io()); err == nil {
-		t.Fatal("bundle succeeded into a missing directory")
 	}
 }

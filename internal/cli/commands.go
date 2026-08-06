@@ -130,7 +130,7 @@ func (a *app) bundleCmd() int {
 	if err != nil {
 		return a.fail(err)
 	}
-	if _, err := m.DoctorBundle(cwd, cwd, a.io()); err != nil {
+	if _, err := m.DoctorBundle(cwd, a.io()); err != nil {
 		return a.fail(err)
 	}
 	return 0

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
@@ -133,9 +132,9 @@ func TestEnsureStartsSupervisedProxyAndIsIdempotent(t *testing.T) {
 	if err := p.Ensure(); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	h, running := p.Health()
-	if !running || h.Service != apiproxy.ServiceName || h.Version != "dev" {
-		t.Fatalf("after Ensure: running=%v health=%+v", running, h)
+	h, holder := p.Health()
+	if holder != proxylife.HolderOurs || h.Version != "dev" {
+		t.Fatalf("after Ensure: holder=%v health=%+v", holder, h)
 	}
 
 	if err := p.Ensure(); err != nil {
@@ -154,9 +153,9 @@ func TestEnsureReplacesStaleVersionViaDrain(t *testing.T) {
 	if err := stale.WaitStopped(5 * time.Second); err != nil {
 		t.Errorf("stale proxy Serve returned %v on takeover, want nil", err)
 	}
-	h, running := p.Health()
-	if !running || h.Version != "dev" {
-		t.Errorf("after takeover: running=%v health=%+v, want version dev", running, h)
+	h, holder := p.Health()
+	if holder != proxylife.HolderOurs || h.Version != "dev" {
+		t.Errorf("after takeover: holder=%v health=%+v, want version dev", holder, h)
 	}
 }
 
@@ -176,7 +175,7 @@ func TestEnsureRefusesForeignPortHolder(t *testing.T) {
 
 func TestHealthReportsNothingRunning(t *testing.T) {
 	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", freeAddr(t))
-	if _, running := p.Health(); running {
+	if _, holder := p.Health(); holder != proxylife.HolderNone {
 		t.Error("Health reports a listener on a closed port")
 	}
 }

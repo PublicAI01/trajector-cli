@@ -310,6 +310,49 @@ func (s *Spool) rewriteIndexLocked(dayDir string, removed map[string]bool) error
 	return nil
 }
 
+// DaySummary reports one day directory of the spool: counts and sizes
+// only, never file names — request ids belong to the records, not to
+// diagnostics.
+type DaySummary struct {
+	Day     string `json:"day"`
+	Records int    `json:"records"`
+	Bytes   int64  `json:"bytes"`
+}
+
+// Summary walks the day directories and reports each. It reads the
+// same tree Usage derives from, so the two can never disagree about
+// what is on disk.
+func (s *Spool) Summary() ([]DaySummary, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	days := []DaySummary{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		d := DaySummary{Day: e.Name()}
+		files, err := os.ReadDir(filepath.Join(s.dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+			if info, err := f.Info(); err == nil {
+				d.Bytes += info.Size()
+			}
+			if filepath.Ext(f.Name()) == ".json" {
+				d.Records++
+			}
+		}
+		days = append(days, d)
+	}
+	return days, nil
+}
+
 // Usage reports current spool size in bytes.
 func (s *Spool) Usage() int64 {
 	s.mu.Lock()

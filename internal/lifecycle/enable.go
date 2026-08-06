@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
@@ -184,7 +183,7 @@ func (m *Machine) selfCheck(token string) error {
 		return fmt.Errorf("self-check request failed: %w", err)
 	}
 	switch {
-	case reply.Service != apiproxy.ServiceName:
+	case !reply.IsOurs():
 		return fmt.Errorf("self-check failed: %s did not answer as a trajector proxy", m.deps.ProxyAddr)
 	case !reply.TokenKnown:
 		return fmt.Errorf("self-check failed: the proxy does not know this project's token")

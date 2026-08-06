@@ -361,3 +361,51 @@ func TestSetQuotaGovernsSubsequentWrites(t *testing.T) {
 		t.Errorf("Quota after SetQuota(0) = %d, want unchanged %d", got, 1<<20)
 	}
 }
+
+func TestSummaryReportsDaysWithoutFileNames(t *testing.T) {
+	dir := t.TempDir()
+	s, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, day := range []time.Time{noon, noon.Add(24 * time.Hour)} {
+		env := storedRawcall(t, "msg_0"+string(rune('1'+i)), "sess-a", "hash-a", day)
+		if err := s.Write(env); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	days, err := s.Summary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(days) != 2 {
+		t.Fatalf("days = %+v, want two entries", days)
+	}
+	var total int64
+	for i, want := range []string{"20260801", "20260802"} {
+		d := days[i]
+		if d.Day != want || d.Records != 1 || d.Bytes <= 0 {
+			t.Errorf("day %d = %+v, want %s with one record and non-zero bytes", i, d, want)
+		}
+		if strings.Contains(d.Day, "msg_") {
+			t.Errorf("summary leaks a file name: %+v", d)
+		}
+		total += d.Bytes
+	}
+	// The summary and Usage read the same tree; they must agree.
+	if total != s.Usage() {
+		t.Errorf("summary bytes = %d, Usage() = %d, want them equal", total, s.Usage())
+	}
+}
+
+func TestSummaryOfAnEmptySpoolIsEmpty(t *testing.T) {
+	s, err := spool.Open(filepath.Join(t.TempDir(), "never-written"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	days, err := s.Summary()
+	if err != nil || len(days) != 0 {
+		t.Fatalf("Summary = %+v, %v; want empty and no error", days, err)
+	}
+}

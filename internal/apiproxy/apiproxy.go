@@ -82,6 +82,10 @@ type Selfcheck struct {
 	SpoolWritable  bool   `json:"spool_writable"`
 }
 
+// IsOurs reports whether the answering service identified itself as
+// this proxy; a foreign listener can answer 200 with anything else.
+func (s Selfcheck) IsOurs() bool { return s.Service == ServiceName }
+
 // ServiceName identifies this proxy in healthz responses so lifecycle
 // probes can tell it apart from a foreign process squatting the port.
 const ServiceName = "trajector-proxy"

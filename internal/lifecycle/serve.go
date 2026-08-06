@@ -10,6 +10,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/capture"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
@@ -95,7 +96,7 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 
 	l, err := net.Listen("tcp", m.proxy.Addr())
 	if err != nil {
-		if h, running := m.proxy.Health(); running && h.Service == apiproxy.ServiceName {
+		if h, holder := m.proxy.Health(); holder == proxylife.HolderOurs {
 			fmt.Fprintf(stdout, "proxy already running at %s (version %s)\n", m.proxy.Addr(), h.Version)
 			return nil
 		}

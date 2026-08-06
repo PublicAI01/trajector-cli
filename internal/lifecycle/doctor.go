@@ -2,45 +2,96 @@ package lifecycle
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
-// doctorReport collects what a doctor run found and did. Repairs are
-// not problems: only findings the user must act on keep the exit code
-// nonzero.
+// findingSeverity orders what a doctor run found. Only problems count
+// toward the exit code: repairs already happened and notes carry no
+// action.
+type findingSeverity int
+
+const (
+	findingOK findingSeverity = iota
+	findingFixed
+	findingNote
+	findingProblem
+)
+
+func (s findingSeverity) label() string {
+	switch s {
+	case findingFixed:
+		return "fixed"
+	case findingNote:
+		return "note"
+	case findingProblem:
+		return "problem"
+	default:
+		return "ok"
+	}
+}
+
+// Finding is one fact a doctor run established, as a value: severity,
+// the sentence, and any follow-up lines. The exit code derives from
+// the severities, not from counting as text is printed.
+type Finding struct {
+	Severity findingSeverity
+	Text     string
+	Details  []string
+}
+
+// doctorReport accumulates findings.
 type doctorReport struct {
-	io       IO
-	problems int
+	findings []Finding
 }
 
-func (r *doctorReport) ok(format string, a ...any) {
-	fmt.Fprintf(r.io.Out, "  ok: "+format+"\n", a...)
+func (r *doctorReport) add(severity findingSeverity, format string, a ...any) {
+	r.findings = append(r.findings, Finding{Severity: severity, Text: fmt.Sprintf(format, a...)})
 }
 
-func (r *doctorReport) fixed(format string, a ...any) {
-	fmt.Fprintf(r.io.Out, "  fixed: "+format+"\n", a...)
-}
-
+func (r *doctorReport) ok(format string, a ...any)    { r.add(findingOK, format, a...) }
+func (r *doctorReport) fixed(format string, a ...any) { r.add(findingFixed, format, a...) }
 func (r *doctorReport) problem(format string, a ...any) {
-	r.problems++
-	fmt.Fprintf(r.io.Out, "  problem: "+format+"\n", a...)
-}
-
-func (r *doctorReport) detail(format string, a ...any) {
-	fmt.Fprintf(r.io.Out, "      "+format+"\n", a...)
+	r.add(findingProblem, format, a...)
 }
 
 // note reports something the user should read that doctor can neither
 // verify nor fix, so it never counts toward the exit code.
-func (r *doctorReport) note(format string, a ...any) {
-	fmt.Fprintf(r.io.Out, "  note: "+format+"\n", a...)
+func (r *doctorReport) note(format string, a ...any) { r.add(findingNote, format, a...) }
+
+// detail attaches a follow-up line to the most recent finding.
+func (r *doctorReport) detail(format string, a ...any) {
+	last := &r.findings[len(r.findings)-1]
+	last.Details = append(last.Details, fmt.Sprintf(format, a...))
+}
+
+// problems counts the findings the user still must act on.
+func (r *doctorReport) problems() int {
+	n := 0
+	for _, f := range r.findings {
+		if f.Severity == findingProblem {
+			n++
+		}
+	}
+	return n
+}
+
+func (r *doctorReport) render(out io.Writer) {
+	for _, f := range r.findings {
+		fmt.Fprintf(out, "  %s: %s\n", f.Severity.label(), f.Text)
+		for _, d := range f.Details {
+			fmt.Fprintf(out, "      %s\n", d)
+		}
+	}
 }
 
 // Doctor diagnoses the device and the current project, repairs what is
@@ -51,34 +102,44 @@ func (r *doctorReport) note(format string, a ...any) {
 // running doctor twice is always safe.
 func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	fmt.Fprintf(io.Out, "trajector %s doctor\n\n", m.deps.Version)
-	r := &doctorReport{io: io}
 
-	st, err := m.Project(dir)
+	d, err := m.Diagnose(dir)
 	if err != nil {
 		return 0, err
 	}
-	doctorPause(r, st)
-	m.doctorProxy(r, st)
-	if err := m.doctorInjection(r, st); err != nil {
+	r := &doctorReport{}
+	doctorTokenStore(r, d.TokenStore)
+	doctorPause(r, d.Project)
+	m.doctorProxy(r, d)
+	if err := m.doctorInjection(r, d.Project); err != nil {
 		return 0, err
 	}
-	m.doctorDiscoveryHint(r)
-	if err := m.doctorSpool(r); err != nil {
-		return 0, err
-	}
-	if err := m.doctorRejected(r); err != nil {
-		return 0, err
-	}
-	m.doctorService(r)
+	m.doctorDiscoveryHint(r, d.TokenStore)
+	doctorSpool(r, d.Spool, m.deps.Layout.SpoolDir())
+	doctorRejected(r, d.Rejected)
+	doctorService(r, d.Handshake, m.deps.Version)
 	doctorEnvironmentNote(r)
 
+	r.render(io.Out)
 	fmt.Fprintln(io.Out)
-	if r.problems == 0 {
+	if r.problems() == 0 {
 		fmt.Fprintln(io.Out, "Everything checks out.")
 	} else {
-		fmt.Fprintf(io.Out, "%d problem(s) need attention.\n", r.problems)
+		fmt.Fprintf(io.Out, "%d problem(s) need attention.\n", r.problems())
 	}
-	return r.problems, nil
+	return r.problems(), nil
+}
+
+// doctorTokenStore distinguishes signed-out from cannot-read: an
+// unreadable token store leaves the pairing state unknown, and unknown
+// must never present as the signed-out state.
+func doctorTokenStore(r *doctorReport, ts TokenStoreState) {
+	if ts.Err == nil {
+		return
+	}
+	r.problem("the device token store could not be read: %v", ts.Err)
+	r.detail("Pairing state is unknown; this is not the signed-out state. If the OS")
+	r.detail("keyring is unavailable here, set %s=file and run `trajector login`.", tokenstore.BackendEnv)
 }
 
 // doctorPause reports a device-wide pause. Doctor never lifts one —
@@ -94,25 +155,25 @@ func doctorPause(r *doctorReport, st ProjectStatus) {
 // doctorProxy checks who holds the proxy port. A foreign holder is the
 // one finding doctor must shout about and can never repair: injected
 // projects would send credentials to it.
-func (m *Machine) doctorProxy(r *doctorReport, st ProjectStatus) {
-	h, running := m.proxy.Health()
-	switch {
-	case running && h.Service == apiproxy.ServiceName:
+func (m *Machine) doctorProxy(r *doctorReport, d Diagnosis) {
+	switch d.Proxy.Holder {
+	case proxylife.HolderOurs:
+		h := d.Proxy.Health
 		if h.Version != m.deps.Version {
 			if err := m.proxy.Ensure(); err != nil {
-				r.problem("a trajector proxy version %s holds %s and could not be replaced: %v", h.Version, m.proxy.Addr(), err)
+				r.problem("a trajector proxy version %s holds %s and could not be replaced: %v", h.Version, d.Proxy.Addr, err)
 				return
 			}
-			r.fixed("replaced the version %s proxy at %s with this build (%s)", h.Version, m.proxy.Addr(), m.deps.Version)
+			r.fixed("replaced the version %s proxy at %s with this build (%s)", h.Version, d.Proxy.Addr, m.deps.Version)
 			return
 		}
-		r.ok("proxy running at %s (version %s, up %s)", m.proxy.Addr(), h.Version, time.Duration(h.UptimeSeconds)*time.Second)
-	case running:
-		r.problem("%s is held by a process that is not the trajector proxy.", m.proxy.Addr())
+		r.ok("proxy running at %s (version %s, up %s)", d.Proxy.Addr, h.Version, time.Duration(h.UptimeSeconds)*time.Second)
+	case proxylife.HolderForeign:
+		r.problem("%s is held by a process that is not the trajector proxy.", d.Proxy.Addr)
 		r.detail("Enabled projects route API credentials at this address. Find and stop the")
 		r.detail("process holding the port, or run `trajector disable` in enabled projects.")
 	default:
-		if !st.Enabled {
+		if !d.Project.Enabled {
 			r.ok("proxy not running; it starts on demand with the next session")
 			return
 		}
@@ -120,7 +181,7 @@ func (m *Machine) doctorProxy(r *doctorReport, st ProjectStatus) {
 			r.problem("the proxy is down and could not be started: %v", err)
 			return
 		}
-		r.fixed("started the capture proxy at %s", m.proxy.Addr())
+		r.fixed("started the capture proxy at %s", d.Proxy.Addr)
 	}
 }
 
@@ -194,8 +255,8 @@ func (m *Machine) doctorUpstream(r *doctorReport, st ProjectStatus) {
 // doctorDiscoveryHint re-adds the user-level discovery hook a paired
 // device is supposed to carry. Unpaired devices are left alone: login
 // owns the first installation.
-func (m *Machine) doctorDiscoveryHint(r *doctorReport) {
-	if !m.Paired() {
+func (m *Machine) doctorDiscoveryHint(r *doctorReport, ts TokenStoreState) {
+	if !ts.Paired {
 		return
 	}
 	userSettings := claudesettings.UserSettingsPath(m.deps.Home)
@@ -210,36 +271,30 @@ func (m *Machine) doctorDiscoveryHint(r *doctorReport) {
 }
 
 // doctorSpool verifies the capture spool accepts writes within quota.
-func (m *Machine) doctorSpool(r *doctorReport) error {
-	sp, err := m.spool()
-	if err != nil {
-		r.problem("the capture spool at %s is not usable: %v", m.deps.Layout.SpoolDir(), err)
-		return nil
+func doctorSpool(r *doctorReport, s SpoolState, dir string) {
+	if s.OpenErr != nil {
+		r.problem("the capture spool at %s is not usable: %v", dir, s.OpenErr)
+		return
 	}
-	if err := sp.Writable(); err != nil {
-		r.problem("the capture spool is not writable, so recording is stopped: %v", err)
-		r.detail("Spool: %s of %s used at %s.", humanBytes(sp.Usage()), humanBytes(sp.Quota()), m.deps.Layout.SpoolDir())
-		if sp.Usage() >= sp.Quota() {
+	if s.WritableErr != nil {
+		r.problem("the capture spool is not writable, so recording is stopped: %v", s.WritableErr)
+		r.detail("Spool: %s of %s used at %s.", humanBytes(s.Usage), humanBytes(s.Quota), dir)
+		if s.Full() {
 			r.detail("The spool is full. Run `trajector upload --force` to upload and free it.")
 		}
-		return nil
+		return
 	}
-	r.ok("capture spool writable (%s of %s used)", humanBytes(sp.Usage()), humanBytes(sp.Quota()))
-	return nil
+	r.ok("capture spool writable (%s of %s used)", humanBytes(s.Usage), humanBytes(s.Quota))
 }
 
 // doctorRejected surfaces quarantined batches. They are never deleted
 // or retried automatically — what happens to them is the user's call —
 // so doctor lists each with its recorded reason and the command that
 // requeues it.
-func (m *Machine) doctorRejected(r *doctorReport) error {
-	rejected, err := upload.ListRejected(m.deps.Layout.RejectedDir())
-	if err != nil {
-		return err
-	}
+func doctorRejected(r *doctorReport, rejected []upload.RejectedBatch) {
 	if len(rejected) == 0 {
 		r.ok("no rejected batches quarantined")
-		return nil
+		return
 	}
 	r.problem("%s:", quarantineHeadline(rejected))
 	for _, b := range rejected {
@@ -254,16 +309,14 @@ func (m *Machine) doctorRejected(r *doctorReport) error {
 	}
 	r.detail("Run `trajector doctor requeue <batch-id>` (or `--all`) to upload them again,")
 	r.detail("or `trajector disable` in the project to delete its local data.")
-	return nil
 }
 
 // doctorService relays what the service last said. The client never
 // parses the version — it cannot judge whether this build satisfies it
 // — so both fields are shown verbatim and count toward nothing.
-func (m *Machine) doctorService(r *doctorReport) {
-	h := m.handshake()
+func doctorService(r *doctorReport, h platform.Handshake, version string) {
 	if h.MinClientVersion != "" {
-		r.note("the service requires client version %s or newer; this build is %s", h.MinClientVersion, m.deps.Version)
+		r.note("the service requires client version %s or newer; this build is %s", h.MinClientVersion, version)
 	}
 	if h.Notice != "" {
 		r.note("notice from the service: %s", h.Notice)

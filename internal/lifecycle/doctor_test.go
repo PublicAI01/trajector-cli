@@ -59,6 +59,27 @@ func TestDoctorExplainsADeviceWidePause(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsAnUnreadableTokenStore(t *testing.T) {
+	e := newEnv(t)
+	// Make the stored token unreadable (not absent): the pairing state
+	// is now unknown, which must never present as signed out.
+	secret := filepath.Join(e.layout().SecretsDir(), "device.secret")
+	if err := os.Remove(secret); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(secret, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	problems, out := e.doctor()
+	if problems == 0 {
+		t.Error("doctor found no problem with an unreadable token store")
+	}
+	if !strings.Contains(out, "token store could not be read") {
+		t.Errorf("doctor = %q, want the unreadable token store named", out)
+	}
+}
+
 func TestDoctorOnAFreshDeviceIsClean(t *testing.T) {
 	e := newUnpairedEnv(t)
 	problems, out := e.doctor()
