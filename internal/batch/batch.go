@@ -89,6 +89,16 @@ func Build(id string, createdAt time.Time, clientVersion string, rawcalls []spoo
 	}
 
 	ordered := append([]spool.Rawcall(nil), rawcalls...)
+	for i := range ordered {
+		// The day index is advisory: a record it missed still carries its
+		// session identity in its own envelope, and adjacency must not
+		// degrade just because the index was lost.
+		if ordered[i].SessionKey == "" {
+			if env, err := envelope.Parse(ordered[i].Data); err == nil {
+				ordered[i].SessionKey = env.SessionKey()
+			}
+		}
+	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		a, b := ordered[i], ordered[j]
 		// Records without a session identity sort after every session

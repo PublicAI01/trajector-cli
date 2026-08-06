@@ -264,3 +264,42 @@ func TestBuildRefusesAMissingID(t *testing.T) {
 		t.Fatal("expected an error for a missing batch id")
 	}
 }
+
+func TestBuildSessionAdjacencySurvivesALostIndex(t *testing.T) {
+	sessioned := func(id, session string, at time.Time) spool.Rawcall {
+		return storedRawcall(t, id, session, "hash-p1",
+			`{"model":"m","metadata":{"user_id":"`+session+`"},"messages":[{"role":"user","content":"hello"}]}`,
+			`{"id":"`+id+`","type":"message"}`, at)
+	}
+	indexed := []spool.Rawcall{
+		sessioned("req-a1", "session-a", buildTime),
+		sessioned("req-b1", "session-b", buildTime.Add(1*time.Second)),
+		sessioned("req-a2", "session-a", buildTime.Add(2*time.Second)),
+		sessioned("req-b2", "session-b", buildTime.Add(3*time.Second)),
+	}
+	unindexed := make([]spool.Rawcall, len(indexed))
+	copy(unindexed, indexed)
+	for i := range unindexed {
+		unindexed[i].SessionKey = ""
+	}
+
+	order := func(rawcalls []spool.Rawcall) string {
+		b, err := batch.Build("batch-1", buildTime, "test", rawcalls, batch.Run{})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		var ids []string
+		for _, r := range parseEnvelope(t, b).Records {
+			ids = append(ids, r.RequestID)
+		}
+		return strings.Join(ids, ",")
+	}
+
+	withIndex, withoutIndex := order(indexed), order(unindexed)
+	if withIndex != "req-a1,req-a2,req-b1,req-b2" {
+		t.Fatalf("indexed order = %s", withIndex)
+	}
+	if withoutIndex != withIndex {
+		t.Errorf("order without the index = %s, want %s", withoutIndex, withIndex)
+	}
+}
