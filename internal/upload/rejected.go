@@ -116,30 +116,62 @@ func PurgeRejected(rejectedDir, projectIDHash string) (int, error) {
 	return deleted, nil
 }
 
+// RejectedBatch is one quarantined batch as the rejected store holds
+// it: the directory name, how many rawcalls actually sit there, and the
+// recorded reason (zero when reason.json is missing or unreadable —
+// the records still count).
+type RejectedBatch struct {
+	BatchID string
+	Records int
+	Reason  Rejection
+}
+
+// ListRejected reports every quarantined batch, ordered by batch id,
+// for the surfaces that must warn while any are waiting and for
+// requeueing them.
+func ListRejected(rejectedDir string) ([]RejectedBatch, error) {
+	batches, err := os.ReadDir(rejectedDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []RejectedBatch
+	for _, b := range batches {
+		if !b.IsDir() {
+			continue
+		}
+		rb := RejectedBatch{BatchID: b.Name()}
+		files, err := os.ReadDir(filepath.Join(rejectedDir, b.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			if f.IsDir() || filepath.Ext(f.Name()) != ".json" {
+				continue
+			}
+			if f.Name() == reasonName {
+				readJSON(filepath.Join(rejectedDir, b.Name(), f.Name()), &rb.Reason)
+				continue
+			}
+			rb.Records++
+		}
+		out = append(out, rb)
+	}
+	return out, nil
+}
+
 // RejectedCount reports how many rawcalls sit in the rejected store,
 // for surfaces that must warn while any are waiting.
 func RejectedCount(rejectedDir string) (int, error) {
-	batches, err := os.ReadDir(rejectedDir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return 0, nil
-	}
+	batches, err := ListRejected(rejectedDir)
 	if err != nil {
 		return 0, err
 	}
 	count := 0
 	for _, b := range batches {
-		if !b.IsDir() {
-			continue
-		}
-		files, err := os.ReadDir(filepath.Join(rejectedDir, b.Name()))
-		if err != nil {
-			return count, err
-		}
-		for _, f := range files {
-			if !f.IsDir() && f.Name() != reasonName && filepath.Ext(f.Name()) == ".json" {
-				count++
-			}
-		}
+		count += b.Records
 	}
 	return count, nil
 }

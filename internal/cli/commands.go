@@ -69,6 +69,25 @@ func (a *app) disableCmd(args []string) int {
 	return 0
 }
 
+func (a *app) statusCmd(args []string) int {
+	if len(args) != 0 {
+		fmt.Fprintln(a.stderr, "usage: trajector status")
+		return 2
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return a.fail(err)
+	}
+	m, err := a.machine()
+	if err != nil {
+		return a.fail(err)
+	}
+	if err := m.Status(cwd, a.io()); err != nil {
+		return a.fail(err)
+	}
+	return 0
+}
+
 func (a *app) uninstallCmd(args []string) int {
 	if len(args) != 0 {
 		fmt.Fprintln(a.stderr, "usage: trajector uninstall")
