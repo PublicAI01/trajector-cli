@@ -97,12 +97,7 @@ func (m *Machine) Status(dir string, io IO) error {
 		return err
 	}
 	if len(rejected) > 0 {
-		records := 0
-		for _, b := range rejected {
-			records += b.Records
-		}
-		fmt.Fprintf(io.Out, "  WARNING: %d rawcall(s) in %d rejected batch(es) are quarantined and will not be retried automatically.\n",
-			records, len(rejected))
+		fmt.Fprintf(io.Out, "  WARNING: %s.\n", quarantineHeadline(rejected))
 		fmt.Fprintln(io.Out, "  Run `trajector doctor` to inspect and requeue them.")
 	}
 
@@ -119,8 +114,7 @@ func (m *Machine) Status(dir string, io IO) error {
 	return nil
 }
 
-// humanBytes renders a byte count the way the dashboard speaks: binary
-// units, one decimal.
+// humanBytes renders a byte count in binary units with one decimal.
 func humanBytes(n int64) string {
 	const unit = 1024
 	if n < unit {

@@ -71,4 +71,8 @@ func TestDoctorRejectsUnknownSubcommands(t *testing.T) {
 	if got.Exit != 2 || !strings.Contains(got.Stderr, "usage: trajector doctor") {
 		t.Errorf("got %+v, want a usage error", got)
 	}
+	got = e.Run("doctor", "bundle", "extra")
+	if got.Exit != 2 || !strings.Contains(got.Stderr, "usage: trajector doctor bundle") {
+		t.Errorf("got %+v, want a bundle usage error", got)
+	}
 }

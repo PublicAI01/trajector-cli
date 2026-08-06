@@ -82,11 +82,12 @@ JSON structure, ordering, tool-call pairing, and signatures), packed with
 same-session records adjacent for compression, zstd-compressed, and uploaded
 with a client-generated idempotency key.
 
-The key rules are strict because they guard against double compensation and
+The key rules are strict because they guard against double counting and
 data loss:
 
 - The batch id is persisted before the first network attempt and reused
-  until acknowledged; the service deduplicates on it.
+  until acknowledged, so a retry is recognizable as a retry and can never
+  be ingested as new data.
 - Only a 2xx that **echoes the batch id** deletes local records. Anything
   else keeps them: auth failures and server errors retry, a version gate
   (426) pauses automatic uploads until upgrade, rate limiting honors

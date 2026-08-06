@@ -39,6 +39,12 @@ func (r *doctorReport) detail(format string, a ...any) {
 	fmt.Fprintf(r.io.Out, "      "+format+"\n", a...)
 }
 
+// note reports something the user should read that doctor can neither
+// verify nor fix, so it never counts toward the exit code.
+func (r *doctorReport) note(format string, a ...any) {
+	fmt.Fprintf(r.io.Out, "  note: "+format+"\n", a...)
+}
+
 // Doctor diagnoses the device and the current project, repairs what is
 // safely its own to repair — injected settings, hooks, the recorded
 // upstream — and reports everything else with the command that resolves
@@ -64,6 +70,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	if err := m.doctorRejected(r); err != nil {
 		return 0, err
 	}
+	m.doctorService(r)
 	doctorEnvironmentNote(r)
 
 	fmt.Fprintln(io.Out)
@@ -223,8 +230,8 @@ func (m *Machine) doctorSpool(r *doctorReport) error {
 }
 
 // doctorRejected surfaces quarantined batches. They are never deleted
-// or retried automatically — they may still correspond to compensation
-// — so doctor lists each with its recorded reason and the command that
+// or retried automatically — what happens to them is the user's call —
+// so doctor lists each with its recorded reason and the command that
 // requeues it.
 func (m *Machine) doctorRejected(r *doctorReport) error {
 	rejected, err := upload.ListRejected(m.deps.Layout.RejectedDir())
@@ -235,11 +242,7 @@ func (m *Machine) doctorRejected(r *doctorReport) error {
 		r.ok("no rejected batches quarantined")
 		return nil
 	}
-	records := 0
-	for _, b := range rejected {
-		records += b.Records
-	}
-	r.problem("%d rawcall(s) in %d rejected batch(es) are quarantined and will not be retried automatically:", records, len(rejected))
+	r.problem("%s:", quarantineHeadline(rejected))
 	for _, b := range rejected {
 		line := fmt.Sprintf("%s: %d rawcall(s)", b.BatchID, b.Records)
 		if !b.Reason.At.IsZero() {
@@ -253,6 +256,29 @@ func (m *Machine) doctorRejected(r *doctorReport) error {
 	r.detail("Run `trajector doctor requeue <batch-id>` (or `--all`) to upload them again,")
 	r.detail("or `trajector disable` in the project to delete its local data.")
 	return nil
+}
+
+// doctorService relays what the service last said. The client never
+// parses the version — it cannot judge whether this build satisfies it
+// — so both fields are shown verbatim and count toward nothing.
+func (m *Machine) doctorService(r *doctorReport) {
+	h := upload.LoadHandshake(m.deps.Layout.UploadDir())
+	if h.MinClientVersion != "" {
+		r.note("the service requires client version %s or newer; this build is %s", h.MinClientVersion, m.deps.Version)
+	}
+	if h.Notice != "" {
+		r.note("notice from the service: %s", h.Notice)
+	}
+}
+
+// quarantineHeadline is the one sentence both status and doctor use for
+// quarantined batches, so the two surfaces cannot drift apart.
+func quarantineHeadline(rejected []upload.RejectedBatch) string {
+	records := 0
+	for _, b := range rejected {
+		records += b.Records
+	}
+	return fmt.Sprintf("%d rawcall(s) in %d rejected batch(es) are quarantined and will not be retried automatically", records, len(rejected))
 }
 
 // doctorEnvironmentNote points out platform topologies that need care.

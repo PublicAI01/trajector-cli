@@ -123,6 +123,26 @@ func TestRequeueIsNotRefusedByTheQuota(t *testing.T) {
 	}
 }
 
+func TestRequeueAllContinuesPastAStuckBatch(t *testing.T) {
+	e := newEnv(t)
+	at := e.deps.Now()
+	// Batch names sort the stuck one first: the batches behind it must
+	// still be attempted.
+	seedRejectedBatch(t, e, "b-a-stuck", "", map[string][]byte{"req-bad": []byte("not an envelope")})
+	seedRejectedBatch(t, e, "b-b-good", "", map[string][]byte{"req-1": spooledEnvelope(t, "req-1", at)})
+
+	err := e.machine().RequeueRejected("", true, e.io())
+	if err == nil || !strings.Contains(err.Error(), "req-bad") {
+		t.Fatalf("err = %v, want the stuck record reported", err)
+	}
+	if got := len(e.sandbox.Rawcalls()); got != 1 {
+		t.Errorf("spool holds %d rawcall(s), want the batch behind the stuck one moved", got)
+	}
+	if _, statErr := os.Stat(filepath.Join(e.layout().RejectedDir(), "b-b-good")); !os.IsNotExist(statErr) {
+		t.Error("the healthy batch should be gone from quarantine")
+	}
+}
+
 func TestRequeueUnknownBatchFails(t *testing.T) {
 	e := newEnv(t)
 	err := e.machine().RequeueRejected("b-missing", false, e.io())

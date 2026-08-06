@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"errors"
 	"fmt"
 	"math"
 
@@ -34,13 +35,19 @@ func (m *Machine) RequeueRejected(batchID string, all bool, io IO) error {
 	if err != nil {
 		return err
 	}
+	// One failing batch must not strand the ones behind it: every batch
+	// is attempted, and whatever could not move is reported at the end.
+	var failed []error
+	requeued := 0
 	for _, id := range ids {
 		rej, moved, err := upload.Requeue(m.deps.Layout.RejectedDir(), sp, id)
+		requeued += moved
 		if err != nil {
 			if moved > 0 {
-				fmt.Fprintf(io.Out, "Requeued %d rawcall(s) from batch %s before failing.\n", moved, id)
+				fmt.Fprintf(io.Out, "Requeued %d rawcall(s) from batch %s before it failed.\n", moved, id)
 			}
-			return err
+			failed = append(failed, err)
+			continue
 		}
 		line := fmt.Sprintf("Requeued %d rawcall(s) from batch %s", moved, id)
 		if rej.Details != "" {
@@ -48,6 +55,8 @@ func (m *Machine) RequeueRejected(batchID string, all bool, io IO) error {
 		}
 		fmt.Fprintln(io.Out, line+".")
 	}
-	fmt.Fprintln(io.Out, "They will upload with the next flush; run `trajector upload --force` to try now.")
-	return nil
+	if requeued > 0 {
+		fmt.Fprintln(io.Out, "They will upload with the next flush; run `trajector upload --force` to try now.")
+	}
+	return errors.Join(failed...)
 }

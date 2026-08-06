@@ -92,7 +92,11 @@ func (a *app) doctorCmd(args []string) int {
 	if len(args) > 0 && args[0] == "requeue" {
 		return a.requeueCmd(args[1:])
 	}
-	if len(args) == 1 && args[0] == "bundle" {
+	if len(args) > 0 && args[0] == "bundle" {
+		if len(args) != 1 {
+			fmt.Fprintln(a.stderr, "usage: trajector doctor bundle")
+			return 2
+		}
 		return a.bundleCmd()
 	}
 	if len(args) != 0 {

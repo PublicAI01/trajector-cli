@@ -31,8 +31,8 @@ func (m *Machine) DoctorBundle(projectDir, outDir string, io IO) (string, error)
 		"proxy_addr":   m.proxy.Addr(),
 	}))
 
-	// The doctor report is the heart of the bundle. Running it may also
-	// repair what is safely repairable — every CLI touchpoint self-heals.
+	// Running doctor may also repair what is safely repairable — every
+	// CLI touchpoint self-heals.
 	var report bytes.Buffer
 	if _, err := m.Doctor(projectDir, IO{In: io.In, Out: &report, Err: io.Err}); err != nil {
 		return "", err
@@ -208,17 +208,16 @@ func mustJSON(v any) []byte {
 
 // bundle accumulates named entries and writes them as one tar.gz.
 type bundle struct {
-	entries []struct {
-		name string
-		data []byte
-	}
+	entries []bundleEntry
+}
+
+type bundleEntry struct {
+	name string
+	data []byte
 }
 
 func (b *bundle) add(name string, data []byte) {
-	b.entries = append(b.entries, struct {
-		name string
-		data []byte
-	}{name, data})
+	b.entries = append(b.entries, bundleEntry{name, data})
 }
 
 func (b *bundle) write(path string) error {
@@ -241,8 +240,8 @@ func (b *bundle) write(path string) error {
 			return err
 		}
 	}
-	for _, close := range []func() error{tw.Close, gz.Close, f.Close} {
-		if err := close(); err != nil {
+	for _, finish := range []func() error{tw.Close, gz.Close, f.Close} {
+		if err := finish(); err != nil {
 			return err
 		}
 	}

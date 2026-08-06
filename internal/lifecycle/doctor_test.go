@@ -209,6 +209,26 @@ func TestDoctorListsRejectedBatches(t *testing.T) {
 	}
 }
 
+func TestDoctorRelaysTheServiceHandshakeWithoutJudgingIt(t *testing.T) {
+	e := newEnv(t)
+	writeUploadFile(t, e, "handshake.json", map[string]any{
+		"min_client_version": "9.9.9",
+		"notice":             "maintenance on Friday",
+	})
+	problems, out := e.doctor()
+
+	// The client never parses the version, so it cannot judge this build
+	// against it: both fields are relayed and neither is a problem.
+	if problems != 0 {
+		t.Fatalf("problems = %d, want the handshake relayed without affecting the exit code, output:\n%s", problems, out)
+	}
+	for _, want := range []string{"9.9.9", "testv", "maintenance on Friday"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor = %q, want it to contain %q", out, want)
+		}
+	}
+}
+
 func TestDoctorWarnsWhenTheSpoolIsFull(t *testing.T) {
 	e := newEnv(t)
 	writeUploadFile(t, e, "handshake.json", map[string]any{"spool_quota_bytes": 1})
