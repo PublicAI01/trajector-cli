@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -94,6 +95,12 @@ func (m *Machine) DoctorBundle(projectDir, outDir string, io IO) (string, error)
 		"consent_state":     st.ConsentState,
 		"pause_reason":      st.PauseReason,
 	}))
+
+	// The archive lands in the user's project and names every project
+	// root on the machine; it must never ride along into their repository.
+	if _, err := claudesettings.EnsureGitIgnored(st.Root, "trajector-doctor-*.tar.gz"); err != nil {
+		return "", err
+	}
 
 	name := fmt.Sprintf("trajector-doctor-%s.tar.gz", m.deps.Now().UTC().Format("20060102-150405"))
 	path := filepath.Join(outDir, name)

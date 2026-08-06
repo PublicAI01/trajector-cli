@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -122,4 +123,49 @@ func keysOf(m map[string]string) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+func TestDoctorBundleIsGitIgnoredInTheProject(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	e := newEnv(t)
+	t.Setenv("HOME", e.deps.Home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(e.deps.Home, ".config"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(e.deps.Home, "gitconfig"))
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = e.project
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := e.machine().DoctorBundle(e.project, e.canonicalRoot(), e.io())
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := exec.Command("git", "check-ignore", "-q", "--", filepath.Base(path))
+	check.Dir = e.canonicalRoot()
+	if err := check.Run(); err != nil {
+		t.Errorf("the bundle %s is not git-ignored in the project", filepath.Base(path))
+	}
+
+	before, err := os.ReadFile(filepath.Join(e.canonicalRoot(), ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.machine().DoctorBundle(e.project, e.canonicalRoot(), e.io()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(filepath.Join(e.canonicalRoot(), ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf(".gitignore grew on a second bundle:\nbefore: %q\nafter: %q", before, after)
+	}
 }
