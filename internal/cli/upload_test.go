@@ -258,8 +258,8 @@ func TestUploadSurfacesARejectedBatchLoudly(t *testing.T) {
 	if n := e.storedRawcalls(t); n != 0 {
 		t.Errorf("spool still holds %d rawcalls; the rejected batch must move aside", n)
 	}
-	if n, err := upload.RejectedCount(e.Layout().RejectedDir()); err != nil || n != 1 {
-		t.Errorf("rejected store holds %d records (%v), want 1", n, err)
+	if n := rejectedRecords(t, e.Layout().RejectedDir()); n != 1 {
+		t.Errorf("rejected store holds %d records, want 1", n)
 	}
 }
 
@@ -268,4 +268,18 @@ func TestUploadUsage(t *testing.T) {
 	if got := e.Run("upload", "--frobnicate"); got.Exit != 2 || !strings.Contains(got.Stderr, "usage: trajector upload") {
 		t.Errorf("bad flag = %+v", got)
 	}
+}
+
+// rejectedRecords sums the record counts ListRejected reports.
+func rejectedRecords(t *testing.T, dir string) int {
+	t.Helper()
+	batches, err := upload.ListRejected(dir)
+	if err != nil {
+		t.Fatalf("ListRejected: %v", err)
+	}
+	n := 0
+	for _, b := range batches {
+		n += b.Records
+	}
+	return n
 }

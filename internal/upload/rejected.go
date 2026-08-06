@@ -162,20 +162,6 @@ func ListRejected(rejectedDir string) ([]RejectedBatch, error) {
 	return out, nil
 }
 
-// RejectedCount reports how many rawcalls sit in the rejected store,
-// for surfaces that must warn while any are waiting.
-func RejectedCount(rejectedDir string) (int, error) {
-	batches, err := ListRejected(rejectedDir)
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, b := range batches {
-		count += b.Records
-	}
-	return count, nil
-}
-
 // Requeue moves one quarantined batch's records back into the spool so
 // the next flush repacks them under a fresh batch id (the rejected id
 // was never acknowledged, so no idempotency is at stake). Each record

@@ -321,17 +321,11 @@ func (s *Server) serveTokenInternal(w http.ResponseWriter, r *http.Request, toke
 // healthz endpoint serves, for in-process callers such as the
 // composition root's batch run metadata.
 func (s *Server) Health() Health {
-	snap := s.stats.snapshot()
-	return Health{
-		Service:               ServiceName,
-		Version:               s.cfg.Version,
-		UptimeSeconds:         int(time.Since(s.start) / time.Second),
-		RecordedToday:         snap.recorded,
-		SSEDegradedToday:      snap.degraded,
-		CapturesDropped:       snap.dropped,
-		UnusableRouteUpstream: snap.unusableUpstream,
-		RecentRecordingErrors: snap.recentErrors,
-	}
+	h := s.stats.snapshot()
+	h.Service = ServiceName
+	h.Version = s.cfg.Version
+	h.UptimeSeconds = int(time.Since(s.start) / time.Second)
+	return h
 }
 
 func (s *Server) serveHealthz(w http.ResponseWriter) {
@@ -346,15 +340,6 @@ type stats struct {
 	day              string
 	recordedToday    int
 	degradedToday    int
-	dropped          int
-	unusableUpstream int
-	recentErrors     []string
-}
-
-// statsSnapshot is what healthz reports.
-type statsSnapshot struct {
-	recorded         int
-	degraded         int
 	dropped          int
 	unusableUpstream int
 	recentErrors     []string
@@ -403,15 +388,15 @@ func (st *stats) recordError(msg string) {
 	}
 }
 
-func (st *stats) snapshot() statsSnapshot {
+func (st *stats) snapshot() Health {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	st.roll(time.Now())
-	return statsSnapshot{
-		recorded:         st.recordedToday,
-		degraded:         st.degradedToday,
-		dropped:          st.dropped,
-		unusableUpstream: st.unusableUpstream,
-		recentErrors:     append([]string(nil), st.recentErrors...),
+	return Health{
+		RecordedToday:         st.recordedToday,
+		SSEDegradedToday:      st.degradedToday,
+		CapturesDropped:       st.dropped,
+		UnusableRouteUpstream: st.unusableUpstream,
+		RecentRecordingErrors: append([]string(nil), st.recentErrors...),
 	}
 }

@@ -140,9 +140,8 @@ func TestListRejectedReportsCountsAndReasons(t *testing.T) {
 		t.Errorf("batch[1] = %+v", batches[1])
 	}
 
-	count, err := upload.RejectedCount(rejectedDir)
-	if err != nil || count != 3 {
-		t.Errorf("RejectedCount = %d, %v; want 3", count, err)
+	if n := rejectedRecords(t, rejectedDir); n != 3 {
+		t.Errorf("rejected store holds %d records, want 3", n)
 	}
 }
 
@@ -160,4 +159,18 @@ func openSpool(t *testing.T) *spool.Spool {
 		t.Fatal(err)
 	}
 	return sp
+}
+
+// rejectedRecords sums the record counts ListRejected reports.
+func rejectedRecords(t *testing.T, dir string) int {
+	t.Helper()
+	batches, err := upload.ListRejected(dir)
+	if err != nil {
+		t.Fatalf("ListRejected: %v", err)
+	}
+	n := 0
+	for _, b := range batches {
+		n += b.Records
+	}
+	return n
 }

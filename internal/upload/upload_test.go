@@ -415,8 +415,8 @@ func TestARejectedBatchIsQuarantinedAndUnblocksUploads(t *testing.T) {
 	if f.spool.Usage() != 0 {
 		t.Fatal("rejected records were left in the spool")
 	}
-	if n, err := upload.RejectedCount(f.rejected); err != nil || n != 1 {
-		t.Fatalf("rejected store holds %d records (%v), want 1", n, err)
+	if n := rejectedRecords(t, f.rejected); n != 1 {
+		t.Fatalf("rejected store holds %d records, want 1", n)
 	}
 	st := upload.LoadState(f.dir)
 	if st.LastRejected == nil || st.LastRejected.Records != 1 || !strings.Contains(st.LastRejected.Details, "bad multipart") {
@@ -474,7 +474,7 @@ func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
 	if f.spool.Usage() == 0 {
 		t.Fatal("data was touched by a version refusal")
 	}
-	if n, _ := upload.RejectedCount(f.rejected); n != 0 {
+	if n := rejectedRecords(t, f.rejected); n != 0 {
 		t.Fatal("a version refusal quarantined valid data")
 	}
 	if got := upload.LoadHandshake(f.dir).MinClientVersion; got != "9.9.9" {
@@ -570,14 +570,14 @@ func TestPurgeRejectedRemovesOnlyThatProject(t *testing.T) {
 	if n, err := upload.PurgeRejected(f.rejected, "hash-other"); err != nil || n != 0 {
 		t.Fatalf("purging another project = %d, %v", n, err)
 	}
-	if n, _ := upload.RejectedCount(f.rejected); n != 1 {
+	if n := rejectedRecords(t, f.rejected); n != 1 {
 		t.Fatal("another project's purge touched the record")
 	}
 
 	if n, err := upload.PurgeRejected(f.rejected, "hash-p1"); err != nil || n != 1 {
 		t.Fatalf("purging the project = %d, %v", n, err)
 	}
-	if n, _ := upload.RejectedCount(f.rejected); n != 0 {
+	if n := rejectedRecords(t, f.rejected); n != 0 {
 		t.Fatal("the record survived its project's purge")
 	}
 	entries, err := os.ReadDir(f.rejected)
