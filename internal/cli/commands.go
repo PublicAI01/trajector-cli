@@ -92,8 +92,11 @@ func (a *app) doctorCmd(args []string) int {
 	if len(args) > 0 && args[0] == "requeue" {
 		return a.requeueCmd(args[1:])
 	}
+	if len(args) == 1 && args[0] == "bundle" {
+		return a.bundleCmd()
+	}
 	if len(args) != 0 {
-		fmt.Fprintln(a.stderr, "usage: trajector doctor [requeue <batch-id>|--all]")
+		fmt.Fprintln(a.stderr, "usage: trajector doctor [bundle | requeue <batch-id>|--all]")
 		return 2
 	}
 	cwd, err := os.Getwd()
@@ -110,6 +113,21 @@ func (a *app) doctorCmd(args []string) int {
 	}
 	if problems > 0 {
 		return 1
+	}
+	return 0
+}
+
+func (a *app) bundleCmd() int {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return a.fail(err)
+	}
+	m, err := a.machine()
+	if err != nil {
+		return a.fail(err)
+	}
+	if _, err := m.DoctorBundle(cwd, cwd, a.io()); err != nil {
+		return a.fail(err)
 	}
 	return 0
 }

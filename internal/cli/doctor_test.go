@@ -41,6 +41,30 @@ func TestDoctorExitsOneWhenProblemsRemain(t *testing.T) {
 	}
 }
 
+func TestDoctorBundleWritesAnArchiveInTheWorkingDirectory(t *testing.T) {
+	e := clitest.New(t)
+	got := e.InProject("doctor", "bundle")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	entries, err := os.ReadDir(e.Project())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range entries {
+		if strings.HasPrefix(f.Name(), "trajector-doctor-") && strings.HasSuffix(f.Name(), ".tar.gz") {
+			found = true
+			if !strings.Contains(got.Stdout, f.Name()) {
+				t.Errorf("stdout = %q, want the bundle name %s reported", got.Stdout, f.Name())
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no bundle written into the project directory; stdout = %q", got.Stdout)
+	}
+}
+
 func TestDoctorRejectsUnknownSubcommands(t *testing.T) {
 	e := clitest.New(t)
 	got := e.Run("doctor", "frobnicate")
