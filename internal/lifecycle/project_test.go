@@ -348,4 +348,43 @@ func TestDisableAlsoDeletesRejectedRawcallsOfTheProject(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(batchDir, "req-other.json")); err != nil {
 		t.Errorf("another project's rejected rawcall was touched: %v", err)
 	}
+	// The deletion count must split its sources: a user deciding what to
+	// do about quarantined data needs to see that disable reached it.
+	if out := e.stdout.String(); !strings.Contains(out, "0 from the spool, 1 from rejected batches") {
+		t.Errorf("stdout = %q, want the deletion count split by source", out)
+	}
+}
+
+func TestDisableSplitsTheDeletionCountBySource(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	route := e.status()
+	e.sandbox.SeedRawcall("req-mine", route.GrantHash, time.Date(2026, 8, 2, 11, 0, 0, 0, time.UTC))
+	seedRejectedBatch(t, e, "b-poison", "", map[string][]byte{
+		"req-rejected": rejectedRecordFor(t, route.GrantHash),
+	})
+
+	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if out := e.stdout.String(); !strings.Contains(out, "Deleted 2 unuploaded rawcall(s) for this project (1 from the spool, 1 from rejected batches).") {
+		t.Errorf("stdout = %q, want the deletion count split by source", out)
+	}
+}
+
+// rejectedRecordFor builds valid rawcall bytes belonging to a project,
+// as a quarantined record would hold them.
+func rejectedRecordFor(t *testing.T, projectIDHash string) []byte {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{
+		"request_id": "req-rejected",
+		"capture":    map[string]any{"project_id_hash": projectIDHash},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

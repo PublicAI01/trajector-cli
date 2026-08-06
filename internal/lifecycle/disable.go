@@ -49,7 +49,7 @@ func (m *Machine) disableProject(projectDir string, io IO) (projectIDHash string
 		return "", fmt.Errorf("recording withdrawal: %w", err)
 	}
 
-	deleted, err := deleteProjectRawcalls(m.deps.Layout.SpoolDir(), hash)
+	spooled, err := deleteProjectRawcalls(m.deps.Layout.SpoolDir(), hash)
 	if err != nil {
 		return "", fmt.Errorf("deleting local unuploaded data: %w", err)
 	}
@@ -59,9 +59,9 @@ func (m *Machine) disableProject(projectDir string, io IO) (projectIDHash string
 	if err != nil {
 		return "", fmt.Errorf("deleting local unuploaded data: %w", err)
 	}
-	deleted += rejected
-	if deleted > 0 {
-		fmt.Fprintf(io.Out, "Deleted %d unuploaded rawcall(s) for this project.\n", deleted)
+	if deleted := spooled + rejected; deleted > 0 {
+		fmt.Fprintf(io.Out, "Deleted %d unuploaded rawcall(s) for this project (%d from the spool, %d from rejected batches).\n",
+			deleted, spooled, rejected)
 	}
 	fmt.Fprintln(io.Out, "This project no longer contributes data.")
 	return hash, nil
