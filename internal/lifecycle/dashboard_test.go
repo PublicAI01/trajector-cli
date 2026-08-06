@@ -100,6 +100,18 @@ func TestStatusExplainsAConsentReconfirmPause(t *testing.T) {
 	}
 }
 
+func TestStatusShowsAnUnrecognizedPauseReasonVerbatim(t *testing.T) {
+	e := newEnv(t)
+	// A pause reason this build does not know (say, written by a newer
+	// one) must still be shown, not hidden.
+	e.sandbox.Pause("some_future_reason")
+	out := e.statusOutput()
+
+	if !strings.Contains(out, "some_future_reason") {
+		t.Errorf("status = %q, want the unknown pause reason shown verbatim", out)
+	}
+}
+
 func TestStatusWarnsWhenInjectionAndRoutingDisagree(t *testing.T) {
 	e := newEnv(t)
 	// A grant with no matching injection: the routing table says this
