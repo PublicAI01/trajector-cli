@@ -19,15 +19,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
-// Pause reasons written into the routing table. Each writer resumes
-// only its own reason, so accepting a new agreement cannot silently
-// lift a signed-out pause. They are not exported: the machine is the
-// only thing that both sets and clears them.
-const (
-	pauseSignedOut = "signed_out"
-	pauseConsent   = "consent_reconfirm"
-)
-
 // Deps is everything the machine needs from the world outside it.
 type Deps struct {
 	Layout   userdirs.Layout

@@ -6,6 +6,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 )
 
@@ -108,7 +109,7 @@ func TestEnableExplainsAPausedDevice(t *testing.T) {
 	if err := tokenstore.Files(e.Layout().SecretsDir()).SetDeviceToken("dev-tok-fake"); err != nil {
 		t.Fatal(err)
 	}
-	e.Sandbox().Pause(proxytest.PausedSignedOut)
+	e.Sandbox().Pause(routing.PauseSignedOut)
 
 	got := e.InProjectInput("yes\n", "enable")
 	if got.Exit != 1 {

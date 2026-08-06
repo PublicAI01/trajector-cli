@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 func TestEnableInjectsRoutesAndSelfChecks(t *testing.T) {
@@ -127,7 +127,7 @@ func TestEnableStaleAgreementRepromptsAndResumesCapture(t *testing.T) {
 	if err := consents.AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	e.sandbox.Pause(proxytest.PausedConsentReconfirm)
+	e.sandbox.Pause(routing.PauseConsentReconfirm)
 
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)

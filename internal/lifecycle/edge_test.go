@@ -11,7 +11,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 func TestInjectedHookQuotesBinaryPathsWithSpaces(t *testing.T) {
@@ -80,7 +80,7 @@ func TestEnableRollsBackWhenSettingsFileIsMalformed(t *testing.T) {
 func TestEnableFailsWhileCapturePaused(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	e.sandbox.Pause(proxytest.PausedSignedOut)
+	e.sandbox.Pause(routing.PauseSignedOut)
 
 	err := e.machine().Enable(e.project, e.io())
 	if err == nil || !strings.Contains(err.Error(), "trajector login") {

@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 // ProjectStatus is everything the machine knows about one project's
@@ -40,7 +41,7 @@ type ProjectStatus struct {
 	ConsentState consent.ProjectState
 
 	// PauseReason is the device-wide pause, empty while recording.
-	PauseReason string
+	PauseReason routing.PauseReason
 }
 
 // Injected reports whether trajector's base URL is currently injected

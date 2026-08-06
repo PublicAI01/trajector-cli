@@ -310,7 +310,7 @@ func (s *Server) serveTokenInternal(w http.ResponseWriter, r *http.Request, toke
 		TokenKnown:     verdict.Resolves(),
 		Recording:      verdict.Records(),
 		Decision:       string(verdict.Decision),
-		PauseReason:    verdict.PauseReason,
+		PauseReason:    string(verdict.PauseReason),
 		ProjectIDHash:  route.ProjectIDHash,
 		UpstreamOrigin: envelope.Origin(upstream, s.cfg.Dialect.OfficialUpstream),
 		SpoolWritable:  s.cfg.Spool.Writable() == nil,

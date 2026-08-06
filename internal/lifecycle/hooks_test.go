@@ -6,6 +6,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 func TestDiscoveryPromptsOncePerProject(t *testing.T) {
@@ -62,7 +63,7 @@ func TestEnsureProxyPausesRecordingOnAStaleAgreement(t *testing.T) {
 	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
 		t.Fatalf("ensure-proxy: %v", err)
 	}
-	if reason := e.sandbox.PausedReason(); reason != proxytest.PausedConsentReconfirm {
+	if reason := e.sandbox.PausedReason(); reason != routing.PauseConsentReconfirm {
 		t.Errorf("pause = %q, want the reconfirmation pause", reason)
 	}
 	if !strings.Contains(e.stderr.String(), "agreement changed") {

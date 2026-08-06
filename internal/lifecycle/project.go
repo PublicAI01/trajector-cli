@@ -10,6 +10,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 // ErrDeclined reports that the user answered no to the data agreement.
@@ -139,7 +140,7 @@ func (m *Machine) pauseIfAgreementStale(io IO) {
 	if err != nil || accepted == "" || accepted == consent.AgreementVersion {
 		return
 	}
-	if err := m.routes.Pause(pauseConsent); err == nil {
+	if err := m.routes.Pause(routing.PauseConsentReconfirm); err == nil {
 		fmt.Fprintln(io.Err, "trajector: the data agreement changed; recording is paused until you reconfirm with `trajector enable`")
 	}
 }

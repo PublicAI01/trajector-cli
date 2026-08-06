@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 func (e *env) statusOutput() string {
@@ -82,7 +83,7 @@ func TestStatusLabelsAThirdPartyUpstream(t *testing.T) {
 
 func TestStatusExplainsADeviceWidePause(t *testing.T) {
 	e := newEnv(t)
-	e.sandbox.Pause(proxytest.PausedSignedOut)
+	e.sandbox.Pause(routing.PauseSignedOut)
 	out := e.statusOutput()
 
 	if !strings.Contains(out, "paused") || !strings.Contains(out, "`trajector login`") {
@@ -92,7 +93,7 @@ func TestStatusExplainsADeviceWidePause(t *testing.T) {
 
 func TestStatusExplainsAConsentReconfirmPause(t *testing.T) {
 	e := newEnv(t)
-	e.sandbox.Pause(proxytest.PausedConsentReconfirm)
+	e.sandbox.Pause(routing.PauseConsentReconfirm)
 	out := e.statusOutput()
 
 	if !strings.Contains(out, "agreement") || !strings.Contains(out, "`trajector enable`") {

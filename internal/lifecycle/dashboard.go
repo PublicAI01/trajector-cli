@@ -29,14 +29,8 @@ func (m *Machine) Status(dir string, io IO) error {
 	} else {
 		fmt.Fprintln(io.Out, "  Not signed in. Run `trajector login` to pair this device.")
 	}
-	switch st.PauseReason {
-	case "":
-	case pauseSignedOut:
-		fmt.Fprintln(io.Out, "  Recording is paused everywhere: signed out. Run `trajector login` to resume.")
-	case pauseConsent:
-		fmt.Fprintln(io.Out, "  Recording is paused everywhere: the data agreement changed. Run `trajector enable` to reconfirm.")
-	default:
-		fmt.Fprintf(io.Out, "  Recording is paused everywhere: %s.\n", st.PauseReason)
+	if st.PauseReason != "" {
+		fmt.Fprintf(io.Out, "  Recording is paused everywhere: %s.\n", st.PauseReason.Explain())
 	}
 
 	fmt.Fprintf(io.Out, "\nProject %s\n", st.Root)

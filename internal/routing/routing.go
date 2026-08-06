@@ -42,6 +42,35 @@ const (
 	ForwardOnlyPaused Decision = "paused"
 )
 
+// PauseReason is the device-wide pause written into the routing table.
+// Exactly two values are legal; each writer resumes only its own, so
+// accepting a new agreement can never silently lift a signed-out pause.
+// The machine is the only thing that sets and clears them.
+type PauseReason string
+
+const (
+	// PauseSignedOut suspends recording while the device holds no
+	// pairing token.
+	PauseSignedOut PauseReason = "signed_out"
+	// PauseConsentReconfirm suspends recording until the changed data
+	// agreement is reconfirmed.
+	PauseConsentReconfirm PauseReason = "consent_reconfirm"
+)
+
+// Explain returns the pause as one user-readable sentence naming the
+// command that lifts it. A reason this build does not know (written by
+// a newer one) is returned verbatim rather than hidden.
+func (r PauseReason) Explain() string {
+	switch r {
+	case PauseSignedOut:
+		return "this device is signed out; run `trajector login` to resume recording"
+	case PauseConsentReconfirm:
+		return "the data agreement changed; run `trajector enable` to reconfirm it"
+	default:
+		return string(r)
+	}
+}
+
 // Verdict is the table's answer for one token. Only Record permits
 // recording; every other decision still forwards. A pause carries why,
 // so surfaces above the proxy can tell the user something they can act
@@ -49,7 +78,7 @@ const (
 type Verdict struct {
 	Decision Decision
 	// PauseReason is set only when Decision is ForwardOnlyPaused.
-	PauseReason string
+	PauseReason PauseReason
 }
 
 // Records reports whether this exchange may be recorded.
@@ -63,7 +92,7 @@ type tableFile struct {
 	// once while forwarding continues unchanged. It backs device-wide
 	// stops (signed out, consent needs reconfirmation) that must not
 	// destroy per-project grants.
-	PausedReason string                   `json:"paused_reason,omitempty"`
+	PausedReason PauseReason              `json:"paused_reason,omitempty"`
 	Projects     map[string]projectRecord `json:"projects"`
 }
 
@@ -84,7 +113,7 @@ type Table struct {
 	mu           sync.Mutex
 	routes       map[string]Route
 	revoked      map[string]bool
-	pausedReason string
+	pausedReason PauseReason
 	checkedAt    time.Time
 	mtime        time.Time
 	size         int64

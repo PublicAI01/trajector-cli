@@ -8,6 +8,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeupstream"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 // revokedTable grants one token and revokes the other, so the same
@@ -180,9 +181,9 @@ func TestFinishedExchangeDoesNotWaitOnTheSpool(t *testing.T) {
 
 // pausedTable grants a project and suspends recording device-wide, as
 // signing out does.
-func pausedTable(upstream, reason string) string {
+func pausedTable(upstream string, reason routing.PauseReason) string {
 	return `{
-		"paused_reason":"` + reason + `",
+		"paused_reason":"` + string(reason) + `",
 		"projects":{"tok1":{
 			"project_id_hash":"hash-tok1",
 			"root_path":"/home/dev/project",
@@ -195,7 +196,7 @@ func pausedTable(upstream, reason string) string {
 func TestPausedDeviceForwardsWithoutRecording(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(pausedTable(upstream.URL(), proxytest.PausedSignedOut))
+	e.WriteTable(pausedTable(upstream.URL(), routing.PauseSignedOut))
 
 	respBody := `{"id":"msg_paused"}`
 	upstream.Enqueue(fakeupstream.Response{Body: []byte(respBody)})
@@ -217,13 +218,13 @@ func TestPausedDeviceForwardsWithoutRecording(t *testing.T) {
 
 func TestSelfcheckCarriesThePauseReason(t *testing.T) {
 	e := proxytest.New(t)
-	e.WriteTable(pausedTable(e.Upstream.URL(), proxytest.PausedSignedOut))
+	e.WriteTable(pausedTable(e.Upstream.URL(), routing.PauseSignedOut))
 
 	reply := e.Selfcheck("tok1")
 	if !reply.TokenKnown || reply.Recording {
 		t.Fatalf("selfcheck = %+v, want a known token that is not recording", reply)
 	}
-	if reply.Decision != "paused" || reply.PauseReason != proxytest.PausedSignedOut {
+	if reply.Decision != "paused" || reply.PauseReason != string(routing.PauseSignedOut) {
 		t.Errorf("decision/reason = %q/%q, want the pause to survive the seam", reply.Decision, reply.PauseReason)
 	}
 }

@@ -146,7 +146,7 @@ func (s *Store) RestoreGrants(snap GrantSnapshot) error {
 // Pause suspends recording for every project without touching any
 // grant. The reason records who paused so that only the matching
 // Resume lifts it.
-func (s *Store) Pause(reason string) error {
+func (s *Store) Pause(reason PauseReason) error {
 	if reason == "" {
 		return fmt.Errorf("routing: pause requires a reason")
 	}
@@ -155,7 +155,7 @@ func (s *Store) Pause(reason string) error {
 
 // Resume lifts a pause set for the given reason. A pause held for a
 // different reason is left in place.
-func (s *Store) Resume(reason string) error {
+func (s *Store) Resume(reason PauseReason) error {
 	return s.update(func(f *tableFile) {
 		if f.PausedReason == reason {
 			f.PausedReason = ""
@@ -165,7 +165,7 @@ func (s *Store) Resume(reason string) error {
 
 // PausedReason reports the active device-wide pause, empty when
 // recording is not paused.
-func (s *Store) PausedReason() (string, error) {
+func (s *Store) PausedReason() (PauseReason, error) {
 	f, err := readTableFile(s.path)
 	if err != nil {
 		return "", err

@@ -46,6 +46,19 @@ func TestDoctorOnAHealthyEnabledProject(t *testing.T) {
 	}
 }
 
+func TestDoctorExplainsADeviceWidePause(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.Pause(routing.PauseSignedOut)
+
+	problems, out := e.doctor()
+	if problems == 0 {
+		t.Error("doctor found no problem on a paused device")
+	}
+	if !strings.Contains(out, "trajector login") {
+		t.Errorf("doctor = %q, want the pause explained with its remedy", out)
+	}
+}
+
 func TestDoctorOnAFreshDeviceIsClean(t *testing.T) {
 	e := newUnpairedEnv(t)
 	problems, out := e.doctor()

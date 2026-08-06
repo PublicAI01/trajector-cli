@@ -58,6 +58,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	if err != nil {
 		return 0, err
 	}
+	doctorPause(r, st)
 	m.doctorProxy(r, st)
 	if err := m.doctorInjection(r, st); err != nil {
 		return 0, err
@@ -79,6 +80,16 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 		fmt.Fprintf(io.Out, "%d problem(s) need attention.\n", r.problems)
 	}
 	return r.problems, nil
+}
+
+// doctorPause reports a device-wide pause. Doctor never lifts one —
+// signing in and reconfirming the agreement are the user's decisions —
+// so this is always a problem with the lifting command named.
+func doctorPause(r *doctorReport, st ProjectStatus) {
+	if st.PauseReason == "" {
+		return
+	}
+	r.problem("recording is paused everywhere: %s", st.PauseReason.Explain())
 }
 
 // doctorProxy checks who holds the proxy port. A foreign holder is the

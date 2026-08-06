@@ -151,7 +151,7 @@ func (m *Machine) confirmAgreement(io IO) error {
 	}
 	// Capture paused for reconfirmation may resume now that the
 	// current terms are accepted.
-	return m.routes.Resume(pauseConsent)
+	return m.routes.Resume(routing.PauseConsentReconfirm)
 }
 
 // projectToken reuses the active token when the project is already
@@ -200,11 +200,8 @@ func (m *Machine) selfCheck(token string) error {
 // can act on. Reporting only that this project would not be recorded
 // leaves a signed-out user with no idea what to do about it.
 func notRecordingReason(reply proxylife.Selfcheck) string {
-	switch reply.PauseReason {
-	case pauseSignedOut:
-		return "this device is signed out, so nothing is being recorded; run `trajector login` and try again"
-	case pauseConsent:
-		return "the data agreement changed and recording is paused until you reconfirm it"
+	if reply.PauseReason != "" {
+		return "nothing is being recorded: " + routing.PauseReason(reply.PauseReason).Explain()
 	}
 	if reply.Decision == string(routing.ForwardOnlyRevoked) {
 		return "this project's token is revoked; run `trajector enable` again to re-grant it"

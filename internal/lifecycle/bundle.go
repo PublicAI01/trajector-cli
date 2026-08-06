@@ -177,7 +177,7 @@ func (m *Machine) summarizeRouting() ([]byte, error) {
 	summary := struct {
 		PausedReason string    `json:"paused_reason"`
 		Projects     []project `json:"projects"`
-	}{PausedReason: paused, Projects: []project{}}
+	}{PausedReason: string(paused), Projects: []project{}}
 	for _, g := range grants {
 		summary.Projects = append(summary.Projects, project{
 			RootPath:      g.RootPath,

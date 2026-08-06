@@ -8,6 +8,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 // pairingTimeout bounds how long Login waits for browser approval.
@@ -62,7 +63,7 @@ func (m *Machine) Pair(io IO) error {
 // finishLogin applies the signed-in side effects that must hold whether
 // this was a fresh pairing or a re-login.
 func (m *Machine) finishLogin(io IO) error {
-	if err := m.routes.Resume(pauseSignedOut); err != nil {
+	if err := m.routes.Resume(routing.PauseSignedOut); err != nil {
 		return err
 	}
 	userSettings := claudesettings.UserSettingsPath(m.deps.Home)
@@ -99,7 +100,7 @@ func (m *Machine) Logout(io IO) error {
 	if err := m.deps.Tokens.ClearDeviceToken(); err != nil {
 		return fmt.Errorf("removing the device token: %w", err)
 	}
-	if err := m.routes.Pause(pauseSignedOut); err != nil {
+	if err := m.routes.Pause(routing.PauseSignedOut); err != nil {
 		return fmt.Errorf("pausing recording: %w", err)
 	}
 	fmt.Fprintln(io.Out, "Signed out. Forwarding for enabled projects is unaffected; recording is")

@@ -32,15 +32,6 @@ func (e *Env) Sandbox() *Sandbox { return Open(e.t, e.layout) }
 // it does not redeclare the contract.
 type Grant = routing.Grant
 
-// The two device-wide pause reasons the machine writes, restated here
-// so tests can seed paused state without driving the machine.
-// Production keeps them unexported: the machine is the only thing that
-// both sets and clears them.
-const (
-	PausedSignedOut        = "signed_out"
-	PausedConsentReconfirm = "consent_reconfirm"
-)
-
 // GrantProject records a project as enabled, as `trajector enable`
 // would. An empty GrantedAt gets a fixed timestamp: most tests do not
 // care when.
@@ -66,7 +57,7 @@ func (s *Sandbox) ActiveGrant(root string) (Grant, bool) {
 
 // PausedReason reports why recording is suspended device-wide, or empty
 // when it is not.
-func (s *Sandbox) PausedReason() string {
+func (s *Sandbox) PausedReason() routing.PauseReason {
 	s.t.Helper()
 	reason, err := routing.OpenStore(s.layout.RoutingTable()).PausedReason()
 	if err != nil {
@@ -76,7 +67,7 @@ func (s *Sandbox) PausedReason() string {
 }
 
 // Pause suspends recording device-wide, as signing out would.
-func (s *Sandbox) Pause(reason string) {
+func (s *Sandbox) Pause(reason routing.PauseReason) {
 	s.t.Helper()
 	if err := routing.OpenStore(s.layout.RoutingTable()).Pause(reason); err != nil {
 		s.t.Fatal(err)
