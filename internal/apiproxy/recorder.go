@@ -242,10 +242,7 @@ func (r *recorder) observation() (envelope.Observation, bool) {
 		ContentType:     r.contentType,
 		ContentEncoding: r.encoding,
 
-		Assembler: envelope.Assembler{
-			Rules:    dialect.AssemblyRules,
-			Assemble: dialect.Assemble,
-		},
+		Assembler: dialect.Assembler,
 
 		UpstreamRequestID: r.upstreamID,
 		Hints:             r.hints,

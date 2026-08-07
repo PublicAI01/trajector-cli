@@ -4,7 +4,7 @@
 // Dialect value, not as configuration of this one.
 package capture
 
-import "encoding/json"
+import "github.com/PublicAI01/trajector-cli/internal/envelope"
 
 // Dialect is one provider's capture profile: identity, call
 // eligibility, official origin, and stream reassembly. The pieces
@@ -17,10 +17,10 @@ type Dialect struct {
 	OfficialUpstream string
 	// ShouldRecord reports whether a request is eligible for recording.
 	ShouldRecord func(method, path string) bool
-	// Assemble reassembles a complete event stream into the equivalent
-	// non-streaming object; AssemblyRules names the rules it applies.
-	Assemble      func(stream []byte) (json.RawMessage, error)
-	AssemblyRules string
+	// Assembler reassembles a complete event stream into the equivalent
+	// non-streaming object, under the envelope's own named-rules type so
+	// a recorder passes it through instead of respelling it.
+	Assembler envelope.Assembler
 }
 
 // Anthropic is the dialect this build captures.
@@ -28,8 +28,7 @@ var Anthropic = Dialect{
 	Provider:         "anthropic",
 	OfficialUpstream: "https://api.anthropic.com",
 	ShouldRecord:     shouldRecord,
-	Assemble:         Assemble,
-	AssemblyRules:    assemblyRulesVersion,
+	Assembler:        envelope.Assembler{Rules: assemblyRulesVersion, Assemble: Assemble},
 }
 
 // recordedEndpoints lists the exact request paths that are recorded.
