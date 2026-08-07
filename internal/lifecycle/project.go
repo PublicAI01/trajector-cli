@@ -166,7 +166,7 @@ func (m *Machine) refreshUpstreamDrift(projectDir string) {
 	if err != nil || !st.Enabled {
 		return
 	}
-	_, _, _ = m.reconcileUpstream(st.Root, st.Upstream)
+	_, _, _, _ = m.reconcileUpstream(st.Root, st.Upstream)
 }
 
 // Discovery prints the one-time onboarding hint for a project that is

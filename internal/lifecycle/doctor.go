@@ -241,10 +241,12 @@ func (m *Machine) doctorInjection(r *doctorReport, st ProjectStatus) error {
 // doctorUpstream reconciles the recorded upstream, the same self-heal
 // the session hook performs, and reports what it did or could not do.
 func (m *Machine) doctorUpstream(r *doctorReport, st ProjectStatus) {
-	want, moved, err := m.reconcileUpstream(st.Root, st.Upstream)
+	want, moved, refused, err := m.reconcileUpstream(st.Root, st.Upstream)
 	switch {
 	case want.unsupportedKey != "":
 		r.problem("%s is set: Bedrock and Vertex channels are not supported, so this project's traffic is not being captured.", want.unsupportedKey)
+	case refused:
+		r.problem("this project's base-URL configuration moved to %s, which is refused: %s. The recorded upstream is unchanged.", want.upstream, nonLoopbackUpstreamRemedy)
 	case err != nil:
 		r.problem("this project's base URL moved to %s but the routing table could not be updated: %v", want.upstream, err)
 	case moved:
