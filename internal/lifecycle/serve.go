@@ -90,6 +90,7 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 		IdleTimeout:     idle,
 		Logf:            logf,
 		Internal:        uploader.Handler(apiproxy.ServiceName),
+		AdminTokenFile:  layout.AdminTokenFile(),
 	})
 	if err != nil {
 		return err

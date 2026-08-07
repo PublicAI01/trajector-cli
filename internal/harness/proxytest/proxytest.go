@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -144,6 +145,7 @@ func New(t *testing.T, opts ...Option) *Env {
 		MaxRecordBytes:  o.maxRecord,
 		Logf:            o.logf,
 		Internal:        o.internal,
+		AdminTokenFile:  o.layout.AdminTokenFile(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -244,10 +246,68 @@ func (e *Env) WaitRawcalls(n int) []spool.Rawcall {
 	}
 }
 
+// readAdminToken is the one place a harness reads a proxy's published
+// admin token off disk.
+func readAdminToken(layout userdirs.Layout) (string, bool) {
+	data, err := os.ReadFile(layout.AdminTokenFile())
+	return string(data), err == nil
+}
+
+// Authorize attaches the admin token published under layout, when one
+// is readable. A caller probing a proxy that has not published yet
+// sends the request bare and gets a 401 — indistinguishable from the
+// proxy not being up, which is what its retry loop already handles.
+func Authorize(req *http.Request, layout userdirs.Layout) {
+	if token, ok := readAdminToken(layout); ok {
+		req.Header.Set(apiproxy.AdminHeader, token)
+	}
+}
+
+// AdminToken reads the token the served proxy published for its
+// reserved endpoints, waiting for it to appear: the proxy writes it
+// once it owns the port, which a fresh sandbox may not have reached
+// yet.
+func (e *Env) AdminToken() string {
+	e.t.Helper()
+	deadline := time.Now().Add(settle)
+	for {
+		if token, ok := readAdminToken(e.layout); ok {
+			return token
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("the proxy never published an admin token at %s", e.layout.AdminTokenFile())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// PostAdmin sends one POST to a reserved endpoint, carrying the admin
+// token the proxy published. Post stays bare on purpose: a test that
+// wants to look like a browser uses it.
+func (e *Env) PostAdmin(path string) *http.Response {
+	e.t.Helper()
+	req, err := http.NewRequest(http.MethodPost, e.BaseURL()+path, nil)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	req.Header.Set(apiproxy.AdminHeader, e.AdminToken())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
 // Healthz reads the proxy's self-report.
 func (e *Env) Healthz() Health {
 	e.t.Helper()
-	resp, err := http.Get(e.BaseURL() + apiproxy.HealthzPath)
+	req, err := http.NewRequest(http.MethodGet, e.BaseURL()+apiproxy.HealthzPath, nil)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	req.Header.Set(apiproxy.AdminHeader, e.AdminToken())
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
 	}

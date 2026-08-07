@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
@@ -176,11 +177,29 @@ func (p *Proxy) Selfcheck(token string) (Selfcheck, error) {
 // Stop asks a running proxy to drain and exit. Nothing listening is
 // already the goal state, so Stop is idempotent and never fails for it.
 func (p *Proxy) Stop() {
+	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, nil)
+	if err != nil {
+		return
+	}
+	p.authorize(req)
 	client := &http.Client{Timeout: probeTimeout}
-	resp, err := client.Post("http://"+p.addr+apiproxy.DrainPath, "", nil)
+	resp, err := client.Do(req)
 	if err == nil {
 		resp.Body.Close()
 	}
+}
+
+// authorize attaches the admin token a serving proxy published for its
+// reserved endpoints. An unreadable token file just means the request
+// goes out bare and the proxy answers 401: the missing-file case is
+// indistinguishable from no proxy running, and both surface through
+// the request's own failure.
+func (p *Proxy) authorize(req *http.Request) {
+	data, err := os.ReadFile(p.layout.AdminTokenFile())
+	if err != nil {
+		return
+	}
+	req.Header.Set(apiproxy.AdminHeader, string(data))
 }
 
 func (p *Proxy) get(path string, into any) error {
@@ -188,8 +207,13 @@ func (p *Proxy) get(path string, into any) error {
 }
 
 func (p *Proxy) getURL(rawURL string, into any) error {
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return err
+	}
+	p.authorize(req)
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(rawURL)
+	resp, err := client.Do(req)
 	if err != nil {
 		// A transport failure surfaces as a *url.Error whose message embeds
 		// the requested URL — which on the selfcheck path carries the
@@ -260,8 +284,13 @@ func (p *Proxy) Flush(force bool) (upload.FlushReply, error) {
 	if force {
 		flushURL += "?" + url.Values{"force": {"1"}}.Encode()
 	}
+	req, err := http.NewRequest(http.MethodPost, flushURL, nil)
+	if err != nil {
+		return upload.FlushReply{}, err
+	}
+	p.authorize(req)
 	client := &http.Client{Timeout: flushTimeout}
-	resp, err := client.Post(flushURL, "", nil)
+	resp, err := client.Do(req)
 	if err != nil {
 		return upload.FlushReply{}, err
 	}

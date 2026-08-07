@@ -3,7 +3,6 @@ package lifecycle_test
 import (
 	"context"
 	"io"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -50,11 +49,8 @@ func TestServeProxyWarnsWhenTheEndpointIsNotTheDefault(t *testing.T) {
 	go func() {
 		served <- e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, e.stderr)
 	}()
-	waitHealthy(t, addr)
-	drain, err := http.Post("http://"+addr+apiproxy.DrainPath, "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	waitHealthy(t, e, addr)
+	drain := adminPost(t, e, "http://"+addr+apiproxy.DrainPath)
 	drain.Body.Close()
 	select {
 	case err := <-served:

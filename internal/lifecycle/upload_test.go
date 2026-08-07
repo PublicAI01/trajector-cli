@@ -25,12 +25,10 @@ func servedProxy(t *testing.T, e *env) {
 	go func() {
 		served <- e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
 	}()
-	waitHealthy(t, addr)
+	waitHealthy(t, e, addr)
 	t.Cleanup(func() {
-		resp, err := http.Post("http://"+addr+apiproxy.DrainPath, "", nil)
-		if err == nil {
-			resp.Body.Close()
-		}
+		resp := adminPost(t, e, "http://"+addr+apiproxy.DrainPath)
+		resp.Body.Close()
 		select {
 		case <-served:
 		case <-time.After(10 * time.Second):

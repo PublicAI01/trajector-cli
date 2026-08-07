@@ -138,7 +138,20 @@ func (e *Env) Sandbox() *proxytest.Sandbox { return proxytest.Open(e.t, e.Layout
 type Proxy struct {
 	t       *testing.T
 	addr    string
+	layout  userdirs.Layout
 	stopped chan struct{}
+}
+
+// adminRequest builds a request for a reserved proxy endpoint, carrying
+// the admin token once the serving proxy has published it.
+func adminRequest(t *testing.T, method, url string, layout userdirs.Layout) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxytest.Authorize(req, layout)
+	return req
 }
 
 // StartProxy serves the proxy on a free port, points the CLI at it, and
@@ -154,7 +167,7 @@ func (e *Env) StartProxy(extra ...string) *Proxy {
 	l.Close()
 	e.t.Setenv(cli.ProxyAddrEnv, addr)
 
-	p := &Proxy{t: e.t, addr: addr, stopped: make(chan struct{})}
+	p := &Proxy{t: e.t, addr: addr, layout: e.Layout(), stopped: make(chan struct{})}
 	args := append([]string{"proxy", "serve", "--addr", addr}, extra...)
 	go func() {
 		defer close(p.stopped)
@@ -170,7 +183,8 @@ func (e *Env) StartProxy(extra ...string) *Proxy {
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		resp, err := http.Get("http://" + addr + apiproxy.HealthzPath)
+		req := adminRequest(e.t, http.MethodGet, "http://"+addr+apiproxy.HealthzPath, p.layout)
+		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -190,7 +204,8 @@ func (p *Proxy) Addr() string { return p.addr }
 // Stop drains the proxy and waits for it to exit.
 func (p *Proxy) Stop() {
 	p.t.Helper()
-	resp, err := http.Post("http://"+p.addr+apiproxy.DrainPath, "", nil)
+	req := adminRequest(p.t, http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, p.layout)
+	resp, err := http.DefaultClient.Do(req)
 	if err == nil {
 		resp.Body.Close()
 	}

@@ -98,8 +98,10 @@ func freeAddr(t *testing.T) string {
 }
 
 // supervised describes a proxy this test may actually spawn, in an
-// isolated sandbox, and stops whatever it started.
-func supervised(t *testing.T, addr string) *proxylife.Proxy {
+// isolated sandbox, and stops whatever it started. The layout is
+// returned so a test can put another proxy on the same one — one user,
+// one set of trajector files.
+func supervised(t *testing.T, addr string) (*proxylife.Proxy, userdirs.Layout) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -123,11 +125,11 @@ func supervised(t *testing.T, addr string) *proxylife.Proxy {
 			time.Sleep(50 * time.Millisecond)
 		}
 	})
-	return p
+	return p, layout
 }
 
 func TestEnsureStartsSupervisedProxyAndIsIdempotent(t *testing.T) {
-	p := supervised(t, freeAddr(t))
+	p, _ := supervised(t, freeAddr(t))
 
 	if err := p.Ensure(); err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -144,8 +146,8 @@ func TestEnsureStartsSupervisedProxyAndIsIdempotent(t *testing.T) {
 
 func TestEnsureReplacesStaleVersionViaDrain(t *testing.T) {
 	addr := freeAddr(t)
-	stale := proxytest.New(t, proxytest.WithAddr(addr), proxytest.WithVersion("0.0.9"))
-	p := supervised(t, addr)
+	p, layout := supervised(t, addr)
+	stale := proxytest.New(t, proxytest.WithAddr(addr), proxytest.WithVersion("0.0.9"), proxytest.WithLayout(layout))
 
 	if err := p.Ensure(); err != nil {
 		t.Fatalf("Ensure: %v", err)

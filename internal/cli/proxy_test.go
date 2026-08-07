@@ -12,7 +12,7 @@ import (
 
 func TestProxyServeYieldsToHealthyInstance(t *testing.T) {
 	e := clitest.New(t)
-	addr := proxytest.New(t).Addr()
+	addr := proxytest.New(t, proxytest.WithLayout(e.Layout())).Addr()
 
 	got := e.Run("proxy", "serve", "--addr", addr)
 	if got.Exit != 0 {

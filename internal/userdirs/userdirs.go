@@ -22,6 +22,7 @@ const (
 	rejectedDirName  = "rawcalls-rejected"
 	secretsDirName   = "secrets"
 	proxyLogName     = "proxy.log"
+	adminTokenName   = "admin_token"
 	uploadDirName    = "upload"
 )
 
@@ -95,6 +96,11 @@ func (l Layout) SecretsDir() string { return filepath.Join(l.config, secretsDirN
 
 // ProxyLog is where a supervised proxy's output is appended.
 func (l Layout) ProxyLog() string { return filepath.Join(l.state, proxyLogName) }
+
+// AdminTokenFile is where a serving proxy publishes the token that
+// authorizes its reserved endpoints. Readable only by the owning user,
+// so possession of the token proves the caller is that user.
+func (l Layout) AdminTokenFile() string { return filepath.Join(l.state, adminTokenName) }
 
 // Isolate points every environment variable a Layout resolution reads
 // at paths inside home, through setenv. It lives beside the resolvers

@@ -6,10 +6,15 @@ package apiproxy
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +23,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // httpURL reports whether s can serve as a forwarding or classification
@@ -48,6 +54,10 @@ const DrainPath = "/trajector/drain"
 // recorded. It exercises the exact injected base URL shape without
 // producing an upstream call.
 const SelfcheckPath = "/trajector/selfcheck"
+
+// AdminHeader carries the admin token that authorizes the reserved
+// endpoints.
+const AdminHeader = "X-Trajector-Admin"
 
 // Health is the proxy's self-report: who it is and what its recording
 // has been doing. Lifecycle probes read Service and Version to tell this
@@ -125,13 +135,20 @@ type Config struct {
 	// (a flush of a long backlog), so it never counts as inflight and
 	// cannot hold the drain/idle machinery open. Nil answers not-found.
 	Internal http.Handler
+	// AdminTokenFile is where Serve publishes the token that authorizes
+	// the reserved endpoints, written 0600 once this instance owns the
+	// port and removed on exit. Anything able to read it — the same
+	// user's CLI — may drive drain, flush, and healthz; a browser or
+	// another local user cannot.
+	AdminTokenFile string
 }
 
 // Server is one proxy instance.
 type Server struct {
-	cfg     Config
-	handler http.Handler
-	start   time.Time
+	cfg        Config
+	handler    http.Handler
+	start      time.Time
+	adminToken string
 
 	stats stats
 
@@ -164,6 +181,9 @@ func New(cfg Config) (*Server, error) {
 	if !httpURL(cfg.Dialect.OfficialUpstream) {
 		return nil, fmt.Errorf("apiproxy: official upstream %q is not an http(s) URL", cfg.Dialect.OfficialUpstream)
 	}
+	if cfg.AdminTokenFile == "" {
+		return nil, fmt.Errorf("apiproxy: an admin token file is required")
+	}
 	if cfg.IdleTimeout == 0 {
 		cfg.IdleTimeout = defaultIdleTimeout
 	}
@@ -176,26 +196,40 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, fmt.Errorf("apiproxy: generating the admin token: %w", err)
+	}
 	s := &Server{
-		cfg:     cfg,
-		start:   time.Now(),
-		records: make(chan func(context.Context), recordQueueDepth),
-		drainCh: make(chan struct{}),
+		cfg:        cfg,
+		start:      time.Now(),
+		adminToken: hex.EncodeToString(nonce[:]),
+		records:    make(chan func(context.Context), recordQueueDepth),
+		drainCh:    make(chan struct{}),
 	}
 	s.lastAuthorized = s.start
 	s.recordsDone.Add(1)
 	go s.runRecordQueue()
 	forward := s.newForwarder()
 	s.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, internalPrefix) && r.URL.Path != HealthzPath && r.URL.Path != DrainPath {
-			// Mounted endpoints run outside the inflight accounting: the
-			// drain/idle machinery exists for captures, never for them.
-			if s.cfg.Internal != nil {
-				s.cfg.Internal.ServeHTTP(w, r)
-			} else {
-				http.NotFound(w, r)
+		if strings.HasPrefix(r.URL.Path, internalPrefix) {
+			// The reserved endpoints drive the proxy's lifecycle and read
+			// its counters; they answer only a caller holding the admin
+			// token, which means one able to read the owning user's files.
+			if !s.adminAuthorized(r) {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
 			}
-			return
+			if r.URL.Path != HealthzPath && r.URL.Path != DrainPath {
+				// Mounted endpoints run outside the inflight accounting: the
+				// drain/idle machinery exists for captures, never for them.
+				if s.cfg.Internal != nil {
+					s.cfg.Internal.ServeHTTP(w, r)
+				} else {
+					http.NotFound(w, r)
+				}
+				return
+			}
 		}
 		s.trackInflight(func() {
 			if strings.HasPrefix(r.URL.Path, internalPrefix) {
@@ -214,10 +248,40 @@ func New(cfg Config) (*Server, error) {
 	return s, nil
 }
 
+func (s *Server) adminAuthorized(r *http.Request) bool {
+	return subtle.ConstantTimeCompare([]byte(r.Header.Get(AdminHeader)), []byte(s.adminToken)) == 1
+}
+
+// publishAdminToken writes this instance's admin token where the
+// owning user's CLI will look for it. It runs only after the listener
+// is bound: the port bind is the single-instance lock, and an instance
+// that lost it must not clobber the winner's published token.
+func (s *Server) publishAdminToken() error {
+	if err := userdirs.EnsureOwnerDir(filepath.Dir(s.cfg.AdminTokenFile)); err != nil {
+		return err
+	}
+	return os.WriteFile(s.cfg.AdminTokenFile, []byte(s.adminToken), 0o600)
+}
+
+// removeAdminToken clears the published token on the way out — unless
+// a successor that already took the port over has published its own,
+// which must stay.
+func (s *Server) removeAdminToken() {
+	data, err := os.ReadFile(s.cfg.AdminTokenFile)
+	if err != nil || string(data) != s.adminToken {
+		return
+	}
+	os.Remove(s.cfg.AdminTokenFile)
+}
+
 // Serve runs the proxy on l until the context is canceled, a drain is
 // requested, or authorized traffic has been idle past the timeout. A
 // drained or idle exit returns nil: it is the normal end of life.
 func (s *Server) Serve(ctx context.Context, l net.Listener) error {
+	if err := s.publishAdminToken(); err != nil {
+		return err
+	}
+	defer s.removeAdminToken()
 	httpSrv := &http.Server{Handler: hostLimited(s.handler, l.Addr().String())}
 
 	shutdownDone := make(chan struct{})

@@ -50,6 +50,7 @@ func TestLoopbackAliasHostsAreAccepted(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Host = host
+		req.Header.Set(apiproxy.AdminHeader, e.AdminToken())
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)

@@ -16,6 +16,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
@@ -31,11 +32,16 @@ func freeAddr(t *testing.T) string {
 	return addr
 }
 
-func waitHealthy(t *testing.T, addr string) {
+func waitHealthy(t *testing.T, e *env, addr string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		resp, err := http.Get("http://" + addr + apiproxy.HealthzPath)
+		req, err := http.NewRequest(http.MethodGet, "http://"+addr+apiproxy.HealthzPath, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		proxytest.Authorize(req, e.deps.Layout)
+		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -47,6 +53,22 @@ func waitHealthy(t *testing.T, addr string) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// adminPost posts to a served proxy's reserved endpoint with the admin
+// token it published.
+func adminPost(t *testing.T, e *env, url string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxytest.Authorize(req, e.deps.Layout)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
 }
 
 func TestServeProxyHostsCaptureAndTheFlushEndpoint(t *testing.T) {
@@ -72,12 +94,9 @@ func TestServeProxyHostsCaptureAndTheFlushEndpoint(t *testing.T) {
 	go func() {
 		served <- e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
 	}()
-	waitHealthy(t, addr)
+	waitHealthy(t, e, addr)
 
-	resp, err := http.Post("http://"+addr+upload.FlushPath+"?force=1", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := adminPost(t, e, "http://"+addr+upload.FlushPath+"?force=1")
 	defer resp.Body.Close()
 	var reply upload.FlushReply
 	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
@@ -91,10 +110,7 @@ func TestServeProxyHostsCaptureAndTheFlushEndpoint(t *testing.T) {
 		t.Errorf("second ServeProxy = %v, want quiet deferral to the healthy proxy", err)
 	}
 
-	drain, err := http.Post("http://"+addr+apiproxy.DrainPath, "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	drain := adminPost(t, e, "http://"+addr+apiproxy.DrainPath)
 	drain.Body.Close()
 	select {
 	case err := <-served:

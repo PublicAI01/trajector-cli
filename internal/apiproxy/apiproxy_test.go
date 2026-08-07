@@ -514,11 +514,7 @@ func TestHealthzReportsIdentityAndCounters(t *testing.T) {
 		t.Errorf("recorded_today = %d after one capture", health.RecordedToday)
 	}
 
-	nf, err := http.Get(e.BaseURL() + "/trajector/unknown")
-	if err != nil {
-		t.Fatal(err)
-	}
-	nf.Body.Close()
+	nf := e.PostAdmin("/trajector/unknown")
 	if nf.StatusCode != 404 {
 		t.Errorf("reserved namespace leaked: status %d", nf.StatusCode)
 	}
@@ -527,11 +523,7 @@ func TestHealthzReportsIdentityAndCounters(t *testing.T) {
 func TestDrainRequestShutsDownGracefully(t *testing.T) {
 	e := proxytest.New(t)
 
-	resp, err := http.Post(e.BaseURL()+apiproxy.DrainPath, "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
+	resp := e.PostAdmin(apiproxy.DrainPath)
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("drain status = %d, want 202", resp.StatusCode)
 	}
@@ -552,7 +544,7 @@ func TestIdleProxyExitsOnItsOwn(t *testing.T) {
 
 func TestReservedPathsAnswerNotFoundWithoutAMount(t *testing.T) {
 	e := proxytest.New(t)
-	resp := e.Post("/trajector/flush", "", nil)
+	resp := e.PostAdmin("/trajector/flush")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 when nothing is mounted", resp.StatusCode)
 	}
@@ -563,7 +555,7 @@ func TestMountedInternalHandlerServesUnderReservedPrefix(t *testing.T) {
 		w.Write([]byte("mounted:" + r.URL.Path))
 	})))
 
-	resp := e.Post("/trajector/flush", "", nil)
+	resp := e.PostAdmin("/trajector/flush")
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 || string(body) != "mounted:/trajector/flush" {
 		t.Errorf("mounted endpoint = %d %q", resp.StatusCode, body)
@@ -590,8 +582,14 @@ func TestMountedCallDoesNotHoldTheProxyOpen(t *testing.T) {
 	)
 	defer close(release)
 
+	token := e.AdminToken()
 	go func() {
-		resp, err := http.Post(e.BaseURL()+"/trajector/flush", "", nil)
+		req, err := http.NewRequest(http.MethodPost, e.BaseURL()+"/trajector/flush", nil)
+		if err != nil {
+			return
+		}
+		req.Header.Set(apiproxy.AdminHeader, token)
+		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			resp.Body.Close()
 		}
