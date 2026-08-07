@@ -78,13 +78,5 @@ func fileEnv(path, key string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	env, ok := root["env"].(map[string]any)
-	if !ok {
-		return "", false
-	}
-	value, ok := env[key].(string)
-	if !ok || value == "" {
-		return "", false
-	}
-	return value, true
+	return envValue(root, key)
 }

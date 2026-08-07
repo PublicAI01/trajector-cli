@@ -101,15 +101,21 @@ func InjectedBaseURL(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	value, ok := envValue(root, envBaseURL)
+	if !ok || !isProxyBaseURL(value) {
+		return "", false
+	}
+	return value, true
+}
+
+// envValue reads the string value of key from root's env block.
+func envValue(root map[string]any, key string) (string, bool) {
 	env, ok := root["env"].(map[string]any)
 	if !ok {
 		return "", false
 	}
-	value, _ := env[envBaseURL].(string)
-	if !isProxyBaseURL(value) {
-		return "", false
-	}
-	return value, true
+	value, ok := env[key].(string)
+	return value, ok && value != ""
 }
 
 // InjectUserHook merges the discovery hook into the user settings file
@@ -133,33 +139,14 @@ func HasHook(path, marker string) bool {
 	if err != nil {
 		return false
 	}
-	hooks, ok := root["hooks"].(map[string]any)
-	if !ok {
-		return false
-	}
-	for _, groups := range hooks {
-		list, ok := groups.([]any)
-		if !ok {
-			continue
+	found := false
+	eachHookEntry(root, func(_ string, entry map[string]any) hookAction {
+		if cmd, _ := entry["command"].(string); strings.Contains(cmd, marker) {
+			found = true
 		}
-		for _, g := range list {
-			group, ok := g.(map[string]any)
-			if !ok {
-				continue
-			}
-			entries, _ := group["hooks"].([]any)
-			for _, e := range entries {
-				entry, ok := e.(map[string]any)
-				if !ok {
-					continue
-				}
-				if cmd, _ := entry["command"].(string); strings.Contains(cmd, marker) {
-					return true
-				}
-			}
-		}
-	}
-	return false
+		return keepEntry
+	})
+	return found
 }
 
 func removeInjection(path string, dropEnv bool, marker string) error {
@@ -168,59 +155,30 @@ func removeInjection(path string, dropEnv bool, marker string) error {
 	}
 	return edit(path, func(root map[string]any) error {
 		if dropEnv {
-			if env, ok := root["env"].(map[string]any); ok {
-				if value, _ := env[envBaseURL].(string); isProxyBaseURL(value) {
-					delete(env, envBaseURL)
-				}
-				if len(env) == 0 {
-					delete(root, "env")
-				}
-			}
+			dropInjectedEnv(root)
 		}
-		hooks, ok := root["hooks"].(map[string]any)
-		if !ok {
-			return nil
-		}
-		for event, groups := range hooks {
-			list, ok := groups.([]any)
-			if !ok {
-				continue
+		eachHookEntry(root, func(_ string, entry map[string]any) hookAction {
+			if cmd, _ := entry["command"].(string); strings.Contains(cmd, marker) {
+				return dropEntry
 			}
-			var kept []any
-			for _, g := range list {
-				group, ok := g.(map[string]any)
-				if !ok {
-					kept = append(kept, g)
-					continue
-				}
-				entries, _ := group["hooks"].([]any)
-				var keptEntries []any
-				for _, e := range entries {
-					entry, ok := e.(map[string]any)
-					if ok {
-						if cmd, _ := entry["command"].(string); strings.Contains(cmd, marker) {
-							continue
-						}
-					}
-					keptEntries = append(keptEntries, e)
-				}
-				if len(keptEntries) == 0 && len(entries) > 0 {
-					continue
-				}
-				group["hooks"] = keptEntries
-				kept = append(kept, group)
-			}
-			if len(kept) == 0 {
-				delete(hooks, event)
-			} else {
-				hooks[event] = kept
-			}
-		}
-		if len(hooks) == 0 {
-			delete(root, "hooks")
-		}
+			return keepEntry
+		})
 		return nil
 	})
+}
+
+func dropInjectedEnv(root map[string]any) {
+	env, ok := root["env"].(map[string]any)
+	if !ok {
+		return
+	}
+	if value, _ := env[envBaseURL].(string); !isProxyBaseURL(value) {
+		return
+	}
+	delete(env, envBaseURL)
+	if len(env) == 0 {
+		delete(root, "env")
+	}
 }
 
 func addHook(root map[string]any, event, command string) error {
@@ -230,28 +188,94 @@ func addHook(root map[string]any, event, command string) error {
 	}
 	groups, ok := hooks[event].([]any)
 	if hooks[event] != nil && !ok {
+		// Refusing beats guessing, as in childObject: appending would
+		// destroy the malformed value, skipping would report success
+		// without installing the hook.
 		return fmt.Errorf("claudesettings: hooks.%s is not a list", event)
 	}
-	for _, g := range groups {
-		group, ok := g.(map[string]any)
-		if !ok {
-			continue
+	exists := false
+	eachHookEntry(root, func(e string, entry map[string]any) hookAction {
+		if cmd, _ := entry["command"].(string); e == event && cmd == command {
+			exists = true
 		}
-		entries, _ := group["hooks"].([]any)
-		for _, e := range entries {
-			entry, ok := e.(map[string]any)
-			if !ok {
-				continue
-			}
-			if cmd, _ := entry["command"].(string); cmd == command {
-				return nil
-			}
-		}
+		return keepEntry
+	})
+	if exists {
+		return nil
 	}
 	hooks[event] = append(groups, map[string]any{
 		"hooks": []any{map[string]any{"type": "command", "command": command}},
 	})
 	return nil
+}
+
+// hookAction is a visitor's verdict on one hook entry.
+type hookAction bool
+
+const (
+	keepEntry hookAction = true
+	dropEntry hookAction = false
+)
+
+// eachHookEntry visits every well-formed hook entry under root
+// (hooks → event → group list → group's hooks list → entry) and drops
+// the entries the visitor rejects, pruning any group, event, or hooks
+// section its drops leave empty. Nodes that do not match the expected
+// shape are skipped and kept as they are: the walk never errors and
+// never rewrites what it cannot parse.
+func eachHookEntry(root map[string]any, visit func(event string, entry map[string]any) hookAction) {
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		return
+	}
+	pruned := false
+	for event, groups := range hooks {
+		list, ok := groups.([]any)
+		if !ok {
+			continue
+		}
+		var kept []any
+		for _, g := range list {
+			group, ok := g.(map[string]any)
+			if !ok {
+				kept = append(kept, g)
+				continue
+			}
+			entries, ok := group["hooks"].([]any)
+			if !ok {
+				kept = append(kept, g)
+				continue
+			}
+			var keptEntries []any
+			for _, e := range entries {
+				entry, ok := e.(map[string]any)
+				if !ok || visit(event, entry) == keepEntry {
+					keptEntries = append(keptEntries, e)
+				}
+			}
+			if len(keptEntries) == len(entries) {
+				kept = append(kept, g)
+				continue
+			}
+			if len(keptEntries) == 0 {
+				continue
+			}
+			group["hooks"] = keptEntries
+			kept = append(kept, g)
+		}
+		if len(kept) == len(list) {
+			continue
+		}
+		if len(kept) == 0 {
+			delete(hooks, event)
+			pruned = true
+			continue
+		}
+		hooks[event] = kept
+	}
+	if pruned && len(hooks) == 0 {
+		delete(root, "hooks")
+	}
 }
 
 func childObject(root map[string]any, key string) (map[string]any, error) {

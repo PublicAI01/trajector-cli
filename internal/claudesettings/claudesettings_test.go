@@ -202,6 +202,119 @@ func TestInjectRefusesMalformedSections(t *testing.T) {
 	}
 }
 
+func TestMalformedHookSettingsHandledConsistently(t *testing.T) {
+	cmd := `"/usr/local/bin/trajector" hook discovery`
+	tests := []struct {
+		name           string
+		content        string
+		wantHas        bool
+		wantInjectErr  bool
+		afterRoundTrip string
+	}{
+		{
+			name:          "hooks section is not an object",
+			content:       `{"hooks": "bogus"}`,
+			wantInjectErr: true,
+		},
+		{
+			name:          "event groups value is not a list",
+			content:       `{"hooks": {"SessionStart": "bogus"}}`,
+			wantInjectErr: true,
+		},
+		{
+			name:    "other event malformed while target event is free",
+			content: `{"hooks": {"PostToolUse": "bogus"}}`,
+		},
+		{
+			name:    "group is not a map",
+			content: `{"hooks": {"SessionStart": ["bogus"]}}`,
+		},
+		{
+			name:    "group hooks value is not a list",
+			content: `{"hooks": {"SessionStart": [{"hooks": "bogus"}]}}`,
+		},
+		{
+			name:    "entry is not a map",
+			content: `{"hooks": {"SessionStart": [{"hooks": ["bogus"]}]}}`,
+		},
+		{
+			name:    "entry has no command",
+			content: `{"hooks": {"SessionStart": [{"hooks": [{"type": "command"}]}]}}`,
+		},
+		{
+			name:    "foreign entry among malformed neighbors",
+			content: `{"hooks": {"SessionStart": ["bogus", {"hooks": [{"type": "command", "command": "echo user-hook"}]}]}}`,
+		},
+		{
+			name:           "hooks object is empty",
+			content:        `{"hooks": {}}`,
+			afterRoundTrip: `{}`,
+		},
+		{
+			name:           "event groups list is empty",
+			content:        `{"hooks": {"SessionStart": []}}`,
+			afterRoundTrip: `{}`,
+		},
+		{
+			name:    "group hooks list is empty",
+			content: `{"hooks": {"SessionStart": [{"hooks": []}]}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			if err := os.WriteFile(path, []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			original := readJSON(t, path)
+
+			if got := HasHook(path, DiscoveryMarker); got != tt.wantHas {
+				t.Errorf("HasHook = %v, want %v", got, tt.wantHas)
+			}
+
+			for i := 0; i < 2; i++ {
+				if err := RemoveUserHook(path); err != nil {
+					t.Fatalf("RemoveUserHook #%d: %v", i+1, err)
+				}
+				if got := readJSON(t, path); !reflect.DeepEqual(got, original) {
+					t.Fatalf("RemoveUserHook #%d rewrote foreign content:\n%v", i+1, got)
+				}
+			}
+
+			err := InjectUserHook(path, cmd)
+			if tt.wantInjectErr {
+				if err == nil {
+					t.Fatal("InjectUserHook over a malformed section did not fail")
+				}
+				if got := readJSON(t, path); !reflect.DeepEqual(got, original) {
+					t.Fatalf("failed injection changed the file:\n%v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !HasHook(path, DiscoveryMarker) {
+				t.Fatal("hook not reported after injection")
+			}
+
+			if err := RemoveUserHook(path); err != nil {
+				t.Fatal(err)
+			}
+			want := original
+			if tt.afterRoundTrip != "" {
+				want = map[string]any{}
+				if err := json.Unmarshal([]byte(tt.afterRoundTrip), &want); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := readJSON(t, path); !reflect.DeepEqual(got, want) {
+				t.Errorf("inject+remove round trip = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 func TestInjectedBaseURLAndTokenRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	path := ProjectLocalPath(root)
