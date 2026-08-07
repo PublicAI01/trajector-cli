@@ -1,0 +1,6 @@
+# Git for Windows converts to CRLF on checkout by default, which changes
+# files whose bytes are the fixture: the golden envelope is compared byte
+# for byte against what the encoder produced. Pinning the working tree to
+# LF everywhere keeps one checkout of this repository identical to every
+# other, rather than making the tests platform-aware about line endings.
+* text=auto eol=lf
