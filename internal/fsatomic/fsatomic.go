@@ -72,7 +72,13 @@ func lock(path string) (unlock func(), err error) {
 			f.Close()
 			return func() { os.Remove(path) }, nil
 		}
-		if !os.IsExist(err) {
+		// Windows reports create-exclusive against a lock file whose
+		// holder is unlocking as a permission error rather than an
+		// existence one: the name stays visible while the delete is
+		// pending. Both mean the same thing here — someone else has it —
+		// and treating only one as contention makes an ordinary handoff
+		// fail outright instead of waiting the few milliseconds it takes.
+		if !os.IsExist(err) && !os.IsPermission(err) {
 			return nil, err
 		}
 		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > lockStale {
@@ -80,7 +86,10 @@ func lock(path string) (unlock func(), err error) {
 			continue
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("fsatomic: %s held past the stale deadline", path)
+			// A directory this process genuinely cannot write reaches
+			// the deadline the same way a held lock does, so the reason
+			// travels with it rather than being guessed from the path.
+			return nil, fmt.Errorf("fsatomic: %s held past the stale deadline: %w", path, err)
 		}
 		time.Sleep(lockRetry)
 	}
