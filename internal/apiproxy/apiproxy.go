@@ -147,6 +147,7 @@ type Config struct {
 type Server struct {
 	cfg        Config
 	handler    http.Handler
+	transport  *http.Transport
 	start      time.Time
 	adminToken string
 
@@ -282,6 +283,11 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 		return err
 	}
 	defer s.removeAdminToken()
+	// The pool goes when this instance does. A process outlives its
+	// Server only under test, where a pool that survives its owner can
+	// hand the next instance a connection to an address that has since
+	// been recycled and is no longer being served.
+	defer s.transport.CloseIdleConnections()
 	httpSrv := &http.Server{Handler: hostLimited(s.handler, l.Addr().String())}
 
 	shutdownDone := make(chan struct{})

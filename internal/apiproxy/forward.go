@@ -27,10 +27,26 @@ type decision struct {
 	rec      *recorder
 }
 
+// newTransport is the forwarding path's own connection pool. Left nil,
+// a ReverseProxy borrows http.DefaultTransport, which would put the
+// user's API traffic in the same pool as this tool's own service calls:
+// a burst of uploads could then evict a connection a forwarded request
+// was about to reuse, and recording would be observable as latency.
+// The per-host idle limit comes off its default of two because a proxy
+// spends its whole life talking to one host, and a session running more
+// concurrent requests than that would reconnect for every one.
+func newTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConnsPerHost = t.MaxIdleConns
+	return t
+}
+
 func (s *Server) newForwarder() http.Handler {
+	s.transport = newTransport()
 	proxy := &httputil.ReverseProxy{
 		Rewrite:        s.rewrite,
 		ModifyResponse: s.modifyResponse,
+		Transport:      s.transport,
 		// Stream responses through unbuffered so the client observes
 		// upstream bytes as they arrive.
 		FlushInterval: -1,
