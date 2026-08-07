@@ -53,6 +53,11 @@ const (
 	probeTimeout = 500 * time.Millisecond
 	startTimeout = 10 * time.Second
 	drainTimeout = 20 * time.Second
+	// foreignSettle is how long a bound but unanswering port is given to
+	// turn out to be a proxy still coming up, before it is called
+	// foreign. It only has to outlast the gap between the bind and the
+	// first served request.
+	foreignSettle = 2 * time.Second
 )
 
 // flushTimeout bounds one requested flush as seen by the CLI. A drain
@@ -125,7 +130,7 @@ func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/"
 // because the port bind is the single-instance lock and losers defer to
 // the winner.
 func (p *Proxy) Ensure() error {
-	switch h, holder := p.Health(); holder {
+	switch h, holder := p.settledHealth(); holder {
 	case HolderForeign:
 		return fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
 	case HolderOurs:
@@ -162,6 +167,24 @@ func (p *Proxy) Health() (Health, Holder) {
 		return Health{}, HolderForeign
 	}
 	return h, HolderOurs
+}
+
+// settledHealth is Health with the startup window allowed for. A proxy
+// between binding its port and answering its first request is
+// indistinguishable from a stranger holding the port, and the caller
+// that won the bind a moment ago is by far the likelier of the two:
+// Ensure's whole convergence story is that losers defer to the winner,
+// which a loser reporting ErrPortOccupied does not do. Only Ensure needs
+// this — it acts on the verdict, where Health's other callers report it.
+func (p *Proxy) settledHealth() (Health, Holder) {
+	deadline := time.Now().Add(foreignSettle)
+	for {
+		h, holder := p.Health()
+		if holder != HolderForeign || time.Now().After(deadline) {
+			return h, holder
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // Selfcheck asks the proxy what it would do with token, over the exact
