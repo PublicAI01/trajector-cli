@@ -1,7 +1,6 @@
 package lifecycle
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -134,15 +133,11 @@ func (m *Machine) confirmAgreement(io IO) error {
 	}
 	fmt.Fprintln(io.Out, consent.AgreementText)
 	fmt.Fprintln(io.Out)
-	fmt.Fprint(io.Out, "Do you accept the data agreement? [yes/no]: ")
-
-	line, err := bufio.NewReader(io.In).ReadString('\n')
-	if err != nil && line == "" {
+	yes, err := askYesNo(io, "Do you accept the data agreement? [yes/no]: ")
+	if err != nil {
 		return fmt.Errorf("reading agreement answer: %w", err)
 	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "yes", "y":
-	default:
+	if !yes {
 		return ErrDeclined
 	}
 	if err := m.consent.AcceptAgreement(consent.AgreementVersion, m.now()); err != nil {
@@ -173,7 +168,7 @@ func projectToken(st ProjectStatus) (string, error) {
 func (m *Machine) selfCheck(token string) error {
 	if err := m.proxy.Ensure(); err != nil {
 		if errors.Is(err, proxylife.ErrPortOccupied) {
-			return fmt.Errorf("self-check failed: %v; refusing to route credentials at it (run `trajector doctor`)", err)
+			return fmt.Errorf("self-check failed: %v. %s", err, PortOccupiedRemedy)
 		}
 		return fmt.Errorf("self-check failed: %w", err)
 	}

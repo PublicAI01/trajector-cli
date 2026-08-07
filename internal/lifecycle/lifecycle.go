@@ -7,8 +7,10 @@
 package lifecycle
 
 import (
+	"bufio"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
@@ -41,6 +43,21 @@ type IO struct {
 	In  io.Reader
 	Out io.Writer
 	Err io.Writer
+}
+
+// askYesNo puts one yes/no question to the user. Only an explicit yes
+// answers true; a read that yields nothing at all is the error.
+func askYesNo(io IO, prompt string) (bool, error) {
+	fmt.Fprint(io.Out, prompt)
+	line, err := bufio.NewReader(io.In).ReadString('\n')
+	if err != nil && line == "" {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "yes", "y":
+		return true, nil
+	}
+	return false, nil
 }
 
 // Machine drives the device and project consent lifecycle.

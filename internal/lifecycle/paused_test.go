@@ -72,6 +72,7 @@ func TestEnableExplainsWhyRecordingIsPaused(t *testing.T) {
 
 func TestUninstallOnACleanMachineReportsNothingToRemove(t *testing.T) {
 	e := newEnv(t)
+	e.stdin = "\n"
 	if err := e.machine().Uninstall(false, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}

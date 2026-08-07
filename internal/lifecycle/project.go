@@ -23,6 +23,10 @@ var ErrNotPaired = errors.New("this device is not paired")
 // else, which the caller must surface loudly rather than retry.
 var ErrPortOccupied = proxylife.ErrPortOccupied
 
+// PortOccupiedRemedy is the one instruction every surface prints with
+// ErrPortOccupied, so the advice cannot drift between surfaces.
+const PortOccupiedRemedy = "Enabled projects route API credentials at this address; find and stop the process holding the port, or run `trajector disable` in enabled projects."
+
 // Enable starts contributing data from a project. Pairing is the
 // precondition, so an unpaired device pairs first rather than failing.
 func (m *Machine) Enable(projectDir string, io IO) error {
@@ -68,8 +72,13 @@ func (m *Machine) Disable(projectDir string, purge bool, io IO) error {
 
 // Uninstall removes every injection this binary made and stops the
 // proxy. Injections come out first: once the binary is gone, a leftover
-// injection would point an enabled project at a dead port.
+// injection would point an enabled project at a dead port. Whether
+// local data goes too is the user's call: a caller that has not already
+// decided (deleteData false) is asked here, before anything changes.
 func (m *Machine) Uninstall(deleteData bool, io IO) error {
+	if !deleteData {
+		deleteData, _ = askYesNo(io, "Delete local data (captured rawcalls, configuration, device token)? [y/N]: ")
+	}
 	grants, err := m.routes.All()
 	if err != nil {
 		return err
@@ -99,19 +108,20 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 	}
 	m.proxy.Stop()
 
-	if !deleteData {
-		fmt.Fprintln(io.Out, "Local data kept.")
-		return nil
-	}
-	if err := m.deps.Tokens.ClearDeviceToken(); err != nil {
-		fmt.Fprintf(io.Err, "trajector: warning: could not remove the device token: %v\n", err)
-	}
-	for _, dir := range m.deps.Layout.Roots() {
-		if err := os.RemoveAll(dir); err != nil {
-			fmt.Fprintf(io.Err, "trajector: warning: could not remove %s: %v\n", dir, err)
+	if deleteData {
+		if err := m.deps.Tokens.ClearDeviceToken(); err != nil {
+			fmt.Fprintf(io.Err, "trajector: warning: could not remove the device token: %v\n", err)
 		}
+		for _, dir := range m.deps.Layout.Roots() {
+			if err := os.RemoveAll(dir); err != nil {
+				fmt.Fprintf(io.Err, "trajector: warning: could not remove %s: %v\n", dir, err)
+			}
+		}
+		fmt.Fprintln(io.Out, "Local data deleted.")
+	} else {
+		fmt.Fprintln(io.Out, "Local data kept.")
 	}
-	fmt.Fprintln(io.Out, "Local data deleted.")
+	fmt.Fprintf(io.Out, "Done. To finish, delete the binary itself: %s\n", m.deps.ExecPath)
 	return nil
 }
 

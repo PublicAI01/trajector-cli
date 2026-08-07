@@ -171,8 +171,7 @@ func (m *Machine) doctorProxy(r *doctorReport, d Diagnosis) {
 		r.ok("proxy running at %s (version %s, up %s)", d.Proxy.Addr, h.Version, time.Duration(h.UptimeSeconds)*time.Second)
 	case proxylife.HolderForeign:
 		r.problem("%s is held by a process that is not the trajector proxy.", d.Proxy.Addr)
-		r.detail("Enabled projects route API credentials at this address. Find and stop the")
-		r.detail("process holding the port, or run `trajector disable` in enabled projects.")
+		r.detail("%s", PortOccupiedRemedy)
 	default:
 		if !d.Project.Enabled {
 			r.ok("proxy not running; it starts on demand with the next session")

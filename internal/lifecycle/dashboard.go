@@ -60,7 +60,7 @@ func (m *Machine) Status(dir string, io IO) error {
 			fmt.Fprintf(io.Out, "  Recent recording errors: %d (last: %s)\n", n, h.RecentRecordingErrors[n-1])
 		}
 	case proxylife.HolderForeign:
-		fmt.Fprintf(io.Out, "  WARNING: %s is held by a process that is not the trajector proxy. Run `trajector doctor`.\n", d.Proxy.Addr)
+		fmt.Fprintf(io.Out, "  WARNING: %s is held by a process that is not the trajector proxy. %s\n", d.Proxy.Addr, PortOccupiedRemedy)
 	default:
 		fmt.Fprintln(io.Out, "  Not running; it starts on demand with the next session.")
 	}

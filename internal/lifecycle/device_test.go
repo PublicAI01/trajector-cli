@@ -279,6 +279,7 @@ func TestUninstallRemovesEveryInjectionAndKeepsDataByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	e.stdin = "\n"
 	if err := e.machine().Uninstall(false, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}

@@ -7,9 +7,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
@@ -24,6 +26,10 @@ var version = "dev"
 // ProxyAddrEnv overrides the proxy address, for tests and unusual
 // setups. Production always uses the fixed address.
 const ProxyAddrEnv = "TRAJECTOR_PROXY_ADDR"
+
+// NowEnv pins the machine's clock to a fixed RFC3339 instant, for
+// tests. Production leaves it unset.
+const NowEnv = "TRAJECTOR_NOW"
 
 type app struct {
 	stdin  io.Reader
@@ -61,7 +67,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "hook":
 		return a.hookCmd(args[1:])
 	case proxylife.Command:
-		return proxyCmd(args[1:], stdout, stderr)
+		return a.proxyCmd(args[1:])
 	default:
 		fmt.Fprintf(stderr, "trajector: unknown command %q\n", args[0])
 		usage(stderr)
@@ -77,7 +83,7 @@ commands:
   logout       sign out; recording pauses, forwarding is unaffected
   enable       start contributing data from the current project
   disable      stop contributing from the current project [--purge]
-  uninstall    remove every injection and optionally local data
+  uninstall    remove every injection and optionally local data [--delete-data]
   status       show pairing, project, proxy, capture, and upload state
   doctor       diagnose and repair injection, hooks, proxy, and spool issues
   upload       upload captured data now [--force]
@@ -141,7 +147,7 @@ func machineAt(addr string) (*lifecycle.Machine, error) {
 	if addr != "" {
 		env.proxyAddr = addr
 	}
-	return lifecycle.Open(lifecycle.Deps{
+	deps := lifecycle.Deps{
 		Layout:    env.layout,
 		Tokens:    tokenstore.Open(env.layout.SecretsDir()),
 		Platform:  platform.New(env.platformURL, version),
@@ -150,7 +156,15 @@ func machineAt(addr string) (*lifecycle.Machine, error) {
 		ProxyAddr: env.proxyAddr,
 		Home:      env.home,
 		Getenv:    os.Getenv,
-	})
+	}
+	if v := os.Getenv(NowEnv); v != "" {
+		at, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return nil, fmt.Errorf("parsing %s: %w", NowEnv, err)
+		}
+		deps.Now = func() time.Time { return at }
+	}
+	return lifecycle.Open(deps)
 }
 
 // io hands the machine this invocation's streams.
@@ -161,4 +175,61 @@ func (a *app) io() lifecycle.IO {
 func (a *app) fail(err error) int {
 	fmt.Fprintf(a.stderr, "trajector: %v\n", err)
 	return 1
+}
+
+// prelude is what every command needs before it can do anything: the
+// working directory and the machine.
+func (a *app) prelude() (*lifecycle.Machine, string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, "", err
+	}
+	m, err := a.machine()
+	if err != nil {
+		return nil, "", err
+	}
+	return m, cwd, nil
+}
+
+// takeFlag strips flag from args when it is the only argument, so a
+// command can hand the rest to with's exact-count check.
+func takeFlag(args []string, flag string) ([]string, bool) {
+	if len(args) == 1 && args[0] == flag {
+		return args[1:], true
+	}
+	return args, false
+}
+
+// with is the shape every command shares: the argument-count check
+// against usage, the prelude, and the one mapping from the machine's
+// answer to an exit code.
+func (a *app) with(usage string, args []string, nargs int, do func(m *lifecycle.Machine, cwd string) error) int {
+	if len(args) != nargs {
+		fmt.Fprintln(a.stderr, usage)
+		return 2
+	}
+	m, cwd, err := a.prelude()
+	if err != nil {
+		return a.fail(err)
+	}
+	return a.exit(do(m, cwd))
+}
+
+// exit maps one command's error to the process exit code. The errors
+// with a softer story than a bare failure are mapped here, once, so
+// every command explains them the same way.
+func (a *app) exit(err error) int {
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, lifecycle.ErrDeclined):
+		fmt.Fprintln(a.stdout, "Agreement declined; nothing was changed.")
+		return 1
+	case errors.Is(err, lifecycle.ErrPortOccupied):
+		fmt.Fprintf(a.stderr, "trajector: WARNING: %v\n", err)
+		fmt.Fprintf(a.stderr, "trajector: %s\n", lifecycle.PortOccupiedRemedy)
+		return 1
+	default:
+		return a.fail(err)
+	}
 }
