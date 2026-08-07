@@ -91,6 +91,17 @@ func Open(deps Deps) (*Machine, error) {
 	}, nil
 }
 
+// warnNonDefaultEndpoint prints one line when this machine is
+// configured to send data somewhere other than the default trajector
+// service, so an endpoint override is never silent. Both surfaces that
+// commit data to the endpoint — enable and the serving proxy — print
+// it on their way in.
+func (m *Machine) warnNonDefaultEndpoint(w io.Writer) {
+	if url := m.deps.Platform.BaseURL(); url != platform.DefaultBaseURL {
+		fmt.Fprintf(w, "WARNING: uploads go to %s, not the default trajector service.\n", url)
+	}
+}
+
 // Paired reports whether this device holds a pairing token.
 func (m *Machine) Paired() bool {
 	_, ok := m.deviceToken()

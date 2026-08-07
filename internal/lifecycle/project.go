@@ -30,6 +30,7 @@ const PortOccupiedRemedy = "Enabled projects route API credentials at this addre
 // Enable starts contributing data from a project. Pairing is the
 // precondition, so an unpaired device pairs first rather than failing.
 func (m *Machine) Enable(projectDir string, io IO) error {
+	m.warnNonDefaultEndpoint(io.Out)
 	if !m.Paired() {
 		fmt.Fprintln(io.Out, "This device is not paired yet; starting pairing first.")
 		if err := m.Pair(io); err != nil {

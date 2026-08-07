@@ -37,6 +37,7 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 	logf := func(format string, a ...any) {
 		fmt.Fprintf(stderr, format+"\n", a...)
 	}
+	m.warnNonDefaultEndpoint(stderr)
 	// The serve process is the machine's one flusher, so this is the one
 	// place the redaction pass is configured. Email and phone patterns
 	// are the personally identifying strings PRIVACY.md promises to mask;
