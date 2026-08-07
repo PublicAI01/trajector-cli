@@ -41,6 +41,17 @@ func (s *Server) newForwarder() http.Handler {
 		ErrorLog: nil,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Full duplex, or the server guards the request body against a
+		// handler that responds before reading it: writing the upstream's
+		// header while the body looks unconsumed makes the server drain
+		// and close that body, racing the transport's own trailing read
+		// of it. Losing that race tears down the upstream connection in
+		// the middle of the response, so the client sees a truncated
+		// exchange the upstream completed. A proxy is the case the guard
+		// exists for the opposite of: both directions are supposed to
+		// stream at once. Only HTTP/2 refuses, where full duplex is
+		// already the rule, so the error is discarded.
+		http.NewResponseController(w).EnableFullDuplex()
 		d := s.decide(r)
 		d.rec.observeRequest(r)
 		ctx := context.WithValue(r.Context(), decisionKey{}, d)
