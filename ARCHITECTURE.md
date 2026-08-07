@@ -97,6 +97,9 @@ data loss:
 
 ## Self-healing and observability
 
+The three surfaces render one diagnosis of the device, resolved in a
+single pass; they differ only in what they do with it.
+
 - `trajector status` is the read-only dashboard: pairing, project consent,
   proxy health, capture counters, spool watermark, uploads, quarantine, and
   service notices.
@@ -104,8 +107,10 @@ data loss:
   injected settings, session hooks, the discovery hint, a moved upstream.
   Consent disagreements and foreign port holders are reported with the
   command that resolves them, never guessed at.
-- `trajector doctor bundle` produces the only diagnostic artifact, generated
-  and sent by the user.
+- `trajector doctor bundle` archives the diagnosis as it stands — it
+  repairs nothing, so a report always describes the state that was
+  diagnosed. The archive is the only diagnostic artifact, generated and
+  sent by the user.
 - The proxy serves `/trajector/healthz` (identity, uptime, counters) and a
   per-token selfcheck used by enable.
 
