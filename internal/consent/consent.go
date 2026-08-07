@@ -1,7 +1,10 @@
 // Package consent records the user's data-contribution decisions: the
 // accepted agreement version and each project's granted or denied
-// state. The store is the durable record of intent; the routing table
-// is derived from it and can always be rebuilt against it.
+// state. The store is the durable audit record of intent and the gate
+// enable checks before granting. It is a record, not a source: the
+// credentials a grant runs on — the project's token and upstream —
+// live only in the routing table, so this store can attest to a
+// decision but never reissue its grant.
 package consent
 
 import (

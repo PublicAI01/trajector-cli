@@ -217,7 +217,7 @@ func (m *Machine) doctorInjection(r *doctorReport, st ProjectStatus) error {
 
 	if st.IdentityDisagreement() {
 		r.problem("the routing table and the consent record disagree about this project's identity.")
-		r.detail("Run `trajector disable` and then `trajector enable` to rebuild both.")
+		r.detail("Run `trajector disable` and then `trajector enable` to record both afresh.")
 		return nil
 	}
 	if !st.Consistent() {
