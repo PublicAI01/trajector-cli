@@ -218,7 +218,7 @@ func New(cfg Config) (*Server, error) {
 // requested, or authorized traffic has been idle past the timeout. A
 // drained or idle exit returns nil: it is the normal end of life.
 func (s *Server) Serve(ctx context.Context, l net.Listener) error {
-	httpSrv := &http.Server{Handler: s.handler}
+	httpSrv := &http.Server{Handler: hostLimited(s.handler, l.Addr().String())}
 
 	shutdownDone := make(chan struct{})
 	go func() {
@@ -259,6 +259,28 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 		return nil
 	}
 	return err
+}
+
+// hostLimited rejects any request whose Host header does not name the
+// bound address. Binding to loopback limits who can connect, but a
+// browser steered to an attacker's domain that resolves to 127.0.0.1
+// (DNS rebinding) connects locally with that domain in Host; matching
+// the header against the address actually bound shuts that out for
+// every endpoint at once.
+func hostLimited(next http.Handler, bound string) http.Handler {
+	allowed := map[string]bool{strings.ToLower(bound): true}
+	if _, port, err := net.SplitHostPort(bound); err == nil {
+		for _, alias := range []string{"localhost", "127.0.0.1", "::1"} {
+			allowed[net.JoinHostPort(alias, port)] = true
+		}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !allowed[strings.ToLower(r.Host)] {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) idle() bool {
