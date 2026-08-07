@@ -145,6 +145,45 @@ func TestEnableAppendsGitIgnoreInsideRepo(t *testing.T) {
 	}
 }
 
+func TestEnableLeavesASymlinkedGitIgnoreAloneAndWarns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs privilege on windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	e := newEnv(t)
+	t.Setenv("HOME", e.deps.Home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(e.deps.Home, ".config"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(e.deps.Home, "gitconfig"))
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = e.project
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	target := filepath.Join(e.deps.Home, "dotfile")
+	before := []byte("dotfile content\n")
+	if err := os.WriteFile(target, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(e.canonicalRoot(), ".gitignore")); err != nil {
+		t.Fatal(err)
+	}
+	e.startProxy()
+
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if !strings.Contains(e.stderr.String(), "symbolic link") {
+		t.Errorf("stderr = %q, want the symlinked .gitignore warned about", e.stderr)
+	}
+	after, err := os.ReadFile(target)
+	if err != nil || string(after) != string(before) {
+		t.Errorf("link target = %q, %v, want it untouched", after, err)
+	}
+}
+
 func readOnly(t *testing.T, dir string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {

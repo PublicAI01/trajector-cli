@@ -232,6 +232,8 @@ func (m *Machine) doctorInjection(r *doctorReport, st ProjectStatus) error {
 		r.problem("could not verify .gitignore covers %s: %v", claudesettings.ProjectLocalRel, err)
 	} else if action == claudesettings.IgnoreAppended {
 		r.fixed("added %s to .gitignore", claudesettings.ProjectLocalRel)
+	} else if action == claudesettings.IgnoreSymlinked {
+		r.problem(".gitignore is a symbolic link and was left alone; add %s to your git ignores yourself", claudesettings.ProjectLocalRel)
 	}
 
 	m.doctorUpstream(r, st)

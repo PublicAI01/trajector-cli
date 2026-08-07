@@ -1,11 +1,13 @@
 package claudesettings
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -555,6 +557,33 @@ func TestEnsureGitIgnoredRespectsExistingCoverage(t *testing.T) {
 	}
 	if action != IgnoreCovered {
 		t.Errorf("action = %q, want covered", action)
+	}
+}
+
+func TestEnsureGitIgnoredRefusesASymlinkedGitignore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs privilege on windows")
+	}
+	root := initRepo(t)
+	target := filepath.Join(t.TempDir(), "victim")
+	before := []byte("victim content\n")
+	if err := os.WriteFile(target, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, ".gitignore")); err != nil {
+		t.Fatal(err)
+	}
+
+	action, err := EnsureGitIgnored(root, ".claude/settings.local.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != IgnoreSymlinked {
+		t.Errorf("action = %q, want symlinked", action)
+	}
+	after, err := os.ReadFile(target)
+	if err != nil || !bytes.Equal(after, before) {
+		t.Errorf("link target = %q, %v, want it untouched", after, err)
 	}
 }
 

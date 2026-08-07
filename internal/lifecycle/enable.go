@@ -105,8 +105,11 @@ func (m *Machine) installAndVerify(io IO, st ProjectStatus, upstream string) err
 	if err != nil {
 		return fmt.Errorf("ensuring .gitignore covers the injected settings: %w", err)
 	}
-	if action == claudesettings.IgnoreAppended {
+	switch action {
+	case claudesettings.IgnoreAppended:
 		fmt.Fprintf(io.Out, "Added %s to .gitignore\n", claudesettings.ProjectLocalRel)
+	case claudesettings.IgnoreSymlinked:
+		fmt.Fprintf(io.Err, "WARNING: .gitignore is a symbolic link and was left alone; add %s to your git ignores so the injected settings are never committed.\n", claudesettings.ProjectLocalRel)
 	}
 
 	if err := m.selfCheck(token); err != nil {

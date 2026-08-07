@@ -20,6 +20,10 @@ const (
 	// IgnoreSkipped: the project is not a git work tree or git is not
 	// available, so there is nothing to leak through.
 	IgnoreSkipped IgnoreAction = "skipped"
+	// IgnoreSymlinked: the project's .gitignore is a symbolic link, so
+	// nothing was written; the caller must tell the user to add the
+	// ignore themselves.
+	IgnoreSymlinked IgnoreAction = "symlinked"
 )
 
 // EnsureGitIgnored makes sure rel (slash-separated, relative to the
@@ -43,6 +47,13 @@ func EnsureGitIgnored(projectRoot, rel string) (IgnoreAction, error) {
 	}
 
 	path := filepath.Join(projectRoot, ".gitignore")
+	// The append must never write through a symbolic link: a repository
+	// can ship .gitignore as a link to a file outside its own tree, and
+	// following it would turn enable into an out-of-tree write at a
+	// path the repository chose.
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return IgnoreSymlinked, nil
+	}
 	existing, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
