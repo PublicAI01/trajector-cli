@@ -3,10 +3,11 @@
 // actually does belongs to the lifecycle machine. Run is driven
 // in-process by tests, so command implementations must write only to
 // the provided streams, read only the provided stdin, and read
-// configuration through the environment.
+// configuration through the environment and the user config file.
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -126,10 +127,38 @@ func resolveEnv() (runtimeEnv, error) {
 	if addr := os.Getenv(ProxyAddrEnv); addr != "" {
 		env.proxyAddr = addr
 	}
-	if url := os.Getenv(platform.BaseURLEnv); url != "" {
-		env.platformURL = url
+	platformURL, err := configuredPlatformURL(layout.ConfigFile())
+	if err != nil {
+		return runtimeEnv{}, err
+	}
+	if platformURL != "" {
+		env.platformURL = platformURL
 	}
 	return env, nil
+}
+
+// configuredPlatformURL reads the service endpoint override from the
+// user config file. The endpoint decides where captured data and the
+// device token go, so it is never read from an environment variable: a
+// repository's committed settings reach this process's environment
+// through the session hooks, and must not be able to choose the
+// destination. An absent file means no override; an unreadable one
+// fails the command loudly rather than silently uploading elsewhere.
+func configuredPlatformURL(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var cfg struct {
+		PlatformURL string `json:"platform_url"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	return cfg.PlatformURL, nil
 }
 
 // machine assembles the lifecycle machine for this invocation.

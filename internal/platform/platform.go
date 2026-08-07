@@ -10,17 +10,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"time"
 )
 
 // DefaultBaseURL is the production service endpoint. Tests and
-// self-hosted setups override it through the TRAJECTOR_PLATFORM_URL
-// environment variable, read by the CLI.
+// self-hosted setups override it through the user-owned config file
+// read by the CLI — never through an environment variable, which a
+// repository's committed settings can reach.
 const DefaultBaseURL = "https://trajector-api.publicai.io"
-
-// BaseURLEnv names the environment override for the service endpoint.
-const BaseURLEnv = "TRAJECTOR_PLATFORM_URL"
 
 // Pairing statuses reported by the service.
 const (
@@ -56,12 +56,62 @@ func (e *StatusError) Temporary() bool {
 type Client struct {
 	baseURL string
 	http    *http.Client
+	// initErr is the endpoint validation verdict decided at
+	// construction. Every call returns it before touching the network,
+	// so a rejected endpoint fails closed: nothing is ever sent to it.
+	initErr error
 }
 
 // New builds a client for the given endpoint, identifying itself as
-// this trajector build.
+// this trajector build. The endpoint decides where the device token and
+// captured data are sent, so it is validated here: a non-loopback
+// endpoint must use https. A rejected endpoint still yields a client —
+// the construction site also assembles the capture path, which must
+// keep running — but every call the client makes fails with the
+// validation verdict instead of sending anything.
 func New(baseURL, version string) *Client {
-	return &Client{baseURL: baseURL, http: newClient(version)}
+	return &Client{baseURL: baseURL, http: newClient(version), initErr: validateBaseURL(baseURL)}
+}
+
+// BaseURL is the endpoint this client sends to.
+func (c *Client) BaseURL() string { return c.baseURL }
+
+func validateBaseURL(baseURL string) error {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("platform: endpoint %q is not a valid URL: %w", baseURL, err)
+	}
+	switch {
+	case u.Scheme != "http" && u.Scheme != "https":
+		return fmt.Errorf("platform: endpoint %q must be an http(s) URL", baseURL)
+	case !CredentialSafeURL(baseURL):
+		return fmt.Errorf("platform: refusing endpoint %q: a non-loopback endpoint must use https", baseURL)
+	}
+	return nil
+}
+
+// CredentialSafeURL reports whether a URL may receive credentials or
+// captured data: https anywhere, plaintext http only when the host can
+// only name this machine. Every surface that vets a destination —
+// this client's endpoint, the drift-checked forward upstream — answers
+// from this one spelling.
+func CredentialSafeURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	switch u.Scheme {
+	case "https":
+		return true
+	case "http":
+		host := u.Hostname()
+		if host == "localhost" {
+			return true
+		}
+		ip := net.ParseIP(host)
+		return ip != nil && ip.IsLoopback()
+	}
+	return false
 }
 
 // Pairing is one in-progress device pairing.
@@ -145,6 +195,9 @@ func (c *Client) RequestDeletion(deviceToken, projectIDHash string) error {
 }
 
 func (c *Client) call(method, path, bearer string, reqBody, respBody any) error {
+	if c.initErr != nil {
+		return c.initErr
+	}
 	var body io.Reader
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)

@@ -6,6 +6,7 @@ package clitest
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -54,9 +55,34 @@ func New(t *testing.T) *Env {
 	// call a test did not stub fails loudly and is recorded, instead of
 	// timing out against an unroutable address.
 	t.Setenv(tokenstore.BackendEnv, "file")
-	t.Setenv("TRAJECTOR_PLATFORM_URL", e.service.URL())
 	t.Setenv("TRAJECTOR_PROXY_ADDR", "")
+	e.SetPlatformURL(e.service.URL())
 	return e
+}
+
+// SetPlatformURL points the CLI at a service endpoint by writing the
+// user config file, the same source production reads. clitest never
+// sets an environment variable for this: the CLI must not honor one.
+func (e *Env) SetPlatformURL(url string) {
+	e.t.Helper()
+	data, err := json.Marshal(map[string]string{"platform_url": url})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.WriteConfig(string(data))
+}
+
+// WriteConfig replaces the user config file with content verbatim, so
+// a test can plant what SetPlatformURL would never produce.
+func (e *Env) WriteConfig(content string) {
+	e.t.Helper()
+	path := e.Layout().ConfigFile()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 // Home is the temp directory standing in for the user's home.

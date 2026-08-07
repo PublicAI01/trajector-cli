@@ -166,6 +166,39 @@ func TestNon2xxCarriesItsStatusAndBody(t *testing.T) {
 	})
 }
 
+func TestNonLoopbackHTTPEndpointFailsEveryCallClosed(t *testing.T) {
+	c := platform.New("http://203.0.113.7:1", "test")
+	if _, err := c.StartPairing("1.2.3"); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Errorf("StartPairing = %v, want a refusal naming the https requirement", err)
+	}
+	if err := c.RevokeDevice("dev-tok-fake"); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Errorf("RevokeDevice = %v, want the same refusal on every call", err)
+	}
+}
+
+func TestUnparseableEndpointFailsEveryCallClosed(t *testing.T) {
+	c := platform.New("://not-a-url", "test")
+	if _, err := c.StartPairing("1.2.3"); err == nil {
+		t.Error("StartPairing against an unparseable endpoint succeeded")
+	}
+}
+
+func TestNonHTTPSchemeEndpointIsRefused(t *testing.T) {
+	c := platform.New("ftp://127.0.0.1:1", "test")
+	if _, err := c.StartPairing("1.2.3"); err == nil {
+		t.Error("StartPairing against a non-http(s) endpoint succeeded")
+	}
+}
+
+func TestLoopbackHTTPEndpointIsAllowed(t *testing.T) {
+	// Every other test in this file drives a 127.0.0.1 http endpoint;
+	// this one pins the localhost spelling as equally acceptable.
+	c := platform.New("http://localhost:1", "test")
+	if _, err := c.StartPairing("1.2.3"); err == nil || strings.Contains(err.Error(), "https") {
+		t.Errorf("StartPairing = %v, want a dial failure, not an endpoint refusal", err)
+	}
+}
+
 func TestPollIntervalFloorsMissingSuggestions(t *testing.T) {
 	if got := (platform.Pairing{}).PollInterval(); got != 2*time.Second {
 		t.Errorf("PollInterval with no suggestion = %v, want the 2s floor", got)

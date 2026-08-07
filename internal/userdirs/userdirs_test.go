@@ -128,6 +128,7 @@ func TestFilesShareTheDirectoryTheyBelongIn(t *testing.T) {
 	}
 	config := "/home/u/.config/trajector"
 	for name, got := range map[string]string{
+		"ConfigFile":   l.ConfigFile(),
 		"ConsentFile":  l.ConsentFile(),
 		"SecretsDir":   l.SecretsDir(),
 		"RoutingTable": l.RoutingTable(),

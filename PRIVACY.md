@@ -58,7 +58,10 @@ machine.**
 
 Redacted records are packed into compressed batches (by default when 10 MiB
 or 24 hours accumulate) and uploaded over HTTPS to the trajector service,
-authenticated by your device pairing token. Each batch carries a client-side
+authenticated by your device pairing token. The upload destination can be
+changed only through `config.json` in your user config directory (field
+`platform_url`, https required off-loopback) — never through an environment
+variable, so nothing a repository ships can redirect your uploads. Each batch carries a client-side
 idempotency key, so a retried upload can never be counted twice. Local
 records are deleted **only after** the service acknowledges the batch by
 echoing that key; any other answer leaves your data in place for retry.

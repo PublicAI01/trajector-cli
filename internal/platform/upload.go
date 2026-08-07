@@ -127,6 +127,9 @@ func (e *BatchRejectedError) Unwrap() error {
 // batch id — a 2xx that names no batch proves nothing was persisted,
 // and the caller must keep its data.
 func (c *Client) UploadBatch(deviceToken, batchID string, envelope []byte, records redact.RedactedBytes) (BatchAck, error) {
+	if c.initErr != nil {
+		return BatchAck{}, c.initErr
+	}
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	if err := writePart(mw, "batch", "batch.json", "application/json", envelope); err != nil {
