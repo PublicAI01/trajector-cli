@@ -3,6 +3,7 @@ package lifecycle_test
 import (
 	"archive/tar"
 	"compress/gzip"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -68,12 +69,20 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 		t.Errorf("stdout = %q, want the bundle path reported", e.stdout)
 	}
 
+	// routing.json carries the root as a JSON string, where a Windows
+	// path's separators arrive escaped; match the encoded spelling
+	// rather than the one the filesystem uses.
+	rootInJSON, err := json.Marshal(e.canonicalRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	entries := readBundle(t, path)
 	for name, want := range map[string]string{
 		"info.json":             "testv",
 		"upload/state.json":     "boom",
 		"upload/handshake.json": "9.9.9",
-		"routing.json":          e.canonicalRoot(),
+		"routing.json":          string(rootInJSON),
 	} {
 		got, ok := entries[name]
 		if !ok {
