@@ -119,7 +119,7 @@ func (r *recorder) finish() {
 			return
 		}
 		if !r.s.enqueue(r.write) {
-			r.abandon("recorder: capture queue is full; rawcall not recorded")
+			r.abandon(abandonQueueFull, "recorder: capture queue is full; rawcall not recorded")
 		}
 	})
 }
@@ -133,7 +133,7 @@ func (r *recorder) guard(step func()) {
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			r.abandon("recorder panic: %v", p)
+			r.abandon(abandonPanic, "recorder panic: %v", p)
 		}
 	}()
 	step()
@@ -159,9 +159,23 @@ func (r *recorder) absorb(buf *bytes.Buffer, complete *bool, p []byte, eof bool)
 		}
 	}()
 	if over {
-		r.abandon("recorder: exchange exceeds the %d byte capture limit; not recorded", r.limit)
+		r.abandon(abandonOverLimit, "recorder: exchange exceeds the %d byte capture limit; not recorded", r.limit)
 	}
 }
+
+// A recording failure reaches healthz and the diagnostic bundle only
+// as one of these fixed categories: the detailed message may quote an
+// error that embeds observed bytes or a local path, and neither may
+// leave through a diagnostic surface. The full message goes to the
+// proxy's own log.
+const (
+	abandonQueueFull  = "capture queue full"
+	abandonPanic      = "recording panicked"
+	abandonOverLimit  = "capture limit exceeded"
+	abandonDeadline   = "capture deadline passed"
+	abandonEnvelope   = "envelope assembly failed"
+	abandonSpoolWrite = "spool write failed"
+)
 
 // drop abandons the capture silently, for outcomes that are expected
 // rather than failures.
@@ -174,7 +188,7 @@ func (r *recorder) drop() {
 }
 
 // abandon gives up on this capture and says why, once.
-func (r *recorder) abandon(format string, args ...any) {
+func (r *recorder) abandon(category string, format string, args ...any) {
 	r.mu.Lock()
 	already := r.dropped
 	r.dropped = true
@@ -185,7 +199,7 @@ func (r *recorder) abandon(format string, args ...any) {
 		return
 	}
 	r.s.stats.countDropped()
-	r.s.stats.recordError(timestamped(format, args...))
+	r.s.stats.recordError(timestamped("%s", category))
 	r.s.cfg.Logf(format, args...)
 }
 
@@ -194,7 +208,7 @@ func (r *recorder) abandon(format string, args ...any) {
 func (r *recorder) write(ctx context.Context) {
 	r.guard(func() {
 		if err := ctx.Err(); err != nil {
-			r.abandon("recorder: capture waited past its deadline; not recorded")
+			r.abandon(abandonDeadline, "recorder: capture waited past its deadline; not recorded")
 			return
 		}
 		obs, ok := r.observation()
@@ -203,11 +217,11 @@ func (r *recorder) write(ctx context.Context) {
 		}
 		env, err := envelope.Record(obs)
 		if err != nil {
-			r.abandon("%v", err)
+			r.abandon(abandonEnvelope, "%v", err)
 			return
 		}
 		if err := r.s.cfg.Spool.Write(env); err != nil {
-			r.abandon("spooling rawcall: %v", err)
+			r.abandon(abandonSpoolWrite, "spooling rawcall: %v", err)
 			return
 		}
 		r.s.stats.recorded(obs.At, env.Garbled())

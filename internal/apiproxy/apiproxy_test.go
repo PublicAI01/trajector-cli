@@ -382,8 +382,13 @@ func TestRecordingFailureDoesNotBreakForwarding(t *testing.T) {
 	}
 
 	h := e.WaitHealthz(func(h proxytest.Health) bool { return len(h.RecentRecordingErrors) > 0 })
-	if !strings.Contains(h.RecentRecordingErrors[0], "quota") {
-		t.Errorf("recorded error = %q, want the quota failure", h.RecentRecordingErrors[0])
+	if !strings.Contains(h.RecentRecordingErrors[0], "spool write failed") {
+		t.Errorf("recorded error = %q, want the spool write category", h.RecentRecordingErrors[0])
+	}
+	// The category is all healthz gets: the underlying error's own words
+	// (quota figures, paths) stay in the proxy log.
+	if strings.Contains(h.RecentRecordingErrors[0], "quota") {
+		t.Errorf("recorded error = %q leaked the underlying error's words", h.RecentRecordingErrors[0])
 	}
 }
 
