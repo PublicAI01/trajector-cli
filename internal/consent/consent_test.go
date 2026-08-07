@@ -3,6 +3,7 @@ package consent_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -64,6 +65,9 @@ func TestProjectStateTransitions(t *testing.T) {
 }
 
 func TestStoreFileIsOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not carried on windows")
+	}
 	s := open(t)
 	if err := s.AcceptAgreement(consent.AgreementVersion, "2026-08-02T10:00:00Z"); err != nil {
 		t.Fatal(err)

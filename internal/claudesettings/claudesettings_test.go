@@ -51,12 +51,18 @@ func TestInjectProjectCreatesFileWithEnvAndBothHooks(t *testing.T) {
 		}
 	}
 
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		t.Errorf("created settings file mode = %v, want owner-only (embeds the token)", perm)
+	// Windows has no owner-only bit to assert: Chmod there toggles the
+	// read-only attribute and nothing else, so the file this test wrote
+	// reports 0666 however it was created. The token it embeds is
+	// protected by the profile directory's ACL instead.
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			t.Errorf("created settings file mode = %v, want owner-only (embeds the token)", perm)
+		}
 	}
 }
 
