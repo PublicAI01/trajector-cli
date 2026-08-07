@@ -100,6 +100,7 @@ type Env struct {
 
 	layout   userdirs.Layout
 	addr     string
+	client   *http.Client
 	spool    *spool.Spool
 	stopped  chan struct{}
 	serveErr error
@@ -117,10 +118,20 @@ func New(t *testing.T, opts ...Option) *Env {
 		o.layout = SandboxLayout(t, t.TempDir())
 	}
 
+	// Each Env keeps its own connection pool and drops it with the test.
+	// On http.DefaultClient these outlive the proxy they were opened to,
+	// and since every Env listens on an ephemeral port, a later test can
+	// be handed a pooled connection to an address its own proxy now owns
+	// but nothing is serving — an EOF with no relation to the test that
+	// sees it.
+	client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+	t.Cleanup(client.CloseIdleConnections)
+
 	e := &Env{
 		t:        t,
 		Upstream: fakeupstream.New(t),
 		layout:   o.layout,
+		client:   client,
 		stopped:  make(chan struct{}),
 	}
 	sp, err := spool.Create(o.layout.SpoolDir(), o.quota)
@@ -207,7 +218,7 @@ func (e *Env) Post(path, body string, header http.Header) *http.Response {
 	for k, vs := range header {
 		req.Header[k] = vs
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e.client.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -294,7 +305,7 @@ func (e *Env) PostAdmin(path string) *http.Response {
 		e.t.Fatal(err)
 	}
 	req.Header.Set(apiproxy.AdminHeader, e.AdminToken())
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e.client.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -310,7 +321,7 @@ func (e *Env) Healthz() Health {
 		e.t.Fatal(err)
 	}
 	req.Header.Set(apiproxy.AdminHeader, e.AdminToken())
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e.client.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -346,7 +357,7 @@ type Selfcheck = apiproxy.Selfcheck
 // injected base-URL shape.
 func (e *Env) Selfcheck(token string) Selfcheck {
 	e.t.Helper()
-	resp, err := http.Get(e.TokenURL(token) + apiproxy.SelfcheckPath)
+	resp, err := e.client.Get(e.TokenURL(token) + apiproxy.SelfcheckPath)
 	if err != nil {
 		e.t.Fatal(err)
 	}
