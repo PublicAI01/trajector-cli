@@ -5,9 +5,7 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
-	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
-	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 )
 
 func TestRootCommand(t *testing.T) {
@@ -100,15 +98,9 @@ func TestUnknownSubcommandsAreUsageErrors(t *testing.T) {
 
 func TestEnableExplainsAPausedDevice(t *testing.T) {
 	e := clitest.New(t)
-	// The proxy must report the CLI's own version or enable would try to
-	// take the port over from what it sees as a stale binary.
-	proxy := proxytest.New(t, proxytest.WithLayout(e.Layout()), proxytest.WithVersion("dev"))
-	t.Setenv("TRAJECTOR_PROXY_ADDR", proxy.Addr())
-
+	e.StartProxy()
 	// A paired device whose recording is paused device-wide.
-	if err := tokenstore.Files(e.Layout().SecretsDir()).SetDeviceToken("dev-tok-fake"); err != nil {
-		t.Fatal(err)
-	}
+	e.Paired()
 	e.Sandbox().Pause(routing.PauseSignedOut)
 
 	got := e.InProjectInput("yes\n", "enable")
@@ -120,12 +112,11 @@ func TestEnableExplainsAPausedDevice(t *testing.T) {
 	}
 }
 
-func TestDisableReportsFailureWithExitCodeOne(t *testing.T) {
+func TestEnableReportsServiceFailureWithExitCodeOne(t *testing.T) {
 	e := clitest.New(t)
-	e.InProject("disable")
-	got := e.InProject("enable")
+	got := e.InProjectInput("yes\n", "enable")
 	if got.Exit != 1 {
-		t.Errorf("enable against an unreachable service = %d, want 1", got.Exit)
+		t.Errorf("enable against a failing service = %d, want 1", got.Exit)
 	}
 	if !strings.Contains(got.Stderr, "trajector: ") {
 		t.Errorf("stderr = %q, want the failure reported once, prefixed", got.Stderr)

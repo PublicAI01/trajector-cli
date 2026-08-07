@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 )
@@ -43,25 +44,17 @@ func TestDoctorExitsOneWhenProblemsRemain(t *testing.T) {
 
 func TestDoctorBundleWritesAnArchiveInTheWorkingDirectory(t *testing.T) {
 	e := clitest.New(t)
+	e.At(time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC))
 	got := e.InProject("doctor", "bundle")
 	if got.Exit != 0 {
 		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
 	}
-	entries, err := os.ReadDir(e.Project())
-	if err != nil {
-		t.Fatal(err)
+	name := "trajector-doctor-20260807-100000.tar.gz"
+	if _, err := os.Stat(filepath.Join(e.Project(), name)); err != nil {
+		t.Errorf("no bundle at the pinned clock's name: %v (stdout: %q)", err, got.Stdout)
 	}
-	found := false
-	for _, f := range entries {
-		if strings.HasPrefix(f.Name(), "trajector-doctor-") && strings.HasSuffix(f.Name(), ".tar.gz") {
-			found = true
-			if !strings.Contains(got.Stdout, f.Name()) {
-				t.Errorf("stdout = %q, want the bundle name %s reported", got.Stdout, f.Name())
-			}
-		}
-	}
-	if !found {
-		t.Errorf("no bundle written into the project directory; stdout = %q", got.Stdout)
+	if !strings.Contains(got.Stdout, name) {
+		t.Errorf("stdout = %q, want the bundle name %s reported", got.Stdout, name)
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 // seedRejectedBatch quarantines records under one batch id, the way a
@@ -40,17 +40,7 @@ func seedRejectedBatch(t *testing.T, e *env, batchID, details string, records ma
 // have spooled them.
 func spooledEnvelope(t *testing.T, requestID string, at time.Time) []byte {
 	t.Helper()
-	env, err := envelope.Record(envelope.Observation{
-		Provider: "anthropic", Endpoint: "/v1/messages", HTTPStatus: 200,
-		ProjectIDHash: "hash-project", At: at,
-		Request:     []byte(`{"model":"claude-fable-5"}`),
-		Response:    []byte(`{"id":"` + requestID + `"}`),
-		ContentType: "application/json", RequestComplete: true, ResponseComplete: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return env.Bytes()
+	return proxytest.Rawcall(t, requestID, "hash-project", at)
 }
 
 func TestRequeueMovesABatchBackIntoTheSpool(t *testing.T) {

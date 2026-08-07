@@ -82,26 +82,47 @@ func (s *Sandbox) Recording(token string) (known, recording bool) {
 	return verdict.Resolves(), verdict.Records()
 }
 
+// RawcallOption refines the observation a seeded rawcall records
+// beyond the minimal valid default.
+type RawcallOption func(*envelope.Observation)
+
 // SeedRawcall stores one rawcall for a project, as a capture would.
-func (s *Sandbox) SeedRawcall(id, projectIDHash string, at time.Time) {
+func (s *Sandbox) SeedRawcall(id, projectIDHash string, at time.Time, opts ...RawcallOption) {
 	s.t.Helper()
 	sp, err := spool.Create(s.layout.SpoolDir(), 0)
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	env, err := envelope.Record(envelope.Observation{
+	if err := sp.Write(record(s.t, id, projectIDHash, at, opts)); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// Rawcall builds one rawcall's envelope bytes, exactly what SeedRawcall
+// stores, for tests that place records somewhere other than the spool.
+func Rawcall(t *testing.T, id, projectIDHash string, at time.Time, opts ...RawcallOption) []byte {
+	t.Helper()
+	return record(t, id, projectIDHash, at, opts).Bytes()
+}
+
+// record is the one place tests get a valid rawcall from.
+func record(t *testing.T, id, projectIDHash string, at time.Time, opts []RawcallOption) envelope.Envelope {
+	t.Helper()
+	obs := envelope.Observation{
 		Provider: "anthropic", Endpoint: "/v1/messages", HTTPStatus: 200,
 		ProjectIDHash: projectIDHash, At: at,
 		Request:     []byte(`{"model":"claude-fable-5"}`),
 		Response:    []byte(`{"id":"` + id + `"}`),
 		ContentType: "application/json", RequestComplete: true, ResponseComplete: true,
-	})
+	}
+	for _, apply := range opts {
+		apply(&obs)
+	}
+	env, err := envelope.Record(obs)
 	if err != nil {
-		s.t.Fatal(err)
+		t.Fatal(err)
 	}
-	if err := sp.Write(env); err != nil {
-		s.t.Fatal(err)
-	}
+	return env
 }
 
 // Rawcalls reports every rawcall currently stored.
