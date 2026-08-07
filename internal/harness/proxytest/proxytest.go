@@ -247,10 +247,13 @@ func (e *Env) WaitRawcalls(n int) []spool.Rawcall {
 }
 
 // readAdminToken is the one place a harness reads a proxy's published
-// admin token off disk.
+// admin token off disk. An empty file counts as not published yet: a
+// caller that treats it as a token sends an empty one and gets back a
+// 401 with no body, which surfaces as a bare decoding error far from
+// the race that caused it.
 func readAdminToken(layout userdirs.Layout) (string, bool) {
 	data, err := os.ReadFile(layout.AdminTokenFile())
-	return string(data), err == nil
+	return string(data), err == nil && len(data) > 0
 }
 
 // Authorize attaches the admin token published under layout, when one

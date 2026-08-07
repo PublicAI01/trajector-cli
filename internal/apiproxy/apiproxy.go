@@ -261,6 +261,12 @@ func (s *Server) publishAdminToken() error {
 	if err := userdirs.EnsureOwnerDir(filepath.Dir(s.cfg.AdminTokenFile)); err != nil {
 		return err
 	}
+	// Deliberately not written through fsatomic: its temp name is fixed
+	// per path, and a takeover has two proxies publishing here at once,
+	// where the loser's rename would fail and take down a proxy that is
+	// otherwise fine. A reader landing inside the truncate-then-write
+	// window sees an empty token and is refused, which every reader here
+	// already treats as a proxy that has not published yet.
 	return os.WriteFile(s.cfg.AdminTokenFile, []byte(s.adminToken), 0o600)
 }
 
