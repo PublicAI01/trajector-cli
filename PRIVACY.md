@@ -52,7 +52,9 @@ masks secrets — API keys, tokens, passwords, and other credential-shaped
 strings — and personally identifying strings — email addresses and phone
 numbers — while preserving JSON structure, message order, tool-call
 pairing, and thinking signatures. **Unredacted data never leaves your
-machine.**
+machine.** Known limitation: masking applies to values only — a secret
+placed in a JSON key position is not masked, because keys are structure
+and the pass never rewrites them.
 
 ## What leaves your machine
 
