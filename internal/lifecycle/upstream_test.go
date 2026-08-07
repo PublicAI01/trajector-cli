@@ -54,6 +54,59 @@ func TestHookRefusesUpstreamDriftToPlaintextNonLoopback(t *testing.T) {
 	}
 }
 
+func TestUpstreamDriftLeavesAVisibleTrace(t *testing.T) {
+	e := enabledOnOfficial(t)
+	official := e.status().Upstream
+	e.environ["ANTHROPIC_BASE_URL"] = "https://relay.example.com"
+
+	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(e.stderr.String(), "upstream moved to https://relay.example.com") {
+		t.Errorf("hook stderr = %q, want the move announced", e.stderr)
+	}
+	st := e.status()
+	if st.UpstreamMoved.From != official || st.UpstreamMoved.At == "" {
+		t.Errorf("status = moved from %q at %q, want the previous upstream and a time", st.UpstreamMoved.From, st.UpstreamMoved.At)
+	}
+
+	e.stdout.Reset()
+	if err := e.machine().Status(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if out := e.stdout.String(); !strings.Contains(out, "moved from "+official) {
+		t.Errorf("status output = %q, want the move shown", out)
+	}
+}
+
+func TestReEnableResetsTheUpstreamMoveTrace(t *testing.T) {
+	e := enabledOnOfficial(t)
+	e.environ["ANTHROPIC_BASE_URL"] = "https://relay.example.com"
+	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	st := e.status()
+	if st.UpstreamMoved.Happened() {
+		t.Errorf("status after re-enable = moved from %q at %q, want the trace reset", st.UpstreamMoved.From, st.UpstreamMoved.At)
+	}
+}
+
+func TestHookAnnouncesARefusedUpstreamMove(t *testing.T) {
+	e := enabledOnOfficial(t)
+	e.environ["ANTHROPIC_BASE_URL"] = "http://203.0.113.9"
+
+	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(e.stderr.String(), "must use https") {
+		t.Errorf("hook stderr = %q, want the refusal explained", e.stderr)
+	}
+}
+
 func TestDoctorReportsARefusedUpstreamDrift(t *testing.T) {
 	e := enabledOnOfficial(t)
 	before := e.status().Upstream

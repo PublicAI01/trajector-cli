@@ -18,11 +18,14 @@ type ProjectStatus struct {
 	Hash string
 
 	// Enabled reports a standing grant. Token, Upstream, and GrantHash
-	// are what the routing table records for it.
-	Enabled   bool
-	Token     string
-	Upstream  string
-	GrantHash string
+	// are what the routing table records for it; UpstreamMoved carries
+	// the last unattended upstream change, zero when the upstream still
+	// is what enable granted.
+	Enabled       bool
+	Token         string
+	Upstream      string
+	UpstreamMoved routing.UpstreamMove
+	GrantHash     string
 
 	// InjectedBaseURL is the base URL trajector injected into the
 	// project's settings, empty when nothing is injected;
@@ -89,6 +92,7 @@ func (m *Machine) Project(dir string) (ProjectStatus, error) {
 		st.Enabled = true
 		st.Token = grant.Token
 		st.Upstream = grant.Upstream
+		st.UpstreamMoved = grant.UpstreamMoved
 		st.GrantHash = grant.ProjectIDHash
 	}
 	if st.PauseReason, err = m.routes.PausedReason(); err != nil {

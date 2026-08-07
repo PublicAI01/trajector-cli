@@ -42,6 +42,9 @@ func (m *Machine) Status(dir string, io IO) error {
 		if st.Upstream != capture.Anthropic.OfficialUpstream {
 			fmt.Fprintf(io.Out, "  Upstream: %s (third-party origin).\n", st.Upstream)
 		}
+		if st.UpstreamMoved.Happened() {
+			fmt.Fprintf(io.Out, "  The upstream moved from %s at %s (base-URL configuration change).\n", st.UpstreamMoved.From, st.UpstreamMoved.At)
+		}
 	case !st.Enabled && !st.Injected():
 		fmt.Fprintln(io.Out, "  Not enabled. Run `trajector enable` to contribute from this project.")
 	default:

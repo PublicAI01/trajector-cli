@@ -53,7 +53,7 @@ func (m *Machine) reconcileUpstream(root, current string) (want upstreamResoluti
 	if !platform.CredentialSafeURL(want.upstream) {
 		return want, false, true, nil
 	}
-	if err := m.routes.SetUpstream(root, want.upstream); err != nil {
+	if err := m.routes.SetUpstream(root, want.upstream, m.now()); err != nil {
 		return want, false, false, err
 	}
 	return want, true, false, nil

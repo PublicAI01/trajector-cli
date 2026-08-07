@@ -102,6 +102,15 @@ type projectRecord struct {
 	Upstream      string `json:"upstream"`
 	GrantedAt     string `json:"granted_at"`
 	RevokedAt     string `json:"revoked_at,omitempty"`
+	// UpstreamMoved records the last unattended upstream change, so a
+	// move made where no user was watching stays visible afterwards. A
+	// fresh grant clears it: enabling is the user's own baseline.
+	UpstreamMoved *upstreamMoveRecord `json:"upstream_moved,omitempty"`
+}
+
+type upstreamMoveRecord struct {
+	From string `json:"from"`
+	At   string `json:"at"`
 }
 
 // Table is a cached view of the on-disk routing table, safe for

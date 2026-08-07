@@ -31,11 +31,24 @@ type Grant struct {
 	RootPath      string
 	Upstream      string
 	GrantedAt     string
+	// UpstreamMoved carries the last recorded unattended upstream
+	// change, zero when the upstream still is what enable granted.
+	UpstreamMoved UpstreamMove
 	// Revoked reports the per-entry revocation only, never a device-wide
 	// pause. A caller that wants to know whether traffic is being
 	// recorded must ask the Table.
 	Revoked bool
 }
+
+// UpstreamMove is one recorded unattended upstream change: where the
+// upstream stood and when it moved.
+type UpstreamMove struct {
+	From string
+	At   string
+}
+
+// Happened reports whether a move was recorded.
+func (m UpstreamMove) Happened() bool { return m.At != "" }
 
 // Grant installs the record for one project. Any previous entry for the
 // same root path — active or revoked — is replaced: a re-enabled
@@ -73,10 +86,14 @@ func (s *Store) Revoke(rootPath, at string) error {
 
 // SetUpstream updates the upstream of the active entry for rootPath,
 // used when the user's own base-URL configuration drifts after enable.
-func (s *Store) SetUpstream(rootPath, upstream string) error {
+// The move is recorded on the entry — where the upstream stood and
+// when it changed — because it happens where no user is watching and
+// must stay visible afterwards.
+func (s *Store) SetUpstream(rootPath, upstream, at string) error {
 	return s.update(func(f *tableFile) {
 		for tok, rec := range f.Projects {
 			if rec.RootPath == rootPath && rec.RevokedAt == "" {
+				rec.UpstreamMoved = &upstreamMoveRecord{From: rec.Upstream, At: at}
 				rec.Upstream = upstream
 				f.Projects[tok] = rec
 			}
@@ -196,14 +213,18 @@ func (s *Store) All() ([]Grant, error) {
 	}
 	grants := make([]Grant, 0, len(f.Projects))
 	for tok, rec := range f.Projects {
-		grants = append(grants, Grant{
+		g := Grant{
 			Token:         tok,
 			ProjectIDHash: rec.ProjectIDHash,
 			RootPath:      rec.RootPath,
 			Upstream:      rec.Upstream,
 			GrantedAt:     rec.GrantedAt,
 			Revoked:       rec.RevokedAt != "",
-		})
+		}
+		if rec.UpstreamMoved != nil {
+			g.UpstreamMoved = UpstreamMove{From: rec.UpstreamMoved.From, At: rec.UpstreamMoved.At}
+		}
+		grants = append(grants, g)
 	}
 	return grants, nil
 }

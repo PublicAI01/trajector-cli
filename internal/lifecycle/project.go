@@ -132,7 +132,7 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 // case the user moved it.
 func (m *Machine) EnsureProxy(projectDir string, io IO) error {
 	m.pauseIfAgreementStale(io)
-	m.refreshUpstreamDrift(projectDir)
+	m.refreshUpstreamDrift(projectDir, io)
 
 	if err := m.proxy.Ensure(); err != nil {
 		if errors.Is(err, ErrPortOccupied) {
@@ -158,15 +158,22 @@ func (m *Machine) pauseIfAgreementStale(io IO) {
 
 // refreshUpstreamDrift re-resolves the user's own base-URL configuration
 // for a project and updates the routing table when it moved, so a
-// chained relay keeps working after the user reconfigures it. The hook's
-// own injected value is invisible here by design; a hook has no voice,
-// so what it cannot fix silently it leaves for doctor to report.
-func (m *Machine) refreshUpstreamDrift(projectDir string) {
+// chained relay keeps working after the user reconfigures it. A hook
+// has next to no voice, so a change is never only spoken: the move is
+// recorded on the grant where status shows it afterwards, and the
+// stderr line here is a best-effort courtesy.
+func (m *Machine) refreshUpstreamDrift(projectDir string, io IO) {
 	st, err := m.Project(projectDir)
 	if err != nil || !st.Enabled {
 		return
 	}
-	_, _, _, _ = m.reconcileUpstream(st.Root, st.Upstream)
+	want, moved, refused, _ := m.reconcileUpstream(st.Root, st.Upstream)
+	switch {
+	case moved:
+		fmt.Fprintf(io.Err, "trajector: this project's upstream moved to %s (its base-URL configuration changed; `trajector status` has the details)\n", want.upstream)
+	case refused:
+		fmt.Fprintf(io.Err, "trajector: refusing to move this project's upstream to %s: %s\n", want.upstream, nonLoopbackUpstreamRemedy)
+	}
 }
 
 // Discovery prints the one-time onboarding hint for a project that is

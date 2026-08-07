@@ -2,6 +2,7 @@ package routing_test
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -165,12 +166,53 @@ func TestSetUpstreamUpdatesOnlyActiveEntry(t *testing.T) {
 	}
 	grant(t, store, "tok-live", "/home/dev/p")
 
-	if err := store.SetUpstream("/home/dev/p", "https://relay.example.com"); err != nil {
+	if err := store.SetUpstream("/home/dev/p", "https://relay.example.com", "2026-08-01T02:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 	route, verdict := table.Lookup("tok-live")
 	if !verdict.Records() || route.Upstream != "https://relay.example.com" {
 		t.Errorf("active route = %+v, verdict = %+v", route, verdict)
+	}
+}
+
+func TestSetUpstreamRecordsTheMoveUntilTheNextGrant(t *testing.T) {
+	store, _ := openStore(t)
+	grant(t, store, "tok-1", "/home/dev/p")
+
+	if err := store.SetUpstream("/home/dev/p", "https://relay.example.com", "2026-08-01T02:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	moved, ok, err := store.Active("/home/dev/p")
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	if moved.UpstreamMoved.From != "https://api.anthropic.com" || moved.UpstreamMoved.At != "2026-08-01T02:00:00Z" {
+		t.Errorf("moved = %+v, want the previous upstream and the move time recorded", moved)
+	}
+
+	grant(t, store, "tok-2", "/home/dev/p")
+	fresh, ok, err := store.Active("/home/dev/p")
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	if fresh.UpstreamMoved.Happened() {
+		t.Errorf("fresh = %+v, want a new grant to reset the move record", fresh)
+	}
+}
+
+func TestTablesWithoutMoveRecordsStillParse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routes-under-test.json")
+	table := `{"projects":{"tok-1":{"project_id_hash":"hash-1","root_path":"/home/dev/p","upstream":"https://api.anthropic.com","granted_at":"2026-08-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(table), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	g, ok, err := routing.OpenStore(path).Active("/home/dev/p")
+	if err != nil || !ok {
+		t.Fatalf("Active = %v, %v", ok, err)
+	}
+	if g.UpstreamMoved.Happened() {
+		t.Errorf("grant = %+v, want no move recorded on a table written before the field existed", g)
 	}
 }
 
