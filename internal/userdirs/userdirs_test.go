@@ -12,6 +12,21 @@ func env(goos string, m map[string]string) userdirs.Env {
 	return userdirs.Env{GOOS: goos, Getenv: func(k string) string { return m[k] }}
 }
 
+// Resolve joins with the host's separator while the layouts it is asked
+// for belong to whatever GOOS the case names, so a table written for
+// linux reads back with backslashes on a Windows runner. slash puts both
+// sides in one form: what these tests assert is which directory a file
+// lands in, never how the host spells a path.
+func slash(p string) string { return filepath.ToSlash(p) }
+
+func slashAll(paths []string) []string {
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = filepath.ToSlash(p)
+	}
+	return out
+}
+
 func TestResolvePlacesFilesPerPlatform(t *testing.T) {
 	tests := []struct {
 		name                           string
@@ -108,13 +123,13 @@ func TestResolvePlacesFilesPerPlatform(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Resolve() error: %v", err)
 			}
-			if got.RoutingTable() != tt.wantRoutingTable {
+			if slash(got.RoutingTable()) != slash(tt.wantRoutingTable) {
 				t.Errorf("RoutingTable() = %q, want %q", got.RoutingTable(), tt.wantRoutingTable)
 			}
-			if got.SpoolDir() != tt.wantSpoolDir {
+			if slash(got.SpoolDir()) != slash(tt.wantSpoolDir) {
 				t.Errorf("SpoolDir() = %q, want %q", got.SpoolDir(), tt.wantSpoolDir)
 			}
-			if got.ProxyLog() != tt.wantProxyLog {
+			if slash(got.ProxyLog()) != slash(tt.wantProxyLog) {
 				t.Errorf("ProxyLog() = %q, want %q", got.ProxyLog(), tt.wantProxyLog)
 			}
 		})
@@ -133,7 +148,7 @@ func TestFilesShareTheDirectoryTheyBelongIn(t *testing.T) {
 		"SecretsDir":   l.SecretsDir(),
 		"RoutingTable": l.RoutingTable(),
 	} {
-		if filepath.Dir(got) != config {
+		if slash(filepath.Dir(got)) != config {
 			t.Errorf("%s() = %q, want it under %q", name, got, config)
 		}
 	}
@@ -145,7 +160,7 @@ func TestRootsCollapseWhenThePlatformSharesOneDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"/Users/u/Library/Application Support/trajector"}
-	if got := darwin.Roots(); !reflect.DeepEqual(got, want) {
+	if got := slashAll(darwin.Roots()); !reflect.DeepEqual(got, want) {
 		t.Errorf("darwin Roots() = %v, want %v", got, want)
 	}
 
@@ -158,7 +173,7 @@ func TestRootsCollapseWhenThePlatformSharesOneDirectory(t *testing.T) {
 		"/home/u/.config/trajector",
 		"/home/u/.local/state/trajector",
 	}
-	if got := linux.Roots(); !reflect.DeepEqual(got, wantLinux) {
+	if got := slashAll(linux.Roots()); !reflect.DeepEqual(got, wantLinux) {
 		t.Errorf("linux Roots() = %v, want %v", got, wantLinux)
 	}
 }
