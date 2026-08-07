@@ -2,11 +2,24 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # Every branch, not only main: a branch push is the whole
+    # verification loop here — Windows only runs in CI, so fixes for it
+    # must be provable before they reach main, without needing a pull
+    # request as the trigger. The branch filter keeps tag pushes out;
+    # those already run these checks through the release workflow's
+    # call below.
+    branches: ["**"]
   pull_request:
   # Callable so the release workflow gates on these exact checks rather
   # than a second copy of them that can drift.
   workflow_call:
+
+# Iterating on a branch means force-pushing over runs that no longer
+# matter; cancel those instead of finishing them. Runs on main are
+# never canceled — each is the record that a pushed state was green.
+concurrency:
+  group: ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
 
 permissions:
   contents: read
