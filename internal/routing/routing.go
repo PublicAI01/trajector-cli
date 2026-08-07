@@ -9,6 +9,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
 // DefaultCacheTTL bounds how stale a cached table may be. Changes on
@@ -191,7 +193,10 @@ func (t *Table) refreshLocked() {
 		return
 	}
 
-	data, err := os.ReadFile(t.path)
+	// Through fsatomic, so the CLI rewriting the table under a live
+	// proxy on Windows neither fails its rename against this read nor
+	// surfaces here as a spurious load error.
+	data, err := fsatomic.ReadFile(t.path)
 	if err != nil {
 		t.routes, t.revoked, t.loadErr = nil, nil, err
 		return

@@ -251,9 +251,11 @@ func (s *Store) update(mutate func(*tableFile)) error {
 }
 
 // readTableFile loads the on-disk table; a missing file is the normal
-// nothing-enabled state and yields an empty table.
+// nothing-enabled state and yields an empty table. The read goes
+// through fsatomic so it neither blocks nor is broken by a concurrent
+// store's rewrite on Windows.
 func readTableFile(path string) (tableFile, error) {
-	data, err := os.ReadFile(path)
+	data, err := fsatomic.ReadFile(path)
 	if os.IsNotExist(err) {
 		data = nil
 	} else if err != nil {
