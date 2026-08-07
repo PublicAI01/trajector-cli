@@ -35,7 +35,12 @@ func EnsureGitIgnored(projectRoot, rel string) (IgnoreAction, error) {
 	if err != nil {
 		return IgnoreSkipped, nil
 	}
-	check := exec.Command(gitPath, "check-ignore", "-q", "--", rel)
+	// check-ignore runs inside a directory the repository controls, and
+	// repository-level configuration is loaded there. fsmonitor is the
+	// one such setting that names a command to execute, so it is pinned
+	// off; system and global configuration stay untouched — the user's
+	// own excludes file is a legitimate ignore source.
+	check := exec.Command(gitPath, "-c", "core.fsmonitor=false", "check-ignore", "-q", "--", rel)
 	check.Dir = projectRoot
 	if err := check.Run(); err == nil {
 		return IgnoreCovered, nil
