@@ -84,6 +84,30 @@ func saveHandshake(dir string, h storedHandshake) error {
 	return writeJSON(filepath.Join(dir, handshakeName), h)
 }
 
+// mergeHandshake overlays update onto stored under the handshake's
+// declared semantics: a zero field means the service left that setting
+// alone, so the stored value survives it. Every writer of the handshake
+// file merges through here, or the file would mean different things
+// depending on who wrote it last.
+func mergeHandshake(stored, update platform.Handshake) platform.Handshake {
+	if update.MinClientVersion != "" {
+		stored.MinClientVersion = update.MinClientVersion
+	}
+	if update.FlushBytes > 0 {
+		stored.FlushBytes = update.FlushBytes
+	}
+	if update.FlushAgeSeconds > 0 {
+		stored.FlushAgeSeconds = update.FlushAgeSeconds
+	}
+	if update.SpoolQuotaBytes > 0 {
+		stored.SpoolQuotaBytes = update.SpoolQuotaBytes
+	}
+	if update.Notice != "" {
+		stored.Notice = update.Notice
+	}
+	return stored
+}
+
 // errUnreadablePending is the positive classification of pending bytes
 // that are not a pending record: they parse as no JSON, or they name no
 // batch id, so they can never again pin the id they exist to pin. It is
@@ -179,10 +203,8 @@ func (u *Uploader) noteUpgradeRequired(minVersion string) {
 	if minVersion == "" {
 		return
 	}
-	h := LoadHandshake(u.deps.Dir)
-	h.MinClientVersion = minVersion
 	if err := saveHandshake(u.deps.Dir, storedHandshake{
-		Handshake:  h,
+		Handshake:  mergeHandshake(LoadHandshake(u.deps.Dir), platform.Handshake{MinClientVersion: minVersion}),
 		ReceivedAt: u.deps.Now().UTC(),
 	}); err != nil {
 		u.deps.Logf("upload: persisting the required client version: %v", err)

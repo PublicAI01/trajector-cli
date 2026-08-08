@@ -527,12 +527,15 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 }
 
 // applyHandshake persists what the service said and puts the spool
-// quota into effect at once. Bookkeeping only — a failure to persist
-// costs nothing but the next flush using older settings.
+// quota into effect at once. A zero field means the service left that
+// setting alone, so the acknowledgement merges over the stored
+// handshake instead of replacing it. Bookkeeping only — a failure to
+// persist costs nothing but the next flush using older settings.
 func (u *Uploader) applyHandshake(h platform.Handshake) {
-	u.deps.Spool.SetQuota(h.SpoolQuotaBytes)
+	merged := mergeHandshake(LoadHandshake(u.deps.Dir), h)
+	u.deps.Spool.SetQuota(merged.SpoolQuotaBytes)
 	if err := saveHandshake(u.deps.Dir, storedHandshake{
-		Handshake:  h,
+		Handshake:  merged,
 		ReceivedAt: u.deps.Now().UTC(),
 	}); err != nil {
 		u.deps.Logf("upload: persisting the service handshake: %v", err)

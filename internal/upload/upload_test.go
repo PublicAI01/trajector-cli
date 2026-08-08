@@ -709,6 +709,81 @@ func TestARateLimitWithoutRetryAfterDefersAutomaticFlushes(t *testing.T) {
 	}
 }
 
+func TestAnAckOmittingASettingLeavesTheStoredValueAlone(t *testing.T) {
+	f := newFixture(t)
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, map[string]any{
+		"min_client_version": "1.5.0",
+		"flush_bytes":        1,
+		"flush_age_seconds":  3600,
+		"spool_quota_bytes":  1 << 20,
+		"notice":             "an upgrade is available",
+	}))
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, map[string]any{"spool_quota_bytes": 2 << 20}))
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	want := platform.Handshake{
+		MinClientVersion: "1.5.0",
+		FlushBytes:       1,
+		FlushAgeSeconds:  3600,
+		SpoolQuotaBytes:  2 << 20,
+		Notice:           "an upgrade is available",
+	}
+
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err != nil {
+		t.Fatal(err)
+	}
+	f.storeRawcall(t, "req-2", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err != nil {
+		t.Fatal(err)
+	}
+	if h := upload.LoadHandshake(f.dir); h != want {
+		t.Errorf("handshake after a quota-only ack = %+v, want %+v", h, want)
+	}
+	if got := f.spool.Quota(); got != 2<<20 {
+		t.Errorf("spool quota after a quota-only ack = %d, want %d", got, 2<<20)
+	}
+
+	f.storeRawcall(t, "req-3", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err != nil {
+		t.Fatal(err)
+	}
+	if h := upload.LoadHandshake(f.dir); h != want {
+		t.Errorf("handshake after an empty ack = %+v, want %+v", h, want)
+	}
+	if got := f.spool.Quota(); got != 2<<20 {
+		t.Errorf("spool quota after an empty ack = %d, want %d", got, 2<<20)
+	}
+}
+
+func TestAVersionRefusalPreservesTheRestOfTheStoredHandshake(t *testing.T) {
+	f := newFixture(t)
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, map[string]any{
+		"flush_bytes":       1,
+		"spool_quota_bytes": 1 << 20,
+		"notice":            "an upgrade is available",
+	}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err != nil {
+		t.Fatal(err)
+	}
+	f.storeRawcall(t, "req-2", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("426 did not surface")
+	}
+
+	want := platform.Handshake{
+		MinClientVersion: "9.9.9",
+		FlushBytes:       1,
+		SpoolQuotaBytes:  1 << 20,
+		Notice:           "an upgrade is available",
+	}
+	if h := upload.LoadHandshake(f.dir); h != want {
+		t.Errorf("handshake after the version refusal = %+v, want %+v", h, want)
+	}
+}
+
 func timeoutStub() fakeplatform.Response {
 	return fakeplatform.JSON(408, map[string]any{})
 }
