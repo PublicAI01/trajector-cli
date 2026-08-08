@@ -21,7 +21,7 @@ func TestRecordsRequestVerbatim(t *testing.T) {
 	}
 	req.Header.Set("X-Api-Key", "sk-test-fake")
 	req.Header.Set("Anthropic-Version", "2023-06-01")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s.HTTP.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestServesScriptedResponsesInOrder(t *testing.T) {
 		status int
 		body   string
 	}{{200, "first"}, {529, "overloaded"}} {
-		resp, err := http.Post(s.URL(), "application/json", nil)
+		resp, err := s.HTTP.Client().Post(s.URL(), "application/json", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +67,7 @@ func TestServesScriptedResponsesInOrder(t *testing.T) {
 
 func TestUnscriptedRequestFailsLoudly(t *testing.T) {
 	s := fakeupstream.New(t)
-	resp, err := http.Get(s.URL())
+	resp, err := s.HTTP.Client().Get(s.URL())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestStreamsSSEBlocksVerbatim(t *testing.T) {
 	}
 	s.Enqueue(fakeupstream.Response{SSE: blocks})
 
-	resp, err := http.Get(s.URL())
+	resp, err := s.HTTP.Client().Get(s.URL())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestResponseHeadersWrittenVerbatim(t *testing.T) {
 	h.Set("Request-Id", "req_fake")
 	s.Enqueue(fakeupstream.Response{Header: h, Body: []byte("{}")})
 
-	resp, err := http.Get(s.URL())
+	resp, err := s.HTTP.Client().Get(s.URL())
 	if err != nil {
 		t.Fatal(err)
 	}

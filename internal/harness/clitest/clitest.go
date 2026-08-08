@@ -31,6 +31,7 @@ type Env struct {
 	home    string
 	project string
 	service *fakeplatform.Server
+	client  *http.Client
 }
 
 // New isolates the process environment and returns the harness. The
@@ -46,7 +47,7 @@ func New(t *testing.T) *Env {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	e := &Env{t: t, home: home, project: project, service: fakeplatform.New(t)}
+	e := &Env{t: t, home: home, project: project, service: fakeplatform.New(t), client: proxytest.Client(t)}
 
 	userdirs.Isolate(t.Setenv, home)
 	t.Setenv("ANTHROPIC_BASE_URL", "")
@@ -139,19 +140,8 @@ type Proxy struct {
 	t       *testing.T
 	addr    string
 	layout  userdirs.Layout
+	client  *http.Client
 	stopped chan struct{}
-}
-
-// adminRequest builds a request for a reserved proxy endpoint, carrying
-// the admin token once the serving proxy has published it.
-func adminRequest(t *testing.T, method, url string, layout userdirs.Layout) *http.Request {
-	t.Helper()
-	req, err := http.NewRequest(method, url, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	proxytest.Authorize(req, layout)
-	return req
 }
 
 // StartProxy serves the proxy on a free port, points the CLI at it, and
@@ -167,7 +157,7 @@ func (e *Env) StartProxy(extra ...string) *Proxy {
 	l.Close()
 	e.t.Setenv(cli.ProxyAddrEnv, addr)
 
-	p := &Proxy{t: e.t, addr: addr, layout: e.Layout(), stopped: make(chan struct{})}
+	p := &Proxy{t: e.t, addr: addr, layout: e.Layout(), client: e.client, stopped: make(chan struct{})}
 	args := append([]string{"proxy", "serve", "--addr", addr}, extra...)
 	go func() {
 		defer close(p.stopped)
@@ -181,21 +171,8 @@ func (e *Env) StartProxy(extra ...string) *Proxy {
 		}
 	})
 
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		req := adminRequest(e.t, http.MethodGet, "http://"+addr+apiproxy.HealthzPath, p.layout)
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return p
-			}
-		}
-		if time.Now().After(deadline) {
-			e.t.Fatal("proxy never became healthy")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	proxytest.WaitServing(e.t, e.client, addr, p.layout)
+	return p
 }
 
 // Addr is the proxy's listen address.
@@ -204,8 +181,12 @@ func (p *Proxy) Addr() string { return p.addr }
 // Stop drains the proxy and waits for it to exit.
 func (p *Proxy) Stop() {
 	p.t.Helper()
-	req := adminRequest(p.t, http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, p.layout)
-	resp, err := http.DefaultClient.Do(req)
+	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, nil)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	proxytest.Authorize(req, p.layout)
+	resp, err := p.client.Do(req)
 	if err == nil {
 		resp.Body.Close()
 	}

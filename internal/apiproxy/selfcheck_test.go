@@ -72,7 +72,11 @@ func TestTokenPrefixedInternalPathsAreNeverForwarded(t *testing.T) {
 	upstream := e.Upstream
 	e.WriteTable(activeTable("tok1", upstream.URL()))
 
-	resp, err := http.Get(e.TokenURL("tok1") + "/trajector/anything")
+	req, err := http.NewRequest(http.MethodGet, e.TokenURL("tok1")+"/trajector/anything", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := e.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

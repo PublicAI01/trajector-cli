@@ -7,6 +7,7 @@ package proxytest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -108,6 +109,20 @@ type Env struct {
 	cancel   context.CancelFunc
 }
 
+// Client returns an HTTP client whose connection pool lives and dies
+// with the test. On the process-wide client, pooled connections outlive
+// the server they were opened to, and since test servers listen on
+// ephemeral ports, a later test can be handed a pooled connection to an
+// address its own server now owns but nothing is serving — an EOF with
+// no relation to the test that sees it. Every request a test sends
+// itself goes through a client scoped this way.
+func Client(t *testing.T) *http.Client {
+	t.Helper()
+	client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+	t.Cleanup(client.CloseIdleConnections)
+	return client
+}
+
 // New starts a proxy and stops it with the test.
 func New(t *testing.T, opts ...Option) *Env {
 	t.Helper()
@@ -119,20 +134,11 @@ func New(t *testing.T, opts ...Option) *Env {
 		o.layout = SandboxLayout(t, t.TempDir())
 	}
 
-	// Each Env keeps its own connection pool and drops it with the test.
-	// On http.DefaultClient these outlive the proxy they were opened to,
-	// and since every Env listens on an ephemeral port, a later test can
-	// be handed a pooled connection to an address its own proxy now owns
-	// but nothing is serving — an EOF with no relation to the test that
-	// sees it.
-	client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
-	t.Cleanup(client.CloseIdleConnections)
-
 	e := &Env{
 		t:        t,
 		Upstream: fakeupstream.New(t),
 		layout:   o.layout,
-		client:   client,
+		client:   Client(t),
 		stopped:  make(chan struct{}),
 	}
 	sp, err := spool.Create(o.layout.SpoolDir(), o.quota)
@@ -225,6 +231,14 @@ func (e *Env) Post(path, body string, header http.Header) *http.Response {
 	}
 	e.t.Cleanup(func() { resp.Body.Close() })
 	return resp
+}
+
+// Do sends a caller-built request through the sandbox's own client, for
+// tests that shape requests no helper would — a foreign Host, a
+// hand-rolled token, a cancelable context. Errors are returned rather
+// than fatal so a helper goroutine may use it too.
+func (e *Env) Do(req *http.Request) (*http.Response, error) {
+	return e.client.Do(req)
 }
 
 // Rawcalls reports everything currently in the spool.
@@ -327,40 +341,79 @@ func (e *Env) PostAdmin(path string) *http.Response {
 	return resp
 }
 
-// Healthz reads the proxy's self-report.
-func (e *Env) Healthz() Health {
-	e.t.Helper()
-	req, err := http.NewRequest(http.MethodGet, e.BaseURL()+apiproxy.HealthzPath, nil)
+// readHealthz performs one authorized health read against the proxy at
+// addr. A non-200 answer becomes an error carrying the status code:
+// handing such a body to the JSON decoder would surface as a bare EOF
+// far from the cause.
+func readHealthz(client *http.Client, addr string, layout userdirs.Layout) (Health, error) {
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+apiproxy.HealthzPath, nil)
 	if err != nil {
-		e.t.Fatal(err)
+		return Health{}, err
 	}
-	req.Header.Set(apiproxy.AdminHeader, e.AdminToken())
-	resp, err := e.client.Do(req)
+	Authorize(req, layout)
+	resp, err := client.Do(req)
 	if err != nil {
-		e.t.Fatal(err)
+		return Health{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Health{}, fmt.Errorf("healthz answered status %d", resp.StatusCode)
+	}
 	var h Health
 	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
-		e.t.Fatal(err)
+		return Health{}, fmt.Errorf("decoding healthz: %w", err)
 	}
-	return h
+	return h, nil
 }
 
-// WaitHealthz polls until the proxy reports what the test is waiting for.
+// Healthz reads the proxy's self-report, waiting out startup.
+func (e *Env) Healthz() Health {
+	e.t.Helper()
+	return e.WaitHealthz(func(Health) bool { return true })
+}
+
+// WaitHealthz polls until the proxy reports what the test is waiting
+// for. A read that fails in transit or answers non-200 means not yet —
+// a proxy mid-startup answers 401 until it publishes its admin token —
+// so it keeps the poll going instead of failing the test.
 func (e *Env) WaitHealthz(want func(Health) bool) Health {
 	e.t.Helper()
 	deadline := time.Now().Add(settle)
 	for {
-		h := e.Healthz()
-		if want(h) {
+		h, err := readHealthz(e.client, e.addr, e.layout)
+		if err == nil && want(h) {
 			return h
 		}
 		if time.Now().After(deadline) {
+			if err != nil {
+				e.t.Fatalf("healthz never answered: %v", err)
+			}
 			e.t.Fatalf("healthz never reported the expected outcome: %+v", h)
 			return h
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// WaitServing blocks until a proxy served outside this harness — the
+// CLI's serve command, the lifecycle supervisor — answers healthz at
+// addr with the admin token published under layout. Transient failures
+// keep the poll going; the deadline failure names the last one, status
+// code included.
+func WaitServing(t *testing.T, client *http.Client, addr string, layout userdirs.Layout) {
+	t.Helper()
+	// Startup covers a whole serve assembly, not just a request the
+	// proxy answers off the request path, so it outlasts settle.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		_, err := readHealthz(client, addr, layout)
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("proxy at %s never became healthy: %v", addr, err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

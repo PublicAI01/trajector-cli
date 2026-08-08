@@ -12,15 +12,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
-// freshClient keeps a test's connections out of the process-wide pool,
-// which outlives the ephemeral addresses these proxies listen on.
-func freshClient(t *testing.T) *http.Client {
-	t.Helper()
-	client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
-	t.Cleanup(client.CloseIdleConnections)
-	return client
-}
-
 func challenge(t *testing.T, client *http.Client, url, host, nonce string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -44,7 +35,7 @@ func TestHealthzAnswersAChallengeWithoutTheAdminToken(t *testing.T) {
 	token := e.AdminToken()
 
 	const nonce = "00112233445566778899aabbccddeeff"
-	resp := challenge(t, freshClient(t), e.BaseURL()+apiproxy.HealthzPath, "", nonce)
+	resp := challenge(t, proxytest.Client(t), e.BaseURL()+apiproxy.HealthzPath, "", nonce)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("healthz with a challenge and no token = %d, want 401 with the counters withheld", resp.StatusCode)
 	}
@@ -63,7 +54,7 @@ func TestChallengeProofIsBoundToTheRequestedHost(t *testing.T) {
 	alias := net.JoinHostPort("localhost", port)
 
 	const nonce = "ffeeddccbbaa99887766554433221100"
-	resp := challenge(t, freshClient(t), "http://"+e.Addr()+apiproxy.HealthzPath, alias, nonce)
+	resp := challenge(t, proxytest.Client(t), "http://"+e.Addr()+apiproxy.HealthzPath, alias, nonce)
 	got := resp.Header.Get(apiproxy.ProofHeader)
 	if got != apiproxy.Proof(token, nonce, alias) {
 		t.Errorf("proof = %q, want the answer for the host the caller addressed", got)
@@ -90,7 +81,7 @@ func TestReservedEndpointsAnswer401WithoutTheAdminToken(t *testing.T) {
 		for _, path := range []string{apiproxy.DrainPath, apiproxy.HealthzPath, "/trajector/flush"} {
 			r := req()
 			r.URL.Path = path
-			resp, err := http.DefaultClient.Do(r)
+			resp, err := e.Do(r)
 			if err != nil {
 				t.Fatal(err)
 			}

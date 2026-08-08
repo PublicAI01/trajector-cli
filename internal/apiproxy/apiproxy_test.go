@@ -235,7 +235,7 @@ func TestInterruptedStreamStoredPartialAndGarbled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, "POST", e.TokenURL("tok1")+"/v1/messages", strings.NewReader(`{"stream":true}`))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,9 +515,9 @@ func TestHealthzReportsIdentityAndCounters(t *testing.T) {
 	e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
 	e.WaitRawcalls(1)
 
-	if health := e.Healthz(); health.RecordedToday != 1 {
-		t.Errorf("recorded_today = %d after one capture", health.RecordedToday)
-	}
+	// The counter lands a beat after the rawcall does: recording is a
+	// sidecar, so the spool and the stats settle independently.
+	e.WaitHealthz(func(h proxytest.Health) bool { return h.RecordedToday == 1 })
 
 	nf := e.PostAdmin("/trajector/unknown")
 	if nf.StatusCode != 404 {
@@ -594,7 +594,7 @@ func TestMountedCallDoesNotHoldTheProxyOpen(t *testing.T) {
 			return
 		}
 		req.Header.Set(apiproxy.AdminHeader, token)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := e.Do(req)
 		if err == nil {
 			resp.Body.Close()
 		}

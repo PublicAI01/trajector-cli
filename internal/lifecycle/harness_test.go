@@ -39,6 +39,7 @@ type env struct {
 	environ  map[string]string
 	sandbox  *proxytest.Sandbox
 	proxyEnv *proxytest.Env
+	client   *http.Client
 }
 
 func newEnv(t *testing.T) *env {
@@ -54,6 +55,7 @@ func newEnv(t *testing.T) *env {
 		stderr:  &bytes.Buffer{},
 		environ: map[string]string{},
 		sandbox: proxytest.Open(t, layout),
+		client:  proxytest.Client(t),
 	}
 	e.deps = lifecycle.Deps{
 		Layout:   layout,

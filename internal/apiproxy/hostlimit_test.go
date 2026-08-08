@@ -20,7 +20,7 @@ func TestForeignHostHeaderIsRejectedOnEveryPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Host = "evil.example:41100"
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := e.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +51,7 @@ func TestLoopbackAliasHostsAreAccepted(t *testing.T) {
 		}
 		req.Host = host
 		req.Header.Set(apiproxy.AdminHeader, e.AdminToken())
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := e.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

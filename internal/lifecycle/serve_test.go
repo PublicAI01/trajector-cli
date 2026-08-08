@@ -35,25 +35,7 @@ func freeAddr(t *testing.T) string {
 
 func waitHealthy(t *testing.T, e *env, addr string) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		req, err := http.NewRequest(http.MethodGet, "http://"+addr+apiproxy.HealthzPath, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		proxytest.Authorize(req, e.deps.Layout)
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("served proxy never became healthy")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	proxytest.WaitServing(t, e.client, addr, e.deps.Layout)
 }
 
 // adminPost posts to a served proxy's reserved endpoint with the admin
@@ -65,7 +47,7 @@ func adminPost(t *testing.T, e *env, url string) *http.Response {
 		t.Fatal(err)
 	}
 	proxytest.Authorize(req, e.deps.Layout)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -240,9 +240,7 @@ func TestAReplayedChallengeProofIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set(apiproxy.ChallengeHeader, "aaaabbbbccccddddaaaabbbbccccdddd")
-	client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
-	t.Cleanup(client.CloseIdleConnections)
-	resp, err := client.Do(req)
+	resp, err := proxytest.Client(t).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

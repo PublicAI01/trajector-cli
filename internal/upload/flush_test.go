@@ -15,7 +15,7 @@ func TestFlushHandlerServesTheWireContract(t *testing.T) {
 	srv := httptest.NewServer(f.uploader.Handler("test-proxy"))
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
+	resp, err := srv.Client().Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestFlushHandlerServesTheWireContract(t *testing.T) {
 		t.Errorf("reply = %+v, want the empty-spool outcome from test-proxy", reply)
 	}
 
-	get, err := http.Get(srv.URL + upload.FlushPath)
+	get, err := srv.Client().Get(srv.URL + upload.FlushPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestFlushHandlerServesTheWireContract(t *testing.T) {
 	if get.StatusCode != http.StatusNotFound {
 		t.Errorf("GET flush = %d, want 404", get.StatusCode)
 	}
-	other, err := http.Post(srv.URL+"/trajector/other", "", nil)
+	other, err := srv.Client().Post(srv.URL+"/trajector/other", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestFlushHandlerCarriesTheOutcomeWithTheError(t *testing.T) {
 	srv := httptest.NewServer(f.uploader.Handler("test-proxy"))
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
+	resp, err := srv.Client().Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestFlushHandlerReportsAFailedFlush(t *testing.T) {
 	srv := httptest.NewServer(f.uploader.Handler("test-proxy"))
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
+	resp, err := srv.Client().Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

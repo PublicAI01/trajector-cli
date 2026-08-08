@@ -14,7 +14,7 @@ func TestStubbedEndpointServesJSON(t *testing.T) {
 	s := fakeplatform.New(t)
 	s.Stub("POST", "/v1/batches", fakeplatform.JSON(200, map[string]any{"ack": true}))
 
-	resp, err := http.Post(s.URL()+"/v1/batches", "application/octet-stream", strings.NewReader("payload"))
+	resp, err := s.HTTP.Client().Post(s.URL()+"/v1/batches", "application/octet-stream", strings.NewReader("payload"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestStubsConsumedFIFOWithStickyLast(t *testing.T) {
 
 	wantStatuses := []int{500, 200, 200}
 	for i, want := range wantStatuses {
-		resp, err := http.Get(s.URL() + "/v1/handshake")
+		resp, err := s.HTTP.Client().Get(s.URL() + "/v1/handshake")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,7 +48,7 @@ func TestStubsConsumedFIFOWithStickyLast(t *testing.T) {
 
 func TestUnstubbedEndpointFailsLoudly(t *testing.T) {
 	s := fakeplatform.New(t)
-	resp, err := http.Get(s.URL() + "/v1/unknown")
+	resp, err := s.HTTP.Client().Get(s.URL() + "/v1/unknown")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestRecordsRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer device-token-fake")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s.HTTP.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
