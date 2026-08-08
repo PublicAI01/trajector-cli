@@ -321,6 +321,60 @@ func TestUploadDeferredByTheServiceExitsZeroEveryTime(t *testing.T) {
 	}
 }
 
+func TestUploadReportsSetAsideRecordsEvenWhenTheServicePausesUploads(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	seedRawcall(e, "req-good", time.Now().UTC().Add(-25*time.Hour))
+	e.Sandbox().SeedTornRawcall("req-torn", e.ProjectHash(), time.Now().UTC().Add(-25*time.Hour))
+	p := e.StartProxy()
+	defer p.Stop()
+
+	got := e.Run("upload", "--force")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	for _, want := range []string{
+		"Set aside 1 unreadable rawcall(s)",
+		"Uploads are paused",
+	} {
+		if !strings.Contains(got.Stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", got.Stdout, want)
+		}
+	}
+	if n := rejectedRecords(t, e.Layout().RejectedDir()); n != 1 {
+		t.Errorf("rejected store holds %d records, want the torn one", n)
+	}
+	if n := len(e.Sandbox().Rawcalls()); n != 1 {
+		t.Errorf("spool holds %d rawcalls, want the good record kept through the pause", n)
+	}
+}
+
+func TestUploadWaitsOutADeferralThatNamesNoPause(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(429, map[string]any{}))
+	seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
+	p := e.StartProxy()
+	defer p.Stop()
+
+	for _, name := range []string{"first encounter", "during the default pause"} {
+		got := e.Run("upload")
+		if got.Exit != 0 {
+			t.Fatalf("%s: exit = %d (stderr: %q)", name, got.Exit, got.Stderr)
+		}
+		if !strings.Contains(got.Stdout, "asked to slow down") {
+			t.Errorf("%s: stdout = %q", name, got.Stdout)
+		}
+	}
+	if n := batchUploads(e.Service()); n != 1 {
+		t.Errorf("service saw %d upload attempts, want the default pause to hold off the second", n)
+	}
+	if n := len(e.Sandbox().Rawcalls()); n != 1 {
+		t.Errorf("spool holds %d rawcalls, want the record kept", n)
+	}
+}
+
 func TestUploadUsage(t *testing.T) {
 	e := clitest.New(t)
 	if got := e.Run("upload", "--frobnicate"); got.Exit != 2 || !strings.Contains(got.Stderr, "usage: trajector upload") {
