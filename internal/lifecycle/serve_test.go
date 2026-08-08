@@ -77,7 +77,7 @@ func TestServeProxyHostsCaptureAndTheFlushEndpoint(t *testing.T) {
 	addr := freeAddr(t)
 	e.deps.ProxyAddr = addr
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	e.service.StubFunc("POST", "/v1/batches", ackBatch)
+	e.service.StubFunc("POST", "/v1/batches", ackBatch(nil))
 
 	served := make(chan error, 1)
 	go func() {
@@ -179,7 +179,7 @@ func TestServeProxyFinishesItsExitFlushBeforeReleasingThePort(t *testing.T) {
 			conn.Close()
 		}
 		portHeldDuringUpload <- err == nil
-		return ackBatch(r)
+		return ackBatch(nil)(r)
 	})
 
 	served := make(chan error, 1)

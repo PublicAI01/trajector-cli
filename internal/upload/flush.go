@@ -2,10 +2,7 @@ package upload
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
-
-	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
 // FlushPath asks the resident uploader to run one flush and report the
@@ -18,6 +15,11 @@ const FlushPath = "/trajector/flush"
 // handler that writes it and the CLI that reads it share this type, so
 // the wire contract is checked by the compiler rather than by two
 // hand-written codecs agreeing.
+//
+// Outcome is authoritative and Error is its detail: a classified flush
+// carries the same outcome whether or not an error came with it, so a
+// reader switches on Outcome first and falls back to Error only when
+// the outcome does not decide.
 type FlushReply struct {
 	Service string  `json:"service"`
 	Outcome Outcome `json:"outcome"`
@@ -50,15 +52,6 @@ func (u *Uploader) Handler(serviceName string) http.Handler {
 		}
 		if err != nil {
 			reply.Error = err.Error()
-			var upgrade *platform.UpgradeRequiredError
-			var rejection *errRejected
-			switch {
-			case errors.As(err, &upgrade):
-				reply.Outcome = UpgradeRequired
-				reply.MinClientVersion = upgrade.MinClientVersion
-			case errors.As(err, &rejection):
-				reply.Outcome = Rejected
-			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(reply)

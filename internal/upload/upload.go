@@ -59,6 +59,8 @@ const (
 // it made before failing. MinClientVersion carries the version the
 // service demands when the outcome is UpgradeRequired, so a caller
 // never has to read the handshake file across processes for it.
+// Outcome is the authoritative signal; an error returned alongside it
+// is detail, never a replacement for it.
 type Result struct {
 	Outcome          Outcome
 	Batches          int
@@ -140,13 +142,42 @@ var ErrClosed = errors.New("upload: the uploader has shut down")
 // starts drains the spool to empty, one bounded batch at a time, and
 // stops at the first failure with everything unacknowledged still on
 // disk for the next attempt.
+//
+// The result's Outcome stays authoritative when Flush also returns an
+// error: a failure of a known class (UpgradeRequired, Deferred,
+// Rejected) carries its classifying outcome with the error as detail,
+// and a failure of no known class carries no outcome at all — never a
+// leftover in-progress one. Readers act on the outcome first.
 func (u *Uploader) Flush(force bool) (Result, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.closed {
 		return Result{}, ErrClosed
 	}
-	return u.flush(force)
+	res, err := u.flush(force)
+	if err != nil {
+		res.Outcome, res.MinClientVersion = "", ""
+		classifyFailure(err, &res)
+	}
+	return res, err
+}
+
+// classifyFailure stamps onto the result the outcome a failure's class
+// implies, so the classified arms are reachable on the first encounter
+// — not only after an in-process gate remembers the condition.
+func classifyFailure(err error, res *Result) {
+	var upgrade *platform.UpgradeRequiredError
+	var limited *platform.RateLimitedError
+	var rejection *errRejected
+	switch {
+	case errors.As(err, &upgrade):
+		res.Outcome = UpgradeRequired
+		res.MinClientVersion = upgrade.MinClientVersion
+	case errors.As(err, &limited):
+		res.Outcome = Deferred
+	case errors.As(err, &rejection):
+		res.Outcome = Rejected
+	}
 }
 
 // Close runs the uploader's last flush — unforced, the same threshold

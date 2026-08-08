@@ -38,7 +38,7 @@ func servedProxy(t *testing.T, e *env) {
 
 func TestUploadReportsEachOutcomeThroughTheResidentProxy(t *testing.T) {
 	e := newEnv(t)
-	e.service.StubFunc("POST", "/v1/batches", ackBatch)
+	e.service.StubFunc("POST", "/v1/batches", ackBatch(nil))
 	servedProxy(t, e)
 	m := e.machine()
 
@@ -88,7 +88,7 @@ func TestUploadRefusesWhenThePortIsForeign(t *testing.T) {
 	}
 }
 
-func TestUploadExplainsAServiceDeferral(t *testing.T) {
+func TestUploadExplainsAServiceDeferralFromTheFirstEncounter(t *testing.T) {
 	e := newEnv(t)
 	e.service.Stub("POST", "/v1/batches", fakeplatform.Response{
 		Status: 429,
@@ -99,8 +99,11 @@ func TestUploadExplainsAServiceDeferral(t *testing.T) {
 	m := e.machine()
 
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	if err := m.Upload(true, e.io()); err == nil {
-		t.Fatal("a rate-limited batch upload reported success")
+	if err := m.Upload(true, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(e.stdout.String(), "asked to slow down") {
+		t.Errorf("stdout = %q", e.stdout)
 	}
 
 	e.stdout.Reset()
@@ -112,7 +115,7 @@ func TestUploadExplainsAServiceDeferral(t *testing.T) {
 	}
 }
 
-func TestUploadExplainsARequiredUpgrade(t *testing.T) {
+func TestUploadExplainsARequiredUpgradeFromTheFirstEncounter(t *testing.T) {
 	e := newEnv(t)
 	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
 		"min_client_version": "9.9.9",
@@ -121,8 +124,14 @@ func TestUploadExplainsARequiredUpgrade(t *testing.T) {
 	m := e.machine()
 
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	if err := m.Upload(true, e.io()); err == nil {
-		t.Fatal("a refused batch upload reported success")
+	if err := m.Upload(true, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(e.stdout.String(), "requires trajector 9.9.9 or newer") {
+		t.Errorf("stdout = %q", e.stdout)
+	}
+	if !strings.Contains(e.stdout.String(), "Captured data is kept.") {
+		t.Errorf("stdout = %q", e.stdout)
 	}
 
 	// The required version reaches the user through the flush reply, not
@@ -140,5 +149,39 @@ func TestUploadExplainsARequiredUpgrade(t *testing.T) {
 	}
 	if !strings.Contains(e.stdout.String(), "Captured data is kept.") {
 		t.Errorf("stdout = %q", e.stdout)
+	}
+}
+
+func TestUploadReportsProgressBeforeAPauseStopsTheDrain(t *testing.T) {
+	e := newEnv(t)
+	e.service.StubFunc("POST", "/v1/batches", ackBatch(map[string]any{"flush_bytes": 1}))
+	e.service.StubFunc("POST", "/v1/batches", ackBatch(nil))
+	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
+		"min_client_version": "9.9.9",
+	}))
+	servedProxy(t, e)
+	m := e.machine()
+
+	// The first upload's handshake caps batches at one record each, so
+	// the next drain acknowledges one batch before the service pauses it.
+	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
+	if err := m.Upload(true, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	e.sandbox.SeedRawcall("req-2", "hash-p1", time.Now().UTC())
+	e.sandbox.SeedRawcall("req-3", "hash-p1", time.Now().UTC())
+	e.stdout.Reset()
+	if err := m.Upload(true, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(e.stdout.String(), "Uploaded 1 batch(es), 1 rawcall(s).") {
+		t.Errorf("stdout = %q, want the acknowledged batch reported", e.stdout)
+	}
+	if !strings.Contains(e.stdout.String(), "Uploads are paused") {
+		t.Errorf("stdout = %q, want the pause explained", e.stdout)
+	}
+	if n := len(e.sandbox.Rawcalls()); n != 1 {
+		t.Errorf("spool holds %d rawcalls, want the unacknowledged record kept", n)
 	}
 }

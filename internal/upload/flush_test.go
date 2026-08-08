@@ -46,6 +46,30 @@ func TestFlushHandlerServesTheWireContract(t *testing.T) {
 	}
 }
 
+func TestFlushHandlerCarriesTheOutcomeWithTheError(t *testing.T) {
+	f := newFixture(t)
+	f.storeRawcall(t, "req-1", f.now)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	srv := httptest.NewServer(f.uploader.Handler("test-proxy"))
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var reply upload.FlushReply
+	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.Outcome != upload.UpgradeRequired || reply.MinClientVersion != "9.9.9" {
+		t.Errorf("reply = %+v, want the classified outcome with the required version", reply)
+	}
+	if reply.Error == "" {
+		t.Errorf("reply = %+v, want the error kept as detail", reply)
+	}
+}
+
 func TestFlushHandlerReportsAFailedFlush(t *testing.T) {
 	f := newFixture(t)
 	f.storeRawcall(t, "req-1", f.now)

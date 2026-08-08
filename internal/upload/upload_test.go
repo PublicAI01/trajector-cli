@@ -507,6 +507,52 @@ func TestARejectedBatchIsNotRetriedAutomatically(t *testing.T) {
 	}
 }
 
+func TestAClassifiedFailureCarriesItsOutcomeAlongsideTheError(t *testing.T) {
+	limited := fakeplatform.JSON(429, map[string]any{})
+	limited.Header.Set("Retry-After", "120")
+	cases := []struct {
+		name string
+		stub fakeplatform.Response
+		want upload.Outcome
+	}{
+		{"upgrade required", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}), upload.UpgradeRequired},
+		{"deferred", limited, upload.Deferred},
+		{"rejected", rejectStub(400, "bad multipart"), upload.Rejected},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.server.Stub("POST", "/v1/batches", tc.stub)
+			f.storeRawcall(t, "req-1", time.Now().UTC())
+
+			res, err := f.uploader.Flush(true)
+			if err == nil {
+				t.Fatal("the refusal did not surface as an error")
+			}
+			if res.Outcome != tc.want {
+				t.Errorf("outcome = %q, want %q", res.Outcome, tc.want)
+			}
+			if tc.want == upload.UpgradeRequired && res.MinClientVersion != "9.9.9" {
+				t.Errorf("min client version = %q, want it carried with the outcome", res.MinClientVersion)
+			}
+		})
+	}
+}
+
+func TestAnUnclassifiedFailureCarriesNoOutcome(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(503, map[string]any{"error": "down"}))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	res, err := f.uploader.Flush(true)
+	if err == nil {
+		t.Fatal("the failure did not surface as an error")
+	}
+	if res.Outcome != "" {
+		t.Errorf("outcome = %q, want none for a failure with no class", res.Outcome)
+	}
+}
+
 func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))

@@ -144,7 +144,7 @@ func TestIdleExitRunsAFinalFlush(t *testing.T) {
 	}
 }
 
-func TestUploadSurfacesARejectedBatchLoudly(t *testing.T) {
+func TestUploadSurfacesEveryRejectedBatchLoudly(t *testing.T) {
 	e := clitest.New(t)
 	e.Paired()
 	e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(400, map[string]any{"error": "bad multipart"}))
@@ -164,6 +164,72 @@ func TestUploadSurfacesARejectedBatchLoudly(t *testing.T) {
 	}
 	if n := rejectedRecords(t, e.Layout().RejectedDir()); n != 1 {
 		t.Errorf("rejected store holds %d records, want 1", n)
+	}
+
+	seedRawcall(e, "req-2", time.Now().UTC())
+	again := e.Run("upload", "--force")
+	if again.Exit != 1 {
+		t.Fatalf("second rejection exit = %d (stdout: %q)", again.Exit, again.Stdout)
+	}
+	if n := rejectedRecords(t, e.Layout().RejectedDir()); n != 2 {
+		t.Errorf("rejected store holds %d records after two rejections, want 2", n)
+	}
+}
+
+func TestUploadPausedByARequiredUpgradeExitsZeroEveryTime(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
+	p := e.StartProxy()
+	defer p.Stop()
+
+	runs := []struct {
+		name string
+		args []string
+	}{
+		{"first encounter", []string{"upload"}},
+		{"repeat", []string{"upload"}},
+		{"forced", []string{"upload", "--force"}},
+	}
+	for _, run := range runs {
+		got := e.Run(run.args...)
+		if got.Exit != 0 {
+			t.Fatalf("%s: exit = %d (stderr: %q)", run.name, got.Exit, got.Stderr)
+		}
+		if !strings.Contains(got.Stdout, "Uploads are paused") || !strings.Contains(got.Stdout, "Captured data is kept") {
+			t.Errorf("%s: stdout = %q", run.name, got.Stdout)
+		}
+	}
+	if n := len(e.Sandbox().Rawcalls()); n != 1 {
+		t.Errorf("spool holds %d rawcalls, want the record kept", n)
+	}
+	if n := batchUploads(e.Service()); n != 2 {
+		t.Errorf("service saw %d upload attempts, want the first encounter and the forced retry only", n)
+	}
+}
+
+func TestUploadDeferredByTheServiceExitsZeroEveryTime(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	limited := fakeplatform.JSON(429, map[string]any{})
+	limited.Header.Set("Retry-After", "3600")
+	e.Service().Stub("POST", "/v1/batches", limited)
+	seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
+	p := e.StartProxy()
+	defer p.Stop()
+
+	for _, name := range []string{"first encounter", "repeat"} {
+		got := e.Run("upload")
+		if got.Exit != 0 {
+			t.Fatalf("%s: exit = %d (stderr: %q)", name, got.Exit, got.Stderr)
+		}
+		if !strings.Contains(got.Stdout, "asked to slow down") {
+			t.Errorf("%s: stdout = %q", name, got.Stdout)
+		}
+	}
+	if n := len(e.Sandbox().Rawcalls()); n != 1 {
+		t.Errorf("spool holds %d rawcalls, want the record kept", n)
 	}
 }
 
