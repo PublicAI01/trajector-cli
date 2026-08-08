@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 const appDir = "trajector"
@@ -97,10 +98,72 @@ func (l Layout) SecretsDir() string { return filepath.Join(l.config, secretsDirN
 // ProxyLog is where a supervised proxy's output is appended.
 func (l Layout) ProxyLog() string { return filepath.Join(l.state, proxyLogName) }
 
-// AdminTokenFile is where a serving proxy publishes the token that
-// authorizes its reserved endpoints. Readable only by the owning user,
-// so possession of the token proves the caller is that user.
-func (l Layout) AdminTokenFile() string { return filepath.Join(l.state, adminTokenName) }
+// AdminTokenFile is where one serving proxy instance publishes the
+// token that authorizes its reserved endpoints. Readable only by the
+// owning user, so possession of the token proves the caller is that
+// user. The name carries the listen address, so proxies on different
+// addresses never publish over each other, and an instance suffix, so
+// an exiting proxy removes exactly its own publication and can never
+// take a successor's.
+func (l Layout) AdminTokenFile(addr, instance string) string {
+	return filepath.Join(l.state, adminTokenName+"-"+addrFileName(addr)+"-"+instance)
+}
+
+// LegacyAdminTokenFile is the fixed name every proxy published under
+// for every address before publications became per-address. Current
+// proxies never publish here; it stays a read candidate so an older
+// proxy still serving can prove itself until it exits.
+func (l Layout) LegacyAdminTokenFile() string { return filepath.Join(l.state, adminTokenName) }
+
+// AdminTokenCandidates lists the files that may hold the admin token
+// published for addr: every instance publication for that address,
+// then the fixed-name file older proxies used, whether or not it
+// exists — a candidate can vanish between listing and reading anyway,
+// so readers must tolerate unreadable entries.
+func (l Layout) AdminTokenCandidates(addr string) []string {
+	return append(l.adminTokenPublications(addr), l.LegacyAdminTokenFile())
+}
+
+// StaleAdminTokenFiles lists the instance publications for addr other
+// than instance's own — what crashed predecessors left behind. Only
+// the instance holding the port bind for addr may remove them: nothing
+// else can rule out that the publisher is still coming up. The
+// fixed-name file is never listed; an older proxy elsewhere may still
+// be proving itself through it.
+func (l Layout) StaleAdminTokenFiles(addr, instance string) []string {
+	own := l.AdminTokenFile(addr, instance)
+	var stale []string
+	for _, path := range l.adminTokenPublications(addr) {
+		if path != own {
+			stale = append(stale, path)
+		}
+	}
+	return stale
+}
+
+// adminTokenPublications lists the existing instance publications for
+// addr. Names carrying an extension after the instance separator are
+// another writer's in-flight temp or lock files, never a publication.
+func (l Layout) adminTokenPublications(addr string) []string {
+	entries, err := os.ReadDir(l.state)
+	if err != nil {
+		return nil
+	}
+	prefix := adminTokenName + "-" + addrFileName(addr) + "-"
+	var files []string
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, prefix) || strings.Contains(name[len(prefix):], ".") {
+			continue
+		}
+		files = append(files, filepath.Join(l.state, name))
+	}
+	return files
+}
+
+// addrFileName spells a listen address as a file-name fragment: the
+// colon in host:port is not a legal file-name character on Windows.
+func addrFileName(addr string) string { return strings.ReplaceAll(addr, ":", "_") }
 
 // Isolate points every environment variable a Layout resolution reads
 // at paths inside home, through setenv. It lives beside the resolvers

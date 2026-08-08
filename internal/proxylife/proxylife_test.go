@@ -2,12 +2,15 @@ package proxylife_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -300,8 +304,8 @@ func TestEnsureRefusesForeignPortHolder(t *testing.T) {
 func healthzCopyHolder(t *testing.T) (*proxylife.Proxy, *proxytest.Imposter) {
 	t.Helper()
 	layout := proxytest.SandboxLayout(t, t.TempDir())
-	proxytest.PublishAdminToken(t, layout, "feedfacefeedfacefeedfacefeedface")
 	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "dev"})
+	proxytest.PublishAdminToken(t, layout, im.Addr(), "feedfacefeedfacefeedfacefeedface")
 	return proxylife.For(layout, "dev", "unused", im.Addr()), im
 }
 
@@ -385,6 +389,128 @@ func TestStopDrainsAHolderThatProvesItself(t *testing.T) {
 	p.Stop()
 	if err := live.WaitStopped(5 * time.Second); err != nil {
 		t.Errorf("Serve = %v after Stop, want a clean drained exit", err)
+	}
+}
+
+// flushStub answers the flush endpoint with a fixed record count, so a
+// test can tell which proxy's mounted endpoint a flush reached.
+func flushStub(records int) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(upload.FlushReply{Records: records})
+	})
+}
+
+func TestTwoProxiesOnOneLayoutAreDrivenIndependently(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	a := proxytest.New(t, proxytest.WithLayout(layout), proxytest.WithInternal(flushStub(1)))
+	b := proxytest.New(t, proxytest.WithLayout(layout), proxytest.WithInternal(flushStub(2)))
+	pa := proxylife.For(layout, "1.2.3", "unused", a.Addr())
+	pb := proxylife.For(layout, "1.2.3", "unused", b.Addr())
+
+	if _, holder := pa.Health(); holder != proxylife.HolderOurs {
+		t.Fatalf("first proxy holder = %v, want ours", holder)
+	}
+	if _, holder := pb.Health(); holder != proxylife.HolderOurs {
+		t.Fatalf("second proxy holder = %v, want ours", holder)
+	}
+	if reply, err := pa.Flush(false); err != nil || reply.Records != 1 {
+		t.Errorf("first proxy flush = %+v, %v, want its own mounted endpoint answering", reply, err)
+	}
+	if reply, err := pb.Flush(false); err != nil || reply.Records != 2 {
+		t.Errorf("second proxy flush = %+v, %v, want its own mounted endpoint answering", reply, err)
+	}
+
+	pb.Stop()
+	if err := b.WaitStopped(5 * time.Second); err != nil {
+		t.Fatalf("Serve = %v after Stop", err)
+	}
+	if _, holder := pb.Health(); holder != proxylife.HolderNone {
+		t.Errorf("stopped proxy holder = %v, want none", holder)
+	}
+	if _, holder := pa.Health(); holder != proxylife.HolderOurs {
+		t.Errorf("surviving proxy holder = %v after its sibling exited, want ours", holder)
+	}
+	if reply, err := pa.Flush(false); err != nil || reply.Records != 1 {
+		t.Errorf("surviving proxy flush = %+v, %v, want it still reachable", reply, err)
+	}
+}
+
+func TestRepeatedTakeoversAlwaysLeaveAProvableHolder(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	addr := freeAddr(t)
+	p := proxylife.For(layout, "dev", "unused", addr)
+
+	current := proxytest.New(t, proxytest.WithLayout(layout), proxytest.WithAddr(addr), proxytest.WithVersion("0.0.1"))
+	for round := 2; round <= 4; round++ {
+		if _, holder := p.Health(); holder != proxylife.HolderOurs {
+			t.Fatalf("holder = %v before takeover round %d, want ours", holder, round)
+		}
+		p.Stop()
+		if err := current.WaitStopped(5 * time.Second); err != nil {
+			t.Fatalf("Serve = %v on takeover round %d", err, round)
+		}
+		current = proxytest.New(t, proxytest.WithLayout(layout), proxytest.WithAddr(addr),
+			proxytest.WithVersion(fmt.Sprintf("0.0.%d", round)))
+	}
+	h, holder := p.Health()
+	if holder != proxylife.HolderOurs || h.Version != "0.0.4" {
+		t.Errorf("after repeated takeovers: holder=%v health=%+v, want the last instance provable", holder, h)
+	}
+}
+
+// startFixedNameProxy stands in for a proxy from before per-address
+// publication: its admin token lives under the fixed file name, and it
+// proves challenges and authorizes requests from that token.
+func startFixedNameProxy(t *testing.T, token string) (string, *int32) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var drains int32
+	body, err := json.Marshal(proxytest.Health{Service: apiproxy.ServiceName, Version: "0.9.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if nonce := r.Header.Get(apiproxy.ChallengeHeader); nonce != "" {
+			w.Header().Set(apiproxy.ProofHeader, apiproxy.Proof(token, nonce, r.Host))
+		}
+		if r.Header.Get(apiproxy.AdminHeader) != token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == apiproxy.HealthzPath:
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(body)
+		case r.Method == http.MethodPost && r.URL.Path == apiproxy.DrainPath:
+			atomic.AddInt32(&drains, 1)
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, r)
+		}
+	})}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+	return l.Addr().String(), &drains
+}
+
+func TestStopDrainsAProxyPublishedUnderTheFixedName(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	const token = "feedfacefeedfacefeedfacefeedface"
+	proxytest.PublishLegacyAdminToken(t, layout, token)
+	addr, drains := startFixedNameProxy(t, token)
+
+	p := proxylife.For(layout, "dev", "unused", addr)
+	h, holder := p.Health()
+	if holder != proxylife.HolderOurs || h.Version != "0.9.0" {
+		t.Fatalf("holder=%v health=%+v, want the fixed-name publication to prove the holder", holder, h)
+	}
+	p.Stop()
+	if atomic.LoadInt32(drains) == 0 {
+		t.Error("no authorized drain reached a holder proven through the fixed-name publication")
 	}
 }
 

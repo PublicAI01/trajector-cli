@@ -23,6 +23,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
@@ -172,12 +173,22 @@ type Config struct {
 	// processes at once (the spool's single flusher), so such work
 	// takes its last turn here, while a successor still cannot bind.
 	BeforeShutdown func()
-	// AdminTokenFile is where Serve publishes the token that authorizes
-	// the reserved endpoints, written 0600 once this instance owns the
-	// port and removed on exit. Anything able to read it — the same
-	// user's CLI — may drive drain, flush, and healthz; a browser or
-	// another local user cannot.
-	AdminTokenFile string
+	// AdminTokens locates admin-token publications on disk: Serve
+	// publishes this instance's token under its bound address, written
+	// 0600 once the instance owns the port and removed on exit.
+	// Anything able to read the publication — the same user's CLI —
+	// may drive drain, flush, and healthz; a browser or another local
+	// user cannot.
+	AdminTokens AdminTokenLayout
+}
+
+// AdminTokenLayout locates admin-token publications on disk: where one
+// serving instance publishes, and which leftover publications the
+// instance holding the port may clear. userdirs.Layout is the
+// production implementation.
+type AdminTokenLayout interface {
+	AdminTokenFile(addr, instance string) string
+	StaleAdminTokenFiles(addr, instance string) []string
 }
 
 // Server is one proxy instance.
@@ -187,6 +198,11 @@ type Server struct {
 	transport  *http.Transport
 	start      time.Time
 	adminToken string
+	// instance distinguishes this server's admin-token publication from
+	// any other publication for the same address, so removing it on exit
+	// can never take a successor's.
+	instance  string
+	tokenPath string
 
 	stats stats
 
@@ -219,8 +235,8 @@ func New(cfg Config) (*Server, error) {
 	if !httpURL(cfg.Dialect.OfficialUpstream) {
 		return nil, fmt.Errorf("apiproxy: official upstream %q is not an http(s) URL", cfg.Dialect.OfficialUpstream)
 	}
-	if cfg.AdminTokenFile == "" {
-		return nil, fmt.Errorf("apiproxy: an admin token file is required")
+	if cfg.AdminTokens == nil {
+		return nil, fmt.Errorf("apiproxy: an admin token layout is required")
 	}
 	if cfg.IdleTimeout == 0 {
 		cfg.IdleTimeout = defaultIdleTimeout
@@ -234,14 +250,15 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
+	var secret [20]byte
+	if _, err := rand.Read(secret[:]); err != nil {
 		return nil, fmt.Errorf("apiproxy: generating the admin token: %w", err)
 	}
 	s := &Server{
 		cfg:        cfg,
 		start:      time.Now(),
-		adminToken: hex.EncodeToString(nonce[:]),
+		adminToken: hex.EncodeToString(secret[:16]),
+		instance:   hex.EncodeToString(secret[16:]),
 		records:    make(chan func(context.Context), recordQueueDepth),
 		drainCh:    make(chan struct{}),
 	}
@@ -297,38 +314,41 @@ func (s *Server) adminAuthorized(r *http.Request) bool {
 }
 
 // publishAdminToken writes this instance's admin token where the
-// owning user's CLI will look for it. It runs only after the listener
-// is bound: the port bind is the single-instance lock, and an instance
-// that lost it must not clobber the winner's published token.
-func (s *Server) publishAdminToken() error {
-	if err := userdirs.EnsureOwnerDir(filepath.Dir(s.cfg.AdminTokenFile)); err != nil {
+// owning user's CLI will look for the address it serves. It runs only
+// after the listener is bound: the port bind is the single-instance
+// lock per address, so the leftover publications it clears can only
+// belong to instances that crashed or already ceded the port — never
+// to a live successor, which could not have bound yet. The publication
+// path is this instance's alone, so the atomic write's fixed temp name
+// cannot collide with another publisher and a reader never observes a
+// partially written token.
+func (s *Server) publishAdminToken(addr string) error {
+	s.tokenPath = s.cfg.AdminTokens.AdminTokenFile(addr, s.instance)
+	if err := userdirs.EnsureOwnerDir(filepath.Dir(s.tokenPath)); err != nil {
 		return err
 	}
-	// Deliberately not written through fsatomic: its temp name is fixed
-	// per path, and a takeover has two proxies publishing here at once,
-	// where the loser's rename would fail and take down a proxy that is
-	// otherwise fine. A reader landing inside the truncate-then-write
-	// window sees an empty token and is refused, which every reader here
-	// already treats as a proxy that has not published yet.
-	return os.WriteFile(s.cfg.AdminTokenFile, []byte(s.adminToken), 0o600)
+	if err := fsatomic.WriteFile(s.tokenPath, []byte(s.adminToken), 0o600); err != nil {
+		return err
+	}
+	for _, stale := range s.cfg.AdminTokens.StaleAdminTokenFiles(addr, s.instance) {
+		os.Remove(stale)
+	}
+	return nil
 }
 
-// removeAdminToken clears the published token on the way out — unless
-// a successor that already took the port over has published its own,
-// which must stay.
+// removeAdminToken clears this instance's own publication on the way
+// out — never anything else. A successor publishes under its own
+// instance name, so no interleaving of exits and takeovers can make
+// this remove take a freshly published successor token.
 func (s *Server) removeAdminToken() {
-	data, err := os.ReadFile(s.cfg.AdminTokenFile)
-	if err != nil || string(data) != s.adminToken {
-		return
-	}
-	os.Remove(s.cfg.AdminTokenFile)
+	os.Remove(s.tokenPath)
 }
 
 // Serve runs the proxy on l until the context is canceled, a drain is
 // requested, or authorized traffic has been idle past the timeout. A
 // drained or idle exit returns nil: it is the normal end of life.
 func (s *Server) Serve(ctx context.Context, l net.Listener) error {
-	if err := s.publishAdminToken(); err != nil {
+	if err := s.publishAdminToken(l.Addr().String()); err != nil {
 		return err
 	}
 	defer s.removeAdminToken()

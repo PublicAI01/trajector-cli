@@ -95,7 +95,7 @@ func TestUploadRefusesAHealthzCopyingPortHolder(t *testing.T) {
 	e := newUploadEnv(t)
 	seedRawcall(e, "req-1", time.Now().UTC())
 	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "dev"})
-	proxytest.PublishAdminToken(t, e.Layout(), "feedfacefeedfacefeedfacefeedface")
+	proxytest.PublishAdminToken(t, e.Layout(), im.Addr(), "feedfacefeedfacefeedfacefeedface")
 	t.Setenv(cli.ProxyAddrEnv, im.Addr())
 
 	got := e.Run("upload", "--force")

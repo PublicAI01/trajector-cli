@@ -1,8 +1,10 @@
 package userdirs_test
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
@@ -175,6 +177,99 @@ func TestRootsCollapseWhenThePlatformSharesOneDirectory(t *testing.T) {
 	}
 	if got := slashAll(linux.Roots()); !reflect.DeepEqual(got, wantLinux) {
 		t.Errorf("linux Roots() = %v, want %v", got, wantLinux)
+	}
+}
+
+// tempLayout resolves a layout whose directories live under a fresh
+// temp dir, for the candidate listings that read the state directory.
+func tempLayout(t *testing.T) (userdirs.Layout, string) {
+	t.Helper()
+	dir := t.TempDir()
+	l, err := userdirs.Resolve(env("linux", map[string]string{
+		"XDG_CONFIG_HOME": dir,
+		"XDG_DATA_HOME":   dir,
+		"XDG_STATE_HOME":  dir,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(dir, "trajector")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return l, state
+}
+
+func TestAdminTokenFileNamesAreWindowsSafeAndPerInstance(t *testing.T) {
+	l, state := tempLayout(t)
+	got := l.AdminTokenFile("127.0.0.1:41100", "aabbccdd")
+	want := filepath.Join(state, "admin_token-127.0.0.1_41100-aabbccdd")
+	if got != want {
+		t.Errorf("AdminTokenFile() = %q, want %q", got, want)
+	}
+	if strings.ContainsAny(filepath.Base(got), `:<>"|?*`) {
+		t.Errorf("AdminTokenFile() base %q carries a character Windows refuses", filepath.Base(got))
+	}
+	if other := l.AdminTokenFile("127.0.0.1:41100", "eeff0011"); other == got {
+		t.Error("two instances at one address share a publication file")
+	}
+	if other := l.AdminTokenFile("127.0.0.1:53200", "aabbccdd"); other == got {
+		t.Error("two addresses share a publication file")
+	}
+	if legacy := l.LegacyAdminTokenFile(); legacy != filepath.Join(state, "admin_token") {
+		t.Errorf("LegacyAdminTokenFile() = %q, want the fixed name", legacy)
+	}
+}
+
+func TestAdminTokenCandidatesListTheirAddressThenTheFixedName(t *testing.T) {
+	l, state := tempLayout(t)
+	const addr, otherAddr = "127.0.0.1:41100", "127.0.0.1:53200"
+	for _, name := range []string{
+		"admin_token-127.0.0.1_41100-aabbccdd",
+		"admin_token-127.0.0.1_41100-aabbccdd.tmp",
+		"admin_token-127.0.0.1_53200-eeff0011",
+		"admin_token",
+		"proxy.log",
+	} {
+		if err := os.WriteFile(filepath.Join(state, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{
+		filepath.Join(state, "admin_token-127.0.0.1_41100-aabbccdd"),
+		filepath.Join(state, "admin_token"),
+	}
+	if got := l.AdminTokenCandidates(addr); !reflect.DeepEqual(got, want) {
+		t.Errorf("AdminTokenCandidates(%q) = %v, want %v", addr, got, want)
+	}
+
+	if err := os.Remove(filepath.Join(state, "admin_token")); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.AdminTokenCandidates(otherAddr); !reflect.DeepEqual(got, []string{
+		filepath.Join(state, "admin_token-127.0.0.1_53200-eeff0011"),
+		filepath.Join(state, "admin_token"),
+	}) {
+		t.Errorf("AdminTokenCandidates(%q) = %v, want the fixed name listed even when absent", otherAddr, got)
+	}
+}
+
+func TestStaleAdminTokenFilesSpareOwnAndTheFixedName(t *testing.T) {
+	l, state := tempLayout(t)
+	const addr = "127.0.0.1:41100"
+	for _, name := range []string{
+		"admin_token-127.0.0.1_41100-aabbccdd",
+		"admin_token-127.0.0.1_41100-eeff0011",
+		"admin_token-127.0.0.1_53200-99887766",
+		"admin_token",
+	} {
+		if err := os.WriteFile(filepath.Join(state, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{filepath.Join(state, "admin_token-127.0.0.1_41100-eeff0011")}
+	if got := l.StaleAdminTokenFiles(addr, "aabbccdd"); !reflect.DeepEqual(got, want) {
+		t.Errorf("StaleAdminTokenFiles() = %v, want %v", got, want)
 	}
 }
 

@@ -19,10 +19,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
@@ -167,64 +167,71 @@ func (p *Proxy) Ensure() error {
 // Health reports who holds the proxy port and, when it is ours, the
 // proxy's self-report. Health is zero unless the holder is HolderOurs.
 func (p *Proxy) Health() (Health, Holder) {
-	if holder := p.verify(); holder != HolderOurs {
+	holder, token := p.verify()
+	if holder != HolderOurs {
 		return Health{}, holder
 	}
 	var h Health
-	if err := p.get(apiproxy.HealthzPath, &h); err != nil || h.Service != apiproxy.ServiceName {
+	if err := p.get(apiproxy.HealthzPath, token, &h); err != nil || h.Service != apiproxy.ServiceName {
 		return Health{}, HolderForeign
 	}
 	return h, HolderOurs
 }
 
 // verify establishes who holds the port before anything is trusted or
-// sent to it. The holder must answer a fresh nonce with proof that it
-// knows the admin token published for this layout: a health payload can
-// be copied by any listener, the proof cannot. The challenge request
-// itself carries no credential, so probing a holder that turns out to
-// be foreign leaks nothing to it.
-func (p *Proxy) verify() Holder {
+// sent to it, and reports the token the holder proved it knows. The
+// holder must answer a fresh nonce with proof that it knows a token
+// published for this address: a health payload can be copied by any
+// listener, the proof cannot. The challenge request itself carries no
+// credential, so probing a holder that turns out to be foreign leaks
+// nothing to it.
+func (p *Proxy) verify() (Holder, string) {
 	conn, err := net.DialTimeout("tcp", p.addr, probeTimeout)
 	if err != nil {
-		return HolderNone
+		return HolderNone, ""
 	}
 	conn.Close()
 
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return HolderForeign
+		return HolderForeign, ""
 	}
 	challenge := hex.EncodeToString(nonce[:])
 
 	req, err := http.NewRequest(http.MethodGet, "http://"+p.addr+apiproxy.HealthzPath, nil)
 	if err != nil {
-		return HolderForeign
+		return HolderForeign, ""
 	}
 	req.Header.Set(apiproxy.ChallengeHeader, challenge)
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return HolderForeign
+		return HolderForeign, ""
 	}
 	resp.Body.Close()
 	proof := resp.Header.Get(apiproxy.ProofHeader)
 	if proof == "" {
-		return HolderForeign
+		return HolderForeign, ""
 	}
 
-	// The published token is read after the answer arrives: a proxy
+	// The published tokens are read after the answer arrives: a proxy
 	// publishes before it serves its first request, so a sibling that
-	// just won the bind is never judged against a pre-publish read. No
-	// token on disk after an answered request means no proxy of ours is
-	// serving here.
-	token, err := os.ReadFile(p.layout.AdminTokenFile())
-	if err != nil || len(token) == 0 {
-		return HolderForeign
+	// just won the bind is never judged against a pre-publish read.
+	// Every candidate is tried — a crashed predecessor's leftover or an
+	// older proxy's fixed-name publication may sit beside the live one —
+	// and a candidate that proves nothing is skipped, never trusted. No
+	// match after an answered request means no proxy of ours is serving
+	// here.
+	for _, path := range p.layout.AdminTokenCandidates(p.addr) {
+		token, err := fsatomic.ReadFile(path)
+		if err != nil || len(token) == 0 {
+			continue
+		}
+		if hmac.Equal([]byte(proof), []byte(apiproxy.Proof(string(token), challenge, p.addr))) {
+			return HolderOurs, string(token)
+		}
 	}
-	if !hmac.Equal([]byte(proof), []byte(apiproxy.Proof(string(token), challenge, p.addr))) {
-		return HolderForeign
-	}
-	return HolderOurs
+	return HolderForeign, ""
 }
 
 // settledHealth is Health with the startup window allowed for. A proxy
@@ -267,14 +274,15 @@ func (p *Proxy) Selfcheck(token string) (Selfcheck, error) {
 // holder that proved it knows that token; an unproven holder is not
 // Stop's to fight — Ensure and the diagnosis surfaces shout about it.
 func (p *Proxy) Stop() {
-	if p.verify() != HolderOurs {
+	holder, token := p.verify()
+	if holder != HolderOurs {
 		return
 	}
 	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, nil)
 	if err != nil {
 		return
 	}
-	p.authorize(req)
+	authorize(req, token)
 	client := &http.Client{Timeout: probeTimeout}
 	resp, err := client.Do(req)
 	if err == nil {
@@ -282,27 +290,19 @@ func (p *Proxy) Stop() {
 	}
 }
 
-// authorize attaches the admin token a serving proxy published for its
-// reserved endpoints. Every caller runs behind a successful verify: the
-// raw token must never probe a holder that has not proven it already
-// knows it. An unreadable token file just means the request goes out
-// bare and the proxy answers 401: the missing-file case is
-// indistinguishable from no proxy running, and both surface through
-// the request's own failure.
-func (p *Proxy) authorize(req *http.Request) {
-	data, err := os.ReadFile(p.layout.AdminTokenFile())
-	if err != nil {
-		return
-	}
-	req.Header.Set(apiproxy.AdminHeader, string(data))
+// authorize attaches the admin token the holder proved it knows.
+// Every caller runs behind a successful verify: the raw token must
+// never probe a holder that has not proven it already knows it.
+func authorize(req *http.Request, token string) {
+	req.Header.Set(apiproxy.AdminHeader, token)
 }
 
-func (p *Proxy) get(path string, into any) error {
+func (p *Proxy) get(path, token string, into any) error {
 	req, err := http.NewRequest(http.MethodGet, "http://"+p.addr+path, nil)
 	if err != nil {
 		return err
 	}
-	p.authorize(req)
+	authorize(req, token)
 	return p.doJSON(req, into)
 }
 
@@ -395,7 +395,8 @@ func (p *Proxy) Supervise(ctx context.Context, idle time.Duration, stdout, stder
 // The flush request carries the admin token, so it goes only to a
 // holder that proved it knows that token.
 func (p *Proxy) Flush(force bool) (upload.FlushReply, error) {
-	switch p.verify() {
+	holder, token := p.verify()
+	switch holder {
 	case HolderNone:
 		return upload.FlushReply{}, fmt.Errorf("no proxy is listening at %s", p.addr)
 	case HolderForeign:
@@ -409,7 +410,7 @@ func (p *Proxy) Flush(force bool) (upload.FlushReply, error) {
 	if err != nil {
 		return upload.FlushReply{}, err
 	}
-	p.authorize(req)
+	authorize(req, token)
 	client := &http.Client{Timeout: flushTimeout}
 	resp, err := client.Do(req)
 	if err != nil {

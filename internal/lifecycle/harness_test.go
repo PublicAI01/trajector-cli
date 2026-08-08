@@ -124,8 +124,8 @@ func (e *env) occupyPort() {
 // published admin token is at stake on disk.
 func (e *env) occupyPortWithHealthzCopy() *proxytest.Imposter {
 	e.t.Helper()
-	proxytest.PublishAdminToken(e.t, e.deps.Layout, "feedfacefeedfacefeedfacefeedface")
 	im := proxytest.StartImposter(e.t, proxytest.Health{Service: apiproxy.ServiceName, Version: e.deps.Version})
+	proxytest.PublishAdminToken(e.t, e.deps.Layout, im.Addr(), "feedfacefeedfacefeedfacefeedface")
 	e.deps.ProxyAddr = im.Addr()
 	return im
 }

@@ -91,7 +91,7 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 		IdleTimeout:     idle,
 		Logf:            logf,
 		Internal:        uploader.Handler(apiproxy.ServiceName),
-		AdminTokenFile:  layout.AdminTokenFile(),
+		AdminTokens:     layout,
 		// One last threshold check on the way out, run while this process
 		// still holds the listen port: the bind is what excludes the next
 		// proxy's flusher, so no upload of this process may continue past

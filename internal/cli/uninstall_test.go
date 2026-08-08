@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 func TestUninstallKeepsDataWhenDeclined(t *testing.T) {
@@ -41,6 +42,23 @@ func TestUninstallDeletesDataWhenConfirmed(t *testing.T) {
 	}
 	if _, err := os.Stat(e.Layout().SpoolDir()); !os.IsNotExist(err) {
 		t.Errorf("spool directory survived a confirmed uninstall (stat: %v)", err)
+	}
+}
+
+func TestUninstallDeletesLeftoverAdminTokenPublications(t *testing.T) {
+	e := clitest.New(t)
+	const addr = "127.0.0.1:41100"
+	proxytest.PublishAdminToken(t, e.Layout(), addr, "feedfacefeedfacefeedfacefeedface")
+	proxytest.PublishLegacyAdminToken(t, e.Layout(), "feedfacefeedfacefeedfacefeedface")
+
+	got := e.Run("uninstall", "--delete-data")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	for _, path := range e.Layout().AdminTokenCandidates(addr) {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("leftover admin token publication %s survived --delete-data (stat: %v)", path, err)
+		}
 	}
 }
 

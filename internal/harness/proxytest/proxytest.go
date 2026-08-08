@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/capture"
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeupstream"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -163,7 +163,7 @@ func New(t *testing.T, opts ...Option) *Env {
 		MaxRecordBytes:  o.maxRecord,
 		Logf:            o.logf,
 		Internal:        o.internal,
-		AdminTokenFile:  o.layout.AdminTokenFile(),
+		AdminTokens:     o.layout,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -273,34 +273,56 @@ func (e *Env) WaitRawcalls(n int) []spool.Rawcall {
 }
 
 // readAdminToken is the one place a harness reads a proxy's published
-// admin token off disk. An empty file counts as not published yet: a
-// caller that treats it as a token sends an empty one and gets back a
-// 401 with no body, which surfaces as a bare decoding error far from
-// the race that caused it.
-func readAdminToken(layout userdirs.Layout) (string, bool) {
-	data, err := os.ReadFile(layout.AdminTokenFile())
-	return string(data), err == nil && len(data) > 0
+// admin token off disk. An unreadable or empty candidate counts as not
+// published yet: a caller that treats it as a token sends an empty one
+// and gets back a 401 with no body, which surfaces as a bare decoding
+// error far from the race that caused it.
+func readAdminToken(layout userdirs.Layout, addr string) (string, bool) {
+	for _, path := range layout.AdminTokenCandidates(addr) {
+		data, err := fsatomic.ReadFile(path)
+		if err == nil && len(data) > 0 {
+			return string(data), true
+		}
+	}
+	return "", false
 }
 
-// PublishAdminToken plants token where a serving proxy would publish
-// it, so a test can probe port holders while a real credential is at
-// stake on disk.
-func PublishAdminToken(t *testing.T, layout userdirs.Layout, token string) {
+// plantAdminToken writes token at path the way a serving proxy would.
+func plantAdminToken(t *testing.T, path, token string) {
 	t.Helper()
-	if err := userdirs.EnsureOwnerDir(filepath.Dir(layout.AdminTokenFile())); err != nil {
+	if err := userdirs.EnsureOwnerDir(filepath.Dir(path)); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(layout.AdminTokenFile(), []byte(token), 0o600); err != nil {
+	if err := fsatomic.WriteFile(path, []byte(token), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// Authorize attaches the admin token published under layout, when one
-// is readable. A caller probing a proxy that has not published yet
-// sends the request bare and gets a 401 — indistinguishable from the
-// proxy not being up, which is what its retry loop already handles.
+// PublishAdminToken plants token where a serving proxy at addr would
+// publish it, so a test can probe port holders while a real credential
+// is at stake on disk. The planted instance name sorts ahead of every
+// hex instance a real proxy generates, so a probe walking the
+// candidates meets the planted file first and must not stop there.
+func PublishAdminToken(t *testing.T, layout userdirs.Layout, addr, token string) {
+	t.Helper()
+	plantAdminToken(t, layout.AdminTokenFile(addr, "0"), token)
+}
+
+// PublishLegacyAdminToken plants token under the fixed name proxies
+// published before publications became per-address, so a test can
+// stand in for such a proxy.
+func PublishLegacyAdminToken(t *testing.T, layout userdirs.Layout, token string) {
+	t.Helper()
+	plantAdminToken(t, layout.LegacyAdminTokenFile(), token)
+}
+
+// Authorize attaches the admin token published for the address the
+// request targets, when one is readable. A caller probing a proxy that
+// has not published yet sends the request bare and gets a 401 —
+// indistinguishable from the proxy not being up, which is what its
+// retry loop already handles.
 func Authorize(req *http.Request, layout userdirs.Layout) {
-	if token, ok := readAdminToken(layout); ok {
+	if token, ok := readAdminToken(layout, req.URL.Host); ok {
 		req.Header.Set(apiproxy.AdminHeader, token)
 	}
 }
@@ -313,11 +335,11 @@ func (e *Env) AdminToken() string {
 	e.t.Helper()
 	deadline := time.Now().Add(settle)
 	for {
-		if token, ok := readAdminToken(e.layout); ok {
+		if token, ok := readAdminToken(e.layout, e.addr); ok {
 			return token
 		}
 		if time.Now().After(deadline) {
-			e.t.Fatalf("the proxy never published an admin token at %s", e.layout.AdminTokenFile())
+			e.t.Fatalf("the proxy never published an admin token for %s", e.addr)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
