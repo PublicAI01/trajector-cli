@@ -6,7 +6,9 @@ package apiproxy
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -59,9 +61,33 @@ const SelfcheckPath = "/trajector/selfcheck"
 // endpoints.
 const AdminHeader = "X-Trajector-Admin"
 
-// Health is the proxy's self-report: who it is and what its recording
-// has been doing. Lifecycle probes read Service and Version to tell this
-// proxy apart from a foreign process squatting the port.
+// ChallengeHeader carries a caller-chosen nonce on a reserved-endpoint
+// request. The proxy answers it in ProofHeader even when the request is
+// otherwise unauthorized: a caller challenges precisely because it does
+// not yet trust the holder of the port enough to show it a credential.
+const ChallengeHeader = "X-Trajector-Challenge"
+
+// ProofHeader carries the proxy's answer to a challenge.
+const ProofHeader = "X-Trajector-Proof"
+
+// Proof answers a challenge nonce: hex(HMAC-SHA256(admin token,
+// nonce + "\n" + host)). It proves knowledge of the admin token without
+// disclosing it — the direction the raw token cannot serve. Only a
+// process able to read the owning user's published token can answer; a
+// listener that merely copies the proxy's health payload cannot. The
+// host the caller addressed is bound into the answer so a challenge
+// relayed to a genuine proxy at another address yields a proof that
+// does not verify for the address actually probed.
+func Proof(adminToken, nonce, host string) string {
+	mac := hmac.New(sha256.New, []byte(adminToken))
+	mac.Write([]byte(nonce + "\n" + host))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// Health is the proxy's self-report: who it says it is and what its
+// recording has been doing. Self-description is corroboration, never
+// identity: any listener can copy this payload, so who holds the port
+// is settled by the admin-token challenge, which a copy cannot answer.
 type Health struct {
 	Service               string   `json:"service"`
 	Version               string   `json:"version"`
@@ -96,8 +122,8 @@ type Selfcheck struct {
 // this proxy; a foreign listener can answer 200 with anything else.
 func (s Selfcheck) IsOurs() bool { return s.Service == ServiceName }
 
-// ServiceName identifies this proxy in healthz responses so lifecycle
-// probes can tell it apart from a foreign process squatting the port.
+// ServiceName names this proxy in its self-reports. It is a label, not
+// a credential: port ownership is proven by the admin-token challenge.
 const ServiceName = "trajector-proxy"
 
 // Defaults for the lazy lifecycle.
@@ -225,6 +251,12 @@ func New(cfg Config) (*Server, error) {
 	forward := s.newForwarder()
 	s.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, internalPrefix) {
+			// A challenge is answered before the authorization gate: the
+			// proof lets a caller verify who holds the port before it
+			// presents any credential of its own.
+			if nonce := r.Header.Get(ChallengeHeader); nonce != "" {
+				w.Header().Set(ProofHeader, Proof(s.adminToken, nonce, r.Host))
+			}
 			// The reserved endpoints drive the proxy's lifecycle and read
 			// its counters; they answer only a caller holding the admin
 			// token, which means one able to read the owning user's files.

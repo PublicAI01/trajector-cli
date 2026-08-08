@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+	"github.com/PublicAI01/trajector-cli/internal/cli"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
@@ -86,6 +88,28 @@ func TestUploadForceDrainsTheSpoolThroughTheProxy(t *testing.T) {
 	}
 	if n := batchUploads(e.Service()); n != 1 {
 		t.Errorf("service saw %d uploads, want 1", n)
+	}
+}
+
+func TestUploadRefusesAHealthzCopyingPortHolder(t *testing.T) {
+	e := newUploadEnv(t)
+	seedRawcall(e, "req-1", time.Now().UTC())
+	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "dev"})
+	proxytest.PublishAdminToken(t, e.Layout(), "feedfacefeedfacefeedfacefeedface")
+	t.Setenv(cli.ProxyAddrEnv, im.Addr())
+
+	got := e.Run("upload", "--force")
+	if got.Exit != 1 {
+		t.Fatalf("exit = %d (stderr: %q), want a loud refusal", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stderr, "not the trajector proxy") {
+		t.Errorf("stderr = %q", got.Stderr)
+	}
+	if im.SawHeader(apiproxy.AdminHeader) {
+		t.Error("the admin token was sent to a holder that never proved it knows it")
+	}
+	if n := len(e.Sandbox().Rawcalls()); n != 1 {
+		t.Errorf("spool holds %d rawcalls, want the captured data kept", n)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
@@ -112,6 +113,17 @@ func (e *env) occupyPort() {
 	e.t.Cleanup(func() { l.Close() })
 	go http.Serve(l, http.NotFoundHandler())
 	e.deps.ProxyAddr = l.Addr().String()
+}
+
+// occupyPortWithHealthzCopy binds the proxy address with a listener
+// that answers exactly what this device's proxy would answer, while a
+// published admin token is at stake on disk.
+func (e *env) occupyPortWithHealthzCopy() *proxytest.Imposter {
+	e.t.Helper()
+	proxytest.PublishAdminToken(e.t, e.deps.Layout, "feedfacefeedfacefeedfacefeedface")
+	im := proxytest.StartImposter(e.t, proxytest.Health{Service: apiproxy.ServiceName, Version: e.deps.Version})
+	e.deps.ProxyAddr = im.Addr()
+	return im
 }
 
 func (e *env) canonicalRoot() string {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -222,6 +223,22 @@ func TestDoctorWarnsAboutAForeignPortHolder(t *testing.T) {
 	}
 	if !strings.Contains(out, "not the trajector proxy") {
 		t.Errorf("doctor = %q, want the foreign process called out", out)
+	}
+}
+
+func TestDoctorWarnsAboutAHealthzCopyingPortHolder(t *testing.T) {
+	e := newEnv(t)
+	im := e.occupyPortWithHealthzCopy()
+	problems, out := e.doctor()
+
+	if problems == 0 {
+		t.Fatalf("problems = 0 with a health-copying holder on the port, output:\n%s", out)
+	}
+	if !strings.Contains(out, "not the trajector proxy") {
+		t.Errorf("doctor = %q, want the unproven holder called out", out)
+	}
+	if im.SawHeader(apiproxy.AdminHeader) {
+		t.Error("the admin token was sent to a holder that never proved it knows it")
 	}
 }
 

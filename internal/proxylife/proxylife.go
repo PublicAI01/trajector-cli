@@ -9,6 +9,9 @@ package proxylife
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,10 +56,10 @@ const (
 	probeTimeout = 500 * time.Millisecond
 	startTimeout = 10 * time.Second
 	drainTimeout = 20 * time.Second
-	// foreignSettle is how long a bound but unanswering port is given to
-	// turn out to be a proxy still coming up, before it is called
-	// foreign. It only has to outlast the gap between the bind and the
-	// first served request.
+	// foreignSettle is how long a bound port that cannot yet prove
+	// itself is given to turn out to be a proxy still coming up, before
+	// it is called foreign. It only has to outlast the gap between the
+	// bind and the published admin token.
 	foreignSettle = 2 * time.Second
 )
 
@@ -72,16 +75,19 @@ type Health = apiproxy.Health
 // Holder names what, if anything, holds the proxy port. The
 // discrimination lives here — misreading it touches the invariant that
 // credentials are only ever routed at our own proxy, so no caller
-// re-derives it from the health payload.
+// re-derives it from the health payload. A holder is ours only after it
+// answers a challenge that proves it knows this user's published admin
+// token; what it says about itself is never the verdict.
 type Holder int
 
 const (
 	// HolderNone: nothing accepted the connection.
 	HolderNone Holder = iota
-	// HolderForeign: something answered, but not as a trajector proxy.
-	// Injected credentials must never be routed at it.
+	// HolderForeign: something answered, but could not prove it is this
+	// user's trajector proxy. Injected credentials must never be routed
+	// at it and the admin token must never be sent to it.
 	HolderForeign
-	// HolderOurs: a trajector proxy answered and Health carries its
+	// HolderOurs: a trajector proxy proved itself and Health carries its
 	// self-report.
 	HolderOurs
 )
@@ -156,17 +162,64 @@ func (p *Proxy) Ensure() error {
 // Health reports who holds the proxy port and, when it is ours, the
 // proxy's self-report. Health is zero unless the holder is HolderOurs.
 func (p *Proxy) Health() (Health, Holder) {
-	conn, err := net.DialTimeout("tcp", p.addr, probeTimeout)
-	if err != nil {
-		return Health{}, HolderNone
+	if holder := p.verify(); holder != HolderOurs {
+		return Health{}, holder
 	}
-	conn.Close()
-
 	var h Health
 	if err := p.get(apiproxy.HealthzPath, &h); err != nil || h.Service != apiproxy.ServiceName {
 		return Health{}, HolderForeign
 	}
 	return h, HolderOurs
+}
+
+// verify establishes who holds the port before anything is trusted or
+// sent to it. The holder must answer a fresh nonce with proof that it
+// knows the admin token published for this layout: a health payload can
+// be copied by any listener, the proof cannot. The challenge request
+// itself carries no credential, so probing a holder that turns out to
+// be foreign leaks nothing to it.
+func (p *Proxy) verify() Holder {
+	conn, err := net.DialTimeout("tcp", p.addr, probeTimeout)
+	if err != nil {
+		return HolderNone
+	}
+	conn.Close()
+
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return HolderForeign
+	}
+	challenge := hex.EncodeToString(nonce[:])
+
+	req, err := http.NewRequest(http.MethodGet, "http://"+p.addr+apiproxy.HealthzPath, nil)
+	if err != nil {
+		return HolderForeign
+	}
+	req.Header.Set(apiproxy.ChallengeHeader, challenge)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return HolderForeign
+	}
+	resp.Body.Close()
+	proof := resp.Header.Get(apiproxy.ProofHeader)
+	if proof == "" {
+		return HolderForeign
+	}
+
+	// The published token is read after the answer arrives: a proxy
+	// publishes before it serves its first request, so a sibling that
+	// just won the bind is never judged against a pre-publish read. No
+	// token on disk after an answered request means no proxy of ours is
+	// serving here.
+	token, err := os.ReadFile(p.layout.AdminTokenFile())
+	if err != nil || len(token) == 0 {
+		return HolderForeign
+	}
+	if !hmac.Equal([]byte(proof), []byte(apiproxy.Proof(string(token), challenge, p.addr))) {
+		return HolderForeign
+	}
+	return HolderOurs
 }
 
 // settledHealth is Health with the startup window allowed for. A proxy
@@ -188,10 +241,16 @@ func (p *Proxy) settledHealth() (Health, Holder) {
 }
 
 // Selfcheck asks the proxy what it would do with token, over the exact
-// injected base-URL shape and without producing an upstream call.
+// injected base-URL shape and without producing an upstream call. The
+// request carries no admin credential: it exercises what an injected
+// client would send, nothing more.
 func (p *Proxy) Selfcheck(token string) (Selfcheck, error) {
+	req, err := http.NewRequest(http.MethodGet, p.BaseURL(token)+apiproxy.SelfcheckPath, nil)
+	if err != nil {
+		return Selfcheck{}, err
+	}
 	var reply Selfcheck
-	if err := p.getURL(p.BaseURL(token)+apiproxy.SelfcheckPath, &reply); err != nil {
+	if err := p.doJSON(req, &reply); err != nil {
 		return Selfcheck{}, err
 	}
 	return reply, nil
@@ -199,7 +258,13 @@ func (p *Proxy) Selfcheck(token string) (Selfcheck, error) {
 
 // Stop asks a running proxy to drain and exit. Nothing listening is
 // already the goal state, so Stop is idempotent and never fails for it.
+// The drain request carries the admin token, so it goes only to a
+// holder that proved it knows that token; an unproven holder is not
+// Stop's to fight — Ensure and the diagnosis surfaces shout about it.
 func (p *Proxy) Stop() {
+	if p.verify() != HolderOurs {
+		return
+	}
 	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, nil)
 	if err != nil {
 		return
@@ -213,8 +278,10 @@ func (p *Proxy) Stop() {
 }
 
 // authorize attaches the admin token a serving proxy published for its
-// reserved endpoints. An unreadable token file just means the request
-// goes out bare and the proxy answers 401: the missing-file case is
+// reserved endpoints. Every caller runs behind a successful verify: the
+// raw token must never probe a holder that has not proven it already
+// knows it. An unreadable token file just means the request goes out
+// bare and the proxy answers 401: the missing-file case is
 // indistinguishable from no proxy running, and both surface through
 // the request's own failure.
 func (p *Proxy) authorize(req *http.Request) {
@@ -226,15 +293,15 @@ func (p *Proxy) authorize(req *http.Request) {
 }
 
 func (p *Proxy) get(path string, into any) error {
-	return p.getURL("http://"+p.addr+path, into)
-}
-
-func (p *Proxy) getURL(rawURL string, into any) error {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	req, err := http.NewRequest(http.MethodGet, "http://"+p.addr+path, nil)
 	if err != nil {
 		return err
 	}
 	p.authorize(req)
+	return p.doJSON(req, into)
+}
+
+func (p *Proxy) doJSON(req *http.Request, into any) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -302,7 +369,15 @@ func (p *Proxy) Supervise(ctx context.Context, idle time.Duration, stdout, stder
 }
 
 // Flush asks a running proxy to upload now and reports what it did.
+// The flush request carries the admin token, so it goes only to a
+// holder that proved it knows that token.
 func (p *Proxy) Flush(force bool) (upload.FlushReply, error) {
+	switch p.verify() {
+	case HolderNone:
+		return upload.FlushReply{}, fmt.Errorf("no proxy is listening at %s", p.addr)
+	case HolderForeign:
+		return upload.FlushReply{}, fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
+	}
 	flushURL := "http://" + p.addr + upload.FlushPath
 	if force {
 		flushURL += "?" + url.Values{"force": {"1"}}.Encode()

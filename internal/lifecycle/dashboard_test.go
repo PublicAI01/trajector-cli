@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
@@ -137,6 +138,22 @@ func TestStatusReportsAForeignPortHolder(t *testing.T) {
 
 	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "not the trajector proxy") {
 		t.Errorf("status = %q, want a loud foreign-process warning", out)
+	}
+}
+
+func TestStatusReportsAHealthzCopyingPortHolder(t *testing.T) {
+	e := newEnv(t)
+	im := e.occupyPortWithHealthzCopy()
+	out := e.statusOutput()
+
+	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "not the trajector proxy") {
+		t.Errorf("status = %q, want a loud warning for a holder that only copies the health payload", out)
+	}
+	if strings.Contains(out, "Running at") {
+		t.Errorf("status = %q, want no running-proxy section for an unproven holder", out)
+	}
+	if im.SawHeader(apiproxy.AdminHeader) {
+		t.Error("the admin token was sent to a holder that never proved it knows it")
 	}
 }
 

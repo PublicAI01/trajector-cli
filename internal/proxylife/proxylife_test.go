@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
@@ -172,6 +173,102 @@ func TestEnsureRefusesForeignPortHolder(t *testing.T) {
 	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", l.Addr().String())
 	if err := p.Ensure(); !errors.Is(err, proxylife.ErrPortOccupied) {
 		t.Errorf("Ensure = %v, want ErrPortOccupied", err)
+	}
+}
+
+// healthzCopyHolder is a listener squatting the proxy address and
+// answering exactly what a live proxy's healthz answers, probed on a
+// layout where a published admin token is genuinely at stake.
+func healthzCopyHolder(t *testing.T) (*proxylife.Proxy, *proxytest.Imposter) {
+	t.Helper()
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	proxytest.PublishAdminToken(t, layout, "feedfacefeedfacefeedfacefeedface")
+	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "dev"})
+	return proxylife.For(layout, "dev", "unused", im.Addr()), im
+}
+
+func TestHealthTreatsAHealthzCopyAsForeign(t *testing.T) {
+	p, im := healthzCopyHolder(t)
+	if _, holder := p.Health(); holder != proxylife.HolderForeign {
+		t.Errorf("holder = %v for a listener copying the health payload, want foreign", holder)
+	}
+	if im.SawHeader(apiproxy.AdminHeader) {
+		t.Error("the admin token was sent to a holder that never proved it knows it")
+	}
+}
+
+func TestEnsureRefusesAHealthzCopyingPortHolder(t *testing.T) {
+	p, im := healthzCopyHolder(t)
+	if err := p.Ensure(); !errors.Is(err, proxylife.ErrPortOccupied) {
+		t.Errorf("Ensure = %v, want ErrPortOccupied", err)
+	}
+	if im.SawHeader(apiproxy.AdminHeader) {
+		t.Error("the admin token was sent to a holder that never proved it knows it")
+	}
+}
+
+func TestStopSendsNoDrainToAnUnprovenHolder(t *testing.T) {
+	p, im := healthzCopyHolder(t)
+	p.Stop()
+	if im.Saw(http.MethodPost, apiproxy.DrainPath) {
+		t.Error("a drain request reached a holder that never proved it knows the admin token")
+	}
+	if im.SawHeader(apiproxy.AdminHeader) {
+		t.Error("the admin token was sent to a holder that never proved it knows it")
+	}
+}
+
+func TestFlushRefusesAnUnprovenHolder(t *testing.T) {
+	p, im := healthzCopyHolder(t)
+	if _, err := p.Flush(true); !errors.Is(err, proxylife.ErrPortOccupied) {
+		t.Errorf("Flush = %v, want ErrPortOccupied", err)
+	}
+	if im.SawHeader(apiproxy.AdminHeader) {
+		t.Error("the admin token was sent to a holder that never proved it knows it")
+	}
+}
+
+func TestAReplayedChallengeProofIsRefused(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	live := proxytest.New(t, proxytest.WithLayout(layout))
+	live.AdminToken()
+
+	// Any local process may collect proofs from a live proxy for nonces
+	// of its own choosing; none of them answers a verifier's fresh nonce.
+	req, err := http.NewRequest(http.MethodGet, live.BaseURL()+apiproxy.HealthzPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(apiproxy.ChallengeHeader, "aaaabbbbccccddddaaaabbbbccccdddd")
+	client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+	t.Cleanup(client.CloseIdleConnections)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	collected := resp.Header.Get(apiproxy.ProofHeader)
+	if collected == "" {
+		t.Fatal("the live proxy answered no proof to collect")
+	}
+
+	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "1.2.3"})
+	im.ReplayProof(collected)
+	p := proxylife.For(layout, "1.2.3", "unused", im.Addr())
+	if _, holder := p.Health(); holder != proxylife.HolderForeign {
+		t.Errorf("holder = %v for a replayed proof, want foreign", holder)
+	}
+}
+
+func TestStopDrainsAHolderThatProvesItself(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	live := proxytest.New(t, proxytest.WithLayout(layout))
+	live.AdminToken()
+
+	p := proxylife.For(layout, "1.2.3", "unused", live.Addr())
+	p.Stop()
+	if err := live.WaitStopped(5 * time.Second); err != nil {
+		t.Errorf("Serve = %v after Stop, want a clean drained exit", err)
 	}
 }
 

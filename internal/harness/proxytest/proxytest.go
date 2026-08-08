@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -265,6 +266,19 @@ func (e *Env) WaitRawcalls(n int) []spool.Rawcall {
 func readAdminToken(layout userdirs.Layout) (string, bool) {
 	data, err := os.ReadFile(layout.AdminTokenFile())
 	return string(data), err == nil && len(data) > 0
+}
+
+// PublishAdminToken plants token where a serving proxy would publish
+// it, so a test can probe port holders while a real credential is at
+// stake on disk.
+func PublishAdminToken(t *testing.T, layout userdirs.Layout, token string) {
+	t.Helper()
+	if err := userdirs.EnsureOwnerDir(filepath.Dir(layout.AdminTokenFile())); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.AdminTokenFile(), []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // Authorize attaches the admin token published under layout, when one
