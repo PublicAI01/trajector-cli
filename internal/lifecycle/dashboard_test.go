@@ -173,6 +173,24 @@ func TestStatusDoesNotWaitOutAHolderStillPublishingItsToken(t *testing.T) {
 	}
 }
 
+func TestStatusPresentsAnUnverifiableProxyAsAuthentication(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.proxyEnv.AdminToken()
+	proxytest.RemoveAdminTokens(t, e.layout(), e.proxyEnv.Addr())
+	out := e.statusOutput()
+
+	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "could not verify the proxy") {
+		t.Errorf("status = %q, want the failed verification reported", out)
+	}
+	if !strings.Contains(out, "authentication problem") {
+		t.Errorf("status = %q, want the authentication reading offered", out)
+	}
+	if strings.Contains(out, "find and stop the process") {
+		t.Errorf("status = %q, must not advise hunting a process that may be our own proxy", out)
+	}
+}
+
 func TestStatusShowsSpoolUsageAndLastUpload(t *testing.T) {
 	e := newEnv(t)
 	e.sandbox.SeedRawcall("req-1", "hash-project", e.deps.Now())

@@ -189,8 +189,8 @@ func projectToken(st ProjectStatus) (string, error) {
 // No upstream call is made and nothing is billed.
 func (m *Machine) selfCheck(token string) error {
 	if err := m.proxy.Ensure(); err != nil {
-		if errors.Is(err, proxylife.ErrPortOccupied) {
-			return fmt.Errorf("self-check failed: %v. %s", err, PortOccupiedRemedy)
+		if remedy := ProxyRemedy(err); remedy != "" {
+			return fmt.Errorf("self-check failed: %v. %s", err, remedy)
 		}
 		return fmt.Errorf("self-check failed: %w", err)
 	}

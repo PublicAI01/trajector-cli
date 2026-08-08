@@ -25,9 +25,34 @@ var ErrNotPaired = errors.New("this device is not paired")
 // else, which the caller must surface loudly rather than retry.
 var ErrPortOccupied = proxylife.ErrPortOccupied
 
-// PortOccupiedRemedy is the one instruction every surface prints with
-// ErrPortOccupied, so the advice cannot drift between surfaces.
-const PortOccupiedRemedy = "Enabled projects route API credentials at this address; find and stop the process holding the port, or run `trajector disable` in enabled projects."
+// ErrProxyUnverified reports a port holder that failed admin-token
+// authentication: possibly this user's own proxy whose published token
+// went missing or stale, so its remedy must never be the foreign-process
+// one.
+var ErrProxyUnverified = proxylife.ErrProxyUnverified
+
+// The one instruction every surface prints with each port-holder
+// verdict, so the advice cannot drift between surfaces. Only ProxyRemedy
+// maps a verdict to its instruction.
+const (
+	portOccupiedRemedy    = "Enabled projects route API credentials at this address; find and stop the process holding the port, or run `trajector disable` in enabled projects."
+	proxyUnverifiedRemedy = "This is usually an authentication problem (the proxy's published admin token is missing or stale), not a foreign process. The proxy publishes a fresh token each time it starts and exits on its own once idle, so a later session usually clears it; there is no process to stop."
+)
+
+// ProxyRemedy is the follow-up instruction a surface prints under a
+// failed port-holder verdict, empty when the verdict's own words are
+// the whole story. Advising the user to stop the port's holder is
+// reserved for a proven stranger: an unverified holder may be their own
+// proxy.
+func ProxyRemedy(why error) string {
+	switch {
+	case errors.Is(why, ErrPortOccupied):
+		return portOccupiedRemedy
+	case errors.Is(why, ErrProxyUnverified):
+		return proxyUnverifiedRemedy
+	}
+	return ""
+}
 
 // Enable starts contributing data from a project. Pairing is the
 // precondition, so an unpaired device pairs first rather than failing.
@@ -137,7 +162,9 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 	if err := claudesettings.RemoveUserHook(claudesettings.UserSettingsPath(m.deps.Home)); err != nil {
 		fmt.Fprintf(io.Err, "trajector: warning: could not remove the discovery hint: %v\n", err)
 	}
-	m.proxy.Stop()
+	if err := m.proxy.Stop(); err != nil {
+		fmt.Fprintf(io.Err, "trajector: warning: the proxy was not stopped: %v\n", err)
+	}
 
 	if deleteData {
 		if err := m.deps.Tokens.ClearDeviceToken(); err != nil {
@@ -165,7 +192,7 @@ func (m *Machine) EnsureProxy(projectDir string, io IO) error {
 	m.refreshUpstreamDrift(projectDir, io)
 
 	if err := m.proxy.Ensure(); err != nil {
-		if errors.Is(err, ErrPortOccupied) {
+		if errors.Is(err, ErrPortOccupied) || errors.Is(err, ErrProxyUnverified) {
 			return err
 		}
 		return fmt.Errorf("could not start the capture proxy: %w", err)

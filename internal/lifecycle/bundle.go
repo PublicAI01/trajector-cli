@@ -146,6 +146,8 @@ type projectWire struct {
 type proxyWire struct {
 	Addr   string `json:"addr"`
 	Holder string `json:"holder"`
+	// Reason is present when the holder could not be proven ours.
+	Reason string `json:"reason,omitempty"`
 	// Health is present only when the holder is ours.
 	Health any `json:"health,omitempty"`
 }
@@ -179,7 +181,7 @@ func renderDiagnosis(d Diagnosis) []byte {
 	if days == nil {
 		days = []spool.DaySummary{}
 	}
-	proxy := proxyWire{Addr: d.Proxy.Addr, Holder: d.Proxy.Holder.String()}
+	proxy := proxyWire{Addr: d.Proxy.Addr, Holder: d.Proxy.Holder.String(), Reason: errString(d.Proxy.Reason)}
 	if d.Proxy.Holder == proxylife.HolderOurs {
 		proxy.Health = d.Proxy.Health
 	}

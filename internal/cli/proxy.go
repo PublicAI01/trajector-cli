@@ -56,14 +56,8 @@ func (a *app) runProxy(mode string, args []string) int {
 	} else {
 		err = m.ServeProxy(ctx, *idle, a.stdout, a.stderr)
 	}
-	switch {
-	case err == nil || errors.Is(err, context.Canceled):
+	if err == nil || errors.Is(err, context.Canceled) {
 		return 0
-	case errors.Is(err, proxylife.ErrPortOccupied):
-		fmt.Fprintf(a.stderr, "trajector: %v\n", err)
-		fmt.Fprintf(a.stderr, "trajector: %s\n", lifecycle.PortOccupiedRemedy)
-		return 1
-	default:
-		return a.fail(err)
 	}
+	return a.exit(err)
 }

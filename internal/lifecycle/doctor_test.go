@@ -227,6 +227,24 @@ func TestDoctorWarnsAboutAForeignPortHolder(t *testing.T) {
 	}
 }
 
+func TestDoctorPresentsAnUnverifiableProxyAsAuthentication(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.proxyEnv.AdminToken()
+	proxytest.RemoveAdminTokens(t, e.layout(), e.proxyEnv.Addr())
+	problems, out := e.doctor()
+
+	if problems == 0 {
+		t.Fatalf("problems = 0 with an unverifiable proxy on the port, output:\n%s", out)
+	}
+	if !strings.Contains(out, "could not verify the proxy") || !strings.Contains(out, "authentication problem") {
+		t.Errorf("doctor = %q, want the authentication problem explained", out)
+	}
+	if strings.Contains(out, "find and stop the process") {
+		t.Errorf("doctor = %q, must not advise hunting a process that may be our own proxy", out)
+	}
+}
+
 func TestDoctorWarnsAboutAHealthzCopyingPortHolder(t *testing.T) {
 	e := newEnv(t)
 	im := e.occupyPortWithHealthzCopy()

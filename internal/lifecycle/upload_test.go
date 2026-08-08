@@ -2,6 +2,7 @@ package lifecycle_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
 
 // servedProxy runs the machine's own proxy assembly for the test and
@@ -85,6 +88,33 @@ func TestUploadRefusesWhenThePortIsForeign(t *testing.T) {
 
 	if err := e.machine().Upload(true, e.io()); err == nil {
 		t.Error("Upload against a foreign port holder = nil, want a loud failure")
+	}
+}
+
+func TestUploadReportsAnUnverifiableProxyAsAuthentication(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.proxyEnv.AdminToken()
+	proxytest.RemoveAdminTokens(t, e.layout(), e.proxyEnv.Addr())
+
+	err := e.machine().Upload(true, e.io())
+	if !errors.Is(err, lifecycle.ErrProxyUnverified) {
+		t.Errorf("Upload = %v, want the authentication failure surfaced", err)
+	}
+}
+
+func TestUploadNamesTheProxyOnAnUnreadableFlushReply(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy(proxytest.WithInternal(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "not json")
+	})))
+
+	err := e.machine().Upload(true, e.io())
+	if err == nil {
+		t.Fatal("Upload = nil, want the unreadable flush reply reported")
+	}
+	if !strings.Contains(err.Error(), "proxy at "+e.proxyEnv.Addr()) {
+		t.Errorf("Upload = %v, want the proxy named", err)
 	}
 }
 

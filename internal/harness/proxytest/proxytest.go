@@ -7,9 +7,11 @@ package proxytest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -306,6 +308,18 @@ func plantAdminToken(t *testing.T, path, token string) {
 func PublishAdminToken(t *testing.T, layout userdirs.Layout, addr, token string) {
 	t.Helper()
 	plantAdminToken(t, layout.AdminTokenFile(addr, "0"), token)
+}
+
+// RemoveAdminTokens deletes every admin-token publication for addr, so
+// a test can probe a live proxy whose published tokens have gone
+// missing from disk.
+func RemoveAdminTokens(t *testing.T, layout userdirs.Layout, addr string) {
+	t.Helper()
+	for _, path := range layout.AdminTokenCandidates(addr) {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+	}
 }
 
 // PublishLegacyAdminToken plants token under the fixed name proxies

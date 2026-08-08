@@ -199,7 +199,7 @@ func TestEnsureStartsSupervisedProxyAndIsIdempotent(t *testing.T) {
 	if err := p.Ensure(); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	h, holder := p.Health()
+	h, holder, _ := p.Health()
 	if holder != proxylife.HolderOurs || h.Version != "dev" {
 		t.Fatalf("after Ensure: holder=%v health=%+v", holder, h)
 	}
@@ -253,14 +253,14 @@ func TestConcurrentStartsConvergeWithoutBlamingAForeignProcess(t *testing.T) {
 		}
 	}
 
-	if _, holder := first.Health(); holder != proxylife.HolderOurs {
+	if _, holder, _ := first.Health(); holder != proxylife.HolderOurs {
 		t.Fatalf("holder = %v after concurrent starts, want ours", holder)
 	}
 	log := proxyLogContents(t, layout)
 	if strings.Contains(log, proxylife.ErrPortOccupied.Error()) {
 		t.Errorf("the proxy log blames a foreign process for a sibling's win:\n%s", log)
 	}
-	if strings.Contains(log, lifecycle.PortOccupiedRemedy) {
+	if strings.Contains(log, lifecycle.ProxyRemedy(proxylife.ErrPortOccupied)) {
 		t.Errorf("the proxy log advises stopping a process that is a sibling proxy:\n%s", log)
 	}
 }
@@ -276,7 +276,7 @@ func TestEnsureReplacesAStrictlyOlderReleaseViaDrain(t *testing.T) {
 	if err := older.WaitStopped(5 * time.Second); err != nil {
 		t.Errorf("older proxy Serve returned %v on takeover, want nil", err)
 	}
-	h, holder := p.Health()
+	h, holder, _ := p.Health()
 	if holder != proxylife.HolderOurs || h.Version != "1.0.0" {
 		t.Errorf("after takeover: holder=%v health=%+v, want version 1.0.0", holder, h)
 	}
@@ -310,7 +310,7 @@ func TestEnsureReusesANewerProxyInsteadOfDrainingIt(t *testing.T) {
 	if err := p.Ensure(); err != nil {
 		t.Fatalf("Ensure = %v, want the newer proxy reused", err)
 	}
-	if h, holder := p.Health(); holder != proxylife.HolderOurs || h.Version != "2.0.0" {
+	if h, holder, _ := p.Health(); holder != proxylife.HolderOurs || h.Version != "2.0.0" {
 		t.Errorf("after Ensure: holder=%v version=%q, want the newer proxy left serving", holder, h.Version)
 	}
 	if log := proxyLogContents(t, layout); !strings.Contains(log, proxylife.ReuseReason) {
@@ -325,7 +325,7 @@ func TestEnsureFromADevBuildReusesAReleaseProxy(t *testing.T) {
 	if err := p.Ensure(); err != nil {
 		t.Fatalf("Ensure = %v, want the release proxy reused", err)
 	}
-	if h, holder := p.Health(); holder != proxylife.HolderOurs || h.Version != "1.2.3" {
+	if h, holder, _ := p.Health(); holder != proxylife.HolderOurs || h.Version != "1.2.3" {
 		t.Errorf("after Ensure: holder=%v version=%q, want the release proxy left serving", holder, h.Version)
 	}
 	log := proxyLogContents(t, layout)
@@ -341,7 +341,7 @@ func TestEnsureFromAReleaseBuildReusesADevProxy(t *testing.T) {
 	if err := p.Ensure(); err != nil {
 		t.Fatalf("Ensure = %v, want the dev proxy reused", err)
 	}
-	if h, holder := p.Health(); holder != proxylife.HolderOurs || h.Version != "dev" {
+	if h, holder, _ := p.Health(); holder != proxylife.HolderOurs || h.Version != "dev" {
 		t.Errorf("after Ensure: holder=%v version=%q, want the dev proxy left serving", holder, h.Version)
 	}
 	if log := proxyLogContents(t, layout); !strings.Contains(log, proxylife.ReuseReason) {
@@ -418,8 +418,12 @@ func healthzCopyHolder(t *testing.T) (*proxylife.Proxy, *proxytest.Imposter) {
 
 func TestHealthTreatsAHealthzCopyAsForeign(t *testing.T) {
 	p, im := healthzCopyHolder(t)
-	if _, holder := p.Health(); holder != proxylife.HolderForeign {
+	_, holder, why := p.Health()
+	if holder != proxylife.HolderForeign {
 		t.Errorf("holder = %v for a listener copying the health payload, want foreign", holder)
+	}
+	if !errors.Is(why, proxylife.ErrPortOccupied) {
+		t.Errorf("reason = %v, want the stranger verdict for a holder that offers no proof", why)
 	}
 	if im.SawHeader(apiproxy.AdminHeader) {
 		t.Error("the admin token was sent to a holder that never proved it knows it")
@@ -438,7 +442,9 @@ func TestEnsureRefusesAHealthzCopyingPortHolder(t *testing.T) {
 
 func TestStopSendsNoDrainToAnUnprovenHolder(t *testing.T) {
 	p, im := healthzCopyHolder(t)
-	p.Stop()
+	if err := p.Stop(); !errors.Is(err, proxylife.ErrPortOccupied) {
+		t.Errorf("Stop = %v, want the undelivered drain explained by the holder's verdict", err)
+	}
 	if im.Saw(http.MethodPost, apiproxy.DrainPath) {
 		t.Error("a drain request reached a holder that never proved it knows the admin token")
 	}
@@ -454,6 +460,166 @@ func TestFlushRefusesAnUnprovenHolder(t *testing.T) {
 	}
 	if im.SawHeader(apiproxy.AdminHeader) {
 		t.Error("the admin token was sent to a holder that never proved it knows it")
+	}
+}
+
+func TestHealthBlamesAuthenticationWhenNoAdminTokenIsReadable(t *testing.T) {
+	live := proxytest.New(t)
+	live.AdminToken()
+
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", live.Addr())
+	_, holder, why := p.Health()
+	if holder != proxylife.HolderForeign {
+		t.Fatalf("holder = %v, want no trust while no admin token verifies the answer", holder)
+	}
+	if !errors.Is(why, proxylife.ErrProxyUnverified) {
+		t.Errorf("reason = %v, want the authentication verdict", why)
+	}
+	if errors.Is(why, proxylife.ErrPortOccupied) {
+		t.Errorf("reason = %v, must not call a proof-answering holder a stranger", why)
+	}
+	if !strings.Contains(why.Error(), "no admin token") {
+		t.Errorf("reason = %v, want the unreadable admin token named", why)
+	}
+}
+
+func TestHealthBlamesAuthenticationWhenNoPublishedTokenMatches(t *testing.T) {
+	live := proxytest.New(t)
+	live.AdminToken()
+
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	proxytest.PublishAdminToken(t, layout, live.Addr(), "feedfacefeedfacefeedfacefeedface")
+	p := proxylife.For(layout, "dev", "unused", live.Addr())
+	_, holder, why := p.Health()
+	if holder != proxylife.HolderForeign {
+		t.Fatalf("holder = %v, want no trust while no published token matches", holder)
+	}
+	if !errors.Is(why, proxylife.ErrProxyUnverified) {
+		t.Errorf("reason = %v, want the authentication verdict", why)
+	}
+	if !strings.Contains(why.Error(), "matches none") {
+		t.Errorf("reason = %v, want the mismatch named", why)
+	}
+}
+
+func TestHealthExplainsAHolderThatAnswersNothing(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", l.Addr().String())
+	_, holder, why := p.Health()
+	if holder != proxylife.HolderForeign {
+		t.Fatalf("holder = %v, want no trust in a holder that answers nothing", holder)
+	}
+	if why == nil || !strings.Contains(why.Error(), "did not answer") {
+		t.Errorf("reason = %v, want the silent holder named", why)
+	}
+	if errors.Is(why, proxylife.ErrPortOccupied) {
+		t.Errorf("reason = %v, must not call a silent holder a stranger", why)
+	}
+}
+
+// provenHolder is a listener that answers the admin-token challenge
+// from a token genuinely published for its address, so probes judge it
+// ours, while its endpoints behave however the test says.
+func provenHolder(t *testing.T, layout userdirs.Layout, handle http.HandlerFunc) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	const token = "feedfacefeedfacefeedfacefeedface"
+	proxytest.PublishAdminToken(t, layout, addr, token)
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if nonce := r.Header.Get(apiproxy.ChallengeHeader); nonce != "" {
+			w.Header().Set(apiproxy.ProofHeader, apiproxy.Proof(token, nonce, r.Host))
+		}
+		handle(w, r)
+	})}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+	return addr
+}
+
+func TestHealthNamesTheProxyOnAnUnreadableHealthAnswer(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	addr := provenHolder(t, layout, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "not json")
+	})
+
+	p := proxylife.For(layout, "dev", "unused", addr)
+	_, holder, why := p.Health()
+	if holder != proxylife.HolderForeign {
+		t.Fatalf("holder = %v, want no trusted self-report out of an unreadable answer", holder)
+	}
+	if why == nil || !strings.Contains(why.Error(), "proxy at "+addr) || !strings.Contains(why.Error(), "unreadable") {
+		t.Errorf("reason = %v, want the proxy named alongside the unreadable answer", why)
+	}
+}
+
+func TestFlushNamesTheProxyOnAnUnreadableFlushReply(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	live := proxytest.New(t, proxytest.WithLayout(layout),
+		proxytest.WithInternal(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, "not json")
+		})))
+	live.AdminToken()
+
+	p := proxylife.For(layout, "1.2.3", "unused", live.Addr())
+	_, err := p.Flush(true)
+	if err == nil {
+		t.Fatal("Flush decoded an unreadable reply")
+	}
+	if !strings.Contains(err.Error(), "proxy at "+live.Addr()) || !strings.Contains(err.Error(), "a flush request") {
+		t.Errorf("Flush = %v, want the proxy and the flush request named", err)
+	}
+}
+
+func TestEnsureReportsWhyAnOlderProxyWouldNotDrain(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	health, err := json.Marshal(proxytest.Health{Service: apiproxy.ServiceName, Version: "0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := provenHolder(t, layout, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == apiproxy.DrainPath {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(health)
+	})
+
+	p := proxylife.For(layout, "1.0.0", "unused", addr)
+	got := p.Ensure()
+	if got == nil {
+		t.Fatal("Ensure = nil, want the refused drain reported")
+	}
+	if !strings.Contains(got.Error(), "drain") || !strings.Contains(got.Error(), "500") {
+		t.Errorf("Ensure = %v, want the refused drain and its status visible", got)
+	}
+}
+
+func TestStopExplainsAnUndeliverableDrainWhenNoTokenIsReadable(t *testing.T) {
+	live := proxytest.New(t)
+	live.AdminToken()
+
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", live.Addr())
+	if err := p.Stop(); !errors.Is(err, proxylife.ErrProxyUnverified) {
+		t.Errorf("Stop = %v, want the authentication failure reported", err)
 	}
 }
 
@@ -482,7 +648,7 @@ func TestAReplayedChallengeProofIsRefused(t *testing.T) {
 	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "1.2.3"})
 	im.ReplayProof(collected)
 	p := proxylife.For(layout, "1.2.3", "unused", im.Addr())
-	if _, holder := p.Health(); holder != proxylife.HolderForeign {
+	if _, holder, _ := p.Health(); holder != proxylife.HolderForeign {
 		t.Errorf("holder = %v for a replayed proof, want foreign", holder)
 	}
 }
@@ -515,10 +681,10 @@ func TestTwoProxiesOnOneLayoutAreDrivenIndependently(t *testing.T) {
 	pa := proxylife.For(layout, "1.2.3", "unused", a.Addr())
 	pb := proxylife.For(layout, "1.2.3", "unused", b.Addr())
 
-	if _, holder := pa.Health(); holder != proxylife.HolderOurs {
+	if _, holder, _ := pa.Health(); holder != proxylife.HolderOurs {
 		t.Fatalf("first proxy holder = %v, want ours", holder)
 	}
-	if _, holder := pb.Health(); holder != proxylife.HolderOurs {
+	if _, holder, _ := pb.Health(); holder != proxylife.HolderOurs {
 		t.Fatalf("second proxy holder = %v, want ours", holder)
 	}
 	if reply, err := pa.Flush(false); err != nil || reply.Records != 1 {
@@ -532,10 +698,10 @@ func TestTwoProxiesOnOneLayoutAreDrivenIndependently(t *testing.T) {
 	if err := b.WaitStopped(5 * time.Second); err != nil {
 		t.Fatalf("Serve = %v after Stop", err)
 	}
-	if _, holder := pb.Health(); holder != proxylife.HolderNone {
+	if _, holder, _ := pb.Health(); holder != proxylife.HolderNone {
 		t.Errorf("stopped proxy holder = %v, want none", holder)
 	}
-	if _, holder := pa.Health(); holder != proxylife.HolderOurs {
+	if _, holder, _ := pa.Health(); holder != proxylife.HolderOurs {
 		t.Errorf("surviving proxy holder = %v after its sibling exited, want ours", holder)
 	}
 	if reply, err := pa.Flush(false); err != nil || reply.Records != 1 {
@@ -550,7 +716,7 @@ func TestRepeatedTakeoversAlwaysLeaveAProvableHolder(t *testing.T) {
 
 	current := proxytest.New(t, proxytest.WithLayout(layout), proxytest.WithAddr(addr), proxytest.WithVersion("0.0.1"))
 	for round := 2; round <= 4; round++ {
-		if _, holder := p.Health(); holder != proxylife.HolderOurs {
+		if _, holder, _ := p.Health(); holder != proxylife.HolderOurs {
 			t.Fatalf("holder = %v before takeover round %d, want ours", holder, round)
 		}
 		p.Stop()
@@ -560,7 +726,7 @@ func TestRepeatedTakeoversAlwaysLeaveAProvableHolder(t *testing.T) {
 		current = proxytest.New(t, proxytest.WithLayout(layout), proxytest.WithAddr(addr),
 			proxytest.WithVersion(fmt.Sprintf("0.0.%d", round)))
 	}
-	h, holder := p.Health()
+	h, holder, _ := p.Health()
 	if holder != proxylife.HolderOurs || h.Version != "0.0.4" {
 		t.Errorf("after repeated takeovers: holder=%v health=%+v, want the last instance provable", holder, h)
 	}
@@ -611,7 +777,7 @@ func TestStopDrainsAProxyPublishedUnderTheFixedName(t *testing.T) {
 	addr, drains := startFixedNameProxy(t, token)
 
 	p := proxylife.For(layout, "dev", "unused", addr)
-	h, holder := p.Health()
+	h, holder, _ := p.Health()
 	if holder != proxylife.HolderOurs || h.Version != "0.9.0" {
 		t.Fatalf("holder=%v health=%+v, want the fixed-name publication to prove the holder", holder, h)
 	}
@@ -623,15 +789,19 @@ func TestStopDrainsAProxyPublishedUnderTheFixedName(t *testing.T) {
 
 func TestHealthReportsNothingRunning(t *testing.T) {
 	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", freeAddr(t))
-	if _, holder := p.Health(); holder != proxylife.HolderNone {
+	if _, holder, _ := p.Health(); holder != proxylife.HolderNone {
 		t.Error("Health reports a listener on a closed port")
 	}
 }
 
 func TestStopOnNothingListeningIsANoop(t *testing.T) {
 	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", freeAddr(t))
-	p.Stop()
-	p.Stop()
+	if err := p.Stop(); err != nil {
+		t.Errorf("Stop = %v, want nil: nothing listening is the goal state", err)
+	}
+	if err := p.Stop(); err != nil {
+		t.Errorf("second Stop = %v, want nil", err)
+	}
 }
 
 // The supervisor is exercised through Supervise, with the spawned child

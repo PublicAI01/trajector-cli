@@ -51,9 +51,18 @@ const Addr = apiproxy.Addr
 // callers must surface this loudly instead of retrying.
 var ErrPortOccupied = errors.New("port occupied by a process that is not the trajector proxy")
 
+// ErrProxyUnverified reports a port holder that engages the admin-token
+// challenge without proving it knows a token published on this machine.
+// A missing or stale publication produces exactly this while the holder
+// is the user's own proxy, so surfaces present an authentication
+// problem, never advice to hunt the process down. The holder stays
+// untrusted either way: no credential is routed at it.
+var ErrProxyUnverified = errors.New("could not verify the proxy")
+
 // Timeouts for the lazy lifecycle.
 const (
 	probeTimeout = 500 * time.Millisecond
+	adminTimeout = 5 * time.Second
 	startTimeout = 10 * time.Second
 	drainTimeout = 20 * time.Second
 	// foreignSettle is how long a bound port that cannot yet prove
@@ -138,9 +147,9 @@ func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/"
 // Concurrent callers converge because the port bind is the
 // single-instance lock and losers defer to the winner.
 func (p *Proxy) Ensure() error {
-	switch h, holder := p.SettledHealth(); holder {
+	switch h, holder, why := p.SettledHealth(); holder {
 	case HolderForeign:
-		return fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
+		return why
 	case HolderOurs:
 		if !Supersedes(p.version, h.Version) {
 			if h.Version != p.version {
@@ -150,8 +159,12 @@ func (p *Proxy) Ensure() error {
 		}
 		// A strictly older release holds the port. Left alone it could
 		// live until its next idle exit, so ask it to drain and take
-		// over.
-		p.Stop()
+		// over. A drain that already failed names what stands in the
+		// way; waiting out the port would bury that cause under a
+		// timeout that cannot succeed.
+		if err := p.Stop(); err != nil {
+			return fmt.Errorf("asking the previous proxy to drain: %w", err)
+		}
 		if err := p.waitPortFree(drainTimeout); err != nil {
 			return err
 		}
@@ -166,16 +179,23 @@ func (p *Proxy) Ensure() error {
 
 // Health reports who holds the proxy port and, when it is ours, the
 // proxy's self-report. Health is zero unless the holder is HolderOurs.
-func (p *Proxy) Health() (Health, Holder) {
-	holder, token := p.verify()
+// A HolderForeign verdict always carries a non-nil reason naming which
+// way the proof failed — no proof offered, unverifiable for want of a
+// matching admin token, silent, or unintelligible — so a surface can
+// tell a stranger from an authentication problem.
+func (p *Proxy) Health() (Health, Holder, error) {
+	holder, token, why := p.verify()
 	if holder != HolderOurs {
-		return Health{}, holder
+		return Health{}, holder, why
 	}
 	var h Health
-	if err := p.get(apiproxy.HealthzPath, token, &h); err != nil || h.Service != apiproxy.ServiceName {
-		return Health{}, HolderForeign
+	if err := p.get(apiproxy.HealthzPath, token, &h, "a health request"); err != nil {
+		return Health{}, HolderForeign, err
 	}
-	return h, HolderOurs
+	if h.Service != apiproxy.ServiceName {
+		return Health{}, HolderForeign, fmt.Errorf("proxy at %s calls itself %q", p.addr, h.Service)
+	}
+	return h, HolderOurs, nil
 }
 
 // verify establishes who holds the port before anything is trusted or
@@ -184,34 +204,35 @@ func (p *Proxy) Health() (Health, Holder) {
 // published for this address: a health payload can be copied by any
 // listener, the proof cannot. The challenge request itself carries no
 // credential, so probing a holder that turns out to be foreign leaks
-// nothing to it.
-func (p *Proxy) verify() (Holder, string) {
+// nothing to it. A holder that is not proven ours comes back
+// HolderForeign with the reason the proof failed; the reason never
+// carries a token.
+func (p *Proxy) verify() (Holder, string, error) {
 	conn, err := net.DialTimeout("tcp", p.addr, probeTimeout)
 	if err != nil {
-		return HolderNone, ""
+		return HolderNone, "", nil
 	}
 	conn.Close()
 
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return HolderForeign, ""
+		return HolderForeign, "", fmt.Errorf("probing %s: %v", p.addr, err)
 	}
 	challenge := hex.EncodeToString(nonce[:])
 
 	req, err := http.NewRequest(http.MethodGet, "http://"+p.addr+apiproxy.HealthzPath, nil)
 	if err != nil {
-		return HolderForeign, ""
+		return HolderForeign, "", fmt.Errorf("probing %s: %v", p.addr, err)
 	}
 	req.Header.Set(apiproxy.ChallengeHeader, challenge)
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := adminClient(adminTimeout).Do(req)
 	if err != nil {
-		return HolderForeign, ""
+		return HolderForeign, "", fmt.Errorf("the holder of %s did not answer a probe: %v", p.addr, transportCause(err))
 	}
 	resp.Body.Close()
 	proof := resp.Header.Get(apiproxy.ProofHeader)
 	if proof == "" {
-		return HolderForeign, ""
+		return HolderForeign, "", fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
 	}
 
 	// The published tokens are read after the answer arrives: a proxy
@@ -222,16 +243,21 @@ func (p *Proxy) verify() (Holder, string) {
 	// and a candidate that proves nothing is skipped, never trusted. No
 	// match after an answered request means no proxy of ours is serving
 	// here.
+	readable := 0
 	for _, path := range p.layout.AdminTokenCandidates(p.addr) {
 		token, err := fsatomic.ReadFile(path)
 		if err != nil || len(token) == 0 {
 			continue
 		}
+		readable++
 		if hmac.Equal([]byte(proof), []byte(apiproxy.Proof(string(token), challenge, p.addr))) {
-			return HolderOurs, string(token)
+			return HolderOurs, string(token), nil
 		}
 	}
-	return HolderForeign, ""
+	if readable == 0 {
+		return HolderForeign, "", fmt.Errorf("%w at %s: it answered the admin-token challenge, but no admin token for this address could be read", ErrProxyUnverified, p.addr)
+	}
+	return HolderForeign, "", fmt.Errorf("%w at %s: its challenge answer matches none of the admin tokens published for this address", ErrProxyUnverified, p.addr)
 }
 
 // SettledHealth is Health with the startup window allowed for. A proxy
@@ -243,12 +269,12 @@ func (p *Proxy) verify() (Holder, string) {
 // paid only by callers about to act on the verdict — Ensure, a serve
 // process that just lost the bind; report-only surfaces read Health
 // directly, so a diagnosis answers about the port as it stands.
-func (p *Proxy) SettledHealth() (Health, Holder) {
+func (p *Proxy) SettledHealth() (Health, Holder, error) {
 	deadline := time.Now().Add(foreignSettle)
 	for {
-		h, holder := p.Health()
+		h, holder, why := p.Health()
 		if holder != HolderForeign || time.Now().After(deadline) {
-			return h, holder
+			return h, holder, why
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -264,32 +290,40 @@ func (p *Proxy) Selfcheck(token string) (Selfcheck, error) {
 		return Selfcheck{}, err
 	}
 	var reply Selfcheck
-	if err := p.doJSON(req, &reply); err != nil {
+	if err := p.doJSON(req, &reply, "a self-check request", adminTimeout); err != nil {
 		return Selfcheck{}, err
 	}
 	return reply, nil
 }
 
-// Stop asks a running proxy to drain and exit. Nothing listening is
-// already the goal state, so Stop is idempotent and never fails for it.
-// The drain request carries the admin token, so it goes only to a
-// holder that proved it knows that token; an unproven holder is not
-// Stop's to fight — Ensure and the diagnosis surfaces shout about it.
-func (p *Proxy) Stop() {
-	holder, token := p.verify()
-	if holder != HolderOurs {
-		return
+// Stop asks a running proxy to drain and exit, and reports why no
+// drain was delivered or accepted. Nothing listening is already the
+// goal state, so that is a nil return. The drain request carries the
+// admin token, so it goes only to a holder that proved it knows that
+// token; an unproven holder is not Stop's to fight — its verdict's
+// reason comes back for the caller to surface.
+func (p *Proxy) Stop() error {
+	holder, token, why := p.verify()
+	switch holder {
+	case HolderNone:
+		return nil
+	case HolderForeign:
+		return why
 	}
 	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, nil)
 	if err != nil {
-		return
+		return err
 	}
 	authorize(req, token)
-	client := &http.Client{Timeout: probeTimeout}
-	resp, err := client.Do(req)
-	if err == nil {
-		resp.Body.Close()
+	resp, err := adminClient(adminTimeout).Do(req)
+	if err != nil {
+		return fmt.Errorf("proxy at %s: %w", p.addr, transportCause(err))
 	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		return p.answered(resp, "a drain request")
+	}
+	return nil
 }
 
 // authorize attaches the admin token the holder proved it knows.
@@ -299,34 +333,58 @@ func authorize(req *http.Request, token string) {
 	req.Header.Set(apiproxy.AdminHeader, token)
 }
 
-func (p *Proxy) get(path, token string, into any) error {
+func (p *Proxy) get(path, token string, into any, what string) error {
 	req, err := http.NewRequest(http.MethodGet, "http://"+p.addr+path, nil)
 	if err != nil {
 		return err
 	}
 	authorize(req, token)
-	return p.doJSON(req, into)
+	return p.doJSON(req, into, what, adminTimeout)
 }
 
-func (p *Proxy) doJSON(req *http.Request, into any) error {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
+// doJSON performs one management request and decodes its answer. Every
+// failure names the proxy, so a truncated or malformed body never
+// surfaces as a bare decoding error far from its cause.
+func (p *Proxy) doJSON(req *http.Request, into any, what string, timeout time.Duration) error {
+	resp, err := adminClient(timeout).Do(req)
 	if err != nil {
-		// A transport failure surfaces as a *url.Error whose message embeds
-		// the requested URL — which on the selfcheck path carries the
-		// project token. Report the cause without the URL so the token
-		// cannot reach an error string a caller prints.
-		var ue *url.Error
-		if errors.As(err, &ue) {
-			return fmt.Errorf("proxy at %s: %w", p.addr, ue.Err)
-		}
-		return fmt.Errorf("proxy at %s: %w", p.addr, err)
+		return fmt.Errorf("proxy at %s: %w", p.addr, transportCause(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("proxy at %s answered %s", p.addr, resp.Status)
+		return p.answered(resp, what)
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(into)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(into); err != nil {
+		return fmt.Errorf("proxy at %s sent an unreadable answer to %s: %w", p.addr, what, err)
+	}
+	return nil
+}
+
+// answered turns an unexpected status into an error naming the proxy.
+// A 401 means the admin token this CLI sent was not the serving one —
+// an authentication failure, never a stranger.
+func (p *Proxy) answered(resp *http.Response, what string) error {
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("%w at %s: it answered 401 Unauthorized to %s", ErrProxyUnverified, p.addr, what)
+	}
+	return fmt.Errorf("proxy at %s answered %s to %s", p.addr, resp.Status, what)
+}
+
+// adminClient is the one construction of the client a management
+// request rides; the timeout bounds the whole exchange.
+func adminClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout}
+}
+
+// transportCause strips the URL a *url.Error embeds — on the selfcheck
+// path it carries the project token, which must never reach an error
+// string a caller prints — and keeps the cause.
+func transportCause(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
 }
 
 // noteReuse records that a proxy of another version was left serving.
@@ -365,12 +423,16 @@ func (p *Proxy) waitHealthy() error {
 		// The bind may have been won by a sibling rather than this
 		// call's own spawn; any holder Ensure would reuse counts as
 		// healthy, or a loser would wait out a winner it defers to.
-		h, holder := p.Health()
+		h, holder, why := p.Health()
 		if holder == HolderOurs && !Supersedes(p.version, h.Version) {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("proxy did not become healthy at %s within %s (log: %s)", p.addr, startTimeout, p.layout.ProxyLog())
+			lastProbe := ""
+			if why != nil {
+				lastProbe = fmt.Sprintf(" (last probe: %v)", why)
+			}
+			return fmt.Errorf("proxy did not become healthy at %s within %s%s (log: %s)", p.addr, startTimeout, lastProbe, p.layout.ProxyLog())
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -397,12 +459,12 @@ func (p *Proxy) Supervise(ctx context.Context, idle time.Duration, stdout, stder
 // The flush request carries the admin token, so it goes only to a
 // holder that proved it knows that token.
 func (p *Proxy) Flush(force bool) (upload.FlushReply, error) {
-	holder, token := p.verify()
+	holder, token, why := p.verify()
 	switch holder {
 	case HolderNone:
 		return upload.FlushReply{}, fmt.Errorf("no proxy is listening at %s", p.addr)
 	case HolderForeign:
-		return upload.FlushReply{}, fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
+		return upload.FlushReply{}, why
 	}
 	flushURL := "http://" + p.addr + upload.FlushPath
 	if force {
@@ -413,17 +475,8 @@ func (p *Proxy) Flush(force bool) (upload.FlushReply, error) {
 		return upload.FlushReply{}, err
 	}
 	authorize(req, token)
-	client := &http.Client{Timeout: flushTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return upload.FlushReply{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return upload.FlushReply{}, fmt.Errorf("proxy at %s answered %s to a flush request", p.addr, resp.Status)
-	}
 	var reply upload.FlushReply
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&reply); err != nil {
+	if err := p.doJSON(req, &reply, "a flush request", flushTimeout); err != nil {
 		return upload.FlushReply{}, err
 	}
 	return reply, nil

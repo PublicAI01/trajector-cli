@@ -91,6 +91,28 @@ func TestUploadForceDrainsTheSpoolThroughTheProxy(t *testing.T) {
 	}
 }
 
+func TestUploadPrintsTheAuthenticationRemedyForAnUnverifiedProxy(t *testing.T) {
+	e := newUploadEnv(t)
+	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "dev"})
+	im.ReplayProof("00000000000000000000000000000000")
+	proxytest.PublishAdminToken(t, e.Layout(), im.Addr(), "feedfacefeedfacefeedfacefeedface")
+	t.Setenv(cli.ProxyAddrEnv, im.Addr())
+
+	got := e.Run("upload", "--force")
+	if got.Exit != 1 {
+		t.Fatalf("exit = %d (stderr: %q), want a loud failure", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stderr, "could not verify the proxy") || !strings.Contains(got.Stderr, "authentication problem") {
+		t.Errorf("stderr = %q, want the authentication reading offered", got.Stderr)
+	}
+	if strings.Contains(got.Stderr, "find and stop the process") {
+		t.Errorf("stderr = %q, must not advise hunting a process that may be our own proxy", got.Stderr)
+	}
+	if im.SawHeader(apiproxy.AdminHeader) {
+		t.Error("the admin token was sent to a holder that never proved it knows it")
+	}
+}
+
 func TestUploadRefusesAHealthzCopyingPortHolder(t *testing.T) {
 	e := newUploadEnv(t)
 	seedRawcall(e, "req-1", time.Now().UTC())

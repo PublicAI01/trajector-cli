@@ -254,9 +254,11 @@ func (a *app) exit(err error) int {
 	case errors.Is(err, lifecycle.ErrDeclined):
 		fmt.Fprintln(a.stdout, "Agreement declined; nothing was changed.")
 		return 1
-	case errors.Is(err, lifecycle.ErrPortOccupied):
+	case errors.Is(err, lifecycle.ErrPortOccupied), errors.Is(err, lifecycle.ErrProxyUnverified):
 		fmt.Fprintf(a.stderr, "trajector: WARNING: %v\n", err)
-		fmt.Fprintf(a.stderr, "trajector: %s\n", lifecycle.PortOccupiedRemedy)
+		if remedy := lifecycle.ProxyRemedy(err); remedy != "" {
+			fmt.Fprintf(a.stderr, "trajector: %s\n", remedy)
+		}
 		return 1
 	default:
 		return a.fail(err)

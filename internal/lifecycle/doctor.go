@@ -153,11 +153,14 @@ func doctorPause(r *doctorReport, st ProjectStatus) {
 	r.problem("recording is paused everywhere: %s", st.PauseReason.Explain())
 }
 
-// doctorProxy checks who holds the proxy port. A foreign holder is the
-// one finding doctor must shout about and can never repair: injected
-// projects would send credentials to it. Among our own proxies only a
-// strictly older release is replaced; any other version keeps serving,
-// or two coexisting builds would drain each other on every run.
+// doctorProxy checks who holds the proxy port. An unproven holder is
+// the one finding doctor must shout about and can never repair:
+// injected projects would send credentials to it. The verdict's reason
+// decides the advice — only a proven stranger earns the stop-the-process
+// remedy; an authentication failure may be the user's own proxy. Among
+// our own proxies only a strictly older release is replaced; any other
+// version keeps serving, or two coexisting builds would drain each
+// other on every run.
 func (m *Machine) doctorProxy(r *doctorReport, d Diagnosis) {
 	switch d.Proxy.Holder {
 	case proxylife.HolderOurs:
@@ -176,8 +179,10 @@ func (m *Machine) doctorProxy(r *doctorReport, d Diagnosis) {
 			r.ok("proxy running at %s (version %s, up %s)", d.Proxy.Addr, h.Version, up)
 		}
 	case proxylife.HolderForeign:
-		r.problem("%s is held by a process that is not the trajector proxy.", d.Proxy.Addr)
-		r.detail("%s", PortOccupiedRemedy)
+		r.problem("%v", d.Proxy.Reason)
+		if remedy := ProxyRemedy(d.Proxy.Reason); remedy != "" {
+			r.detail("%s", remedy)
+		}
 	default:
 		if !d.Project.Enabled {
 			r.ok("proxy not running; it starts on demand with the next session")

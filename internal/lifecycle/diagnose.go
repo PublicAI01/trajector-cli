@@ -14,6 +14,11 @@ type ProxyState struct {
 	Holder proxylife.Holder
 	// Health is meaningful only when Holder is HolderOurs.
 	Health proxylife.Health
+	// Reason explains a HolderForeign verdict: which way the holder's
+	// proof failed. It is what separates an authentication problem from
+	// a genuine stranger, so surfaces render it instead of re-deriving
+	// a verdict of their own.
+	Reason error
 }
 
 // SpoolState is the capture spool as one readable value.
@@ -77,8 +82,8 @@ func (m *Machine) Diagnose(dir string) (Diagnosis, error) {
 	// startup grace: only callers that act on the verdict pay to wait
 	// out a sibling's startup. A diagnosis reports the port as it
 	// stands and must answer at once.
-	h, holder := m.proxy.Health()
-	d.Proxy = ProxyState{Addr: m.proxy.Addr(), Holder: holder, Health: h}
+	h, holder, why := m.proxy.Health()
+	d.Proxy = ProxyState{Addr: m.proxy.Addr(), Holder: holder, Health: h, Reason: why}
 	if st.Enabled && holder == proxylife.HolderOurs {
 		if reply, err := m.proxy.Selfcheck(st.Token); err == nil {
 			d.Selfcheck = &reply
