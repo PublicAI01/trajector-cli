@@ -50,11 +50,14 @@ reported, never fought — enable refuses to inject, and session hooks warn.
 
 There is no daemon. Session hooks injected by enable run
 `trajector hook ensure-proxy` at session start and prompt submit; any CLI
-touchpoint does the same. If a healthy proxy of the current version is
-listening, that is a no-op; a stale-version proxy is asked to drain
-in-flight requests and hand the port over; nothing listening starts a
-supervisor that restarts a crashed proxy with backoff. Idle for 30 minutes,
-the proxy exits on its own.
+touchpoint does the same. If a healthy proxy is listening, that is a
+no-op; only a proxy announcing a strictly older release is asked to
+drain in-flight requests and hand the port over — an equal or newer
+proxy is reused, and so is one whose version cannot be ordered against
+this build's (a dev build, for instance), so coexisting builds never
+drain each other. Nothing listening starts a supervisor that restarts a
+crashed proxy with backoff. Idle for 30 minutes, the proxy exits on its
+own.
 
 ## Capture
 

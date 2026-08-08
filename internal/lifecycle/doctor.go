@@ -155,20 +155,26 @@ func doctorPause(r *doctorReport, st ProjectStatus) {
 
 // doctorProxy checks who holds the proxy port. A foreign holder is the
 // one finding doctor must shout about and can never repair: injected
-// projects would send credentials to it.
+// projects would send credentials to it. Among our own proxies only a
+// strictly older release is replaced; any other version keeps serving,
+// or two coexisting builds would drain each other on every run.
 func (m *Machine) doctorProxy(r *doctorReport, d Diagnosis) {
 	switch d.Proxy.Holder {
 	case proxylife.HolderOurs:
 		h := d.Proxy.Health
-		if h.Version != m.deps.Version {
+		up := time.Duration(h.UptimeSeconds) * time.Second
+		switch {
+		case proxylife.Supersedes(m.deps.Version, h.Version):
 			if err := m.proxy.Ensure(); err != nil {
 				r.problem("a trajector proxy version %s holds %s and could not be replaced: %v", h.Version, d.Proxy.Addr, err)
 				return
 			}
 			r.fixed("replaced the version %s proxy at %s with this build (%s)", h.Version, d.Proxy.Addr, m.deps.Version)
-			return
+		case h.Version != m.deps.Version:
+			r.ok("proxy running at %s (version %s, up %s); %s", d.Proxy.Addr, h.Version, up, proxylife.ReuseReason)
+		default:
+			r.ok("proxy running at %s (version %s, up %s)", d.Proxy.Addr, h.Version, up)
 		}
-		r.ok("proxy running at %s (version %s, up %s)", d.Proxy.Addr, h.Version, time.Duration(h.UptimeSeconds)*time.Second)
 	case proxylife.HolderForeign:
 		r.problem("%s is held by a process that is not the trajector proxy.", d.Proxy.Addr)
 		r.detail("%s", PortOccupiedRemedy)

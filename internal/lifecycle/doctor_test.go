@@ -11,6 +11,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
@@ -239,6 +240,42 @@ func TestDoctorWarnsAboutAHealthzCopyingPortHolder(t *testing.T) {
 	}
 	if im.SawHeader(apiproxy.AdminHeader) {
 		t.Error("the admin token was sent to a holder that never proved it knows it")
+	}
+}
+
+func TestDoctorLeavesANewerProxyServing(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Version = "1.0.0"
+	e.startProxy(proxytest.WithVersion("2.0.0"))
+	problems, out := e.doctor()
+
+	if problems != 0 {
+		t.Fatalf("problems = %d with a newer proxy on the port, output:\n%s", problems, out)
+	}
+	if strings.Contains(out, "replaced the version") {
+		t.Errorf("doctor = %q, want the newer proxy left alone", out)
+	}
+	if !strings.Contains(out, proxylife.ReuseReason) {
+		t.Errorf("doctor = %q, want the takeover rule stated", out)
+	}
+	if got := e.proxyEnv.Healthz().Version; got != "2.0.0" {
+		t.Errorf("proxy version after doctor = %q, want the newer proxy still serving", got)
+	}
+}
+
+func TestDoctorLeavesAProxyItCannotOrderAgainstServing(t *testing.T) {
+	e := newEnv(t) // this build announces "testv", which no order covers
+	e.startProxy(proxytest.WithVersion("1.2.3"))
+	problems, out := e.doctor()
+
+	if problems != 0 {
+		t.Fatalf("problems = %d with an unordered version pair, output:\n%s", problems, out)
+	}
+	if !strings.Contains(out, proxylife.ReuseReason) {
+		t.Errorf("doctor = %q, want the takeover rule stated", out)
+	}
+	if got := e.proxyEnv.Healthz().Version; got != "1.2.3" {
+		t.Errorf("proxy version after doctor = %q, want the release proxy still serving", got)
 	}
 }
 

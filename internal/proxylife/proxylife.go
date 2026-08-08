@@ -130,22 +130,27 @@ func (p *Proxy) Addr() string { return p.addr }
 // BaseURL is the base URL injected into a project enabled with token.
 func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/" + token }
 
-// Ensure makes sure a healthy proxy of this version is listening:
-// already-healthy is a no-op, a stale version is asked to drain and
-// replaced, nothing listening is started. Concurrent callers converge
-// because the port bind is the single-instance lock and losers defer to
-// the winner.
+// Ensure makes sure a healthy proxy is listening: already-healthy is a
+// no-op, a strictly older release is asked to drain and replaced, and
+// nothing listening is started. A holder whose version is equal, newer,
+// or out of order with this build's — see Supersedes — is reused as it
+// stands, and a differing-version reuse is noted in the proxy log.
+// Concurrent callers converge because the port bind is the
+// single-instance lock and losers defer to the winner.
 func (p *Proxy) Ensure() error {
 	switch h, holder := p.settledHealth(); holder {
 	case HolderForeign:
 		return fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
 	case HolderOurs:
-		if h.Version == p.version {
+		if !Supersedes(p.version, h.Version) {
+			if h.Version != p.version {
+				p.noteReuse(h.Version)
+			}
 			return nil
 		}
-		// A proxy from another binary version holds the port. Left
-		// alone it could live until its next idle exit, so ask it to
-		// drain and take over.
+		// A strictly older release holds the port. Left alone it could
+		// live until its next idle exit, so ask it to drain and take
+		// over.
 		p.Stop()
 		if err := p.waitPortFree(drainTimeout); err != nil {
 			return err
@@ -322,6 +327,21 @@ func (p *Proxy) doJSON(req *http.Request, into any) error {
 	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(into)
 }
 
+// noteReuse records that a proxy of another version was left serving.
+// The line goes to the proxy log, where the serving proxy's own output
+// already lands, so coexisting builds leave one combined record of who
+// deferred to whom. Best-effort by design: failing to write the line
+// never changes the decision.
+func (p *Proxy) noteReuse(holder string) {
+	f, err := openLogAppend(p.layout.ProxyLog())
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s this build (%s) reuses the version %s proxy at %s: %s\n",
+		time.Now().UTC().Format(time.RFC3339), p.version, holder, p.addr, ReuseReason)
+}
+
 func (p *Proxy) waitPortFree(within time.Duration) error {
 	deadline := time.Now().Add(within)
 	for {
@@ -340,8 +360,11 @@ func (p *Proxy) waitPortFree(within time.Duration) error {
 func (p *Proxy) waitHealthy() error {
 	deadline := time.Now().Add(startTimeout)
 	for {
+		// The bind may have been won by a sibling rather than this
+		// call's own spawn; any holder Ensure would reuse counts as
+		// healthy, or a loser would wait out a winner it defers to.
 		h, holder := p.Health()
-		if holder == HolderOurs && h.Version == p.version {
+		if holder == HolderOurs && !Supersedes(p.version, h.Version) {
 			return nil
 		}
 		if time.Now().After(deadline) {

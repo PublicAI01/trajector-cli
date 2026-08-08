@@ -98,9 +98,11 @@ func (e *env) io() lifecycle.IO {
 
 // startProxy serves a real capture proxy against this device's routing
 // table and spool, so a self-check runs against the genuine article.
-func (e *env) startProxy() {
+// It announces this build's version unless an option says otherwise.
+func (e *env) startProxy(opts ...proxytest.Option) {
 	e.t.Helper()
-	e.proxyEnv = proxytest.New(e.t, proxytest.WithLayout(e.deps.Layout), proxytest.WithVersion("testv"))
+	base := []proxytest.Option{proxytest.WithLayout(e.deps.Layout), proxytest.WithVersion(e.deps.Version)}
+	e.proxyEnv = proxytest.New(e.t, append(base, opts...)...)
 	e.deps.ProxyAddr = e.proxyEnv.Addr()
 }
 

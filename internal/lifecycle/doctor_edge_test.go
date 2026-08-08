@@ -3,19 +3,25 @@ package lifecycle_test
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
-func TestDoctorReportsAStaleProxyItCannotReplace(t *testing.T) {
+func TestDoctorReportsAnOlderProxyItCannotReplace(t *testing.T) {
 	e := newEnv(t)
-	e.startProxy()
-	// The listening proxy identifies as another build. Replacing it means
-	// draining it and spawning this binary — and this environment's exec
-	// path does not exist, so the takeover must fail loudly, not silently.
-	e.deps.Version = "testv2"
-
+	e.deps.Version = "2.0.0"
+	e.startProxy(proxytest.WithVersion("1.0.0"))
+	// Replacing the strictly older proxy means draining it and spawning
+	// this binary — and this environment's exec path does not exist, so
+	// the takeover must fail loudly, not silently.
 	problems, out := e.doctor()
+
+	if err := e.proxyEnv.WaitStopped(5 * time.Second); err != nil {
+		t.Errorf("Serve = %v after doctor's takeover, want the older proxy drained", err)
+	}
 	if problems == 0 {
-		t.Fatalf("problems = 0 with an irreplaceable stale proxy, output:\n%s", out)
+		t.Fatalf("problems = 0 with an irreplaceable older proxy, output:\n%s", out)
 	}
 	if !strings.Contains(out, "could not be replaced") {
 		t.Errorf("doctor = %q, want the failed takeover reported", out)
