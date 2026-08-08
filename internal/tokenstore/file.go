@@ -34,7 +34,7 @@ func (s fileStore) Load(name string) ([]byte, error) {
 	if err := checkName(name); err != nil {
 		return nil, err
 	}
-	secret, err := os.ReadFile(s.path(name))
+	secret, err := fsatomic.ReadFile(s.path(name))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, errNotFound
 	}

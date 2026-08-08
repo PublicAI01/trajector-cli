@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
@@ -110,7 +111,7 @@ func (s *Sandbox) SeedTornRawcall(id, projectIDHash string, at time.Time) {
 	if err != nil || len(matches) != 1 {
 		s.t.Fatalf("locating the stored rawcall %s: %v (matches: %v)", id, err, matches)
 	}
-	data, err := os.ReadFile(matches[0])
+	data, err := fsatomic.ReadFile(matches[0])
 	if err != nil {
 		s.t.Fatal(err)
 	}

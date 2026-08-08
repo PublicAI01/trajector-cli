@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
@@ -61,7 +62,7 @@ func (m *Machine) DoctorBundle(projectDir string, io IO) (string, error) {
 	for _, name := range upload.BookkeepingFiles() {
 		// Bookkeeping files hold only ids, timestamps, and service
 		// settings by design; they are copied verbatim.
-		if data, err := os.ReadFile(filepath.Join(uploadDir, name)); err == nil {
+		if data, err := fsatomic.ReadFile(filepath.Join(uploadDir, name)); err == nil {
 			b.add("upload/"+name, data)
 		}
 	}

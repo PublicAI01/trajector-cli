@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
 // fileSnapshot remembers one file's exact pre-enable state so rollback
@@ -24,7 +26,7 @@ func takeSnapshots(paths ...string) (snapshots, error) {
 	var s snapshots
 	for _, path := range paths {
 		snap := fileSnapshot{path: path}
-		data, err := os.ReadFile(path)
+		data, err := fsatomic.ReadFile(path)
 		switch {
 		case err == nil:
 			info, err := os.Stat(path)

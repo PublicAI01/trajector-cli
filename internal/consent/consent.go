@@ -177,7 +177,7 @@ func (s *Store) MarkPrompted(projectIDHash string) (first bool, err error) {
 }
 
 func (s *Store) read() (storeFile, error) {
-	data, err := os.ReadFile(s.path)
+	data, err := fsatomic.ReadFile(s.path)
 	if os.IsNotExist(err) {
 		data = nil
 	} else if err != nil {

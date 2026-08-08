@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
 // Rawcall is one stored record as a reader sees it.
@@ -98,7 +99,7 @@ func (s *Spool) Each(visit func(Rawcall) error) error {
 			return err
 		}
 		for _, f := range files {
-			data, err := os.ReadFile(f.path)
+			data, err := fsatomic.ReadFile(f.path)
 			if err != nil {
 				return err
 			}
@@ -140,7 +141,7 @@ func (s *Spool) DeleteProject(projectIDHash string) (int, error) {
 		if line, ok := indexed[f.id]; ok && line.ProjectIDHash != "" {
 			return line.ProjectIDHash == projectIDHash, nil
 		}
-		data, err := os.ReadFile(f.path)
+		data, err := fsatomic.ReadFile(f.path)
 		if err != nil {
 			return false, err
 		}
@@ -240,7 +241,7 @@ func (s *Spool) Oldest() (time.Time, bool) {
 // rebuild-from-disk case, not a failure, and an unreadable line costs
 // only the metadata it carried.
 func readIndex(dayDir string) (map[string]indexLine, error) {
-	data, err := os.ReadFile(filepath.Join(dayDir, indexName))
+	data, err := fsatomic.ReadFile(filepath.Join(dayDir, indexName))
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
