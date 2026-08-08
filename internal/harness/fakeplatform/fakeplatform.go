@@ -40,28 +40,57 @@ type Response struct {
 // renamed field breaks here at compile time instead of at decode time
 // in every test that spelled the shape by hand.
 func (s *Server) PairableAs(pairingID, deviceToken string) {
+	s.stubPairingStart(pairingID)
+	s.stubPaired(pairingID, deviceToken)
+}
+
+// PairableAsAfterOutage scripts a pairing whose first status check
+// fails with a service-side error before ending paired as deviceToken.
+func (s *Server) PairableAsAfterOutage(pairingID, deviceToken string) {
+	s.stubPairingStart(pairingID)
+	s.stubPairingOutage(pairingID)
+	s.stubPaired(pairingID, deviceToken)
+}
+
+// PairingOutage scripts a pairing whose every status check fails with a
+// service-side error.
+func (s *Server) PairingOutage(pairingID string) {
+	s.stubPairingStart(pairingID)
+	s.stubPairingOutage(pairingID)
+}
+
+// PairingVanishes scripts a pairing the service no longer recognizes.
+func (s *Server) PairingVanishes(pairingID string) {
+	s.stubPairingStart(pairingID)
+	s.Stub("GET", "/v1/pairings/"+pairingID, JSON(404, map[string]any{"error": "unknown pairing"}))
+}
+
+// PairingExpires scripts a pairing whose link expires before approval.
+func (s *Server) PairingExpires(pairingID string) {
+	s.stubPairingStart(pairingID)
+	s.Stub("GET", "/v1/pairings/"+pairingID, JSON(200, platform.PairingResult{
+		Status: platform.PairingExpired,
+	}))
+}
+
+func (s *Server) stubPairingStart(pairingID string) {
 	s.Stub("POST", "/v1/pairings", JSON(200, platform.Pairing{
 		PairingID:       pairingID,
 		VerificationURL: "https://example.com/pair/" + pairingID,
 		UserCode:        "ABCD-1234",
 		PollIntervalMS:  1,
 	}))
+}
+
+func (s *Server) stubPaired(pairingID, deviceToken string) {
 	s.Stub("GET", "/v1/pairings/"+pairingID, JSON(200, platform.PairingResult{
 		Status:      platform.PairingPaired,
 		DeviceToken: deviceToken,
 	}))
 }
 
-// PairingExpires scripts a pairing whose link expires before approval.
-func (s *Server) PairingExpires(pairingID string) {
-	s.Stub("POST", "/v1/pairings", JSON(200, platform.Pairing{
-		PairingID:       pairingID,
-		VerificationURL: "https://example.com/pair/" + pairingID,
-		PollIntervalMS:  1,
-	}))
-	s.Stub("GET", "/v1/pairings/"+pairingID, JSON(200, platform.PairingResult{
-		Status: platform.PairingExpired,
-	}))
+func (s *Server) stubPairingOutage(pairingID string) {
+	s.Stub("GET", "/v1/pairings/"+pairingID, JSON(502, map[string]any{"error": "bad gateway"}))
 }
 
 // JSON builds a response with a JSON-encoded body.

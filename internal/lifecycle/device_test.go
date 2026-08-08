@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
@@ -47,6 +48,70 @@ func TestLoginOnAlreadyPairedDeviceStillReachesTheSignedInState(t *testing.T) {
 	}
 	if reason := e.sandbox.PausedReason(); reason != "" {
 		t.Errorf("pause %q survived a re-login", reason)
+	}
+}
+
+func TestLoginRidesOutATransientPairingCheckFailure(t *testing.T) {
+	e := newUnpairedEnv(t)
+	e.service.PairableAsAfterOutage("pair-1", "dev-tok-fake")
+
+	if err := e.machine().Login(e.io()); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if !e.machine().Paired() {
+		t.Error("device not paired after login")
+	}
+}
+
+func TestLoginKeepsPollingThroughAnOutageUntilTheWindowCloses(t *testing.T) {
+	e := newUnpairedEnv(t)
+	e.service.PairingOutage("pair-1")
+	now := e.deps.Now()
+	e.deps.Now = func() time.Time {
+		now = now.Add(time.Minute)
+		return now
+	}
+
+	err := e.machine().Login(e.io())
+	if err == nil || !strings.Contains(err.Error(), "timed out waiting for approval") {
+		t.Fatalf("login = %v, want the approval window reported closed", err)
+	}
+	if !strings.Contains(err.Error(), "502") {
+		t.Errorf("login = %v, want the last failed check named", err)
+	}
+	checks := 0
+	for _, r := range e.service.Requests() {
+		if r.Method == "GET" {
+			checks++
+		}
+	}
+	if checks < 2 {
+		t.Errorf("service saw %d status checks, want polling to continue past the first failure", checks)
+	}
+	if e.machine().Paired() {
+		t.Error("device paired despite a service outage")
+	}
+}
+
+func TestLoginStopsWhenTheServiceNoLongerKnowsThePairing(t *testing.T) {
+	e := newUnpairedEnv(t)
+	e.service.PairingVanishes("pair-1")
+
+	err := e.machine().Login(e.io())
+	if err == nil || !strings.Contains(err.Error(), "checking pairing") {
+		t.Fatalf("login = %v, want the refused check surfaced", err)
+	}
+	checks := 0
+	for _, r := range e.service.Requests() {
+		if r.Method == "GET" {
+			checks++
+		}
+	}
+	if checks != 1 {
+		t.Errorf("service saw %d status checks, want no retry of a positively refused pairing", checks)
+	}
+	if e.machine().Paired() {
+		t.Error("device paired despite a refused pairing check")
 	}
 }
 
