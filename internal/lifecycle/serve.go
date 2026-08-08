@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -91,6 +92,16 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 		Logf:            logf,
 		Internal:        uploader.Handler(apiproxy.ServiceName),
 		AdminTokenFile:  layout.AdminTokenFile(),
+		// One last threshold check on the way out, run while this process
+		// still holds the listen port: the bind is what excludes the next
+		// proxy's flusher, so no upload of this process may continue past
+		// its release, or the two would drain the same spool records
+		// under different batch ids.
+		BeforeShutdown: func() {
+			if ferr := uploader.Close(); ferr != nil {
+				logf("final flush: %v", ferr)
+			}
+		},
 	})
 	if err != nil {
 		return err
@@ -109,12 +120,6 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 	go periodicFlush(ctx, served, uploader, logf)
 	err = server.Serve(ctx, l)
 	close(served)
-	// One last threshold check on the way out: the proxy is the only
-	// resident process, so anything it leaves unflushed waits for the
-	// next session.
-	if _, ferr := uploader.Flush(false); ferr != nil {
-		logf("final flush: %v", ferr)
-	}
 	return err
 }
 
@@ -132,6 +137,10 @@ func periodicFlush(ctx context.Context, served chan struct{}, uploader *upload.U
 			return
 		case <-ticker.C:
 			if _, err := uploader.Flush(false); err != nil {
+				if errors.Is(err, upload.ErrClosed) {
+					// The exit flush already ran; the cadence is done.
+					return
+				}
 				logf("flush: %v", err)
 			}
 		}

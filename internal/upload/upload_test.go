@@ -394,6 +394,51 @@ func TestNewRejectsMissingWiring(t *testing.T) {
 	}
 }
 
+func TestCloseRunsAFinalFlushAndThenRefusesToFlush(t *testing.T) {
+	f := newFixture(t)
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
+
+	if err := f.uploader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if f.spool.Usage() != 0 {
+		t.Error("the final flush left aged records in the spool")
+	}
+	if f.uploadCount() != 1 {
+		t.Fatalf("service saw %d requests, want 1", f.uploadCount())
+	}
+
+	f.storeRawcall(t, "req-2", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); !errors.Is(err, upload.ErrClosed) {
+		t.Fatalf("flush after close = %v, want ErrClosed", err)
+	}
+	if err := f.uploader.Close(); err != nil {
+		t.Errorf("second close = %v, want nil", err)
+	}
+	if f.uploadCount() != 1 {
+		t.Errorf("service saw %d requests after close, want still 1", f.uploadCount())
+	}
+	if f.spool.Usage() == 0 {
+		t.Error("a record stored after close was deleted")
+	}
+}
+
+func TestCloseKeepsRecordsBelowTheUploadThresholds(t *testing.T) {
+	f := newFixture(t)
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	if err := f.uploader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(f.server.Requests()); got != 0 {
+		t.Errorf("service saw %d requests, want 0", got)
+	}
+	if f.spool.Usage() == 0 {
+		t.Error("close drained a spool below the thresholds")
+	}
+}
+
 func rejectStub(status int, detail string) fakeplatform.Response {
 	return fakeplatform.JSON(status, map[string]any{"error": detail})
 }

@@ -2,7 +2,6 @@ package lifecycle_test
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -39,19 +38,7 @@ func servedProxy(t *testing.T, e *env) {
 
 func TestUploadReportsEachOutcomeThroughTheResidentProxy(t *testing.T) {
 	e := newEnv(t)
-	e.service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
-		parts, err := fakeplatform.Parts(r)
-		if err != nil {
-			return fakeplatform.JSON(590, map[string]any{"error": err.Error()})
-		}
-		var env struct {
-			BatchID string `json:"batch_id"`
-		}
-		if err := json.Unmarshal(parts["batch"], &env); err != nil || env.BatchID == "" {
-			return fakeplatform.JSON(590, map[string]any{"error": "no batch id in envelope"})
-		}
-		return fakeplatform.JSON(200, map[string]any{"batch_id": env.BatchID})
-	})
+	e.service.StubFunc("POST", "/v1/batches", ackBatch)
 	servedProxy(t, e)
 	m := e.machine()
 

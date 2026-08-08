@@ -133,8 +133,19 @@ type Config struct {
 	// reserved prefix, after the proxy's built-ins. It is not part of
 	// the capture path: a mounted call may legitimately run for minutes
 	// (a flush of a long backlog), so it never counts as inflight and
-	// cannot hold the drain/idle machinery open. Nil answers not-found.
+	// cannot hold the drain/idle machinery open. The exemption cuts
+	// both ways on exit: nothing in this server orders a running
+	// mounted call before the port release, so mounted work that must
+	// not outlive the bind has to be fenced by BeforeShutdown through
+	// the mounted component's own lock. Nil answers not-found.
 	Internal http.Handler
+	// BeforeShutdown, when set, runs exactly once, after the server has
+	// decided to exit — drain request, idle timeout, or context
+	// cancellation — and before the listener is closed. The port bind
+	// is the machine-wide exclusion for work that must never run in two
+	// processes at once (the spool's single flusher), so such work
+	// takes its last turn here, while a successor still cannot bind.
+	BeforeShutdown func()
 	// AdminTokenFile is where Serve publishes the token that authorizes
 	// the reserved endpoints, written 0600 once this instance owns the
 	// port and removed on exit. Anything able to read it — the same
@@ -316,6 +327,9 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 				if !s.idle() {
 					continue
 				}
+			}
+			if s.cfg.BeforeShutdown != nil {
+				s.cfg.BeforeShutdown()
 			}
 			drainCtx, cancel := context.WithTimeout(context.Background(), s.cfg.DrainTimeout)
 			defer cancel()

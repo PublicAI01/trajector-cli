@@ -95,6 +95,9 @@ type Uploader struct {
 	deps Deps
 	mu   sync.Mutex
 
+	// closed refuses every flush after Close ran its last one.
+	closed bool
+
 	// Both gates suppress automatic flushes only; a forced flush walks
 	// straight past them. They reset on any acknowledged upload and are
 	// deliberately not persisted: a fresh process (post-upgrade, or just
@@ -128,6 +131,10 @@ func New(deps Deps) (*Uploader, error) {
 	return &Uploader{deps: deps}, nil
 }
 
+// ErrClosed reports a flush requested after Close: this uploader has
+// done its last work and refuses to start more.
+var ErrClosed = errors.New("upload: the uploader has shut down")
+
 // Flush uploads what the spool holds. Unforced, it first checks the
 // thresholds; forced, it uploads regardless. Either way a flush that
 // starts drains the spool to empty, one bounded batch at a time, and
@@ -136,7 +143,32 @@ func New(deps Deps) (*Uploader, error) {
 func (u *Uploader) Flush(force bool) (Result, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.closed {
+		return Result{}, ErrClosed
+	}
+	return u.flush(force)
+}
 
+// Close runs the uploader's last flush — unforced, the same threshold
+// check the periodic cadence makes — and then refuses every later
+// Flush with ErrClosed. It must be called while this process still
+// holds whatever excludes a successor flusher (for the proxy, its
+// listen port): a flush already running when Close is called finishes
+// under the same lock, so once Close returns, no upload activity from
+// this process can overlap a successor's.
+func (u *Uploader) Close() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.closed {
+		return nil
+	}
+	u.closed = true
+	_, err := u.flush(false)
+	return err
+}
+
+// flush is Flush without the lock and the closed gate.
+func (u *Uploader) flush(force bool) (Result, error) {
 	res := Result{Outcome: Empty}
 
 	token, err := u.deps.DeviceToken()

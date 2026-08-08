@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -76,19 +77,7 @@ func TestServeProxyHostsCaptureAndTheFlushEndpoint(t *testing.T) {
 	addr := freeAddr(t)
 	e.deps.ProxyAddr = addr
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	e.service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
-		parts, err := fakeplatform.Parts(r)
-		if err != nil {
-			return fakeplatform.JSON(590, map[string]any{"error": err.Error()})
-		}
-		var env struct {
-			BatchID string `json:"batch_id"`
-		}
-		if err := json.Unmarshal(parts["batch"], &env); err != nil || env.BatchID == "" {
-			return fakeplatform.JSON(590, map[string]any{"error": "no batch id in envelope"})
-		}
-		return fakeplatform.JSON(200, map[string]any{"batch_id": env.BatchID})
-	})
+	e.service.StubFunc("POST", "/v1/batches", ackBatch)
 
 	served := make(chan error, 1)
 	go func() {
@@ -174,6 +163,188 @@ func TestServeProxySurfacesASpoolFailure(t *testing.T) {
 	err := e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "spool") {
 		t.Errorf("ServeProxy with a blocked spool = %v, want a spool error", err)
+	}
+}
+
+func TestServeProxyFinishesItsExitFlushBeforeReleasingThePort(t *testing.T) {
+	e := newEnv(t)
+	addr := freeAddr(t)
+	e.deps.ProxyAddr = addr
+	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC().Add(-25*time.Hour))
+
+	portHeldDuringUpload := make(chan bool, 1)
+	e.service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			conn.Close()
+		}
+		portHeldDuringUpload <- err == nil
+		return ackBatch(r)
+	})
+
+	served := make(chan error, 1)
+	go func() {
+		served <- e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
+	}()
+	waitHealthy(t, e, addr)
+
+	drain := adminPost(t, e, "http://"+addr+apiproxy.DrainPath)
+	drain.Body.Close()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("ServeProxy = %v after a drain, want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("served proxy did not exit after a drain")
+	}
+
+	select {
+	case held := <-portHeldDuringUpload:
+		if !held {
+			t.Error("the exit flush uploaded after the listen port was released")
+		}
+	default:
+		t.Fatal("the drain exit never flushed the aged spool record")
+	}
+	if got := len(e.service.Requests()); got != 1 {
+		t.Errorf("service saw %d requests, want the one exit-flush batch", got)
+	}
+	if n := len(e.sandbox.Rawcalls()); n != 0 {
+		t.Errorf("spool holds %d rawcalls after the exit flush", n)
+	}
+}
+
+func TestProxyTakeoverNeverUploadsARecordUnderTwoBatchIDs(t *testing.T) {
+	e := newEnv(t)
+	addr := freeAddr(t)
+	e.deps.ProxyAddr = addr
+	e.sandbox.SeedRawcall("req-old", "hash-p1", time.Now().UTC().Add(-25*time.Hour))
+
+	// The first upload is held open, standing in for a slow service, so
+	// a successor wants the port while the predecessor is still
+	// flushing. The first upload carrying req-new fails once, so the
+	// batch id minted for it must survive the takeover to be retried.
+	uploadStarted := make(chan struct{})
+	holdFirst := make(chan struct{}, 1)
+	holdFirst <- struct{}{}
+	failNewOnce := make(chan struct{}, 1)
+	failNewOnce <- struct{}{}
+	e.service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		b, err := parseBatch(r)
+		if err != nil {
+			return fakeplatform.JSON(590, map[string]any{"error": err.Error()})
+		}
+		select {
+		case <-holdFirst:
+			close(uploadStarted)
+			time.Sleep(3 * time.Second)
+		default:
+		}
+		if slices.Contains(b.RequestIDs, "req-new") {
+			select {
+			case <-failNewOnce:
+				return fakeplatform.JSON(503, map[string]any{"error": "temporarily down"})
+			default:
+			}
+		}
+		return fakeplatform.JSON(200, map[string]any{"batch_id": b.BatchID})
+	})
+
+	predecessor := make(chan error, 1)
+	go func() {
+		predecessor <- e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
+	}()
+	waitHealthy(t, e, addr)
+
+	drain := adminPost(t, e, "http://"+addr+apiproxy.DrainPath)
+	drain.Body.Close()
+	select {
+	case <-uploadStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the drain never started an exit flush")
+	}
+
+	// A record captured while the predecessor is still flushing: both
+	// sides of the takeover now have records waiting to upload.
+	e.sandbox.SeedRawcall("req-new", "hash-p1", time.Now().UTC().Add(-25*time.Hour))
+
+	successorMachine := e.machine()
+	bound := make(chan struct{})
+	successor := make(chan error, 1)
+	go func() {
+		// Take the port the moment it is free, as a newer binary's
+		// takeover does after asking the old proxy to drain.
+		for {
+			conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+			if err != nil {
+				break
+			}
+			conn.Close()
+			time.Sleep(5 * time.Millisecond)
+		}
+		close(bound)
+		successor <- successorMachine.ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
+	}()
+	select {
+	case <-bound:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the port never came free for the successor")
+	}
+	waitHealthy(t, e, addr)
+	firstFlush := adminPost(t, e, "http://"+addr+upload.FlushPath+"?force=1")
+	firstFlush.Body.Close()
+
+	select {
+	case err := <-predecessor:
+		if err != nil {
+			t.Fatalf("predecessor ServeProxy = %v, want nil", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the predecessor proxy did not exit")
+	}
+
+	secondFlush := adminPost(t, e, "http://"+addr+upload.FlushPath+"?force=1")
+	var reply upload.FlushReply
+	if err := json.NewDecoder(secondFlush.Body).Decode(&reply); err != nil {
+		t.Fatal(err)
+	}
+	secondFlush.Body.Close()
+	if reply.Outcome != upload.Empty {
+		t.Errorf("flush after the takeover settled = %+v, want everything already uploaded", reply)
+	}
+
+	drain = adminPost(t, e, "http://"+addr+apiproxy.DrainPath)
+	drain.Body.Close()
+	select {
+	case err := <-successor:
+		if err != nil {
+			t.Errorf("successor ServeProxy = %v, want nil", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the successor proxy did not exit")
+	}
+
+	batchesByRecord := map[string]map[string]bool{}
+	for _, r := range e.service.Requests() {
+		b, err := parseBatch(r)
+		if err != nil {
+			t.Fatalf("unreadable upload request: %v", err)
+		}
+		for _, rid := range b.RequestIDs {
+			if batchesByRecord[rid] == nil {
+				batchesByRecord[rid] = map[string]bool{}
+			}
+			batchesByRecord[rid][b.BatchID] = true
+		}
+	}
+	for _, rid := range []string{"req-old", "req-new"} {
+		if got := len(batchesByRecord[rid]); got != 1 {
+			t.Errorf("%s was uploaded under %d batch ids, want exactly 1", rid, got)
+		}
+	}
+	if n := len(e.sandbox.Rawcalls()); n != 0 {
+		t.Errorf("spool holds %d rawcalls after the takeover, want 0", n)
 	}
 }
 
