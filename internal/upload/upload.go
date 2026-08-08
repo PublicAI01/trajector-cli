@@ -493,10 +493,16 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 		u.minClientVersion = upgrade.MinClientVersion
 		u.noteUpgradeRequired(upgrade.MinClientVersion)
 	case errors.As(err, &limited):
-		// RetryAfter arrives already capped at platform.MaxRetryAfter.
-		if limited.RetryAfter > 0 {
-			u.notBefore = u.deps.Now().Add(limited.RetryAfter)
+		// RetryAfter arrives already capped at platform.MaxRetryAfter. A
+		// rate limit that names no pause still demanded one: without a
+		// default, automatic flushes would keep their full cadence
+		// against a service that just asked them to slow down.
+		pause := limited.RetryAfter
+		if pause <= 0 {
+			pause = defaultRateLimitPause
+			err = fmt.Errorf("%w; automatic flushes wait %s", err, pause)
 		}
+		u.notBefore = u.deps.Now().Add(pause)
 	case errors.As(err, &rejected):
 		// The service says this batch can never be accepted. Move its
 		// records aside so the uploads behind it flow again; nothing is
@@ -559,6 +565,12 @@ func (u *Uploader) collect(limit int64) ([]spool.Rawcall, error) {
 // maxTimeoutBackoff caps the pause between timed-out attempts, so
 // backing off can never mute automatic uploads for good.
 const maxTimeoutBackoff = 15 * time.Minute
+
+// defaultRateLimitPause is how long automatic flushes hold off after a
+// rate limit that names no Retry-After: long enough to actually shed
+// load, short enough to resume promptly once the limit lifts. A service
+// wanting a different pause names one.
+const defaultRateLimitPause = 5 * time.Minute
 
 // timeoutBackoff is how long automatic flushes hold off after the nth
 // consecutive timed-out attempt: doubling from a minute, so a

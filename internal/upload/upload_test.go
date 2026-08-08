@@ -676,6 +676,39 @@ func TestTheRetryAfterPauseIsCapped(t *testing.T) {
 	}
 }
 
+func TestARateLimitWithoutRetryAfterDefersAutomaticFlushes(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(429, map[string]any{}))
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
+
+	res, err := f.uploader.Flush(true)
+	if err == nil {
+		t.Fatal("429 did not surface")
+	}
+	if res.Outcome != upload.Deferred {
+		t.Fatalf("outcome = %q, want %q", res.Outcome, upload.Deferred)
+	}
+	if !strings.Contains(err.Error(), "wait") {
+		t.Errorf("flush error = %q, want the default pause named", err)
+	}
+
+	f.now = f.now.Add(4 * time.Minute)
+	res, err = f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.Deferred {
+		t.Fatalf("automatic flush four minutes into the pause = %+v, %v", res, err)
+	}
+	if f.uploadCount() != 1 {
+		t.Fatalf("service saw %d requests during the pause, want 1", f.uploadCount())
+	}
+
+	f.now = f.now.Add(time.Minute + time.Second)
+	res, err = f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("flush after the pause = %+v, %v", res, err)
+	}
+}
+
 func timeoutStub() fakeplatform.Response {
 	return fakeplatform.JSON(408, map[string]any{})
 }
