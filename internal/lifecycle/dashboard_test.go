@@ -215,6 +215,53 @@ func TestStatusWarnsAboutRejectedBatches(t *testing.T) {
 	}
 }
 
+func TestStatusRendersEverySectionWhenTheSpoolCannotOpen(t *testing.T) {
+	e := newEnv(t)
+	writeUploadFile(t, e, "handshake.json", map[string]any{"notice": "scheduled maintenance on Friday"})
+	e.obstruct(e.layout().SpoolDir())
+	out := e.statusOutput()
+
+	if want := "the capture spool at " + e.layout().SpoolDir() + " is not usable"; !strings.Contains(out, want) {
+		t.Errorf("status = %q, want the spool section to contain %q", out, want)
+	}
+	for _, want := range []string{"Uploads", "Never uploaded", "scheduled maintenance on Friday", "`trajector doctor`"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want it to contain %q", out, want)
+		}
+	}
+	if strings.Contains(out, "full") {
+		t.Errorf("status = %q, want no spool-full warning for a spool that never opened", out)
+	}
+}
+
+func TestStatusShowsRejectedBatchesAlongsideASpoolError(t *testing.T) {
+	e := newEnv(t)
+	seedRejectedBatch(t, e, "b-poison", "413 Request Entity Too Large", map[string][]byte{
+		"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
+	})
+	e.obstruct(e.layout().SpoolDir())
+	out := e.statusOutput()
+
+	for _, want := range []string{"is not usable", "1 rejected batch(es)", "not be retried automatically"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want it to contain %q", out, want)
+		}
+	}
+}
+
+func TestStatusWarnsWhenTheRejectedBatchesCannotBeRead(t *testing.T) {
+	e := newEnv(t)
+	e.obstruct(e.layout().RejectedDir())
+	out := e.statusOutput()
+
+	if want := "the rejected batches at " + e.layout().RejectedDir() + " could not be read"; !strings.Contains(out, want) {
+		t.Errorf("status = %q, want it to contain %q", out, want)
+	}
+	if !strings.Contains(out, "`trajector doctor`") {
+		t.Errorf("status = %q, want it to point at doctor", out)
+	}
+}
+
 func TestStatusShowsServiceMinVersionAndNotice(t *testing.T) {
 	e := newEnv(t)
 	writeUploadFile(t, e, "handshake.json", map[string]any{

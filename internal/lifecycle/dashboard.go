@@ -13,7 +13,8 @@ import (
 // consent, the proxy, the spool, uploads, and what the service last
 // said. It renders a Diagnosis and nothing else — it never repairs
 // anything, always leaves the fixing to doctor, and never starts a
-// proxy just to look at one.
+// proxy just to look at one. A store that could not be read is that
+// section's warning, never a reason to cut the sections after it.
 func (m *Machine) Status(dir string, io IO) error {
 	fmt.Fprintf(io.Out, "trajector %s\n", m.deps.Version)
 
@@ -69,13 +70,15 @@ func (m *Machine) Status(dir string, io IO) error {
 		fmt.Fprintln(io.Out, "  Not running; it starts on demand with the next session.")
 	}
 
-	if d.Spool.OpenErr != nil {
-		return d.Spool.OpenErr
-	}
 	fmt.Fprintln(io.Out, "\nSpool")
-	fmt.Fprintf(io.Out, "  %s of %s used.\n", platform.HumanBytes(d.Spool.Usage), platform.HumanBytes(d.Spool.Quota))
-	if d.Spool.Full() {
-		fmt.Fprintln(io.Out, "  WARNING: the spool is full; recording is stopped until space frees. Run `trajector upload --force`.")
+	if d.Spool.OpenErr != nil {
+		fmt.Fprintf(io.Out, "  WARNING: %s.\n", spoolUnusableHeadline(m.deps.Layout.SpoolDir(), d.Spool.OpenErr))
+		fmt.Fprintln(io.Out, "  Run `trajector doctor`.")
+	} else {
+		fmt.Fprintf(io.Out, "  %s of %s used.\n", platform.HumanBytes(d.Spool.Usage), platform.HumanBytes(d.Spool.Quota))
+		if d.Spool.Full() {
+			fmt.Fprintln(io.Out, "  WARNING: the spool is full; recording is stopped until space frees. Run `trajector upload --force`.")
+		}
 	}
 
 	fmt.Fprintln(io.Out, "\nUploads")
@@ -88,7 +91,11 @@ func (m *Machine) Status(dir string, io IO) error {
 	if d.Uploads.LastError != "" {
 		fmt.Fprintf(io.Out, "  Last error: %s (%s).\n", d.Uploads.LastError, d.Uploads.LastErrorAt.UTC().Format(time.RFC3339))
 	}
-	if len(d.Rejected) > 0 {
+	switch {
+	case d.RejectedErr != nil:
+		fmt.Fprintf(io.Out, "  WARNING: %s.\n", rejectedUnreadableHeadline(m.deps.Layout.RejectedDir(), d.RejectedErr))
+		fmt.Fprintln(io.Out, "  Run `trajector doctor`.")
+	case len(d.Rejected) > 0:
 		fmt.Fprintf(io.Out, "  WARNING: %s.\n", quarantineHeadline(d.Rejected))
 		fmt.Fprintln(io.Out, "  Run `trajector doctor` to inspect and requeue them.")
 	}

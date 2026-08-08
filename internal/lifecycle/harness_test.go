@@ -128,6 +128,22 @@ func (e *env) occupyPortWithHealthzCopy() *proxytest.Imposter {
 	return im
 }
 
+// obstruct replaces a directory the machine expects with a plain file,
+// so opening or listing it fails on every platform until the
+// obstruction is removed.
+func (e *env) obstruct(dir string) {
+	e.t.Helper()
+	if err := os.RemoveAll(dir); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(dir, nil, 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
 func (e *env) canonicalRoot() string {
 	e.t.Helper()
 	root, err := consent.CanonicalRoot(e.project)

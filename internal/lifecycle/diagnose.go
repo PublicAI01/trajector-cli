@@ -18,8 +18,8 @@ type ProxyState struct {
 
 // SpoolState is the capture spool as one readable value.
 type SpoolState struct {
-	// OpenErr, when non-nil, means the spool could not be opened at
-	// all; every other field is then zero.
+	// OpenErr, when non-nil, means the spool could not be opened or its
+	// contents read; every other field is then zero.
 	OpenErr error
 	Usage   int64
 	Quota   int64
@@ -45,13 +45,17 @@ type TokenStoreState struct {
 // status renders it, doctor renders and repairs from it, and the
 // bundle serializes it — three surfaces, one set of facts.
 type Diagnosis struct {
-	Project    ProjectStatus
-	Proxy      ProxyState
-	Spool      SpoolState
-	Uploads    upload.State
-	Rejected   []upload.RejectedBatch
-	Handshake  platform.Handshake
-	TokenStore TokenStoreState
+	Project  ProjectStatus
+	Proxy    ProxyState
+	Spool    SpoolState
+	Uploads  upload.State
+	Rejected []upload.RejectedBatch
+	// RejectedErr, when non-nil, means the quarantined batches could not
+	// be read; Rejected is then empty, which must never present as an
+	// empty quarantine.
+	RejectedErr error
+	Handshake   platform.Handshake
+	TokenStore  TokenStoreState
 	// Selfcheck is the live proxy's own answer for this project's
 	// token. It is non-nil only when the project is enabled, our proxy
 	// holds the port, and the proxy answered.
@@ -77,13 +81,14 @@ func (m *Machine) Diagnose(dir string) (Diagnosis, error) {
 		}
 	}
 
-	if sp, err := m.spool(); err != nil {
-		d.Spool = SpoolState{OpenErr: err}
+	sp, spoolErr := m.spool()
+	var days []spool.DaySummary
+	if spoolErr == nil {
+		days, spoolErr = sp.Summary()
+	}
+	if spoolErr != nil {
+		d.Spool = SpoolState{OpenErr: spoolErr}
 	} else {
-		days, err := sp.Summary()
-		if err != nil {
-			return d, err
-		}
 		d.Spool = SpoolState{
 			Usage:       sp.Usage(),
 			Quota:       sp.Quota(),
@@ -93,9 +98,7 @@ func (m *Machine) Diagnose(dir string) (Diagnosis, error) {
 	}
 
 	d.Uploads = upload.LoadState(m.deps.Layout.UploadDir())
-	if d.Rejected, err = upload.ListRejected(m.deps.Layout.RejectedDir()); err != nil {
-		return d, err
-	}
+	d.Rejected, d.RejectedErr = upload.ListRejected(m.deps.Layout.RejectedDir())
 	d.Handshake = m.handshake()
 
 	_, paired, err := m.deps.Tokens.DeviceToken()

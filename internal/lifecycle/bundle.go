@@ -116,13 +116,14 @@ func errString(err error) string {
 // everything else in a Diagnosis is identities, counters, timestamps,
 // and reasons.
 type diagnosisWire struct {
-	Project    projectWire    `json:"project"`
-	Proxy      proxyWire      `json:"proxy"`
-	Spool      spoolWire      `json:"spool"`
-	Uploads    upload.State   `json:"uploads"`
-	Rejected   []rejectedWire `json:"rejected"`
-	Handshake  any            `json:"handshake"`
-	TokenStore tokenStoreWire `json:"token_store"`
+	Project     projectWire    `json:"project"`
+	Proxy       proxyWire      `json:"proxy"`
+	Spool       spoolWire      `json:"spool"`
+	Uploads     upload.State   `json:"uploads"`
+	Rejected    []rejectedWire `json:"rejected"`
+	RejectedErr string         `json:"rejected_err,omitempty"`
+	Handshake   any            `json:"handshake"`
+	TokenStore  tokenStoreWire `json:"token_store"`
 	// Selfcheck is the live proxy's answer for the current project,
 	// present only when a proxy of ours answered one.
 	Selfcheck any `json:"selfcheck,omitempty"`
@@ -204,11 +205,12 @@ func renderDiagnosis(d Diagnosis) []byte {
 			WritableErr: errString(d.Spool.WritableErr),
 			Days:        days,
 		},
-		Uploads:    d.Uploads,
-		Rejected:   rejected,
-		Handshake:  d.Handshake,
-		TokenStore: tokenStoreWire{Paired: d.TokenStore.Paired, Err: errString(d.TokenStore.Err)},
-		Selfcheck:  selfcheckValue(d),
+		Uploads:     d.Uploads,
+		Rejected:    rejected,
+		RejectedErr: errString(d.RejectedErr),
+		Handshake:   d.Handshake,
+		TokenStore:  tokenStoreWire{Paired: d.TokenStore.Paired, Err: errString(d.TokenStore.Err)},
+		Selfcheck:   selfcheckValue(d),
 	})
 }
 

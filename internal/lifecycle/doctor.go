@@ -116,7 +116,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	}
 	m.doctorDiscoveryHint(r, d.TokenStore)
 	doctorSpool(r, d.Spool, m.deps.Layout.SpoolDir())
-	doctorRejected(r, d.Rejected)
+	doctorRejected(r, d.Rejected, d.RejectedErr, m.deps.Layout.RejectedDir())
 	doctorService(r, d.Handshake, m.deps.Version)
 	doctorEnvironmentNote(r)
 	m.doctorSelfcheck(r, d)
@@ -277,7 +277,7 @@ func (m *Machine) doctorDiscoveryHint(r *doctorReport, ts TokenStoreState) {
 // doctorSpool verifies the capture spool accepts writes within quota.
 func doctorSpool(r *doctorReport, s SpoolState, dir string) {
 	if s.OpenErr != nil {
-		r.problem("the capture spool at %s is not usable: %v", dir, s.OpenErr)
+		r.problem("%s", spoolUnusableHeadline(dir, s.OpenErr))
 		return
 	}
 	if s.WritableErr != nil {
@@ -295,7 +295,11 @@ func doctorSpool(r *doctorReport, s SpoolState, dir string) {
 // or retried automatically — what happens to them is the user's call —
 // so doctor lists each with its recorded reason and the command that
 // requeues it.
-func doctorRejected(r *doctorReport, rejected []upload.RejectedBatch) {
+func doctorRejected(r *doctorReport, rejected []upload.RejectedBatch, listErr error, dir string) {
+	if listErr != nil {
+		r.problem("%s", rejectedUnreadableHeadline(dir, listErr))
+		return
+	}
 	if len(rejected) == 0 {
 		r.ok("no rejected batches quarantined")
 		return
@@ -354,6 +358,19 @@ func quarantineHeadline(rejected []upload.RejectedBatch) string {
 		records += b.Records
 	}
 	return fmt.Sprintf("%d rawcall(s) in %d rejected batch(es) are quarantined and will not be retried automatically", records, len(rejected))
+}
+
+// spoolUnusableHeadline is the one sentence both status and doctor use
+// for a spool that could not be opened or read, so the two surfaces
+// cannot drift apart.
+func spoolUnusableHeadline(dir string, err error) string {
+	return fmt.Sprintf("the capture spool at %s is not usable: %v", dir, err)
+}
+
+// rejectedUnreadableHeadline is the one sentence both status and doctor
+// use for a quarantine directory that could not be read.
+func rejectedUnreadableHeadline(dir string, err error) string {
+	return fmt.Sprintf("the rejected batches at %s could not be read: %v", dir, err)
 }
 
 // doctorEnvironmentNote points out platform topologies that need care.

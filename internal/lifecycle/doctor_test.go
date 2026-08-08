@@ -326,6 +326,38 @@ func TestDoctorRelaysTheServiceHandshakeWithoutJudgingIt(t *testing.T) {
 	}
 }
 
+func TestStatusAndDoctorPresentAnUnusableSpoolAlike(t *testing.T) {
+	e := newEnv(t)
+	e.obstruct(e.layout().SpoolDir())
+	want := "the capture spool at " + e.layout().SpoolDir() + " is not usable"
+
+	statusOut := e.statusOutput()
+	e.stdout.Reset()
+	problems, doctorOut := e.doctor()
+
+	if problems == 0 {
+		t.Fatalf("problems = 0 with an unusable spool, output:\n%s", doctorOut)
+	}
+	for surface, out := range map[string]string{"status": statusOut, "doctor": doctorOut} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%s = %q, want it to contain %q", surface, out, want)
+		}
+	}
+}
+
+func TestDoctorReportsRejectedBatchesItCannotRead(t *testing.T) {
+	e := newEnv(t)
+	e.obstruct(e.layout().RejectedDir())
+	problems, out := e.doctor()
+
+	if problems == 0 {
+		t.Fatalf("problems = 0 with an unreadable quarantine, output:\n%s", out)
+	}
+	if want := "the rejected batches at " + e.layout().RejectedDir() + " could not be read"; !strings.Contains(out, want) {
+		t.Errorf("doctor = %q, want it to contain %q", out, want)
+	}
+}
+
 func TestDoctorWarnsWhenTheSpoolIsFull(t *testing.T) {
 	e := newEnv(t)
 	writeUploadFile(t, e, "handshake.json", map[string]any{"spool_quota_bytes": 1})

@@ -114,6 +114,27 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 	}
 }
 
+func TestDoctorBundleRecordsStoreFailuresInsteadOfFailing(t *testing.T) {
+	e := newEnv(t)
+	e.obstruct(e.layout().SpoolDir())
+	e.obstruct(e.layout().RejectedDir())
+
+	t.Chdir(t.TempDir())
+	path, err := e.machine().DoctorBundle(e.project, e.io())
+	if err != nil {
+		t.Fatalf("bundle: %v\nstdout: %s", err, e.stdout)
+	}
+	diagnosis, ok := readBundle(t, path)["diagnosis.json"]
+	if !ok {
+		t.Fatal("bundle is missing diagnosis.json")
+	}
+	for _, want := range []string{`"open_err"`, `"rejected_err"`} {
+		if !strings.Contains(diagnosis, want) {
+			t.Errorf("diagnosis.json = %s\nwant it to contain %q", diagnosis, want)
+		}
+	}
+}
+
 func TestDoctorBundleNeverLeaksRecordDataOrTokens(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()

@@ -132,7 +132,13 @@ type RejectedBatch struct {
 func ListRejected(rejectedDir string) ([]RejectedBatch, error) {
 	batches, err := os.ReadDir(rejectedDir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		// Windows also reports a plain file sitting where the directory
+		// belongs as not-exist. Only a path with nothing behind it at all
+		// is an empty quarantine; anything present but unreadable must
+		// surface as an error, never as no quarantine.
+		if _, statErr := os.Lstat(rejectedDir); statErr != nil {
+			return nil, nil
+		}
 	}
 	if err != nil {
 		return nil, err
