@@ -559,6 +559,101 @@ func TestTheRetryAfterPauseIsCapped(t *testing.T) {
 	}
 }
 
+func timeoutStub() fakeplatform.Response {
+	return fakeplatform.JSON(408, map[string]any{})
+}
+
+func TestConsecutiveTimeoutsBackOffAndRetryTheSameBatch(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", timeoutStub())
+	f.server.Stub("POST", "/v1/batches", timeoutStub())
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	_, err := f.uploader.Flush(true)
+	if err == nil {
+		t.Fatal("timed-out upload did not surface")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "B)") || !strings.Contains(msg, "waits") {
+		t.Fatalf("flush error = %q, want the batch size and the retry plan", msg)
+	}
+	if strings.Contains(msg, "context deadline exceeded") {
+		t.Fatalf("flush error = %q surfaces a bare deadline", msg)
+	}
+	if st := upload.LoadState(f.dir); !strings.Contains(st.LastError, "B)") {
+		t.Errorf("state.LastError = %q, want the batch size", st.LastError)
+	}
+
+	res, err := f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.Deferred {
+		t.Fatalf("automatic flush right after a timeout = %+v, %v, want %q", res, err, upload.Deferred)
+	}
+	if f.uploadCount() != 1 {
+		t.Fatalf("service saw %d requests during the pause, want 1", f.uploadCount())
+	}
+
+	f.now = f.now.Add(61 * time.Second)
+	if _, err := f.uploader.Flush(false); err == nil {
+		t.Fatal("second timed-out attempt did not surface")
+	}
+	if f.uploadCount() != 2 {
+		t.Fatalf("service saw %d requests after the pause, want 2", f.uploadCount())
+	}
+
+	f.now = f.now.Add(61 * time.Second)
+	res, err = f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.Deferred {
+		t.Fatalf("flush one minute into a doubled pause = %+v, %v, want %q", res, err, upload.Deferred)
+	}
+
+	f.now = f.now.Add(60 * time.Second)
+	res, err = f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("flush after the doubled pause = %+v, %v", res, err)
+	}
+	reqs := f.server.Requests()
+	if len(reqs) != 3 {
+		t.Fatalf("service saw %d requests, want 3", len(reqs))
+	}
+	first := uploadedBatchID(t, reqs[0])
+	for i, r := range reqs[1:] {
+		if id := uploadedBatchID(t, r); id != first {
+			t.Fatalf("attempt %d used batch id %q, first attempt used %q; they must match", i+2, id, first)
+		}
+	}
+	if f.spool.Usage() != 0 {
+		t.Error("acknowledged records were not deleted")
+	}
+}
+
+func TestAnAcknowledgedUploadResetsTheTimeoutEscalation(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", timeoutStub())
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.Stub("POST", "/v1/batches", timeoutStub())
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("timed-out upload did not surface")
+	}
+	res, err := f.uploader.Flush(true)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("forced flush during the timeout pause = %+v, %v; force must not wait", res, err)
+	}
+
+	f.storeRawcall(t, "req-2", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("timed-out upload after a success did not surface")
+	}
+	f.now = f.now.Add(61 * time.Second)
+	res, err = f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("flush a minute after a fresh timeout = %+v, %v; the pause must restart from its base", res, err)
+	}
+}
+
 func TestPurgeRejectedRemovesOnlyThatProject(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", rejectStub(400, "nope"))

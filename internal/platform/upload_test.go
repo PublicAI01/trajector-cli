@@ -47,7 +47,7 @@ func TestEveryUploadFailureClassCarriesItsStatus(t *testing.T) {
 			c, server := client(t)
 			server.Stub("POST", "/v1/batches", tt.response)
 
-			_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")))
+			_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
 			if err == nil {
 				t.Fatal("upload succeeded against a failing service")
 			}
@@ -66,7 +66,7 @@ func TestUploadBatchPostsEnvelopeAndRecordsAsMultipart(t *testing.T) {
 	c, server := client(t)
 	server.Stub("POST", "/v1/batches", ackStub(200, "batch-1"))
 
-	ack, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte(`{"batch_id":"batch-1"}`), redact.AlreadyRedacted([]byte("zstd-bytes")))
+	ack, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte(`{"batch_id":"batch-1"}`), redact.AlreadyRedacted([]byte("zstd-bytes")), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestUploadBatchPostsEnvelopeAndRecordsAsMultipart(t *testing.T) {
 func TestUploadBatchRejectsAnAckNamingAnotherBatch(t *testing.T) {
 	c, server := client(t)
 	server.Stub("POST", "/v1/batches", ackStub(200, "batch-other"))
-	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z"))); err == nil {
+	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err == nil {
 		t.Error("acknowledgement for another batch accepted")
 	}
 }
@@ -112,7 +112,7 @@ func TestUploadBatchRejectsAnAckNamingAnotherBatch(t *testing.T) {
 func TestUploadBatchRejectsAnAckNamingNoBatch(t *testing.T) {
 	c, server := client(t)
 	server.Stub("POST", "/v1/batches", fakeplatform.JSON(200, map[string]any{}))
-	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z"))); err == nil {
+	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err == nil {
 		t.Error("acknowledgement without a batch id accepted")
 	}
 }
@@ -120,7 +120,7 @@ func TestUploadBatchRejectsAnAckNamingNoBatch(t *testing.T) {
 func TestUploadBatchSurfacesServiceFailure(t *testing.T) {
 	c, server := client(t)
 	server.Stub("POST", "/v1/batches", ackStub(503, "batch-1"))
-	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z"))); err == nil {
+	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err == nil {
 		t.Error("503 response did not fail")
 	}
 }
@@ -133,7 +133,7 @@ func upload4xx(t *testing.T, status int, header http.Header, body map[string]any
 		resp.Header[k] = vs
 	}
 	server.Stub("POST", "/v1/batches", resp)
-	_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")))
+	_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
 	if err == nil {
 		t.Fatalf("status %d did not fail", status)
 	}
@@ -194,6 +194,85 @@ func TestUploadBatchAuthAndTimeoutFailuresStayTransient(t *testing.T) {
 		var limited *platform.RateLimitedError
 		if errors.As(err, &rejected) || errors.As(err, &upgrade) || errors.As(err, &limited) {
 			t.Fatalf("status %d error = %v, want a plain transient error", status, err)
+		}
+	}
+}
+
+func TestUploadBudgetScalesWithBatchSizeAndConsecutiveTimeouts(t *testing.T) {
+	if got := platform.UploadBudget(0, 0); got != time.Minute {
+		t.Errorf("budget for an empty body = %s, want the 1m0s floor", got)
+	}
+	if got := platform.UploadBudget(60*(64<<10), 0); got != 2*time.Minute {
+		t.Errorf("budget for a minute of bytes at the floor rate = %s, want 2m0s", got)
+	}
+	if small, large := platform.UploadBudget(1<<20, 0), platform.UploadBudget(32<<20, 0); large <= small {
+		t.Errorf("budget did not grow with batch size: %s for 1 MiB, %s for 32 MiB", small, large)
+	}
+	if got := platform.UploadBudget(0, 2); got != 4*time.Minute {
+		t.Errorf("budget after two timeouts = %s, want 4m0s", got)
+	}
+	if got := platform.UploadBudget(1<<40, 50); got != 30*time.Minute {
+		t.Errorf("budget for an outsized batch after many timeouts = %s, want the 30m0s cap", got)
+	}
+}
+
+func TestUploadBatchTimeoutNamesTheBatchSizeInsteadOfABareDeadline(t *testing.T) {
+	c, server := client(t)
+	server.StubFunc("POST", "/v1/batches", func(fakeplatform.Request) fakeplatform.Response {
+		time.Sleep(300 * time.Millisecond)
+		return ackStub(200, "batch-1")
+	})
+	server.Stub("POST", "/v1/batches", ackStub(200, "batch-1"))
+
+	_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 50*time.Millisecond)
+	var timedOut *platform.UploadTimeoutError
+	if !errors.As(err, &timedOut) {
+		t.Fatalf("error = %v, want UploadTimeoutError", err)
+	}
+	if timedOut.BatchBytes <= 0 {
+		t.Errorf("BatchBytes = %d, want the upload body size", timedOut.BatchBytes)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "B)") || !strings.Contains(msg, "too slow") {
+		t.Errorf("error %q does not name the batch size and the slow connection", msg)
+	}
+	if strings.Contains(msg, "context deadline exceeded") {
+		t.Errorf("error %q surfaces the bare deadline", msg)
+	}
+
+	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err != nil {
+		t.Errorf("upload with the default budget = %v, want success once the response arrives", err)
+	}
+}
+
+func TestUploadBatch408ReportsATimedOutUploadThatStaysTransient(t *testing.T) {
+	err := upload4xx(t, 408, nil, map[string]any{})
+	var timedOut *platform.UploadTimeoutError
+	if !errors.As(err, &timedOut) || timedOut.BatchBytes <= 0 {
+		t.Fatalf("error = %v, want UploadTimeoutError naming the batch size", err)
+	}
+	var status *platform.StatusError
+	if !errors.As(err, &status) || !status.Temporary() {
+		t.Fatalf("error = %v, want a temporary status underneath", err)
+	}
+}
+
+func TestHumanBytesRendersBinaryUnits(t *testing.T) {
+	tests := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0 B"},
+		{512, "512 B"},
+		{1024, "1.0 KiB"},
+		{1536, "1.5 KiB"},
+		{10 << 20, "10.0 MiB"},
+		{2 << 30, "2.0 GiB"},
+		{3 << 40, "3.0 TiB"},
+	}
+	for _, tt := range tests {
+		if got := platform.HumanBytes(tt.n); got != tt.want {
+			t.Errorf("HumanBytes(%d) = %q, want %q", tt.n, got, tt.want)
 		}
 	}
 }

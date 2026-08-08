@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/capture"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 )
 
@@ -72,7 +73,7 @@ func (m *Machine) Status(dir string, io IO) error {
 		return d.Spool.OpenErr
 	}
 	fmt.Fprintln(io.Out, "\nSpool")
-	fmt.Fprintf(io.Out, "  %s of %s used.\n", humanBytes(d.Spool.Usage), humanBytes(d.Spool.Quota))
+	fmt.Fprintf(io.Out, "  %s of %s used.\n", platform.HumanBytes(d.Spool.Usage), platform.HumanBytes(d.Spool.Quota))
 	if d.Spool.Full() {
 		fmt.Fprintln(io.Out, "  WARNING: the spool is full; recording is stopped until space frees. Run `trajector upload --force`.")
 	}
@@ -80,7 +81,7 @@ func (m *Machine) Status(dir string, io IO) error {
 	fmt.Fprintln(io.Out, "\nUploads")
 	if r := d.Uploads.LastUpload; r != nil {
 		fmt.Fprintf(io.Out, "  Last upload: %d rawcall(s) (%s) at %s.\n",
-			r.Records, humanBytes(r.Bytes), r.At.UTC().Format(time.RFC3339))
+			r.Records, platform.HumanBytes(r.Bytes), r.At.UTC().Format(time.RFC3339))
 	} else {
 		fmt.Fprintln(io.Out, "  Never uploaded.")
 	}
@@ -103,18 +104,4 @@ func (m *Machine) Status(dir string, io IO) error {
 		}
 	}
 	return nil
-}
-
-// humanBytes renders a byte count in binary units with one decimal.
-func humanBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }

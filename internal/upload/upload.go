@@ -104,6 +104,11 @@ type Uploader struct {
 	// upgrade gate; it rides out with the gate's outcome.
 	minClientVersion string
 	notBefore        time.Time
+	// timeouts counts consecutive timed-out upload attempts. Each one
+	// widens the next attempt's budget and lengthens the pause before
+	// it, so the batch at the head of the queue is never retried forever
+	// on the terms that just failed. Any acknowledged upload resets it.
+	timeouts int
 }
 
 // New validates the wiring and builds an uploader.
@@ -259,13 +264,15 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result)
 		u.noteAttempt(err)
 		return fmt.Errorf("upload: %w", err)
 	}
-	ack, err := u.deps.Service.UploadBatch(token, b.ID, b.Envelope, b.Records)
+	budget := platform.UploadBudget(int64(len(b.Envelope))+int64(b.Records.Len()), u.timeouts)
+	ack, err := u.deps.Service.UploadBatch(token, b.ID, b.Envelope, b.Records, budget)
 	u.noteAttempt(err)
 	if err != nil {
 		return u.settleFailure(id, rawcalls, err)
 	}
 	u.upgradeRequired = false
 	u.notBefore = time.Time{}
+	u.timeouts = 0
 
 	uploaded := map[string]bool{}
 	for _, rid := range b.RequestIDs {
@@ -301,7 +308,17 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 	var upgrade *platform.UpgradeRequiredError
 	var limited *platform.RateLimitedError
 	var rejected *platform.BatchRejectedError
+	var timedOut *platform.UploadTimeoutError
 	switch {
+	case errors.As(err, &timedOut):
+		// Retrying a too-slow upload on the same terms would pin this
+		// batch at the queue head until the spool fills. Each consecutive
+		// timeout doubles the next attempt's budget and the pause before
+		// an automatic flush tries again.
+		u.timeouts++
+		pause := timeoutBackoff(u.timeouts)
+		u.notBefore = u.deps.Now().Add(pause)
+		return fmt.Errorf("upload: batch %s: %w; the next attempt waits %s and allows more time", id, err, pause)
 	case errors.As(err, &upgrade):
 		// The data is fine; this client is too old. Automatic flushes
 		// stop so the batch is not re-uploaded pointlessly every minute.
@@ -370,6 +387,21 @@ func (u *Uploader) collect(limit int64) ([]spool.Rawcall, error) {
 		return nil, err
 	}
 	return rawcalls, nil
+}
+
+// maxTimeoutBackoff caps the pause between timed-out attempts, so
+// backing off can never mute automatic uploads for good.
+const maxTimeoutBackoff = 15 * time.Minute
+
+// timeoutBackoff is how long automatic flushes hold off after the nth
+// consecutive timed-out attempt: doubling from a minute, so a
+// struggling link is not hammered every flush tick.
+func timeoutBackoff(timeouts int) time.Duration {
+	pause := time.Minute
+	for ; timeouts > 1 && pause < maxTimeoutBackoff; timeouts-- {
+		pause *= 2
+	}
+	return min(pause, maxTimeoutBackoff)
 }
 
 func requestIDs(rawcalls []spool.Rawcall) []string {

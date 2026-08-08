@@ -282,13 +282,13 @@ func doctorSpool(r *doctorReport, s SpoolState, dir string) {
 	}
 	if s.WritableErr != nil {
 		r.problem("the capture spool is not writable, so recording is stopped: %v", s.WritableErr)
-		r.detail("Spool: %s of %s used at %s.", humanBytes(s.Usage), humanBytes(s.Quota), dir)
+		r.detail("Spool: %s of %s used at %s.", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota), dir)
 		if s.Full() {
 			r.detail("The spool is full. Run `trajector upload --force` to upload and free it.")
 		}
 		return
 	}
-	r.ok("capture spool writable (%s of %s used)", humanBytes(s.Usage), humanBytes(s.Quota))
+	r.ok("capture spool writable (%s of %s used)", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota))
 }
 
 // doctorRejected surfaces quarantined batches. They are never deleted
