@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 )
 
 // IgnoreAction reports what EnsureGitIgnored did.
@@ -26,10 +25,12 @@ const (
 	IgnoreSymlinked IgnoreAction = "symlinked"
 )
 
-// EnsureGitIgnored makes sure rel (slash-separated, relative to the
-// project root) is ignored by git, appending it to the project's
-// .gitignore when it is not. The injected settings file embeds a
-// consent token and must never end up in the user's repository.
+// EnsureGitIgnored makes sure rel — a slash-separated path or ignore
+// pattern, relative to the project root — is ignored by git, appending
+// it verbatim to the project's .gitignore when it is not. A trailing
+// slash is kept: it is what scopes a rule to directories. Callers pass
+// the files this tool drops into a user's project; none of them may
+// end up committed.
 func EnsureGitIgnored(projectRoot, rel string) (IgnoreAction, error) {
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
@@ -68,7 +69,7 @@ func EnsureGitIgnored(projectRoot, rel string) (IgnoreAction, error) {
 	if len(existing) > 0 && !bytes.HasSuffix(existing, []byte("\n")) {
 		b.WriteByte('\n')
 	}
-	b.WriteString(strings.TrimSuffix(rel, "/") + "\n")
+	b.WriteString(rel + "\n")
 	if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
 		return "", err
 	}

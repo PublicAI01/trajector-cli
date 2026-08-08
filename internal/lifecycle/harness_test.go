@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -157,6 +159,41 @@ func (e *env) consentFileContents() string {
 		e.t.Fatal(err)
 	}
 	return string(data)
+}
+
+// gitRepo turns the project into a git repository, isolated from the
+// developer's global git configuration so ignore coverage comes only
+// from the repository itself. Skips the test when git is unavailable.
+func (e *env) gitRepo() {
+	e.t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		e.t.Skip("git not available")
+	}
+	e.t.Setenv("HOME", e.deps.Home)
+	e.t.Setenv("XDG_CONFIG_HOME", filepath.Join(e.deps.Home, ".config"))
+	e.t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(e.deps.Home, "gitconfig"))
+	e.t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = e.project
+	if out, err := cmd.CombinedOutput(); err != nil {
+		e.t.Fatalf("git init: %v\n%s", err, out)
+	}
+}
+
+// gitIgnored reports whether git ignores path inside the project.
+func (e *env) gitIgnored(path string) bool {
+	e.t.Helper()
+	check := exec.Command("git", "check-ignore", "-q", "--", path)
+	check.Dir = e.canonicalRoot()
+	err := check.Run()
+	if err == nil {
+		return true
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false
+	}
+	e.t.Fatalf("git check-ignore: %v", err)
+	return false
 }
 
 // pairable stubs a complete pairing flow on the fake service.

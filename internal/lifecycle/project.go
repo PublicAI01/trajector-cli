@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
@@ -71,6 +73,28 @@ func (m *Machine) Disable(projectDir string, purge bool, io IO) error {
 	return nil
 }
 
+// leftoverIgnoreRules reports which of the enable-written .gitignore
+// lines are still present under root. Uninstall only ever reports
+// them: the file is the user's, so removing lines from it is their
+// call, never this binary's.
+func leftoverIgnoreRules(root string) []string {
+	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		return nil
+	}
+	present := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		present[strings.TrimSpace(line)] = true
+	}
+	var rules []string
+	for _, rule := range projectIgnoreRules {
+		if present[rule] {
+			rules = append(rules, rule)
+		}
+	}
+	return rules
+}
+
 // Uninstall removes every injection this binary made and stops the
 // proxy. Injections come out first: once the binary is gone, a leftover
 // injection would point an enabled project at a dead port. Whether
@@ -103,6 +127,12 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 		removed++
 	}
 	fmt.Fprintf(io.Out, "Removed injection from %d project(s).\n", removed)
+	for _, root := range projects {
+		if leftover := leftoverIgnoreRules(root); len(leftover) > 0 {
+			fmt.Fprintf(io.Out, "Left %s in %s; remove those lines yourself if you no longer want them.\n",
+				strings.Join(leftover, ", "), filepath.Join(root, ".gitignore"))
+		}
+	}
 
 	if err := claudesettings.RemoveUserHook(claudesettings.UserSettingsPath(m.deps.Home)); err != nil {
 		fmt.Fprintf(io.Err, "trajector: warning: could not remove the discovery hint: %v\n", err)

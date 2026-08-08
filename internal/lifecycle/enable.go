@@ -14,6 +14,14 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
+// projectIgnoreRules are the .gitignore lines an enabled project
+// carries: the injected settings file, which embeds a consent token,
+// and both forms of a diagnostic bundle. The bundle rules land at
+// enable time so the archive and its unpacked directory are ignored
+// before either exists; uninstall names exactly this list when it
+// points at leftover lines, so the two surfaces cannot drift.
+var projectIgnoreRules = append([]string{claudesettings.ProjectLocalRel}, doctorBundleIgnoreRules...)
+
 // hookCommand renders the shell command injected into settings hooks.
 func hookCommand(execPath, subcommand string) string {
 	if strings.ContainsAny(execPath, " \t") {
@@ -101,15 +109,25 @@ func (m *Machine) installAndVerify(io IO, st ProjectStatus, upstream string) err
 	}
 	fmt.Fprintf(io.Out, "Injected %s (base URL and session hooks)\n", settingsPath)
 
-	action, err := claudesettings.EnsureGitIgnored(st.Root, claudesettings.ProjectLocalRel)
-	if err != nil {
-		return fmt.Errorf("ensuring .gitignore covers the injected settings: %w", err)
+	var appended []string
+	symlinked := false
+	for _, rule := range projectIgnoreRules {
+		action, err := claudesettings.EnsureGitIgnored(st.Root, rule)
+		if err != nil {
+			return fmt.Errorf("ensuring .gitignore covers %s: %w", rule, err)
+		}
+		switch action {
+		case claudesettings.IgnoreAppended:
+			appended = append(appended, rule)
+		case claudesettings.IgnoreSymlinked:
+			symlinked = true
+		}
 	}
-	switch action {
-	case claudesettings.IgnoreAppended:
-		fmt.Fprintf(io.Out, "Added %s to .gitignore\n", claudesettings.ProjectLocalRel)
-	case claudesettings.IgnoreSymlinked:
-		fmt.Fprintf(io.Err, "WARNING: .gitignore is a symbolic link and was left alone; add %s to your git ignores so the injected settings are never committed.\n", claudesettings.ProjectLocalRel)
+	if len(appended) > 0 {
+		fmt.Fprintf(io.Out, "Added %s to .gitignore\n", strings.Join(appended, ", "))
+	}
+	if symlinked {
+		fmt.Fprintf(io.Err, "WARNING: .gitignore is a symbolic link and was left alone; add %s to your git ignores so the injected settings and diagnostic bundles are never committed.\n", strings.Join(projectIgnoreRules, ", "))
 	}
 
 	if err := m.selfCheck(token); err != nil {

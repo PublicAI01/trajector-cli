@@ -17,6 +17,22 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
+// A diagnostic archive is named doctorBundlePrefix + timestamp +
+// doctorBundleSuffix; the ignore rules are spelled from the same
+// constants so they match every name DoctorBundle can produce.
+const (
+	doctorBundlePrefix = "trajector-doctor-"
+	doctorBundleSuffix = ".tar.gz"
+)
+
+// doctorBundleIgnoreRules cover both forms a bundle takes inside the
+// user's project: the archive itself and the directory left by
+// unpacking it.
+var doctorBundleIgnoreRules = []string{
+	doctorBundlePrefix + "*" + doctorBundleSuffix,
+	doctorBundlePrefix + "*/",
+}
+
 // DoctorBundle writes a diagnostic archive into the current directory
 // and returns its path. The bundle is the only way a crash report
 // leaves this machine, and the user sends it themselves — so it
@@ -57,12 +73,15 @@ func (m *Machine) DoctorBundle(projectDir string, io IO) (string, error) {
 	b.add("routing.json", routingSummary)
 
 	// The archive lands in the user's project and names every project
-	// root on the machine; it must never ride along into their repository.
-	if _, err := claudesettings.EnsureGitIgnored(d.Project.Root, "trajector-doctor-*.tar.gz"); err != nil {
-		return "", err
+	// root on the machine; neither it nor the directory a user unpacks
+	// it into may ride along into their repository.
+	for _, rule := range doctorBundleIgnoreRules {
+		if _, err := claudesettings.EnsureGitIgnored(d.Project.Root, rule); err != nil {
+			return "", err
+		}
 	}
 
-	name := fmt.Sprintf("trajector-doctor-%s.tar.gz", m.deps.Now().UTC().Format("20060102-150405"))
+	name := doctorBundlePrefix + m.deps.Now().UTC().Format("20060102-150405") + doctorBundleSuffix
 	if err := b.write(name); err != nil {
 		return "", err
 	}
@@ -296,8 +315,8 @@ func (b *bundle) add(name string, data []byte) {
 }
 
 func (b *bundle) write(path string) error {
-	if !strings.HasSuffix(path, ".tar.gz") {
-		return fmt.Errorf("bundle path %s must end in .tar.gz", path)
+	if !strings.HasSuffix(path, doctorBundleSuffix) {
+		return fmt.Errorf("bundle path %s must end in %s", path, doctorBundleSuffix)
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {

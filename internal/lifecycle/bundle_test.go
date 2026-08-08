@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -226,19 +225,8 @@ func keysOf(m map[string]string) []string {
 }
 
 func TestDoctorBundleIsGitIgnoredInTheProject(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
 	e := newEnv(t)
-	t.Setenv("HOME", e.deps.Home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(e.deps.Home, ".config"))
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(e.deps.Home, "gitconfig"))
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	cmd := exec.Command("git", "init", "-q")
-	cmd.Dir = e.project
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
+	e.gitRepo()
 	e.startProxy()
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatal(err)
@@ -249,9 +237,7 @@ func TestDoctorBundleIsGitIgnoredInTheProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	check := exec.Command("git", "check-ignore", "-q", "--", filepath.Base(path))
-	check.Dir = e.canonicalRoot()
-	if err := check.Run(); err != nil {
+	if !e.gitIgnored(filepath.Base(path)) {
 		t.Errorf("the bundle %s is not git-ignored in the project", filepath.Base(path))
 	}
 
@@ -268,5 +254,31 @@ func TestDoctorBundleIsGitIgnoredInTheProject(t *testing.T) {
 	}
 	if string(before) != string(after) {
 		t.Errorf(".gitignore grew on a second bundle:\nbefore: %q\nafter: %q", before, after)
+	}
+}
+
+func TestDoctorBundleRestoresIgnoreRulesWhenMissing(t *testing.T) {
+	e := newEnv(t)
+	e.gitRepo()
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(e.canonicalRoot(), ".gitignore")); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(e.canonicalRoot())
+	if _, err := e.machine().DoctorBundle(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	ignore, err := os.ReadFile(filepath.Join(e.canonicalRoot(), ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range []string{"trajector-doctor-*.tar.gz\n", "trajector-doctor-*/\n"} {
+		if !strings.Contains(string(ignore), rule) {
+			t.Errorf(".gitignore = %q, want it to contain %q", ignore, rule)
+		}
 	}
 }

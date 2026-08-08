@@ -3,6 +3,7 @@ package lifecycle_test
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -294,6 +295,59 @@ func TestUninstallRemovesEveryInjectionAndKeepsDataByDefault(t *testing.T) {
 	}
 	if _, err := os.Stat(e.layout().RoutingTable()); err != nil {
 		t.Errorf("configuration removed despite keeping data: %v", err)
+	}
+}
+
+func TestUninstallPointsAtLeftoverIgnoreLinesWithoutEditingThem(t *testing.T) {
+	e := newEnv(t)
+	e.gitRepo()
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	ignorePath := filepath.Join(e.canonicalRoot(), ".gitignore")
+	before, err := os.ReadFile(ignorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e.stdin = "\n"
+	e.stdout.Reset()
+	if err := e.machine().Uninstall(false, e.io()); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	out := e.stdout.String()
+	for _, want := range []string{
+		ignorePath,
+		".claude/settings.local.json",
+		"trajector-doctor-*.tar.gz",
+		"trajector-doctor-*/",
+		"remove those lines yourself",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout = %q, want it to mention %q", out, want)
+		}
+	}
+	after, err := os.ReadFile(ignorePath)
+	if err != nil || string(after) != string(before) {
+		t.Errorf(".gitignore changed across uninstall:\nbefore: %q\nafter: %q (%v)", before, after, err)
+	}
+}
+
+func TestUninstallSkipsIgnoreNoteWithoutAnIgnoreFile(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	e.stdin = "\n"
+	e.stdout.Reset()
+	if err := e.machine().Uninstall(false, e.io()); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if strings.Contains(e.stdout.String(), ".gitignore") {
+		t.Errorf("stdout = %q, want no ignore note for a project without a .gitignore", e.stdout)
 	}
 }
 

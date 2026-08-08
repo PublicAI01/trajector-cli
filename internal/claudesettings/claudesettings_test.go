@@ -552,6 +552,31 @@ func TestEnsureGitIgnoredAppendsWhenUncovered(t *testing.T) {
 	}
 }
 
+func TestEnsureGitIgnoredPreservesDirectoryOnlyRules(t *testing.T) {
+	root := initRepo(t)
+	action, err := EnsureGitIgnored(root, "dist-*/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != IgnoreAppended {
+		t.Errorf("action = %q, want appended", action)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "dist-*/\n" {
+		t.Errorf(".gitignore = %q, want the trailing slash kept", data)
+	}
+	again, err := EnsureGitIgnored(root, "dist-*/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != IgnoreCovered {
+		t.Errorf("second run action = %q, want covered", again)
+	}
+}
+
 func TestEnsureGitIgnoredRespectsExistingCoverage(t *testing.T) {
 	root := initRepo(t)
 	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".claude/\n"), 0o644); err != nil {

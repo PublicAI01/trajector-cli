@@ -2,7 +2,6 @@ package lifecycle_test
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -116,21 +115,8 @@ func TestEnableFailsWhenSpoolUnwritable(t *testing.T) {
 }
 
 func TestEnableAppendsGitIgnoreInsideRepo(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
 	e := newEnv(t)
-	// Isolate from the developer's global git configuration so ignore
-	// coverage comes only from this repository.
-	t.Setenv("HOME", e.deps.Home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(e.deps.Home, ".config"))
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(e.deps.Home, "gitconfig"))
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	cmd := exec.Command("git", "init", "-q")
-	cmd.Dir = e.project
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
+	e.gitRepo()
 	e.startProxy()
 
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
@@ -145,23 +131,65 @@ func TestEnableAppendsGitIgnoreInsideRepo(t *testing.T) {
 	}
 }
 
+func TestEnableGitIgnoresBundleArchiveAndUnpackedDirectory(t *testing.T) {
+	e := newEnv(t)
+	e.gitRepo()
+	e.startProxy()
+
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	unpacked := filepath.Join(e.canonicalRoot(), "trajector-doctor-20260101-000000")
+	if err := os.MkdirAll(unpacked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unpacked, "info.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"trajector-doctor-20260101-000000.tar.gz",
+		"trajector-doctor-20260101-000000/info.json",
+	} {
+		if !e.gitIgnored(path) {
+			t.Errorf("%s is not git-ignored after enable", path)
+		}
+	}
+}
+
+func TestEnableBackfillsUnpackedBundleRuleWithoutDuplicates(t *testing.T) {
+	e := newEnv(t)
+	e.gitRepo()
+	ignorePath := filepath.Join(e.canonicalRoot(), ".gitignore")
+	old := ".claude/settings.local.json\ntrajector-doctor-*.tar.gz\n"
+	if err := os.WriteFile(ignorePath, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.startProxy()
+
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	want := old + "trajector-doctor-*/\n"
+	after, err := os.ReadFile(ignorePath)
+	if err != nil || string(after) != want {
+		t.Errorf(".gitignore = %q, %v, want %q", after, err, want)
+	}
+
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatalf("second enable: %v", err)
+	}
+	again, err := os.ReadFile(ignorePath)
+	if err != nil || string(again) != want {
+		t.Errorf(".gitignore after second enable = %q, %v, want %q", again, err, want)
+	}
+}
+
 func TestEnableLeavesASymlinkedGitIgnoreAloneAndWarns(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("creating symlinks needs privilege on windows")
 	}
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
 	e := newEnv(t)
-	t.Setenv("HOME", e.deps.Home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(e.deps.Home, ".config"))
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(e.deps.Home, "gitconfig"))
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	cmd := exec.Command("git", "init", "-q")
-	cmd.Dir = e.project
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
+	e.gitRepo()
 	target := filepath.Join(e.deps.Home, "dotfile")
 	before := []byte("dotfile content\n")
 	if err := os.WriteFile(target, before, 0o644); err != nil {
