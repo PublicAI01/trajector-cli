@@ -92,7 +92,7 @@ func TestWriteStoresEnvelopeUnderDayDirectory(t *testing.T) {
 
 	entries, _ := os.ReadDir(filepath.Join(dir, "20260801"))
 	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".tmp") {
+		if strings.Contains(e.Name(), ".tmp") {
 			t.Errorf("temp file left behind: %s", e.Name())
 		}
 	}

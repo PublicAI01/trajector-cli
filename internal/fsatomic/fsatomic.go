@@ -11,11 +11,26 @@
 package fsatomic
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
+)
+
+// Sibling-name markers. Every transient file this package creates next
+// to a path spells the path's own name first and one of these after it,
+// so a transient name never ends in the path's real extension and a
+// directory scan selecting on that extension can never pick one up.
+const (
+	tempMarker  = ".tmp-"
+	lockSuffix  = ".lock"
+	ejectSuffix = ".eject"
 )
 
 // Replacement collision parameters. The colliding holds are an open
@@ -27,13 +42,18 @@ const (
 	replaceWindow = 500 * time.Millisecond
 )
 
-// WriteFile writes data to path through a same-directory temp file and
-// rename. The temp name is fixed (path + ".tmp"), so concurrent writers
-// of one path must already be serialized by the caller; Update is the
-// variant that serializes them itself.
+// WriteFile writes data to path through a uniquely named same-directory
+// temp file and one rename. Concurrent writers of one path never touch
+// each other's temp files, and each rename installs one writer's
+// complete data, the last one landing final — so plain writers may
+// race, but a read-modify-write cycle still needs Update to not lose
+// the writes that land between its read and its rename. A writer that
+// dies before its rename leaves its temp file behind: no reader ever
+// opens one (see the marker contract above), and Update sweeps aged
+// ones for the paths it manages.
 func WriteFile(path string, data []byte, perm fs.FileMode) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, perm); err != nil {
+	tmp, err := writeTemp(path, data, perm)
+	if err != nil {
 		return err
 	}
 	deadline := time.Now().Add(replaceWindow)
@@ -48,6 +68,30 @@ func WriteFile(path string, data []byte, perm fs.FileMode) error {
 		}
 		time.Sleep(replaceRetry)
 	}
+}
+
+// writeTemp creates path's uniquely named temp sibling holding data.
+// The temp is born owner-only and widened to perm only once its content
+// is complete; the explicit chmod applies perm exactly, so a mode taken
+// from the file being replaced is preserved rather than re-masked.
+func writeTemp(path string, data []byte, perm fs.FileMode) (string, error) {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+tempMarker+"*")
+	if err != nil {
+		return "", err
+	}
+	tmp := f.Name()
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(tmp, perm)
+	}
+	if err != nil {
+		os.Remove(tmp)
+		return "", err
+	}
+	return tmp, nil
 }
 
 // ReadFile reads path tolerating a concurrent WriteFile. The handle is
@@ -87,13 +131,16 @@ const (
 // file, so concurrent updaters — including ones in other processes —
 // are serialized and none loses another's change. fn receives the
 // current content, nil when the file does not exist yet, and returns
-// the full replacement. The path's directory must already exist.
+// the full replacement. The path's directory must already exist. Aged
+// leftovers of writers that died mid-flight are swept here, under the
+// lock, where no live writer's transient can be mistaken for one.
 func Update(path string, perm fs.FileMode, fn func(old []byte) ([]byte, error)) error {
-	unlock, err := lock(path + ".lock")
+	unlock, err := lock(path + lockSuffix)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	sweepOrphans(path)
 
 	old, err := ReadFile(path)
 	if os.IsNotExist(err) {
@@ -108,15 +155,48 @@ func Update(path string, perm fs.FileMode, fn func(old []byte) ([]byte, error)) 
 	return WriteFile(path, data, perm)
 }
 
+// sweepOrphans removes what a writer that died mid-flight left next to
+// path: temp files never renamed into place and ejection tickets never
+// removed. It runs only while path's lock is held, and touches only
+// names aged past the lock's own stale bound, so the transients of a
+// live writer — which exist for milliseconds — are never in reach.
+func sweepOrphans(path string) {
+	dir := filepath.Dir(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	base := filepath.Base(path)
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, base+tempMarker) &&
+			name != base+lockSuffix+ejectSuffix {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || time.Since(info.ModTime()) <= lockStale {
+			continue
+		}
+		os.Remove(filepath.Join(dir, name))
+	}
+}
+
 // lock takes an exclusive lock via create-exclusive of a lock file,
 // which every platform this runs on supports over local filesystems.
+// The file carries a random owner mark: a lock ejected as stale may
+// already have been recreated by the next holder, so release must
+// recognize — and spare — an incarnation it did not create.
 func lock(path string) (unlock func(), err error) {
+	var mark [16]byte
+	if _, err := rand.Read(mark[:]); err != nil {
+		return nil, err
+	}
+	owner := []byte(hex.EncodeToString(mark[:]))
 	deadline := time.Now().Add(lockTimeout)
 	for {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		err := claimLock(path, owner)
 		if err == nil {
-			f.Close()
-			return func() { os.Remove(path) }, nil
+			return func() { releaseLock(path, owner) }, nil
 		}
 		// Windows reports create-exclusive against a lock file whose
 		// holder is unlocking as a permission error rather than an
@@ -128,8 +208,11 @@ func lock(path string) (unlock func(), err error) {
 			return nil, err
 		}
 		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > lockStale {
-			os.Remove(path)
-			continue
+			// Whether or not this waiter won the ejection, the claim retry
+			// goes through the shared deadline and pacing below: a lock
+			// that stays stale because its ejection ticket is blocked must
+			// still time out rather than spin.
+			ejectStaleLock(path)
 		}
 		if time.Now().After(deadline) {
 			// A directory this process genuinely cannot write reaches
@@ -138,5 +221,65 @@ func lock(path string) (unlock func(), err error) {
 			return nil, fmt.Errorf("fsatomic: %s held past the stale deadline: %w", path, err)
 		}
 		time.Sleep(lockRetry)
+	}
+}
+
+// claimLock create-exclusively takes the lock file and stamps it with
+// this holder's owner mark. A file that could not take the complete
+// mark is removed before anyone could judge it stale, so no other
+// writer can be holding it.
+func claimLock(path string, owner []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, werr := f.Write(owner)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(path)
+		return werr
+	}
+	return nil
+}
+
+// releaseLock removes the lock only while it still carries this
+// holder's mark: after a stale ejection the same path may hold the next
+// writer's lock, which an outlived holder's release must leave
+// standing. The check narrows the misfire window from the whole hold
+// duration to the moment between the read and the remove.
+func releaseLock(path string, owner []byte) {
+	current, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(current, owner) {
+		return
+	}
+	os.Remove(path)
+}
+
+// ejectStaleLock removes a lock whose holder died without releasing it.
+// The removal runs under a create-exclusive ejection ticket and only
+// after re-judging the lock's age there: with one ejector at a time, a
+// still-stale file is still the incarnation that was judged — a fresh
+// lock can only be created at a name the stale file has left, and only
+// this ejector removes it. Without the ticket, a slower waiter working
+// from a pre-ejection judgment would remove the fresh lock that the
+// winner's ejection plus a new claim just put at the same path. Waiters
+// that lose the ticket re-enter the wait loop and judge afresh.
+func ejectStaleLock(path string) {
+	ticket := path + ejectSuffix
+	f, err := os.OpenFile(ticket, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		// A ticket aged past the stale bound belongs to an ejector that
+		// died mid-ejection; left alone it would block ejection forever.
+		if info, statErr := os.Stat(ticket); statErr == nil && time.Since(info.ModTime()) > lockStale {
+			os.Remove(ticket)
+		}
+		return
+	}
+	f.Close()
+	defer os.Remove(ticket)
+	if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) > lockStale {
+		os.Remove(path)
 	}
 }

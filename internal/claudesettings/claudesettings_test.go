@@ -3,11 +3,13 @@ package claudesettings
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -372,6 +374,32 @@ func TestUserHookInjectAndRemove(t *testing.T) {
 	}
 	if HasHook(path, DiscoveryMarker) {
 		t.Error("discovery hook still present after removal")
+	}
+}
+
+func TestConcurrentEditsLoseNoInjection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = InjectUserHook(path, fmt.Sprintf("/usr/local/bin/trajector-%d hook discovery", i))
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("inject %d: %v", i, err)
+		}
+	}
+	for i := range n {
+		marker := fmt.Sprintf("trajector-%d hook discovery", i)
+		if !HasHook(path, marker) {
+			t.Errorf("hook %q lost to a concurrent edit", marker)
+		}
 	}
 }
 

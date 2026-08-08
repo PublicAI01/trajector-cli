@@ -39,6 +39,13 @@ const (
 // messages. Every spelling of the name derives from this one.
 const ProjectLocalRel = ".claude/settings.local.json"
 
+// ProjectLocalIgnoreRule is the gitignore pattern enable maintains for
+// the injected settings file. It is deliberately wider than the file
+// itself: an atomic rewrite that dies midway leaves a temp or lock
+// sibling that can carry the same consent token, and none of those may
+// be committable either.
+const ProjectLocalIgnoreRule = ProjectLocalRel + "*"
+
 // ProjectLocalPath locates the project-scoped settings file that
 // receives the injection. It is local (never committed) by Claude Code
 // convention; enable additionally verifies gitignore coverage.
@@ -301,6 +308,10 @@ func readSettings(path string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseSettings(path, data)
+}
+
+func parseSettings(path string, data []byte) (map[string]any, error) {
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return map[string]any{}, nil
 	}
@@ -311,20 +322,11 @@ func readSettings(path string) (map[string]any, error) {
 	return root, nil
 }
 
+// edit is a read-modify-write of a file whose other writers are the
+// user and concurrent trajector processes; a plain last-write-wins
+// replacement would discard whatever a concurrent writer merged in, so
+// the whole cycle runs under fsatomic.Update's cross-process lock.
 func edit(path string, mutate func(map[string]any) error) error {
-	root, err := readSettings(path)
-	if err != nil {
-		return err
-	}
-	if err := mutate(root); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(root, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-
 	// Keep the user's chosen permissions on an existing file; new files
 	// are owner-only because the injected URL embeds a consent token.
 	mode := fs.FileMode(0o600)
@@ -334,5 +336,18 @@ func edit(path string, mutate func(map[string]any) error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return fsatomic.WriteFile(path, data, mode)
+	return fsatomic.Update(path, mode, func(old []byte) ([]byte, error) {
+		root, err := parseSettings(path, old)
+		if err != nil {
+			return nil, err
+		}
+		if err := mutate(root); err != nil {
+			return nil, err
+		}
+		data, err := json.MarshalIndent(root, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		return append(data, '\n'), nil
+	})
 }

@@ -15,12 +15,13 @@ import (
 )
 
 // projectIgnoreRules are the .gitignore lines an enabled project
-// carries: the injected settings file, which embeds a consent token,
-// and both forms of a diagnostic bundle. The bundle rules land at
-// enable time so the archive and its unpacked directory are ignored
-// before either exists; uninstall names exactly this list when it
-// points at leftover lines, so the two surfaces cannot drift.
-var projectIgnoreRules = append([]string{claudesettings.ProjectLocalRel}, doctorBundleIgnoreRules...)
+// carries: the injected settings file with its transient siblings,
+// which embed a consent token, and both forms of a diagnostic bundle.
+// The bundle rules land at enable time so the archive and its unpacked
+// directory are ignored before either exists; uninstall names exactly
+// this list when it points at leftover lines, so the two surfaces
+// cannot drift.
+var projectIgnoreRules = append([]string{claudesettings.ProjectLocalIgnoreRule}, doctorBundleIgnoreRules...)
 
 // hookCommand renders the shell command injected into settings hooks.
 func hookCommand(execPath, subcommand string) string {

@@ -169,7 +169,7 @@ func TestEnableBackfillsUnpackedBundleRuleWithoutDuplicates(t *testing.T) {
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	want := old + "trajector-doctor-*/\n"
+	want := old + ".claude/settings.local.json*\ntrajector-doctor-*/\n"
 	after, err := os.ReadFile(ignorePath)
 	if err != nil || string(after) != want {
 		t.Errorf(".gitignore = %q, %v, want %q", after, err, want)

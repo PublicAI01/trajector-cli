@@ -319,9 +319,8 @@ func (s *Server) adminAuthorized(r *http.Request) bool {
 // lock per address, so the leftover publications it clears can only
 // belong to instances that crashed or already ceded the port — never
 // to a live successor, which could not have bound yet. The publication
-// path is this instance's alone, so the atomic write's fixed temp name
-// cannot collide with another publisher and a reader never observes a
-// partially written token.
+// path is this instance's alone, so no other writer ever replaces it
+// and a reader never observes a partially written token.
 func (s *Server) publishAdminToken(addr string) error {
 	s.tokenPath = s.cfg.AdminTokens.AdminTokenFile(addr, s.instance)
 	if err := userdirs.EnsureOwnerDir(filepath.Dir(s.tokenPath)); err != nil {
