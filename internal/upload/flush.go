@@ -25,6 +25,10 @@ type FlushReply struct {
 	Outcome Outcome `json:"outcome"`
 	Batches int     `json:"batches"`
 	Records int     `json:"records"`
+	// Unreadable counts rawcalls this flush set aside into the rejected
+	// store because they no longer read back as rawcalls, so the caller
+	// can say so instead of the records going quiet.
+	Unreadable int `json:"unreadable,omitempty"`
 	// MinClientVersion is set when the service gates this client
 	// version, so the caller can name the required version without
 	// reading the handshake file across processes.
@@ -48,6 +52,7 @@ func (u *Uploader) Handler(serviceName string) http.Handler {
 			Outcome:          result.Outcome,
 			Batches:          result.Batches,
 			Records:          result.Records,
+			Unreadable:       result.Unreadable,
 			MinClientVersion: result.MinClientVersion,
 		}
 		if err != nil {

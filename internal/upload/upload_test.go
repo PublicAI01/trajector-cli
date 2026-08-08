@@ -3,6 +3,7 @@ package upload_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,11 +20,14 @@ import (
 
 type fixture struct {
 	spool    *spool.Spool
+	spoolDir string
 	server   *fakeplatform.Server
 	uploader *upload.Uploader
 	dir      string
 	rejected string
 	token    string
+	// logs collects what the uploader reports through its Logf seam.
+	logs strings.Builder
 	// now is the uploader's clock; tests advance it to cross gates.
 	now time.Time
 }
@@ -34,10 +38,11 @@ func newFixture(t *testing.T) *fixture {
 		server:   fakeplatform.New(t),
 		dir:      filepath.Join(t.TempDir(), "upload"),
 		rejected: filepath.Join(t.TempDir(), "rawcalls-rejected"),
+		spoolDir: filepath.Join(t.TempDir(), "rawcalls"),
 		token:    "dev-tok-fake",
 		now:      time.Now().UTC(),
 	}
-	sp, err := spool.Create(filepath.Join(t.TempDir(), "rawcalls"), 0)
+	sp, err := spool.Create(f.spoolDir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,13 +57,34 @@ func newFixture(t *testing.T) *fixture {
 		Run: func() batch.Run {
 			return batch.Run{RecordedToday: 5, SpoolUsageBytes: sp.Usage(), SpoolQuotaBytes: sp.Quota()}
 		},
-		Now: func() time.Time { return f.now },
+		Logf: func(format string, args ...any) { fmt.Fprintf(&f.logs, format+"\n", args...) },
+		Now:  func() time.Time { return f.now },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.uploader = u
 	return f
+}
+
+// tearStoredRawcall truncates a stored rawcall's file to its front
+// half, leaving what a write torn by a crash leaves, and returns the
+// bytes that remain on disk.
+func (f *fixture) tearStoredRawcall(t *testing.T, id string) []byte {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(f.spoolDir, "*", id+".json"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("locating the stored rawcall %s: %v (matches: %v)", id, err, matches)
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	torn := data[:len(data)/2]
+	if err := os.WriteFile(matches[0], torn, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return torn
 }
 
 func (f *fixture) storeRawcall(t *testing.T, id string, at time.Time) {

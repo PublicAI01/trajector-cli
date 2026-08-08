@@ -10,17 +10,21 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
-// The rejected store holds rawcalls of batches the service refused as
-// unacceptable, moved out of the spool so one bad batch cannot block
-// every upload behind it. The layout is a documented product contract:
+// The rejected store holds rawcalls no upload can carry: records of
+// batches the service refused as unacceptable, and records this machine
+// set aside itself because they no longer read back as rawcalls. Both
+// are moved out of the spool so one bad batch or one unreadable file
+// cannot block every upload behind it. The layout is a documented
+// product contract:
 //
 //	<dir>/<batch_id>/<request_id>.json   the rawcall, exactly as spooled
-//	<dir>/<batch_id>/reason.json         why the batch was rejected
+//	<dir>/<batch_id>/reason.json         why the records were set aside
 //
-// Nothing here is deleted automatically: a rejected batch may still
+// Nothing here is deleted automatically: a quarantined record may still
 // correspond to compensation, so it waits — loudly, via status and
 // doctor — for a fixed client to requeue it or the user to discard it.
 const reasonName = "reason.json"
@@ -34,17 +38,19 @@ type Rejection struct {
 	At      time.Time `json:"at"`
 }
 
-// quarantine moves one rejected batch's records from the spool into the
-// rejected store. The copy lands before the spool deletes, so a failure
-// anywhere leaves every record present in at least one of the two
-// places; rerunning after a partial move overwrites the same files.
+// quarantine moves one batch's records from the spool into the rejected
+// store. The copy lands before the spool deletes, so a failure anywhere
+// leaves every record present in at least one of the two places;
+// rerunning after a partial move overwrites the same files. Writes go
+// through fsatomic so a concurrent reader — requeue or withdrawal in
+// another process — never observes a half-written record.
 func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, rawcalls []spool.Rawcall) error {
 	dir := filepath.Join(rejectedDir, rej.BatchID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	for _, rc := range rawcalls {
-		if err := os.WriteFile(filepath.Join(dir, rc.RequestID+".json"), rc.Data, 0o600); err != nil {
+		if err := fsatomic.WriteFile(filepath.Join(dir, rc.RequestID+".json"), rc.Data, 0o600); err != nil {
 			return err
 		}
 	}
@@ -52,7 +58,7 @@ func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, rawcalls []s
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, reasonName), append(reason, '\n'), 0o600); err != nil {
+	if err := fsatomic.WriteFile(filepath.Join(dir, reasonName), append(reason, '\n'), 0o600); err != nil {
 		return err
 	}
 
@@ -93,7 +99,7 @@ func PurgeRejected(rejectedDir, projectIDHash string) (int, error) {
 				continue
 			}
 			path := filepath.Join(dir, name)
-			data, err := os.ReadFile(path)
+			data, err := fsatomic.ReadFile(path)
 			if err != nil {
 				return deleted, err
 			}
@@ -196,7 +202,7 @@ func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, in
 			continue
 		}
 		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path)
+		data, err := fsatomic.ReadFile(path)
 		if err != nil {
 			stuck = append(stuck, err)
 			continue

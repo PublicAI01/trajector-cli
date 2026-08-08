@@ -50,6 +50,7 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 	}
 	writeUploadFile(t, e, "state.json", map[string]any{"last_error": "boom"})
 	writeUploadFile(t, e, "handshake.json", map[string]any{"min_client_version": "9.9.9"})
+	writeUploadFile(t, e, "pending-unreadable.json", map[string]any{"batch_id": "b-half"})
 	seedRejectedBatch(t, e, "b-poison", "413 Request Entity Too Large", map[string][]byte{
 		"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
 	})
@@ -78,10 +79,11 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 
 	entries := readBundle(t, path)
 	for name, want := range map[string]string{
-		"info.json":             "testv",
-		"upload/state.json":     "boom",
-		"upload/handshake.json": "9.9.9",
-		"routing.json":          string(rootInJSON),
+		"info.json":                      "testv",
+		"upload/state.json":              "boom",
+		"upload/handshake.json":          "9.9.9",
+		"upload/pending-unreadable.json": "b-half",
+		"routing.json":                   string(rootInJSON),
 	} {
 		got, ok := entries[name]
 		if !ok {

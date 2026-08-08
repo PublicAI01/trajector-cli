@@ -48,9 +48,9 @@ type wire struct {
 }
 
 // wireItem indexes one record inside the decompressed stream. The
-// metadata fields are copies of what the rawcall's own envelope says; a
-// record whose envelope cannot be read back is still indexed by
-// position, because data is never dropped on this side of the wire.
+// metadata fields are copies of what the rawcall's own envelope says;
+// every packed record has a readable envelope, because Build refuses
+// the ones that do not.
 type wireItem struct {
 	RequestID      string `json:"request_id"`
 	ProjectIDHash  string `json:"project_id_hash,omitempty"`
@@ -78,10 +78,30 @@ type Batch struct {
 	RequestIDs []string
 }
 
+// RecordError names the one rawcall that stopped a Build: a record
+// that no longer reads back as a rawcall, or that redaction could not
+// mask. Build refuses such a record rather than packing it — it cannot
+// be attributed or masked field-aware, so it must not ship — and the
+// error carries the record's identity so the caller can set exactly
+// that record aside and pack the rest. Refusal is never silent loss:
+// the record stays wherever the caller keeps it.
+type RecordError struct {
+	RequestID string
+	Err       error
+}
+
+func (e *RecordError) Error() string {
+	return fmt.Sprintf("rawcall %s cannot be packed: %v", e.RequestID, e.Err)
+}
+
+func (e *RecordError) Unwrap() error { return e.Err }
+
 // Build packs rawcalls into one batch. Records of the same session are
 // laid out adjacently — their bodies share long prefixes, which is what
 // makes the compressed stream small — and every record passes through
 // redaction before it is packed: nothing leaves this function unmasked.
+// A record that cannot be read back or masked stops the build with a
+// RecordError naming it.
 func Build(id string, createdAt time.Time, clientVersion string, rawcalls []spool.Rawcall, run Run) (Batch, error) {
 	if id == "" {
 		return Batch{}, fmt.Errorf("batch: a batch needs an id")
@@ -121,13 +141,16 @@ func Build(id string, createdAt time.Time, clientVersion string, rawcalls []spoo
 	items := make([]wireItem, 0, len(ordered))
 	ids := make([]string, 0, len(ordered))
 	for _, rc := range ordered {
+		env, err := envelope.Parse(rc.Data)
+		if err != nil {
+			return Batch{}, &RecordError{RequestID: rc.RequestID, Err: err}
+		}
 		masked, err := redact.JSONLBytes(rc.Data)
 		if err != nil {
-			// An unmaskable record must not be shipped; failing the whole
-			// build leaves everything in the spool for a later attempt.
-			return Batch{}, fmt.Errorf("batch: redacting rawcall %s: %w", rc.RequestID, err)
+			// An unmaskable record must not be shipped.
+			return Batch{}, &RecordError{RequestID: rc.RequestID, Err: fmt.Errorf("redacting: %w", err)}
 		}
-		item := index(rc)
+		item := index(rc, env)
 		item.Offset = int64(stream.Len())
 		item.Size = int64(masked.Len())
 		stream.Write(masked.Bytes())
@@ -158,16 +181,11 @@ func Build(id string, createdAt time.Time, clientVersion string, rawcalls []spoo
 	return Batch{ID: id, Envelope: env, Records: redact.AlreadyRedacted(compressed), RequestIDs: ids}, nil
 }
 
-// index copies what a rawcall's envelope says about it. A record that
-// cannot be read back is indexed by position alone.
-func index(rc spool.Rawcall) wireItem {
+// index copies what a rawcall's envelope says about it.
+func index(rc spool.Rawcall, env envelope.Envelope) wireItem {
 	item := wireItem{RequestID: rc.RequestID}
 	if !rc.Timestamp.IsZero() {
 		item.Timestamp = rc.Timestamp.UTC().Format(time.RFC3339Nano)
-	}
-	env, err := envelope.Parse(rc.Data)
-	if err != nil {
-		return item
 	}
 	item.ProjectIDHash = env.ProjectIDHash()
 	item.UpstreamOrigin = env.UpstreamOrigin()

@@ -200,6 +200,48 @@ func TestUploadSurfacesEveryRejectedBatchLoudly(t *testing.T) {
 	}
 }
 
+func TestUploadSetsAsideATornRawcallAndKeepsUploading(t *testing.T) {
+	e := newUploadEnv(t)
+	seedRawcall(e, "req-good", time.Now().UTC())
+	e.Sandbox().SeedTornRawcall("req-torn", e.ProjectHash(), time.Now().UTC())
+	p := e.StartProxy()
+	defer p.Stop()
+
+	got := e.Run("upload", "--force")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	for _, want := range []string{
+		"Uploaded 1 batch(es), 1 rawcall(s).",
+		"Set aside 1 unreadable rawcall(s)",
+	} {
+		if !strings.Contains(got.Stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", got.Stdout, want)
+		}
+	}
+	if n := len(e.Sandbox().Rawcalls()); n != 0 {
+		t.Errorf("spool holds %d rawcalls; the torn record must move aside, the rest upload", n)
+	}
+	if n := rejectedRecords(t, e.Layout().RejectedDir()); n != 1 {
+		t.Errorf("rejected store holds %d records, want the torn one", n)
+	}
+	if n := batchUploads(e.Service()); n != 1 {
+		t.Errorf("service saw %d uploads, want 1", n)
+	}
+
+	status := e.InProject("status")
+	if !strings.Contains(status.Stdout, "1 rawcall(s) in 1 rejected batch(es)") {
+		t.Errorf("status stdout = %q, want the quarantined count", status.Stdout)
+	}
+	doc := e.InProject("doctor")
+	if doc.Exit != 1 {
+		t.Fatalf("doctor exit = %d, want 1 while a record waits quarantined (stdout: %q)", doc.Exit, doc.Stdout)
+	}
+	if !strings.Contains(doc.Stdout, "unreadable in the spool") {
+		t.Errorf("doctor stdout = %q, want the recorded set-aside reason", doc.Stdout)
+	}
+}
+
 func TestUploadPausedByARequiredUpgradeExitsZeroEveryTime(t *testing.T) {
 	e := clitest.New(t)
 	e.Paired()

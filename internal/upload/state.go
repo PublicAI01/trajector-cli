@@ -14,11 +14,22 @@ import (
 
 // The uploader's bookkeeping files. All of them hold only ids,
 // timestamps, and service settings — never record data.
+// pendingUnreadableName preserves the bytes of a pending record that
+// stopped parsing, set aside so uploads can continue while the
+// evidence of what was discarded stays inspectable.
 const (
-	pendingName   = "pending.json"
-	stateName     = "state.json"
-	handshakeName = "handshake.json"
+	pendingName           = "pending.json"
+	pendingUnreadableName = "pending-unreadable.json"
+	stateName             = "state.json"
+	handshakeName         = "handshake.json"
 )
+
+// BookkeepingFiles names every file the uploader keeps in its state
+// directory, for diagnostics to copy verbatim: each holds only ids,
+// timestamps, and service settings, never record data.
+func BookkeepingFiles() []string {
+	return []string{stateName, handshakeName, pendingName, pendingUnreadableName}
+}
 
 // pending is a batch that was offered to the service and not yet
 // acknowledged. It pins the batch id to its records so a retry reuses
@@ -73,8 +84,21 @@ func saveHandshake(dir string, h storedHandshake) error {
 	return writeJSON(filepath.Join(dir, handshakeName), h)
 }
 
+// errUnreadablePending is the positive classification of pending bytes
+// that are not a pending record: they parse as no JSON, or they name no
+// batch id, so they can never again pin the id they exist to pin. It is
+// distinct from a read failure — a file that cannot be read at all may
+// still hold a valid record, so only this classification may trigger
+// recovery. It carries the judged bytes so the recovery sets aside
+// exactly what was judged, not whatever the file holds by then.
+type errUnreadablePending struct{ raw []byte }
+
+func (e *errUnreadablePending) Error() string {
+	return "the pending batch record is unreadable"
+}
+
 func loadPending(dir string) (pending, bool, error) {
-	data, err := os.ReadFile(filepath.Join(dir, pendingName))
+	data, err := fsatomic.ReadFile(filepath.Join(dir, pendingName))
 	if errors.Is(err, fs.ErrNotExist) {
 		return pending{}, false, nil
 	}
@@ -85,10 +109,25 @@ func loadPending(dir string) (pending, bool, error) {
 	if err := json.Unmarshal(data, &p); err != nil || p.BatchID == "" {
 		// An unreadable pending record cannot be resent, but silently
 		// dropping it would reopen the double-ingest window it exists to
-		// close.
-		return pending{}, false, errors.New("the pending batch record is unreadable")
+		// close: the caller owns the recovery and its warning.
+		return pending{}, false, &errUnreadablePending{raw: data}
 	}
 	return p, true, nil
+}
+
+// setAsideUnreadablePending replaces the pending file with nothing,
+// preserving the unreadable bytes under pendingUnreadableName so what
+// was discarded stays inspectable. A later corruption overwrites the
+// same file: only the latest discard is evidence worth keeping.
+func setAsideUnreadablePending(dir string, raw []byte) error {
+	if err := fsatomic.WriteFile(filepath.Join(dir, pendingUnreadableName), raw, 0o600); err != nil {
+		return err
+	}
+	err := os.Remove(filepath.Join(dir, pendingName))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func savePending(dir string, p pending) error {
@@ -157,7 +196,7 @@ func (u *Uploader) writeState(st State) {
 }
 
 func readJSON(path string, into any) {
-	data, err := os.ReadFile(path)
+	data, err := fsatomic.ReadFile(path)
 	if err != nil {
 		return
 	}

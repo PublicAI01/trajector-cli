@@ -58,8 +58,8 @@ func (m *Machine) DoctorBundle(projectDir string, io IO) (string, error) {
 	b.add("diagnosis.json", renderDiagnosis(d))
 
 	uploadDir := m.deps.Layout.UploadDir()
-	for _, name := range []string{"state.json", "handshake.json", "pending.json"} {
-		// These bookkeeping files hold only ids, timestamps, and service
+	for _, name := range upload.BookkeepingFiles() {
+		// Bookkeeping files hold only ids, timestamps, and service
 		// settings by design; they are copied verbatim.
 		if data, err := os.ReadFile(filepath.Join(uploadDir, name)); err == nil {
 			b.add("upload/"+name, data)

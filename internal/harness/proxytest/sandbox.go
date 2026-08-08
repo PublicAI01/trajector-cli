@@ -1,6 +1,8 @@
 package proxytest
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -94,6 +96,25 @@ func (s *Sandbox) SeedRawcall(id, projectIDHash string, at time.Time, opts ...Ra
 		s.t.Fatal(err)
 	}
 	if err := sp.Write(record(s.t, id, projectIDHash, at, opts)); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// SeedTornRawcall stores one rawcall and then truncates its file to the
+// front half, leaving what a write torn by a crash leaves: a file named
+// like a record that no longer reads back as one.
+func (s *Sandbox) SeedTornRawcall(id, projectIDHash string, at time.Time) {
+	s.t.Helper()
+	s.SeedRawcall(id, projectIDHash, at)
+	matches, err := filepath.Glob(filepath.Join(s.layout.SpoolDir(), "*", id+".json"))
+	if err != nil || len(matches) != 1 {
+		s.t.Fatalf("locating the stored rawcall %s: %v (matches: %v)", id, err, matches)
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	if err := os.WriteFile(matches[0], data[:len(data)/2], 0o600); err != nil {
 		s.t.Fatal(err)
 	}
 }

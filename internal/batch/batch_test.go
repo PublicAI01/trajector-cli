@@ -3,6 +3,7 @@ package batch_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -231,24 +232,37 @@ func TestBuildEnvelopeCarriesIdentityIndexAndRunMetadata(t *testing.T) {
 	}
 }
 
-func TestBuildPacksARecordWhoseEnvelopeCannotBeReadBack(t *testing.T) {
+func TestBuildRefusesARecordItCannotReadBackAndNamesIt(t *testing.T) {
 	broken := spool.Rawcall{
 		RequestID: "req-broken",
 		Timestamp: buildTime,
 		Data:      []byte("not a rawcall at all"),
 	}
-	b, err := batch.Build("batch-1", buildTime, "test", []spool.Rawcall{broken}, batch.Run{})
+	rawcalls := []spool.Rawcall{
+		simpleRawcall(t, "req-good", "session-a", buildTime),
+		broken,
+	}
+	_, err := batch.Build("batch-1", buildTime, "test", rawcalls, batch.Run{})
+	if err == nil {
+		t.Fatal("a batch was built around a record that does not read back")
+	}
+	var record *batch.RecordError
+	if !errors.As(err, &record) {
+		t.Fatalf("err = %v (%T), want a RecordError", err, err)
+	}
+	if record.RequestID != "req-broken" {
+		t.Fatalf("refused record = %q, want req-broken", record.RequestID)
+	}
+	if record.Unwrap() == nil {
+		t.Error("the refusal carries no underlying cause")
+	}
+
+	b, err := batch.Build("batch-1", buildTime, "test", rawcalls[:1], batch.Run{})
 	if err != nil {
-		t.Fatalf("Build: %v", err)
+		t.Fatalf("Build without the broken record: %v", err)
 	}
-	env := parseEnvelope(t, b)
-	if len(env.Records) != 1 || env.Records[0].RequestID != "req-broken" {
-		t.Fatalf("index = %+v", env.Records)
-	}
-	stream := decompress(t, b.Records.Bytes())
-	r := env.Records[0]
-	if got := string(stream[r.Offset : r.Offset+r.Size]); got != "not a rawcall at all" {
-		t.Fatalf("packed record = %q", got)
+	if len(b.RequestIDs) != 1 || b.RequestIDs[0] != rawcalls[0].RequestID {
+		t.Fatalf("RequestIDs = %v, want only the readable record", b.RequestIDs)
 	}
 }
 

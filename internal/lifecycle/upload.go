@@ -27,6 +27,9 @@ func (m *Machine) Upload(force bool, io IO) error {
 	if reply.Batches > 0 {
 		fmt.Fprintf(io.Out, "Uploaded %d batch(es), %d rawcall(s).\n", reply.Batches, reply.Records)
 	}
+	if reply.Unreadable > 0 {
+		fmt.Fprintf(io.Out, "Set aside %d unreadable rawcall(s); they were never sent. Run `trajector doctor` to inspect them.\n", reply.Unreadable)
+	}
 	switch reply.Outcome {
 	case upload.Uploaded:
 		// the acknowledged-count line above is the whole report
