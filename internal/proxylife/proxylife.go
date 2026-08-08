@@ -138,7 +138,7 @@ func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/"
 // Concurrent callers converge because the port bind is the
 // single-instance lock and losers defer to the winner.
 func (p *Proxy) Ensure() error {
-	switch h, holder := p.settledHealth(); holder {
+	switch h, holder := p.SettledHealth(); holder {
 	case HolderForeign:
 		return fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
 	case HolderOurs:
@@ -234,14 +234,16 @@ func (p *Proxy) verify() (Holder, string) {
 	return HolderForeign, ""
 }
 
-// settledHealth is Health with the startup window allowed for. A proxy
-// between binding its port and answering its first request is
-// indistinguishable from a stranger holding the port, and the caller
+// SettledHealth is Health with the startup window allowed for. A proxy
+// between binding its port and publishing its admin token is
+// indistinguishable from a stranger holding the port, and a sibling
 // that won the bind a moment ago is by far the likelier of the two:
-// Ensure's whole convergence story is that losers defer to the winner,
-// which a loser reporting ErrPortOccupied does not do. Only Ensure needs
-// this — it acts on the verdict, where Health's other callers report it.
-func (p *Proxy) settledHealth() (Health, Holder) {
+// concurrent starts converge only because losers defer to the winner,
+// which a loser reporting ErrPortOccupied does not do. The grace is
+// paid only by callers about to act on the verdict — Ensure, a serve
+// process that just lost the bind; report-only surfaces read Health
+// directly, so a diagnosis answers about the port as it stands.
+func (p *Proxy) SettledHealth() (Health, Holder) {
 	deadline := time.Now().Add(foreignSettle)
 	for {
 		h, holder := p.Health()

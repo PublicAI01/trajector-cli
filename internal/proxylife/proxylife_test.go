@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+	"github.com/PublicAI01/trajector-cli/internal/cli"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
@@ -79,7 +81,12 @@ const versionEnv = "TRAJECTOR_TEST_PROXY_VERSION"
 
 func TestMain(m *testing.M) {
 	procbin.Main(m, map[string]func(args []string) int{
-		"proxy":        serveProxy,
+		"proxy": serveProxy,
+		// The full CLI entry point, so a spawned process tree prints
+		// exactly what production would print into the proxy log.
+		"cli": func(args []string) int {
+			return cli.Run(args, strings.NewReader(""), os.Stdout, os.Stderr)
+		},
 		"exit-clean":   func([]string) int { return 0 },
 		"always-crash": func([]string) int { return 1 },
 		"sleep": func([]string) int {
@@ -125,21 +132,65 @@ func supervised(t *testing.T, addr, version string) (*proxylife.Proxy, userdirs.
 	p := proxylife.For(layout, version, procbin.Self(t, "proxy"), addr)
 	t.Cleanup(func() {
 		p.Stop()
-		deadline := time.Now().Add(10 * time.Second)
-		for {
-			conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
-			if err != nil {
-				return
-			}
-			conn.Close()
-			if time.Now().After(deadline) {
-				t.Error("spawned proxy did not release its port")
-				return
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
+		waitReleased(t, addr)
+		waitLogReleased(t, layout)
 	})
 	return p, layout
+}
+
+// waitLogReleased waits until the spawned process tree has let go of
+// the proxy log. The port comes free when the serving child exits, but
+// the supervisor holding the log's append handle exits a beat later —
+// and Windows refuses the temp-dir cleanup's delete while any handle
+// is open.
+func waitLogReleased(t *testing.T, layout userdirs.Layout) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if logRemoved(layout) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Log("the proxy log is still held at cleanup")
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// portFree reports whether nothing accepts connections at addr.
+func portFree(addr string) bool {
+	conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+	if err != nil {
+		return true
+	}
+	conn.Close()
+	return false
+}
+
+// logRemoved removes the proxy log, reporting whether it is gone — on
+// Windows the remove is refused while any process holds the file open.
+func logRemoved(layout userdirs.Layout) bool {
+	err := os.Remove(layout.ProxyLog())
+	return err == nil || errors.Is(err, fs.ErrNotExist)
+}
+
+// waitReleased waits for whatever holds addr to release it.
+func waitReleased(t *testing.T, addr string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err != nil {
+			return
+		}
+		conn.Close()
+		if time.Now().After(deadline) {
+			t.Error("spawned proxy did not release its port")
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func TestEnsureStartsSupervisedProxyAndIsIdempotent(t *testing.T) {
@@ -155,6 +206,62 @@ func TestEnsureStartsSupervisedProxyAndIsIdempotent(t *testing.T) {
 
 	if err := p.Ensure(); err != nil {
 		t.Errorf("second Ensure: %v, want nil against the healthy instance", err)
+	}
+}
+
+func TestConcurrentStartsConvergeWithoutBlamingAForeignProcess(t *testing.T) {
+	addr := freeAddr(t)
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_DATA_HOME", dir)
+	t.Setenv("XDG_STATE_HOME", dir)
+	t.Setenv(tokenstore.BackendEnv, "file")
+	layout := proxytest.SandboxLayout(t, dir)
+	exe := procbin.Self(t, "cli")
+	first := proxylife.For(layout, "dev", exe, addr)
+	second := proxylife.For(layout, "dev", exe, addr)
+	t.Cleanup(func() {
+		// A sibling still inside its startup grace when the winner
+		// drains exits on its bind error and is restarted by its
+		// supervisor onto the now-free port — the self-healing working
+		// as designed — so one drain is not always the last. Drain
+		// until both trees are gone: the port coming free says the
+		// serving child exited, the log becoming removable says no
+		// process holds its append handle anymore, which is the release
+		// Windows' delete refusal measures.
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			first.Stop()
+			if portFree(addr) && logRemoved(layout) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Error("spawned proxies kept the port or the log through repeated drains")
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	})
+
+	done := make(chan error, 2)
+	for _, p := range []*proxylife.Proxy{first, second} {
+		go func() { done <- p.Ensure() }()
+	}
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatalf("concurrent Ensure: %v", err)
+		}
+	}
+
+	if _, holder := first.Health(); holder != proxylife.HolderOurs {
+		t.Fatalf("holder = %v after concurrent starts, want ours", holder)
+	}
+	log := proxyLogContents(t, layout)
+	if strings.Contains(log, proxylife.ErrPortOccupied.Error()) {
+		t.Errorf("the proxy log blames a foreign process for a sibling's win:\n%s", log)
+	}
+	if strings.Contains(log, lifecycle.PortOccupiedRemedy) {
+		t.Errorf("the proxy log advises stopping a process that is a sibling proxy:\n%s", log)
 	}
 }
 

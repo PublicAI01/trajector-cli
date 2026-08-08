@@ -130,6 +130,20 @@ func (e *env) occupyPortWithHealthzCopy() *proxytest.Imposter {
 	return im
 }
 
+// occupyPortStillPublishing binds the proxy address with a holder that
+// leaves the first challenge unproven and proves itself from the next
+// one on, as a sibling between winning its bind and publishing its
+// admin token would.
+func (e *env) occupyPortStillPublishing() *proxytest.Imposter {
+	e.t.Helper()
+	im := proxytest.StartImposter(e.t, proxytest.Health{Service: apiproxy.ServiceName, Version: e.deps.Version})
+	const token = "feedfacefeedfacefeedfacefeedface"
+	proxytest.PublishAdminToken(e.t, e.deps.Layout, im.Addr(), token)
+	im.ProveAfter(1, token)
+	e.deps.ProxyAddr = im.Addr()
+	return im
+}
+
 // obstruct replaces a directory the machine expects with a plain file,
 // so opening or listing it fails on every platform until the
 // obstruction is removed.

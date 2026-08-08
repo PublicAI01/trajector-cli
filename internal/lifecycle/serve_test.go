@@ -1,6 +1,7 @@
 package lifecycle_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -129,6 +130,53 @@ func TestServeProxyRefusesAForeignPortHolder(t *testing.T) {
 	err := e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
 	if !errors.Is(err, lifecycle.ErrPortOccupied) {
 		t.Errorf("ServeProxy = %v, want ErrPortOccupied", err)
+	}
+}
+
+func TestServeProxyDefersToASiblingStillPublishingItsToken(t *testing.T) {
+	e := newEnv(t)
+	e.occupyPortStillPublishing()
+
+	var stdout bytes.Buffer
+	if err := e.machine().ServeProxy(context.Background(), time.Hour, &stdout, io.Discard); err != nil {
+		t.Fatalf("ServeProxy = %v, want a quiet deferral once the sibling proves itself", err)
+	}
+	if !strings.Contains(stdout.String(), "already running") {
+		t.Errorf("stdout = %q, want the deferral to name the running proxy", stdout.String())
+	}
+}
+
+func TestServeProxyReportsAnUncontestedBindFailureAsItsOwnCause(t *testing.T) {
+	e := newEnv(t)
+	e.deps.ProxyAddr = "127.0.0.1:99999"
+
+	err := e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
+	if err == nil || errors.Is(err, lifecycle.ErrPortOccupied) {
+		t.Fatalf("ServeProxy = %v, want the listen failure itself, not an occupancy verdict", err)
+	}
+	if !strings.Contains(err.Error(), "invalid port") {
+		t.Errorf("ServeProxy = %v, want the original listen error preserved", err)
+	}
+}
+
+func TestServeProxyReportsAPermissionRefusedBindAsItsOwnCause(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:1")
+	if err == nil {
+		probe.Close()
+		t.Skip("this environment allows binding low ports without privilege")
+	}
+	if !errors.Is(err, os.ErrPermission) {
+		t.Skipf("a low-port bind fails with %v here, not a permission refusal", err)
+	}
+
+	e := newEnv(t)
+	e.deps.ProxyAddr = "127.0.0.1:1"
+	serveErr := e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
+	if errors.Is(serveErr, lifecycle.ErrPortOccupied) {
+		t.Fatalf("ServeProxy = %v, want the permission refusal, not an occupancy verdict", serveErr)
+	}
+	if !errors.Is(serveErr, os.ErrPermission) {
+		t.Errorf("ServeProxy = %v, want the permission refusal preserved", serveErr)
 	}
 }
 

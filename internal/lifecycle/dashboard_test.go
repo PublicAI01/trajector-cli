@@ -157,6 +157,22 @@ func TestStatusReportsAHealthzCopyingPortHolder(t *testing.T) {
 	}
 }
 
+func TestStatusDoesNotWaitOutAHolderStillPublishingItsToken(t *testing.T) {
+	e := newEnv(t)
+	im := e.occupyPortStillPublishing()
+	out := e.statusOutput()
+
+	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "not the trajector proxy") {
+		t.Errorf("status = %q, want the unproven holder reported as it stands", out)
+	}
+	if strings.Contains(out, "Running at") {
+		t.Errorf("status = %q, want no running-proxy section before the holder proves itself", out)
+	}
+	if im.SawHeader(apiproxy.AdminHeader) {
+		t.Error("the admin token was sent to a holder that never proved it knows it")
+	}
+}
+
 func TestStatusShowsSpoolUsageAndLastUpload(t *testing.T) {
 	e := newEnv(t)
 	e.sandbox.SeedRawcall("req-1", "hash-project", e.deps.Now())

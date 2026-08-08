@@ -109,11 +109,22 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 
 	l, err := net.Listen("tcp", m.proxy.Addr())
 	if err != nil {
-		if h, holder := m.proxy.Health(); holder == proxylife.HolderOurs {
+		// Losing the bind says nothing about who won it: a sibling that
+		// won a moment ago may not have published its admin token yet, so
+		// this verdict gets the same settled grace Ensure acts on. And
+		// when nothing is listening at all, the port was never contested —
+		// the bind failed for its own reason (permissions, a broken
+		// network stack) and that error is the report, not an occupancy
+		// verdict.
+		switch h, holder := m.proxy.SettledHealth(); holder {
+		case proxylife.HolderOurs:
 			fmt.Fprintf(stdout, "proxy already running at %s (version %s)\n", m.proxy.Addr(), h.Version)
 			return nil
+		case proxylife.HolderForeign:
+			return fmt.Errorf("%w: %s", ErrPortOccupied, m.proxy.Addr())
+		default:
+			return fmt.Errorf("listening on %s: %w", m.proxy.Addr(), err)
 		}
-		return fmt.Errorf("%w: %s", ErrPortOccupied, m.proxy.Addr())
 	}
 
 	served := make(chan struct{})

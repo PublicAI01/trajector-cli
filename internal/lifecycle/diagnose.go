@@ -73,6 +73,10 @@ func (m *Machine) Diagnose(dir string) (Diagnosis, error) {
 	}
 	d.Project = st
 
+	// The verdict is read bare, without proxylife.SettledHealth's
+	// startup grace: only callers that act on the verdict pay to wait
+	// out a sibling's startup. A diagnosis reports the port as it
+	// stands and must answer at once.
 	h, holder := m.proxy.Health()
 	d.Proxy = ProxyState{Addr: m.proxy.Addr(), Holder: holder, Health: h}
 	if st.Enabled && holder == proxylife.HolderOurs {

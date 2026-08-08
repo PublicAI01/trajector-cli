@@ -12,15 +12,18 @@ import (
 
 // Imposter is a real TCP listener squatting a proxy address and
 // answering with a copy of a proxy's health payload — everything a
-// process that cannot read the owning user's files can do. It records
-// what it receives, so a test can assert that no credential ever
-// reached it.
+// process that cannot read the owning user's files can do. With
+// ProveAfter it instead stands in for the user's own proxy caught
+// before its token publication. It records what it receives, so a test
+// can assert that no credential ever reached it.
 type Imposter struct {
 	addr string
 
-	mu    sync.Mutex
-	proof string
-	seen  []imposterRequest
+	mu       sync.Mutex
+	proof    string
+	token    string
+	unproven int
+	seen     []imposterRequest
 }
 
 type imposterRequest struct {
@@ -47,6 +50,13 @@ func StartImposter(t *testing.T, health Health) *Imposter {
 		im.mu.Lock()
 		im.seen = append(im.seen, imposterRequest{method: r.Method, path: r.URL.Path, header: r.Header.Clone()})
 		proof := im.proof
+		if nonce := r.Header.Get(apiproxy.ChallengeHeader); nonce != "" && im.token != "" {
+			if im.unproven > 0 {
+				im.unproven--
+			} else {
+				proof = apiproxy.Proof(im.token, nonce, r.Host)
+			}
+		}
 		im.mu.Unlock()
 		if proof != "" {
 			w.Header().Set(apiproxy.ProofHeader, proof)
@@ -74,6 +84,17 @@ func (im *Imposter) ReplayProof(proof string) {
 	im.mu.Lock()
 	defer im.mu.Unlock()
 	im.proof = proof
+}
+
+// ProveAfter makes the imposter answer challenges with valid proofs
+// computed from token once n challenges have gone unproven — the way a
+// holder caught between winning its bind and publishing its admin
+// token answers before and after the publication lands.
+func (im *Imposter) ProveAfter(n int, token string) {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	im.unproven = n
+	im.token = token
 }
 
 // Saw reports whether any received request matched method and path.
