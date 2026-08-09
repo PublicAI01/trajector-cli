@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
@@ -28,6 +29,26 @@ import (
 // correspond to compensation, so it waits — loudly, via status and
 // doctor — for a fixed client to requeue it or the user to discard it.
 const reasonName = "reason.json"
+
+// noSuchBatch is the one sentence every operation on a named batch uses
+// when the store does not hold it.
+func noSuchBatch(batchID string) error {
+	return fmt.Errorf("no rejected batch %s", batchID)
+}
+
+// batchDir resolves one batch id to its directory. The id names a path
+// this package reads, moves, and deletes, so an id that is anything but
+// a single directory name is refused rather than interpreted: refusing
+// beats guessing which tree the caller meant.
+func batchDir(rejectedDir, batchID string) (string, error) {
+	switch {
+	case batchID == "", batchID == ".", batchID == "..":
+		return "", noSuchBatch(batchID)
+	case batchID != filepath.Base(batchID), strings.ContainsAny(batchID, `/\`):
+		return "", noSuchBatch(batchID)
+	}
+	return filepath.Join(rejectedDir, batchID), nil
+}
 
 // Rejection describes one rejected batch, both inside reason.json and
 // in the uploader state read by status.
@@ -183,10 +204,13 @@ func ListRejected(rejectedDir string) ([]RejectedBatch, error) {
 // from the envelope: it stays quarantined with reason.json while every
 // readable record still moves, and the error reports what stayed.
 func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, int, error) {
-	dir := filepath.Join(rejectedDir, batchID)
+	dir, err := batchDir(rejectedDir, batchID)
+	if err != nil {
+		return Rejection{}, 0, err
+	}
 	files, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return Rejection{}, 0, fmt.Errorf("no rejected batch %s", batchID)
+		return Rejection{}, 0, noSuchBatch(batchID)
 	}
 	if err != nil {
 		return Rejection{}, 0, err
@@ -224,6 +248,42 @@ func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, in
 		return rej, moved, errors.Join(stuck...)
 	}
 	return rej, moved, os.RemoveAll(dir)
+}
+
+// Discard deletes one quarantined batch and reports the recorded reason
+// with how many rawcalls left with it. It is Requeue's dual and the
+// terminal half of the pair: a record that no longer parses as an
+// envelope can never re-enter the spool, so deletion is the only way it
+// leaves the quarantine. Discard therefore reads nothing back and
+// judges nothing — every record in the batch counts and the directory
+// goes whole.
+func Discard(rejectedDir, batchID string) (Rejection, int, error) {
+	dir, err := batchDir(rejectedDir, batchID)
+	if err != nil {
+		return Rejection{}, 0, err
+	}
+	files, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Rejection{}, 0, noSuchBatch(batchID)
+	}
+	if err != nil {
+		return Rejection{}, 0, err
+	}
+	var rej Rejection
+	readJSON(filepath.Join(dir, reasonName), &rej)
+
+	records := 0
+	for _, f := range files {
+		name := f.Name()
+		if f.IsDir() || name == reasonName || filepath.Ext(name) != ".json" {
+			continue
+		}
+		records++
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return rej, 0, err
+	}
+	return rej, records, nil
 }
 
 // errRejected is what a flush returns after quarantining a batch: the

@@ -100,7 +100,7 @@ func (m *Machine) Status(dir string, io IO) error {
 		fmt.Fprintln(io.Out, "  Run `trajector doctor`.")
 	case len(d.Rejected) > 0:
 		fmt.Fprintf(io.Out, "  WARNING: %s.\n", quarantineHeadline(d.Rejected))
-		fmt.Fprintln(io.Out, "  Run `trajector doctor` to inspect and requeue them.")
+		fmt.Fprintln(io.Out, "  Run `trajector doctor` to inspect them, then requeue or discard them.")
 	}
 
 	if d.Handshake.MinClientVersion != "" || d.Handshake.Notice != "" {

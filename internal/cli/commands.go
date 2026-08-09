@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
@@ -53,12 +54,26 @@ func (a *app) doctorCmd(args []string) int {
 	switch args[0] {
 	case "requeue":
 		return a.requeueCmd(args[1:])
+	case "discard":
+		return a.discardCmd(args[1:])
 	case "bundle":
 		return a.bundleCmd(args[1:])
 	default:
-		fmt.Fprintln(a.stderr, "usage: trajector doctor [bundle | requeue <batch-id>|--all]")
+		doctorUsage(a.stderr)
 		return 2
 	}
+}
+
+// doctorUsage spells out the two exits a quarantined batch has, because
+// choosing between them is the whole question a user arrives with.
+func doctorUsage(w io.Writer) {
+	fmt.Fprint(w, `usage: trajector doctor [bundle | requeue <batch-id>|--all | discard <batch-id>|--all]
+
+  requeue  put a quarantined batch back in the spool to upload again;
+           use it once whatever stopped the batch is fixed
+  discard  delete a quarantined batch and its rawcalls from this machine
+           for good; use it to give up on a batch that will never upload
+`)
 }
 
 func (a *app) bundleCmd(args []string) int {
@@ -75,6 +90,17 @@ func (a *app) requeueCmd(args []string) int {
 			batchID = ""
 		}
 		return m.RequeueRejected(batchID, all, a.io())
+	})
+}
+
+func (a *app) discardCmd(args []string) int {
+	args, confirmed := takeFlag(args, "--yes")
+	return a.with("usage: trajector doctor discard <batch-id>|--all [--yes]", args, 1, func(m *lifecycle.Machine, _ string) error {
+		batchID, all := args[0], args[0] == "--all"
+		if all {
+			batchID = ""
+		}
+		return m.DiscardRejected(batchID, all, confirmed, a.io())
 	})
 }
 

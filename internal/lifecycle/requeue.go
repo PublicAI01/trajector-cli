@@ -44,14 +44,20 @@ func (m *Machine) RequeueRejected(batchID string, all bool, io IO) error {
 			failed = append(failed, err)
 			continue
 		}
-		line := fmt.Sprintf("Requeued %d rawcall(s) from batch %s", moved, id)
-		if rej.Details != "" {
-			line += fmt.Sprintf(" (rejected as: %s)", rej.Details)
-		}
-		fmt.Fprintln(io.Out, line+".")
+		fmt.Fprintf(io.Out, "Requeued %d rawcall(s) from batch %s%s.\n", moved, id, rejectionSuffix(rej))
 	}
 	if requeued > 0 {
 		fmt.Fprintln(io.Out, "They will upload with the next flush; run `trajector upload --force` to try now.")
 	}
 	return errors.Join(failed...)
+}
+
+// rejectionSuffix names the recorded reason on the line a command
+// prints about one quarantined batch, so requeue and discard describe
+// the same record the same way.
+func rejectionSuffix(rej upload.Rejection) string {
+	if rej.Details == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (rejected as: %s)", rej.Details)
 }

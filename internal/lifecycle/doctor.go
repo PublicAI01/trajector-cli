@@ -304,8 +304,8 @@ func doctorSpool(r *doctorReport, s SpoolState, dir string) {
 
 // doctorRejected surfaces quarantined batches. They are never deleted
 // or retried automatically — what happens to them is the user's call —
-// so doctor lists each with its recorded reason and the command that
-// requeues it.
+// so doctor lists each with its recorded reason and both commands that
+// end its wait.
 func doctorRejected(r *doctorReport, rejected []upload.RejectedBatch, listErr error, dir string) {
 	if listErr != nil {
 		r.problem("%s", rejectedUnreadableHeadline(dir, listErr))
@@ -327,7 +327,7 @@ func doctorRejected(r *doctorReport, rejected []upload.RejectedBatch, listErr er
 		r.detail("%s", line)
 	}
 	r.detail("Run `trajector doctor requeue <batch-id>` (or `--all`) to upload them again,")
-	r.detail("or `trajector disable` in the project to delete its local data.")
+	r.detail("or `trajector doctor discard <batch-id>` (or `--all`) to delete them for good.")
 }
 
 // doctorService relays what the service last said. The client never

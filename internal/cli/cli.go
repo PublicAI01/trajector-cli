@@ -220,11 +220,13 @@ func (a *app) prelude() (*lifecycle.Machine, string, error) {
 	return m, cwd, nil
 }
 
-// takeFlag strips flag from args when it is the only argument, so a
-// command can hand the rest to with's exact-count check.
+// takeFlag strips flag from the end of args, so a command can hand the
+// rest to with's exact-count check. Only the trailing position is
+// recognized: a flag anywhere else leaves the count wrong and the
+// command answers with its usage line rather than guessing.
 func takeFlag(args []string, flag string) ([]string, bool) {
-	if len(args) == 1 && args[0] == flag {
-		return args[1:], true
+	if n := len(args); n > 0 && args[n-1] == flag {
+		return args[:n-1], true
 	}
 	return args, false
 }

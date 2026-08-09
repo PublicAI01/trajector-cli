@@ -354,7 +354,7 @@ func TestDoctorListsRejectedBatches(t *testing.T) {
 	if problems == 0 {
 		t.Fatalf("problems = 0 with a quarantined batch, output:\n%s", out)
 	}
-	for _, want := range []string{"b-poison", "413 Request Entity Too Large", "requeue"} {
+	for _, want := range []string{"b-poison", "413 Request Entity Too Large", "requeue", "discard"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor = %q, want it to contain %q", out, want)
 		}

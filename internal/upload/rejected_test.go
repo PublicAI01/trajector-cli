@@ -117,6 +117,54 @@ func TestRequeueKeepsAnUnreadableRecordQuarantined(t *testing.T) {
 	}
 }
 
+func TestDiscardRemovesTheBatchAndCountsItsRecords(t *testing.T) {
+	rejectedDir := t.TempDir()
+	seedBatch(t, rejectedDir, "b-poison", map[string][]byte{
+		"req-good": rawcallBytes(t, "req-good"),
+		"req-bad":  []byte("not an envelope"),
+	})
+
+	rej, deleted, err := upload.Discard(rejectedDir, "b-poison")
+	if err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want every record counted whether or not it reads back", deleted)
+	}
+	if rej.Details != "400 Bad Request" {
+		t.Errorf("reason details = %q, want the recorded rejection returned", rej.Details)
+	}
+	if _, err := os.Stat(filepath.Join(rejectedDir, "b-poison")); !os.IsNotExist(err) {
+		t.Error("batch directory still present after discard")
+	}
+}
+
+func TestDiscardUnknownBatchNamesIt(t *testing.T) {
+	_, _, err := upload.Discard(t.TempDir(), "b-missing")
+	if err == nil || !strings.Contains(err.Error(), "b-missing") {
+		t.Fatalf("err = %v, want the unknown batch named", err)
+	}
+}
+
+func TestBatchIdsThatLeaveTheStoreAreRefused(t *testing.T) {
+	rejectedDir := t.TempDir()
+	sibling := filepath.Join(rejectedDir, "..", "sibling")
+	if err := os.MkdirAll(sibling, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"..", filepath.Join("..", "sibling"), ""} {
+		if _, _, err := upload.Discard(rejectedDir, id); err == nil {
+			t.Errorf("discard %q was accepted", id)
+		}
+		if _, _, err := upload.Requeue(rejectedDir, openSpool(t), id); err == nil {
+			t.Errorf("requeue %q was accepted", id)
+		}
+	}
+	if _, err := os.Stat(sibling); err != nil {
+		t.Errorf("a directory outside the store was removed: %v", err)
+	}
+}
+
 func TestListRejectedReportsCountsAndReasons(t *testing.T) {
 	rejectedDir := t.TempDir()
 	seedBatch(t, rejectedDir, "b-one", map[string][]byte{"req-1": []byte(`{}`)})

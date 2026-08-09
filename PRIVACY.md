@@ -83,6 +83,10 @@ third-party origin; reward terms are the same regardless of origin.
   both the spool and any upload-rejected quarantine.
 - `trajector disable --purge`: additionally asks the service to delete the
   project's uploaded but not yet delivered data.
+- `trajector doctor discard <batch-id>` (or `--all`): deletes a
+  quarantined batch's records from this machine for good, after asking
+  you to confirm. It is a local deletion only — nothing is sent anywhere
+  and nothing already uploaded is affected.
 - `trajector logout`: revokes the device token and pauses recording
   everywhere; forwarding is unaffected. Logging in again resumes.
 - `trajector uninstall`: removes every injection, stops the proxy, and

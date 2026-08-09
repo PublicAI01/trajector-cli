@@ -99,7 +99,8 @@ data loss:
   (426) pauses automatic uploads until upgrade, rate limiting honors
   Retry-After (capped at one hour). Any other 4xx quarantines the batch
   locally — visible in status and doctor, recoverable with
-  `trajector doctor requeue`, deleted only by consent withdrawal.
+  `trajector doctor requeue`, and deleted only when the user says so:
+  `trajector doctor discard` or consent withdrawal.
 
 ## Self-healing and observability
 
@@ -113,6 +114,13 @@ single pass; they differ only in what they do with it.
   injected settings, session hooks, the discovery hint, a moved upstream.
   Consent disagreements and foreign port holders are reported with the
   command that resolves them, never guessed at.
+- A quarantined batch has exactly two exits, both the user's to choose:
+  `trajector doctor requeue <batch-id>|--all` puts its records back in
+  the spool for another upload, and `trajector doctor discard
+  <batch-id>|--all` deletes them from the machine for good after
+  confirming (`--yes` answers ahead of time). Discard is the way out for
+  records set aside because they no longer read back as rawcalls: those
+  cannot re-enter the spool, so requeue refuses them.
 - `trajector doctor bundle` archives the diagnosis as it stands — it
   repairs nothing, so a report always describes the state that was
   diagnosed. The archive is the only diagnostic artifact, generated and
