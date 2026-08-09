@@ -38,7 +38,7 @@ func (a *app) uploadCmd(args []string) int {
 func (a *app) runProxy(mode string, args []string) int {
 	fs := flag.NewFlagSet("proxy "+mode, flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
-	addr := fs.String("addr", "", "listen address")
+	addr := fs.String("addr", "", "listen address, matched by its literal spelling: probes, admin-token files, and the challenge all treat localhost and 127.0.0.1 as different addresses, so every command must spell it the way serve did")
 	idle := fs.Duration("idle-timeout", 0, "exit after this much authorized-traffic silence")
 	if err := fs.Parse(args); err != nil {
 		return 2
