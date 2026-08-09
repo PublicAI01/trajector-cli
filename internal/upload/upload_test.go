@@ -115,6 +115,10 @@ func (f *fixture) storeRawcall(t *testing.T, id string, at time.Time) {
 
 // echoAck acknowledges whatever batch id the request carries, plus any
 // handshake fields.
+//
+// TODO: converge the three sibling ack builders (echoAck here,
+// stubEchoAck in cli, ackBatch in lifecycle) into fakeplatform the
+// next time ack semantics change.
 func echoAck(t *testing.T, handshake map[string]any) func(fakeplatform.Request) fakeplatform.Response {
 	return func(r fakeplatform.Request) fakeplatform.Response {
 		t.Helper()

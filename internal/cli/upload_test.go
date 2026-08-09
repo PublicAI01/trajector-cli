@@ -25,6 +25,9 @@ func newUploadEnv(t *testing.T) *clitest.Env {
 	return e
 }
 
+// TODO: converge the three sibling ack builders (echoAck in upload,
+// stubEchoAck here, ackBatch in lifecycle) into fakeplatform the next
+// time ack semantics change.
 func stubEchoAck(t *testing.T, service *fakeplatform.Server) {
 	t.Helper()
 	service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {

@@ -1,6 +1,10 @@
 // Package fakeplatform is a scripted stand-in for the trajector service
 // API. Upload and pairing seam tests stub endpoints per method and path
 // and assert against the recorded requests.
+//
+// TODO: this package is the convergence target for the three sibling
+// batch-ack builders (echoAck in upload, stubEchoAck in cli, ackBatch
+// in lifecycle); fold them in the next time ack semantics change.
 package fakeplatform
 
 import (
