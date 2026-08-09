@@ -62,6 +62,9 @@ var ErrProxyUnverified = errors.New("could not verify the proxy")
 // Timeouts for the lazy lifecycle.
 const (
 	probeTimeout = 500 * time.Millisecond
+	// adminTimeout bounds one management exchange end to end, so a
+	// holder that accepts a connection and then answers nothing costs a
+	// command one wait rather than hanging it.
 	adminTimeout = 5 * time.Second
 	startTimeout = 10 * time.Second
 	drainTimeout = 20 * time.Second
@@ -69,6 +72,14 @@ const (
 	// itself is given to turn out to be a proxy still coming up, before
 	// it is called foreign. It only has to outlast the gap between the
 	// bind and the published admin token.
+	//
+	// The two budgets answer different questions and are deliberately
+	// left unaligned: adminTimeout bounds one exchange, foreignSettle
+	// bounds the retrying of a holder that answers but cannot prove
+	// itself yet. Because one exchange outlasts the whole retry window,
+	// a holder that answers nothing is probed once and never retried;
+	// the two compose additively at worst, when an attempt starts just
+	// inside the window and then wedges.
 	foreignSettle = 2 * time.Second
 )
 
@@ -184,7 +195,7 @@ func (p *Proxy) Ensure() error {
 // matching admin token, silent, or unintelligible — so a surface can
 // tell a stranger from an authentication problem.
 func (p *Proxy) Health() (Health, Holder, error) {
-	holder, token, why := p.verify()
+	token, holder, why := p.verify()
 	if holder != HolderOurs {
 		return Health{}, holder, why
 	}
@@ -207,32 +218,32 @@ func (p *Proxy) Health() (Health, Holder, error) {
 // nothing to it. A holder that is not proven ours comes back
 // HolderForeign with the reason the proof failed; the reason never
 // carries a token.
-func (p *Proxy) verify() (Holder, string, error) {
+func (p *Proxy) verify() (string, Holder, error) {
 	conn, err := net.DialTimeout("tcp", p.addr, probeTimeout)
 	if err != nil {
-		return HolderNone, "", nil
+		return "", HolderNone, nil
 	}
 	conn.Close()
 
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return HolderForeign, "", fmt.Errorf("probing %s: %v", p.addr, err)
+		return "", HolderForeign, fmt.Errorf("probing %s: %v", p.addr, err)
 	}
 	challenge := hex.EncodeToString(nonce[:])
 
 	req, err := http.NewRequest(http.MethodGet, "http://"+p.addr+apiproxy.HealthzPath, nil)
 	if err != nil {
-		return HolderForeign, "", fmt.Errorf("probing %s: %v", p.addr, err)
+		return "", HolderForeign, fmt.Errorf("probing %s: %v", p.addr, err)
 	}
 	req.Header.Set(apiproxy.ChallengeHeader, challenge)
 	resp, err := adminClient(adminTimeout).Do(req)
 	if err != nil {
-		return HolderForeign, "", fmt.Errorf("the holder of %s did not answer a probe: %v", p.addr, transportCause(err))
+		return "", HolderForeign, fmt.Errorf("the holder of %s did not answer a probe: %v", p.addr, transportCause(err))
 	}
 	resp.Body.Close()
 	proof := resp.Header.Get(apiproxy.ProofHeader)
 	if proof == "" {
-		return HolderForeign, "", fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
+		return "", HolderForeign, fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
 	}
 
 	// The published tokens are read after the answer arrives: a proxy
@@ -251,13 +262,35 @@ func (p *Proxy) verify() (Holder, string, error) {
 		}
 		readable++
 		if hmac.Equal([]byte(proof), []byte(apiproxy.Proof(string(token), challenge, p.addr))) {
-			return HolderOurs, string(token), nil
+			return string(token), HolderOurs, nil
 		}
 	}
 	if readable == 0 {
-		return HolderForeign, "", fmt.Errorf("%w at %s: it answered the admin-token challenge, but no admin token for this address could be read", ErrProxyUnverified, p.addr)
+		return "", HolderForeign, fmt.Errorf("%w at %s: it answered the admin-token challenge, but no admin token for this address could be read", ErrProxyUnverified, p.addr)
 	}
-	return HolderForeign, "", fmt.Errorf("%w at %s: its challenge answer matches none of the admin tokens published for this address", ErrProxyUnverified, p.addr)
+	return "", HolderForeign, fmt.Errorf("%w at %s: its challenge answer matches none of the admin tokens published for this address", ErrProxyUnverified, p.addr)
+}
+
+// settledVerify is verify with the startup window SettledHealth
+// explains allowed for: the management calls that act on the holder go
+// through it, so a sibling that has bound the port but not published
+// yet is waited out instead of being blamed for the port.
+func (p *Proxy) settledVerify() (string, Holder, error) {
+	return settle(p.verify)
+}
+
+// settle retries a HolderForeign verdict until the startup grace runs
+// out. Every caller about to act on a verdict reads it through here;
+// nothing else does.
+func settle[T any](verdict func() (T, Holder, error)) (T, Holder, error) {
+	deadline := time.Now().Add(foreignSettle)
+	for {
+		v, holder, why := verdict()
+		if holder != HolderForeign || time.Now().After(deadline) {
+			return v, holder, why
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // SettledHealth is Health with the startup window allowed for. A proxy
@@ -267,17 +300,12 @@ func (p *Proxy) verify() (Holder, string, error) {
 // concurrent starts converge only because losers defer to the winner,
 // which a loser reporting ErrPortOccupied does not do. The grace is
 // paid only by callers about to act on the verdict — Ensure, a serve
-// process that just lost the bind; report-only surfaces read Health
-// directly, so a diagnosis answers about the port as it stands.
+// process that just lost the bind, the wait for a freshly started
+// proxy, and the drain and flush requests aimed at the holder;
+// report-only surfaces read Health directly, so a diagnosis answers
+// about the port as it stands.
 func (p *Proxy) SettledHealth() (Health, Holder, error) {
-	deadline := time.Now().Add(foreignSettle)
-	for {
-		h, holder, why := p.Health()
-		if holder != HolderForeign || time.Now().After(deadline) {
-			return h, holder, why
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	return settle(p.Health)
 }
 
 // Selfcheck asks the proxy what it would do with token, over the exact
@@ -303,7 +331,7 @@ func (p *Proxy) Selfcheck(token string) (Selfcheck, error) {
 // token; an unproven holder is not Stop's to fight — its verdict's
 // reason comes back for the caller to surface.
 func (p *Proxy) Stop() error {
-	holder, token, why := p.verify()
+	token, holder, why := p.settledVerify()
 	switch holder {
 	case HolderNone:
 		return nil
@@ -371,9 +399,17 @@ func (p *Proxy) answered(resp *http.Response, what string) error {
 }
 
 // adminClient is the one construction of the client a management
-// request rides; the timeout bounds the whole exchange.
+// request rides; the timeout bounds the whole exchange. The client
+// carries a connection pool of its own, and keeps no connection alive
+// past the exchange: on the process-wide pool a connection opened
+// before the port changed hands outlives the proxy that answered on
+// it, and the next management request — a drain or a flush, which no
+// transport may replay — is handed that dead connection and fails with
+// an EOF that says nothing about the proxy now listening.
 func adminClient(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
+	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
 // transportCause strips the URL a *url.Error embeds — on the selfcheck
@@ -423,7 +459,7 @@ func (p *Proxy) waitHealthy() error {
 		// The bind may have been won by a sibling rather than this
 		// call's own spawn; any holder Ensure would reuse counts as
 		// healthy, or a loser would wait out a winner it defers to.
-		h, holder, why := p.Health()
+		h, holder, why := p.SettledHealth()
 		if holder == HolderOurs && !Supersedes(p.version, h.Version) {
 			return nil
 		}
@@ -459,7 +495,7 @@ func (p *Proxy) Supervise(ctx context.Context, idle time.Duration, stdout, stder
 // The flush request carries the admin token, so it goes only to a
 // holder that proved it knows that token.
 func (p *Proxy) Flush(force bool) (upload.FlushReply, error) {
-	holder, token, why := p.verify()
+	token, holder, why := p.settledVerify()
 	switch holder {
 	case HolderNone:
 		return upload.FlushReply{}, fmt.Errorf("no proxy is listening at %s", p.addr)

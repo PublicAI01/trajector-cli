@@ -2,12 +2,13 @@ package proxytest_test
 
 import (
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"runtime"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
+
+	"github.com/PublicAI01/trajector-cli/internal/harness/repotest"
 )
 
 // Test servers listen on ephemeral ports, so a pooled connection held by
@@ -23,79 +24,77 @@ func TestTestRequestsNeverRideTheProcessWideConnectionPool(t *testing.T) {
 	}
 	handRolled := "http." + "Client{"
 
-	root := moduleRoot(t)
-	harnessDir := filepath.Join("internal", "harness") + string(filepath.Separator)
 	var hits []string
-	walk := func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if path == root {
-				return nil
-			}
-			if strings.HasPrefix(d.Name(), ".") || d.Name() == "testdata" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		isTest := strings.HasSuffix(path, "_test.go")
-		if !isTest && !strings.HasPrefix(rel, harnessDir) {
-			return nil
+	repotest.Lines(t, func(l repotest.Line) {
+		if !l.File.Test() && !strings.HasPrefix(l.File.Rel, "internal/harness/") {
+			return
 		}
 		banned := shared
-		if isTest {
+		if l.File.Test() {
 			// Hand-rolling a client in a test either shares the
 			// process-wide transport or leaves a pool nothing drops
 			// with the test; only the harness builds clients.
 			banned = append(append([]string(nil), shared...), handRolled)
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		for i, line := range strings.Split(string(data), "\n") {
-			for _, pattern := range banned {
-				if strings.Contains(line, pattern) {
-					hits = append(hits, fmt.Sprintf("%s:%d: %s", filepath.ToSlash(rel), i+1, strings.TrimSpace(line)))
-				}
+		for _, pattern := range banned {
+			if strings.Contains(l.Text, pattern) {
+				hits = append(hits, l.String())
 			}
 		}
-		return nil
-	}
-	if err := filepath.WalkDir(root, walk); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if len(hits) > 0 {
 		t.Errorf("requests must go through a client scoped to the test (proxytest.Client, an Env helper, or a fake server's client):\n%s",
 			strings.Join(hits, "\n"))
 	}
 }
 
-// moduleRoot walks up from this source file to the directory holding
-// go.mod.
-func moduleRoot(t *testing.T) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("no caller position for this source file")
-	}
-	dir := filepath.Dir(file)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
+// A client built without a transport of its own borrows the
+// process-wide pool: connections it opens outlive the exchange and are
+// shared with every other component in the process, so a request made
+// after the address changed hands can be handed a connection to a
+// server that is gone. Every client this module builds names its own
+// transport.
+func TestEveryHTTPClientCarriesItsOwnConnectionPool(t *testing.T) {
+	fset := token.NewFileSet()
+	var hits []string
+	for _, f := range repotest.GoFiles(t) {
+		parsed, err := parser.ParseFile(fset, f.Path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("no go.mod above %s", file)
-		}
-		dir = parent
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			lit, ok := n.(*ast.CompositeLit)
+			if !ok || !isHTTPClient(lit.Type) || namesField(lit, "Transport") {
+				return true
+			}
+			hits = append(hits, fmt.Sprintf("%s:%d", f.Rel, fset.Position(lit.Pos()).Line))
+			return true
+		})
 	}
+	if len(hits) > 0 {
+		t.Errorf("every HTTP client must name a transport of its own, or it rides the process-wide connection pool:\n%s",
+			strings.Join(hits, "\n"))
+	}
+}
+
+func isHTTPClient(expr ast.Expr) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Client" {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "http"
+}
+
+func namesField(lit *ast.CompositeLit, field string) bool {
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		if key, ok := kv.Key.(*ast.Ident); ok && key.Name == field {
+			return true
+		}
+	}
+	return false
 }

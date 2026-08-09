@@ -24,6 +24,7 @@ type Imposter struct {
 	token    string
 	unproven int
 	seen     []imposterRequest
+	carried  map[net.Conn]bool
 }
 
 type imposterRequest struct {
@@ -45,8 +46,8 @@ func StartImposter(t *testing.T, health Health) *Imposter {
 	if err != nil {
 		t.Fatal(err)
 	}
-	im := &Imposter{addr: l.Addr().String()}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	im := &Imposter{addr: l.Addr().String(), carried: map[net.Conn]bool{}}
+	srv := &http.Server{ConnState: im.noteConn, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		im.mu.Lock()
 		im.seen = append(im.seen, imposterRequest{method: r.Method, path: r.URL.Path, header: r.Header.Clone()})
 		proof := im.proof
@@ -95,6 +96,33 @@ func (im *Imposter) ProveAfter(n int, token string) {
 	defer im.mu.Unlock()
 	im.unproven = n
 	im.token = token
+}
+
+// noteConn records a connection the moment it carries a request, so a
+// bare liveness dial — which carries none — is not counted as one.
+func (im *Imposter) noteConn(c net.Conn, state http.ConnState) {
+	if state != http.StateActive {
+		return
+	}
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	im.carried[c] = true
+}
+
+// Connections reports how many distinct connections carried a request,
+// so a test can tell requests that each opened their own connection
+// from requests that rode one pooled connection.
+func (im *Imposter) Connections() int {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	return len(im.carried)
+}
+
+// Requests reports how many requests the imposter received.
+func (im *Imposter) Requests() int {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	return len(im.seen)
 }
 
 // Saw reports whether any received request matched method and path.

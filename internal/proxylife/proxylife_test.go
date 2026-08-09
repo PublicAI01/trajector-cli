@@ -463,6 +463,98 @@ func TestFlushRefusesAnUnprovenHolder(t *testing.T) {
 	}
 }
 
+// siblingStillPublishing is a holder that leaves the first challenge
+// unproven and proves itself from the next one on, the way a sibling
+// caught between winning the bind and publishing its admin token
+// answers.
+func siblingStillPublishing(t *testing.T) (*proxylife.Proxy, *proxytest.Imposter) {
+	t.Helper()
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	const token = "feedfacefeedfacefeedfacefeedface"
+	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "1.2.3"})
+	proxytest.PublishAdminToken(t, layout, im.Addr(), token)
+	im.ProveAfter(1, token)
+	return proxylife.For(layout, "1.2.3", "unused", im.Addr()), im
+}
+
+func TestFlushWaitsOutASiblingStillPublishingItsAdminToken(t *testing.T) {
+	p, im := siblingStillPublishing(t)
+
+	if _, err := p.Flush(true); errors.Is(err, proxylife.ErrPortOccupied) {
+		t.Errorf("Flush = %v inside a sibling's startup window, want the holder waited out", err)
+	}
+	if !im.Saw(http.MethodPost, upload.FlushPath) {
+		t.Error("no flush reached a holder that proved itself a moment later")
+	}
+}
+
+func TestStopWaitsOutASiblingStillPublishingItsAdminToken(t *testing.T) {
+	p, im := siblingStillPublishing(t)
+
+	if err := p.Stop(); errors.Is(err, proxylife.ErrPortOccupied) {
+		t.Errorf("Stop = %v inside a sibling's startup window, want the holder waited out", err)
+	}
+	if !im.Saw(http.MethodPost, apiproxy.DrainPath) {
+		t.Error("no drain reached a holder that proved itself a moment later")
+	}
+}
+
+func TestEachManagementRequestOpensItsOwnConnection(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	const token = "feedfacefeedfacefeedfacefeedface"
+	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "1.2.3"})
+	proxytest.PublishAdminToken(t, layout, im.Addr(), token)
+	im.ProveAfter(0, token)
+
+	p := proxylife.For(layout, "1.2.3", "unused", im.Addr())
+	for range 2 {
+		if _, holder, why := p.Health(); holder != proxylife.HolderOurs {
+			t.Fatalf("holder = %v (%v), want the proven holder", holder, why)
+		}
+	}
+	if got, want := im.Connections(), im.Requests(); got != want {
+		t.Errorf("%d management requests rode %d connections; a connection pooled across a takeover of the port hands the next request a dead one", want, got)
+	}
+}
+
+// wedgedHolder accepts requests and answers none of them, so every
+// exchange with it runs out its own timeout.
+func wedgedHolder(t *testing.T) (string, *int32) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exchanges int32
+	wedged := make(chan struct{})
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&exchanges, 1)
+		<-wedged
+	})}
+	go srv.Serve(l)
+	t.Cleanup(func() {
+		close(wedged)
+		srv.Close()
+	})
+	return l.Addr().String(), &exchanges
+}
+
+func TestASettledVerdictSpendsOneWedgedManagementExchange(t *testing.T) {
+	addr, exchanges := wedgedHolder(t)
+
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", addr)
+	_, holder, why := p.SettledHealth()
+	if holder != proxylife.HolderForeign {
+		t.Fatalf("holder = %v, want no trust in a holder that answers nothing", holder)
+	}
+	if why == nil || !strings.Contains(why.Error(), "did not answer") {
+		t.Errorf("reason = %v, want the silent holder named", why)
+	}
+	if got := atomic.LoadInt32(exchanges); got != 1 {
+		t.Errorf("a settled verdict spent %d exchanges on a holder that answers nothing, want 1: one exchange's own timeout outlasts the startup grace", got)
+	}
+}
+
 func TestHealthBlamesAuthenticationWhenNoAdminTokenIsReadable(t *testing.T) {
 	live := proxytest.New(t)
 	live.AdminToken()

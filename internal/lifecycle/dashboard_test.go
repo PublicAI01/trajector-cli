@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
@@ -170,6 +172,24 @@ func TestStatusDoesNotWaitOutAHolderStillPublishingItsToken(t *testing.T) {
 	}
 	if im.SawHeader(apiproxy.AdminHeader) {
 		t.Error("the admin token was sent to a holder that never proved it knows it")
+	}
+}
+
+func TestStatusAnswersAboutAnUnprovenHolderWithoutPayingTheStartupGrace(t *testing.T) {
+	e := newEnv(t)
+	e.occupyPortWithHealthzCopy()
+
+	start := time.Now()
+	e.statusOutput()
+	reported := time.Since(start)
+
+	p := proxylife.For(e.layout(), e.deps.Version, "unused", e.deps.ProxyAddr)
+	start = time.Now()
+	p.SettledHealth()
+	settled := time.Since(start)
+
+	if reported*2 >= settled {
+		t.Errorf("status answered in %s where a settled verdict about the same holder takes %s; only callers about to act pay the startup grace", reported, settled)
 	}
 }
 
