@@ -46,3 +46,7 @@ release:
   github:
     owner: PublicAI01
     name: trajector-cli
+  # Every 0.x tag is published as a pre-release: before a stable major,
+  # no release should read as the recommended general-use download.
+  # Switch to `auto` when a stable major ships.
+  prerelease: true
