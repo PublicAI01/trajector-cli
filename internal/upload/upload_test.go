@@ -425,7 +425,7 @@ func TestCloseRunsAFinalFlushAndThenRefusesToFlush(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
 	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
 
-	if err := f.uploader.Close(); err != nil {
+	if err := f.uploader.Close(time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if f.spool.Usage() != 0 {
@@ -439,7 +439,7 @@ func TestCloseRunsAFinalFlushAndThenRefusesToFlush(t *testing.T) {
 	if _, err := f.uploader.Flush(true); !errors.Is(err, upload.ErrClosed) {
 		t.Fatalf("flush after close = %v, want ErrClosed", err)
 	}
-	if err := f.uploader.Close(); err != nil {
+	if err := f.uploader.Close(time.Minute); err != nil {
 		t.Errorf("second close = %v, want nil", err)
 	}
 	if f.uploadCount() != 1 {
@@ -454,7 +454,7 @@ func TestCloseKeepsRecordsBelowTheUploadThresholds(t *testing.T) {
 	f := newFixture(t)
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	if err := f.uploader.Close(); err != nil {
+	if err := f.uploader.Close(time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(f.server.Requests()); got != 0 {
@@ -462,6 +462,38 @@ func TestCloseKeepsRecordsBelowTheUploadThresholds(t *testing.T) {
 	}
 	if f.spool.Usage() == 0 {
 		t.Error("close drained a spool below the thresholds")
+	}
+}
+
+func TestCloseAbandonsAnUploadThatOutlastsItsBudget(t *testing.T) {
+	f := newFixture(t)
+	released := make(chan struct{})
+	t.Cleanup(func() { close(released) })
+	f.server.StubFunc("POST", "/v1/batches", func(fakeplatform.Request) fakeplatform.Response {
+		select {
+		case <-released:
+		case <-time.After(10 * time.Second):
+		}
+		return fakeplatform.JSON(200, map[string]any{"batch_id": "never-acknowledged"})
+	})
+	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
+
+	const budget = 200 * time.Millisecond
+	start := time.Now()
+	err := f.uploader.Close(budget)
+	spent := time.Since(start)
+
+	if spent > 30*budget {
+		t.Errorf("close ran %s on a %s budget, want the upload abandoned when the budget ran out", spent, budget)
+	}
+	if err == nil {
+		t.Error("close = nil, want the abandoned upload reported")
+	}
+	if f.spool.Usage() == 0 {
+		t.Error("the abandoned upload's records left the spool")
+	}
+	if _, err := os.Stat(filepath.Join(f.dir, "pending.json")); err != nil {
+		t.Errorf("the abandoned batch left no pending record for the next flusher: %v", err)
 	}
 }
 

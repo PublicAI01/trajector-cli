@@ -21,6 +21,19 @@ import (
 // thresholds.
 const flushInterval = time.Minute
 
+// exitFlushBudget bounds the flush a serving proxy runs on its way out.
+// That flush holds the listen port, which is what keeps a successor's
+// flusher out, and a successor that asked this proxy to drain waits
+// only so long for the port before reporting it was never released. A
+// flush on a slow link can run far longer than that — one attempt alone
+// may take half an hour by the regular proportional budget — so the
+// exit path is capped well inside the successor's wait, leaving room
+// for the listener close behind it. What the cap cuts off is not lost:
+// those records stay in the spool, and whoever flushes next, this
+// proxy's successor included, picks them up under the batch id already
+// pinned for them.
+const exitFlushBudget = 15 * time.Second
+
 // SuperviseProxy runs the watchdog process: it keeps a proxy child
 // alive and ends with the child's clean idle exit.
 func (m *Machine) SuperviseProxy(ctx context.Context, idle time.Duration, stdout, stderr io.Writer) error {
@@ -98,7 +111,7 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 		// its release, or the two would drain the same spool records
 		// under different batch ids.
 		BeforeShutdown: func() {
-			if ferr := uploader.Close(); ferr != nil {
+			if ferr := uploader.Close(exitFlushBudget); ferr != nil {
 				logf("final flush: %v", ferr)
 			}
 		},

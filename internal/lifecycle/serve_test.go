@@ -20,6 +20,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -242,6 +243,101 @@ func TestServeProxyFinishesItsExitFlushBeforeReleasingThePort(t *testing.T) {
 	}
 	if n := len(e.sandbox.Rawcalls()); n != 0 {
 		t.Errorf("spool holds %d rawcalls after the exit flush", n)
+	}
+}
+
+func TestASlowExitFlushReleasesThePortAndLeavesItsRecordsToTheSuccessor(t *testing.T) {
+	e := newEnv(t)
+	addr := freeAddr(t)
+	e.deps.ProxyAddr = addr
+	e.deps.Version = "1.0.0"
+	e.sandbox.SeedRawcall("req-old", "hash-p1", time.Now().UTC().Add(-25*time.Hour))
+
+	// The exit flush meets a link too slow to finish inside any window
+	// the successor is willing to wait; every later upload is answered
+	// at once.
+	released := make(chan struct{})
+	t.Cleanup(func() { close(released) })
+	slow := make(chan struct{}, 1)
+	slow <- struct{}{}
+	e.service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		select {
+		case <-slow:
+			select {
+			case <-released:
+			case <-time.After(time.Minute):
+			}
+		default:
+		}
+		return ackBatch(nil)(r)
+	})
+
+	predecessor := make(chan error, 1)
+	go func() {
+		predecessor <- e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
+	}()
+	waitHealthy(t, e, addr)
+
+	takeover := proxylife.For(e.deps.Layout, "2.0.0", "unspawnable", addr).Ensure()
+	if takeover == nil || !strings.Contains(takeover.Error(), "starting proxy") {
+		t.Fatalf("takeover = %v, want it to have reached the point of starting the replacement", takeover)
+	}
+	if strings.Contains(takeover.Error(), "did not release the port") {
+		t.Errorf("takeover = %v, want the exit flush to give up the port inside the successor's wait", takeover)
+	}
+	select {
+	case err := <-predecessor:
+		if err != nil {
+			t.Fatalf("predecessor ServeProxy = %v after a drain, want nil", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the predecessor proxy did not exit")
+	}
+	if n := len(e.sandbox.Rawcalls()); n != 1 {
+		t.Fatalf("spool holds %d rawcalls after the abandoned exit flush, want the record kept for the successor", n)
+	}
+
+	successor := make(chan error, 1)
+	go func() {
+		successor <- e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
+	}()
+	waitHealthy(t, e, addr)
+	flush := adminPost(t, e, "http://"+addr+upload.FlushPath+"?force=1")
+	var reply upload.FlushReply
+	if err := json.NewDecoder(flush.Body).Decode(&reply); err != nil {
+		t.Fatal(err)
+	}
+	flush.Body.Close()
+	if reply.Outcome != upload.Uploaded || reply.Records != 1 {
+		t.Errorf("successor flush = %+v, want the record the predecessor abandoned uploaded", reply)
+	}
+
+	drain := adminPost(t, e, "http://"+addr+apiproxy.DrainPath)
+	drain.Body.Close()
+	select {
+	case err := <-successor:
+		if err != nil {
+			t.Errorf("successor ServeProxy = %v, want nil", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the successor proxy did not exit")
+	}
+
+	batchIDs := map[string]bool{}
+	for _, r := range e.service.Requests() {
+		b, err := parseBatch(r)
+		if err != nil {
+			t.Fatalf("unreadable upload request: %v", err)
+		}
+		if slices.Contains(b.RequestIDs, "req-old") {
+			batchIDs[b.BatchID] = true
+		}
+	}
+	if len(batchIDs) != 1 {
+		t.Errorf("the abandoned record was offered under %d batch ids, want the pending id reused", len(batchIDs))
+	}
+	if n := len(e.sandbox.Rawcalls()); n != 0 {
+		t.Errorf("spool holds %d rawcalls after the successor flushed, want 0", n)
 	}
 }
 

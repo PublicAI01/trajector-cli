@@ -142,6 +142,12 @@ func New(deps Deps) (*Uploader, error) {
 // done its last work and refuses to start more.
 var ErrClosed = errors.New("upload: the uploader has shut down")
 
+// errBudgetSpent reports a flush that stopped because the budget it
+// runs on ran out. Nothing is lost by it: records stay in the spool and
+// a batch already offered keeps its pending id, so the next flush
+// resends it under that id rather than a fresh one.
+var errBudgetSpent = errors.New("upload: the flush ran out of its budget; what it did not upload stays in the spool for the next flush")
+
 // Flush uploads what the spool holds. Unforced, it first checks the
 // thresholds; forced, it uploads regardless. Either way a flush that
 // starts drains the spool to empty, one bounded batch at a time, and
@@ -159,7 +165,7 @@ func (u *Uploader) Flush(force bool) (Result, error) {
 	if u.closed {
 		return Result{}, ErrClosed
 	}
-	res, err := u.flush(force)
+	res, err := u.flush(force, time.Time{})
 	if err != nil {
 		res.Outcome, res.MinClientVersion = "", ""
 		classifyFailure(err, &res)
@@ -186,25 +192,33 @@ func classifyFailure(err error, res *Result) {
 }
 
 // Close runs the uploader's last flush — unforced, the same threshold
-// check the periodic cadence makes — and then refuses every later
-// Flush with ErrClosed. It must be called while this process still
-// holds whatever excludes a successor flusher (for the proxy, its
-// listen port): a flush already running when Close is called finishes
-// under the same lock, so once Close returns, no upload activity from
-// this process can overlap a successor's.
-func (u *Uploader) Close() error {
+// check the periodic cadence makes — within budget, and then refuses
+// every later Flush with ErrClosed. It must be called while this
+// process still holds whatever excludes a successor flusher (for the
+// proxy, its listen port): a flush already running when Close is called
+// finishes under the same lock, so once Close returns, no upload
+// activity from this process can overlap a successor's.
+//
+// Because the exclusion is held for exactly as long as this call runs,
+// the budget is what the caller is willing to keep a successor waiting.
+// It is measured on the wall clock — no injected clock can shorten a
+// successor's wait — and what it does not manage to upload stays in the
+// spool, with its batch id pinned, for whoever flushes next.
+func (u *Uploader) Close(budget time.Duration) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.closed {
 		return nil
 	}
 	u.closed = true
-	_, err := u.flush(false)
+	_, err := u.flush(false, time.Now().Add(budget))
 	return err
 }
 
-// flush is Flush without the lock and the closed gate.
-func (u *Uploader) flush(force bool) (Result, error) {
+// flush is Flush without the lock and the closed gate. A zero deadline
+// is a flush with no budget: it runs until the spool is drained or an
+// attempt fails.
+func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 	res := Result{Outcome: Empty}
 
 	token, err := u.deps.DeviceToken()
@@ -230,7 +244,7 @@ func (u *Uploader) flush(force bool) (Result, error) {
 	// A pending batch is finished before anything else: its id was
 	// already offered to the service, and only its acknowledgement (or
 	// the disappearance of its records) releases it.
-	if err := u.resendPending(token, &res); err != nil {
+	if err := u.resendPending(token, &res, deadline); err != nil {
 		return res, err
 	}
 
@@ -268,6 +282,9 @@ func (u *Uploader) flush(force bool) (Result, error) {
 		if len(rawcalls) == 0 {
 			break
 		}
+		if !deadline.IsZero() && time.Until(deadline) <= 0 {
+			return res, errBudgetSpent
+		}
 		id, err := newBatchID()
 		if err != nil {
 			return res, fmt.Errorf("upload: %w", err)
@@ -278,7 +295,7 @@ func (u *Uploader) flush(force bool) (Result, error) {
 			// to start.
 			return res, fmt.Errorf("upload: recording the batch before sending it: %w", err)
 		}
-		if err := u.send(token, id, rawcalls, &res); err != nil {
+		if err := u.send(token, id, rawcalls, &res, deadline); err != nil {
 			return res, err
 		}
 	}
@@ -292,7 +309,7 @@ func (u *Uploader) flush(force bool) (Result, error) {
 // of its records still exist. The batch id is reused verbatim: if the
 // earlier attempt was ingested and only the acknowledgement was lost,
 // the service recognizes the id and does not ingest it again.
-func (u *Uploader) resendPending(token string, res *Result) error {
+func (u *Uploader) resendPending(token string, res *Result, deadline time.Time) error {
 	p, ok, err := loadPending(u.deps.Dir)
 	var unreadable *errUnreadablePending
 	if errors.As(err, &unreadable) {
@@ -323,7 +340,7 @@ func (u *Uploader) resendPending(token string, res *Result) error {
 		// out from under a pending batch. Nothing is left to send.
 		return clearPending(u.deps.Dir)
 	}
-	return u.send(token, p.BatchID, rawcalls, res)
+	return u.send(token, p.BatchID, rawcalls, res, deadline)
 }
 
 // discardUnreadablePending is the recovery for a pending file whose
@@ -350,7 +367,7 @@ func (u *Uploader) discardUnreadablePending(raw []byte) error {
 // record exactly as they were — except records the build itself
 // refused, which move to the rejected store so one unreadable file
 // cannot stall every upload behind it.
-func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result) error {
+func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result, deadline time.Time) error {
 	b, rawcalls, err := u.buildReadable(id, rawcalls, res)
 	if err != nil {
 		u.noteAttempt(err)
@@ -363,7 +380,19 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result)
 		// record has nothing left to protect.
 		return clearPending(u.deps.Dir)
 	}
+	// One attempt's budget normally scales with the batch and with the
+	// attempts that timed out before it, up to a cap wide enough for a
+	// large batch on a slow link. A flush running on a budget of its own
+	// gets whatever is left of that instead: its caller holds something
+	// a successor is waiting for, so an attempt that would outlast the
+	// budget is cut off there, and its batch — id already pinned — waits
+	// in the spool for the next flush.
 	budget := platform.UploadBudget(int64(len(b.Envelope))+int64(b.Records.Len()), u.timeouts)
+	if !deadline.IsZero() {
+		if budget = min(budget, time.Until(deadline)); budget <= 0 {
+			return errBudgetSpent
+		}
+	}
 	ack, err := u.deps.Service.UploadBatch(token, b.ID, b.Envelope, b.Records, budget)
 	u.noteAttempt(err)
 	if err != nil {
