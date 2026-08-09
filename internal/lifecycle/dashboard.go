@@ -74,14 +74,20 @@ func (m *Machine) Status(dir string, io IO) error {
 	}
 
 	fmt.Fprintln(io.Out, "\nSpool")
-	if d.Spool.OpenErr != nil {
+	switch {
+	case d.Spool.OpenErr != nil:
 		fmt.Fprintf(io.Out, "  WARNING: %s.\n", spoolUnusableHeadline(m.deps.Layout.SpoolDir(), d.Spool.OpenErr))
 		fmt.Fprintln(io.Out, "  Run `trajector doctor`.")
-	} else {
+	case d.Spool.WritableErr != nil:
 		fmt.Fprintf(io.Out, "  %s of %s used.\n", platform.HumanBytes(d.Spool.Usage), platform.HumanBytes(d.Spool.Quota))
+		fmt.Fprintf(io.Out, "  WARNING: %s.\n", spoolUnwritableHeadline(d.Spool.WritableErr))
 		if d.Spool.Full() {
-			fmt.Fprintln(io.Out, "  WARNING: the spool is full; recording is stopped until space frees. Run `trajector upload --force`.")
+			fmt.Fprintf(io.Out, "  %s\n", spoolFullRemedy)
+		} else {
+			fmt.Fprintln(io.Out, "  Run `trajector doctor`.")
 		}
+	default:
+		fmt.Fprintf(io.Out, "  %s of %s used.\n", platform.HumanBytes(d.Spool.Usage), platform.HumanBytes(d.Spool.Quota))
 	}
 
 	fmt.Fprintln(io.Out, "\nUploads")

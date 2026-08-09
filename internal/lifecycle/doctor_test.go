@@ -413,6 +413,49 @@ func TestDoctorReportsRejectedBatchesItCannotRead(t *testing.T) {
 	}
 }
 
+func TestStatusAndDoctorPresentAFullSpoolAlike(t *testing.T) {
+	e := newEnv(t)
+	writeUploadFile(t, e, "handshake.json", map[string]any{"spool_quota_bytes": 1})
+	e.sandbox.SeedRawcall("req-1", "hash-project", e.deps.Now())
+
+	statusOut := e.statusOutput()
+	e.stdout.Reset()
+	problems, doctorOut := e.doctor()
+
+	if problems == 0 {
+		t.Fatalf("problems = 0 with a full spool, output:\n%s", doctorOut)
+	}
+	for surface, out := range map[string]string{"status": statusOut, "doctor": doctorOut} {
+		if !strings.Contains(out, "not writable, so recording is stopped") {
+			t.Errorf("%s = %q, want the stopped-recording sentence", surface, out)
+		}
+		if !strings.Contains(out, "The spool is full. Run `trajector upload --force`") {
+			t.Errorf("%s = %q, want the full-spool remedy", surface, out)
+		}
+	}
+}
+
+func TestStatusAndDoctorPresentAnUnwritableSpoolAlike(t *testing.T) {
+	e := newEnv(t)
+	readOnly(t, e.layout().SpoolDir())
+
+	statusOut := e.statusOutput()
+	e.stdout.Reset()
+	problems, doctorOut := e.doctor()
+
+	if problems == 0 {
+		t.Fatalf("problems = 0 with an unwritable spool, output:\n%s", doctorOut)
+	}
+	for surface, out := range map[string]string{"status": statusOut, "doctor": doctorOut} {
+		if !strings.Contains(out, "not writable, so recording is stopped") {
+			t.Errorf("%s = %q, want the stopped-recording sentence", surface, out)
+		}
+		if strings.Contains(out, "The spool is full") {
+			t.Errorf("%s = %q, want no quota remedy for a spool that is not full", surface, out)
+		}
+	}
+}
+
 func TestDoctorWarnsWhenTheSpoolIsFull(t *testing.T) {
 	e := newEnv(t)
 	writeUploadFile(t, e, "handshake.json", map[string]any{"spool_quota_bytes": 1})

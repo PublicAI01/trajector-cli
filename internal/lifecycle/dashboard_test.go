@@ -245,6 +245,26 @@ func TestStatusWarnsWhenTheSpoolIsFull(t *testing.T) {
 	}
 }
 
+func TestStatusReportsRecordingStoppedByAnUnwritableSpool(t *testing.T) {
+	e := newEnv(t)
+	readOnly(t, e.layout().SpoolDir())
+	out := e.statusOutput()
+
+	for _, want := range []string{"WARNING", "not writable, so recording is stopped", "`trajector doctor`"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want it to contain %q", out, want)
+		}
+	}
+	if strings.Contains(out, "is not usable") {
+		t.Errorf("status = %q, want a spool that opened fine reported as unwritable, not unusable", out)
+	}
+	for _, want := range []string{"Uploads", "Never uploaded"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want the sections after the spool still rendered (%q)", out, want)
+		}
+	}
+}
+
 func TestStatusWarnsAboutRejectedBatches(t *testing.T) {
 	e := newEnv(t)
 	batchDir := filepath.Join(e.layout().RejectedDir(), "b-poison")
@@ -283,8 +303,10 @@ func TestStatusRendersEverySectionWhenTheSpoolCannotOpen(t *testing.T) {
 			t.Errorf("status = %q, want it to contain %q", out, want)
 		}
 	}
-	if strings.Contains(out, "full") {
-		t.Errorf("status = %q, want no spool-full warning for a spool that never opened", out)
+	for _, unwanted := range []string{"full", "not writable"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("status = %q, want no writability verdict for a spool that never opened (%q)", out, unwanted)
+		}
 	}
 }
 

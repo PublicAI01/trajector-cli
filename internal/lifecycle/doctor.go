@@ -292,10 +292,10 @@ func doctorSpool(r *doctorReport, s SpoolState, dir string) {
 		return
 	}
 	if s.WritableErr != nil {
-		r.problem("the capture spool is not writable, so recording is stopped: %v", s.WritableErr)
+		r.problem("%s", spoolUnwritableHeadline(s.WritableErr))
 		r.detail("Spool: %s of %s used at %s.", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota), dir)
 		if s.Full() {
-			r.detail("The spool is full. Run `trajector upload --force` to upload and free it.")
+			r.detail("%s", spoolFullRemedy)
 		}
 		return
 	}
@@ -377,6 +377,18 @@ func quarantineHeadline(rejected []upload.RejectedBatch) string {
 func spoolUnusableHeadline(dir string, err error) string {
 	return fmt.Sprintf("the capture spool at %s is not usable: %v", dir, err)
 }
+
+// spoolUnwritableHeadline is the one sentence both status and doctor use
+// for a spool that opened but refuses writes. Every such refusal stops
+// recording, whatever caused it, so both surfaces say so and name the
+// cause the spool itself reported.
+func spoolUnwritableHeadline(err error) string {
+	return fmt.Sprintf("the capture spool is not writable, so recording is stopped: %v", err)
+}
+
+// spoolFullRemedy is the follow-up both surfaces print under the one
+// writability refusal that has a way out of its own.
+const spoolFullRemedy = "The spool is full. Run `trajector upload --force` to upload and free it."
 
 // rejectedUnreadableHeadline is the one sentence both status and doctor
 // use for a quarantine directory that could not be read.

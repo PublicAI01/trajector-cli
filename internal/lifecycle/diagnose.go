@@ -1,6 +1,8 @@
 package lifecycle
 
 import (
+	"errors"
+
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -34,8 +36,11 @@ type SpoolState struct {
 }
 
 // Full reports a spool that refuses writes because usage reached the
-// quota, the one writability failure with a distinct remedy.
-func (s SpoolState) Full() bool { return s.Usage >= s.Quota }
+// quota, the one writability failure with a distinct remedy. It reads
+// the refusal the spool itself returned rather than re-deriving the
+// comparison, so a surface can never disagree with the spool about why
+// a write would be refused.
+func (s SpoolState) Full() bool { return errors.Is(s.WritableErr, spool.ErrQuotaExceeded) }
 
 // TokenStoreState is the pairing state with its failure mode kept
 // apart: a token store that cannot be read is unknown, not signed out.
