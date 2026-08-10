@@ -61,7 +61,15 @@ type State struct {
 // storedHandshake is the last service handshake with when it arrived.
 type storedHandshake struct {
 	platform.Handshake
-	ReceivedAt time.Time `json:"received_at,omitzero"`
+	// UpgradeMessage is what the service said when it last refused this
+	// client's version. It sits beside the handshake rather than inside
+	// it because it arrives on a 426, not on an acknowledgement — and
+	// because it must not survive one: an acknowledged upload is the
+	// service accepting this version, which makes the refusal it
+	// explained no longer true. applyHandshake writes a fresh record
+	// with this field zero, which is that clearing.
+	UpgradeMessage string    `json:"upgrade_message,omitempty"`
+	ReceivedAt     time.Time `json:"received_at,omitzero"`
 }
 
 // LoadState reads the uploader's state; a missing or unreadable file is
@@ -73,11 +81,23 @@ func LoadState(dir string) State {
 }
 
 // LoadHandshake reads the last persisted service handshake; missing or
-// unreadable means no handshake, and defaults apply.
+// unreadable means no handshake, and defaults apply. What comes back
+// off disk is cleaned again: this file may have been written by a build
+// that predates the cleaning, or edited by hand.
 func LoadHandshake(dir string) platform.Handshake {
 	var h storedHandshake
 	readJSON(filepath.Join(dir, handshakeName), &h)
-	return h.Handshake
+	return h.Handshake.Safe()
+}
+
+// LoadUpgradeMessage reads what the service said when it last refused
+// this client's version, for status and doctor to relay from a process
+// that never made the upload itself. Empty when the service never
+// refused, said nothing, or has since acknowledged an upload.
+func LoadUpgradeMessage(dir string) string {
+	var h storedHandshake
+	readJSON(filepath.Join(dir, handshakeName), &h)
+	return platform.SafeServiceText(h.UpgradeMessage)
 }
 
 func saveHandshake(dir string, h storedHandshake) error {
@@ -197,15 +217,17 @@ func (u *Uploader) noteRejection(rej Rejection) {
 	u.writeState(st)
 }
 
-// noteUpgradeRequired keeps the refused-until version where status and
-// doctor read the handshake, preserving the rest of it. Best-effort.
-func (u *Uploader) noteUpgradeRequired(minVersion string) {
-	if minVersion == "" {
+// noteUpgradeRequired keeps the refused-until version and what the
+// service said about it where status and doctor read the handshake,
+// preserving the rest of it. Best-effort.
+func (u *Uploader) noteUpgradeRequired(minVersion, message string) {
+	if minVersion == "" && message == "" {
 		return
 	}
 	if err := saveHandshake(u.deps.Dir, storedHandshake{
-		Handshake:  mergeHandshake(LoadHandshake(u.deps.Dir), platform.Handshake{MinClientVersion: minVersion}),
-		ReceivedAt: u.deps.Now().UTC(),
+		Handshake:      mergeHandshake(LoadHandshake(u.deps.Dir), platform.Handshake{MinClientVersion: minVersion}),
+		UpgradeMessage: message,
+		ReceivedAt:     u.deps.Now().UTC(),
 	}); err != nil {
 		u.deps.Logf("upload: persisting the required client version: %v", err)
 	}

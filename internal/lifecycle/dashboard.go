@@ -109,11 +109,19 @@ func (m *Machine) Status(dir string, io IO) error {
 		fmt.Fprintln(io.Out, "  Run `trajector doctor` to inspect them, then requeue or discard them.")
 	}
 
-	if d.Handshake.MinClientVersion != "" || d.Handshake.Notice != "" {
+	if d.Handshake.MinClientVersion != "" || d.Handshake.Notice != "" || d.UpgradeMessage != "" {
 		fmt.Fprintln(io.Out, "\nService")
 		if d.Handshake.MinClientVersion != "" {
 			fmt.Fprintf(io.Out, "  The service requires client version %s or newer; this build is %s.\n",
 				d.Handshake.MinClientVersion, m.deps.Version)
+		}
+		// The service's own words come before the instruction: they may
+		// say why, or by when, and a user who reads only the first line
+		// should read the reason rather than the remedy.
+		if d.UpgradeMessage != "" {
+			fmt.Fprintf(io.Out, "  The service says: %s\n", d.UpgradeMessage)
+		}
+		if d.Handshake.MinClientVersion != "" || d.UpgradeMessage != "" {
 			fmt.Fprintf(io.Out, "  %s\n", upgradeHint)
 		}
 		if d.Handshake.Notice != "" {

@@ -33,7 +33,11 @@ type FlushReply struct {
 	// version, so the caller can name the required version without
 	// reading the handshake file across processes.
 	MinClientVersion string `json:"min_client_version,omitempty"`
-	Error            string `json:"error,omitempty"`
+	// UpgradeMessage carries the service's own words about the refusal,
+	// for the same reason: the caller relays them without reaching
+	// across processes for the handshake file.
+	UpgradeMessage string `json:"upgrade_message,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
 // Handler serves the flush endpoint, for the composition root to mount
@@ -54,6 +58,7 @@ func (u *Uploader) Handler(serviceName string) http.Handler {
 			Records:          result.Records,
 			Unreadable:       result.Unreadable,
 			MinClientVersion: result.MinClientVersion,
+			UpgradeMessage:   result.UpgradeMessage,
 		}
 		if err != nil {
 			reply.Error = err.Error()

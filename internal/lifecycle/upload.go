@@ -41,6 +41,9 @@ func (m *Machine) Upload(force bool, io IO) error {
 		fmt.Fprintln(io.Out, "Not signed in; run `trajector login` first. Captured data is kept.")
 	case upload.UpgradeRequired:
 		fmt.Fprintf(io.Out, "Uploads are paused: the service requires trajector %s or newer (this is %s).\n", reply.MinClientVersion, m.deps.Version)
+		if reply.UpgradeMessage != "" {
+			fmt.Fprintf(io.Out, "The service says: %s\n", reply.UpgradeMessage)
+		}
 		// The kept-data line stands alone: a user reading a pause needs
 		// to know nothing was lost before they read what to do about it.
 		fmt.Fprintln(io.Out, "Captured data is kept.")

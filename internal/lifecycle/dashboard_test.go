@@ -353,6 +353,47 @@ func TestStatusShowsServiceMinVersionAndNotice(t *testing.T) {
 	}
 }
 
+func TestStatusRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
+	e := newEnv(t)
+	writeUploadFile(t, e, "handshake.json", map[string]any{
+		"min_client_version": "9.9.9",
+		"upgrade_message":    "Upload format 0.1.x is retired on 2026-09-01.",
+	})
+	out := e.statusOutput()
+
+	for _, want := range []string{"9.9.9", "The service says:", "retired on 2026-09-01", "trajector upgrade"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want it to contain %q", out, want)
+		}
+	}
+}
+
+func TestStatusRefusesToLetTheServiceForgeItsOwnLines(t *testing.T) {
+	// A status report is what a user trusts to tell them the state of
+	// their machine. Text the service chose is printed inside it, so a
+	// message that can move the cursor or start a line could write any
+	// verdict it likes under our name.
+	e := newEnv(t)
+	writeUploadFile(t, e, "handshake.json", map[string]any{
+		"min_client_version": "9.9.9",
+		"upgrade_message":    "upgrade\n  Capture: off, nothing recorded\x1b[2K",
+		"notice":             "hello\rgoodbye",
+	})
+	out := e.statusOutput()
+
+	if strings.Contains(out, "\x1b") || strings.Contains(out, "\r") {
+		t.Errorf("status = %q, want no escapes from the service's text", out)
+	}
+	if strings.Contains(out, "\n  Capture: off") {
+		t.Errorf("status = %q, want the forged line folded back into one", out)
+	}
+	for _, want := range []string{"upgrade", "Capture: off", "hello goodbye"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want the words themselves kept (%q)", out, want)
+		}
+	}
+}
+
 // writeUploadFile seeds one of the uploader's bookkeeping files, whose
 // on-disk shapes are documented formats the dashboard reads.
 func writeUploadFile(t *testing.T, e *env, name string, contents map[string]any) {

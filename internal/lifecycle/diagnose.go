@@ -65,7 +65,12 @@ type Diagnosis struct {
 	// empty quarantine.
 	RejectedErr error
 	Handshake   platform.Handshake
-	TokenStore  TokenStoreState
+	// UpgradeMessage is what the service said when it last refused this
+	// client's version, empty once it has acknowledged an upload again.
+	// It rides beside the handshake rather than in it because it never
+	// came with an acknowledgement.
+	UpgradeMessage string
+	TokenStore     TokenStoreState
 	// Selfcheck is the live proxy's own answer for this project's
 	// token. It is non-nil only when the project is enabled, our proxy
 	// holds the port, and the proxy answered.
@@ -114,6 +119,7 @@ func (m *Machine) Diagnose(dir string) (Diagnosis, error) {
 	d.Uploads = upload.LoadState(m.deps.Layout.UploadDir())
 	d.Rejected, d.RejectedErr = upload.ListRejected(m.deps.Layout.RejectedDir())
 	d.Handshake = m.handshake()
+	d.UpgradeMessage = upload.LoadUpgradeMessage(m.deps.Layout.UploadDir())
 
 	_, paired, err := m.deps.Tokens.DeviceToken()
 	d.TokenStore = TokenStoreState{Paired: paired, Err: err}

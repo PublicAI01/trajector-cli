@@ -68,6 +68,37 @@ func TestFlushHandlerCarriesTheOutcomeWithTheError(t *testing.T) {
 	if reply.Error == "" {
 		t.Errorf("reply = %+v, want the error kept as detail", reply)
 	}
+	if reply.UpgradeMessage != "" {
+		t.Errorf("reply = %+v, want no words when the service sent none", reply)
+	}
+}
+
+func TestFlushHandlerCarriesWhatTheServiceSaidAboutTheVersion(t *testing.T) {
+	// The command that prints the pause runs in a different process
+	// from the flush, so the service's sentence has to cross this wire
+	// or the user never reads it.
+	const said = "Upload format 0.1.x is retired on 2026-09-01."
+	f := newFixture(t)
+	f.storeRawcall(t, "req-1", f.now)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
+		"min_client_version": "9.9.9",
+		"message":            said,
+	}))
+	srv := httptest.NewServer(f.uploader.Handler("test-proxy"))
+	defer srv.Close()
+
+	resp, err := srv.Client().Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var reply upload.FlushReply
+	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.UpgradeMessage != said {
+		t.Errorf("reply = %+v, want the service's words relayed", reply)
+	}
 }
 
 func TestFlushHandlerReportsAFailedFlush(t *testing.T) {

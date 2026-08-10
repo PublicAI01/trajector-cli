@@ -17,7 +17,20 @@ All notable changes to trajector are documented here. The format follows
   failed upgrade leaves the working binary untouched, and an
   installation a package manager owns is handed back to that manager.
 - Every surface that reports the service asking for a newer client —
-  `upload`, `status`, `doctor` — now names `trajector upgrade`.
+  `upload`, `status`, `doctor` — now names `trajector upgrade`, and
+  relays what the service said about the refusal when it said anything.
+  A required version number alone cannot explain why or by when; the
+  sentence beside it can. The diagnostic bundle carries it too.
+
+### Security
+
+- Free text the service supplies — the upgrade explanation and the
+  handshake notice — is stripped of anything that could draw on a
+  terminal before it is stored or printed: escape sequences, carriage
+  returns, line breaks, and invisible or direction-changing characters
+  all become spaces, and the result is one capped line. Printed beside
+  our own output, such text could otherwise forge a line the user
+  reads as the client's own report.
 
 ## [0.1.0] - 2026-08-09
 

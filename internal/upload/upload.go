@@ -66,6 +66,9 @@ type Result struct {
 	Batches          int
 	Records          int
 	MinClientVersion string
+	// UpgradeMessage is what the service said about the refusal, in its
+	// own words, empty when it said nothing. Relayed, never parsed.
+	UpgradeMessage string
 	// Unreadable counts rawcalls this flush moved into the rejected
 	// store because they no longer read back as rawcalls. They were
 	// never sent; they stop blocking the uploads behind them, and
@@ -111,8 +114,10 @@ type Uploader struct {
 	// restarted) gets to find out for itself.
 	upgradeRequired bool
 	// minClientVersion is what the service last demanded alongside the
-	// upgrade gate; it rides out with the gate's outcome.
+	// upgrade gate, and upgradeMessage what it said about the demand;
+	// both ride out with the gate's outcome.
 	minClientVersion string
+	upgradeMessage   string
 	notBefore        time.Time
 	// timeouts counts consecutive timed-out upload attempts. Each one
 	// widens the next attempt's budget and lengthens the pause before
@@ -167,7 +172,7 @@ func (u *Uploader) Flush(force bool) (Result, error) {
 	}
 	res, err := u.flush(force, time.Time{})
 	if err != nil {
-		res.Outcome, res.MinClientVersion = "", ""
+		res.Outcome, res.MinClientVersion, res.UpgradeMessage = "", "", ""
 		classifyFailure(err, &res)
 	}
 	return res, err
@@ -184,6 +189,7 @@ func classifyFailure(err error, res *Result) {
 	case errors.As(err, &upgrade):
 		res.Outcome = UpgradeRequired
 		res.MinClientVersion = upgrade.MinClientVersion
+		res.UpgradeMessage = upgrade.Message
 	case errors.As(err, &limited):
 		res.Outcome = Deferred
 	case errors.As(err, &rejection):
@@ -233,6 +239,7 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 		if u.upgradeRequired {
 			res.Outcome = UpgradeRequired
 			res.MinClientVersion = u.minClientVersion
+			res.UpgradeMessage = u.upgradeMessage
 			return res, nil
 		}
 		if u.deps.Now().Before(u.notBefore) {
@@ -399,6 +406,7 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result,
 		return u.settleFailure(id, rawcalls, err)
 	}
 	u.upgradeRequired = false
+	u.minClientVersion, u.upgradeMessage = "", ""
 	u.notBefore = time.Time{}
 	u.timeouts = 0
 
@@ -520,7 +528,8 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 		// stop so the batch is not re-uploaded pointlessly every minute.
 		u.upgradeRequired = true
 		u.minClientVersion = upgrade.MinClientVersion
-		u.noteUpgradeRequired(upgrade.MinClientVersion)
+		u.upgradeMessage = upgrade.Message
+		u.noteUpgradeRequired(upgrade.MinClientVersion, upgrade.Message)
 	case errors.As(err, &limited):
 		// RetryAfter arrives already capped at platform.MaxRetryAfter. A
 		// rate limit that names no pause still demanded one: without a

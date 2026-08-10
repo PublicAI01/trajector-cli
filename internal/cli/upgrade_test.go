@@ -109,3 +109,41 @@ func TestUpgradeIsNamedWhereverThisBuildIsFoundTooOld(t *testing.T) {
 		})
 	})
 }
+
+func TestWhatTheServiceSaysAboutTheVersionReachesTheUser(t *testing.T) {
+	// A required version says the client is behind; only the service can
+	// say why and by when. That sentence is written by the service, held
+	// by the proxy, and printed by three other processes — so it is
+	// tested where it has actually crossed all of them, and it must not
+	// be able to write a line of its own on the way.
+	const said = "Upload format 0.1.x is retired on 2026-09-01."
+	e := clitest.New(t)
+	e.Paired()
+	e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
+		"min_client_version": "9.9.9",
+		"message":            said + "\rtrajector: everything is fine",
+	}))
+	seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
+	p := e.StartProxy()
+	defer p.Stop()
+
+	if got := e.Run("upload", "--force"); got.Exit != 0 {
+		t.Fatalf("upload exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	for _, surface := range []string{"upload", "status", "doctor"} {
+		t.Run(surface, func(t *testing.T) {
+			var out string
+			if surface == "upload" {
+				out = e.Run("upload").Stdout
+			} else {
+				out = e.InProject(surface).Stdout
+			}
+			if !strings.Contains(out, said) {
+				t.Errorf("%s stdout = %q, want the service's sentence", surface, out)
+			}
+			if strings.Contains(out, "\rtrajector") || strings.Contains(out, "\ntrajector: everything is fine") {
+				t.Errorf("%s stdout = %q, want the forged line disarmed", surface, out)
+			}
+		})
+	}
+}

@@ -651,6 +651,98 @@ func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
 	}
 }
 
+func TestAVersionRefusalRelaysWhatTheServiceSaid(t *testing.T) {
+	// A required version alone tells the user they are behind; the
+	// service's own sentence tells them why and by when, which is the
+	// part no local wording can supply.
+	const said = "Upload format 0.1.x is retired on 2026-09-01."
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
+		"min_client_version": "9.9.9",
+		"message":            said,
+	}))
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", f.now)
+
+	res, err := f.uploader.Flush(true)
+	if err == nil {
+		t.Fatal("426 did not surface")
+	}
+	if res.UpgradeMessage != said {
+		t.Errorf("upgrade message on the refusal = %q, want %q", res.UpgradeMessage, said)
+	}
+	if got := upload.LoadUpgradeMessage(f.dir); got != said {
+		t.Errorf("persisted upgrade message = %q, want %q", got, said)
+	}
+
+	// A later process — status, doctor — reads the message from disk;
+	// so does the gate that answers without asking the service again.
+	res, err = f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.UpgradeRequired {
+		t.Fatalf("gated flush = %+v, %v", res, err)
+	}
+	if res.UpgradeMessage != said {
+		t.Errorf("gated flush message = %q, want the service's words repeated", res.UpgradeMessage)
+	}
+
+	// An acknowledged upload is the service accepting this version, so
+	// the refusal it once made is no longer true and must stop showing.
+	res, err = f.uploader.Flush(true)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("forced flush past the gate = %+v, %v", res, err)
+	}
+	if res.UpgradeMessage != "" {
+		t.Errorf("message after a success = %q, want none", res.UpgradeMessage)
+	}
+	if got := upload.LoadUpgradeMessage(f.dir); got != "" {
+		t.Errorf("persisted message after a success = %q, want none", got)
+	}
+}
+
+func TestAVersionRefusalWithoutWordsPersistsNone(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	f.storeRawcall(t, "req-1", f.now)
+
+	res, _ := f.uploader.Flush(true)
+	if res.MinClientVersion != "9.9.9" {
+		t.Fatalf("refusal = %+v, want the required version", res)
+	}
+	if res.UpgradeMessage != "" || upload.LoadUpgradeMessage(f.dir) != "" {
+		t.Errorf("a silent refusal produced words: %q / %q", res.UpgradeMessage, upload.LoadUpgradeMessage(f.dir))
+	}
+}
+
+func TestAServiceMessageOnDiskCannotDrawOnTheTerminal(t *testing.T) {
+	// The message is service-controlled text that a later process
+	// prints beside our own lines. It is disarmed on the way in and on
+	// the way out, so a file edited between the two still cannot forge
+	// a line of our output.
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
+		"min_client_version": "9.9.9",
+		"message":            "upgrade now\rtrajector: everything is fine",
+	}))
+	f.storeRawcall(t, "req-1", f.now)
+
+	res, _ := f.uploader.Flush(true)
+	for _, got := range []string{res.UpgradeMessage, upload.LoadUpgradeMessage(f.dir)} {
+		if strings.ContainsAny(got, "\r\n\x1b") {
+			t.Errorf("relayed message = %q, want the terminal control runes gone", got)
+		}
+		if !strings.Contains(got, "upgrade now") {
+			t.Errorf("relayed message = %q, want the words kept", got)
+		}
+	}
+}
+
+func TestUpgradeMessageIsAbsentBeforeAnyRefusal(t *testing.T) {
+	f := newFixture(t)
+	if got := upload.LoadUpgradeMessage(f.dir); got != "" {
+		t.Errorf("upgrade message with no handshake on disk = %q, want none", got)
+	}
+}
+
 func TestRateLimitingDefersAutomaticFlushes(t *testing.T) {
 	f := newFixture(t)
 	limited := fakeplatform.JSON(429, map[string]any{})

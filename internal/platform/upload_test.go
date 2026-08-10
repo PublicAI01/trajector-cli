@@ -148,6 +148,59 @@ func TestUploadBatch426ReportsUpgradeRequired(t *testing.T) {
 	}
 }
 
+func TestUploadBatch426CarriesTheServiceWording(t *testing.T) {
+	// A version number cannot say why the upgrade is required or by
+	// when. Without the message the client can only relay a number.
+	err := upload4xx(t, 426, nil, map[string]any{
+		"min_client_version": "2.0.0",
+		"message":            "the 0.1.x upload format is no longer accepted",
+	})
+	var upgrade *platform.UpgradeRequiredError
+	if !errors.As(err, &upgrade) || upgrade.Message != "the 0.1.x upload format is no longer accepted" {
+		t.Fatalf("error = %v, message = %q", err, upgrade.Message)
+	}
+}
+
+func TestUploadBatch426WithoutAMessageSaysNothingExtra(t *testing.T) {
+	err := upload4xx(t, 426, nil, map[string]any{"min_client_version": "2.0.0"})
+	var upgrade *platform.UpgradeRequiredError
+	if !errors.As(err, &upgrade) || upgrade.Message != "" {
+		t.Fatalf("error = %v, message = %q, want empty so no line is printed", err, upgrade.Message)
+	}
+}
+
+func TestUploadBatch426WordingCannotDrawOnTheTerminal(t *testing.T) {
+	// The 426 body is service-controlled text that lands on a terminal
+	// line beside the client's own words. It is cleaned here, at the
+	// boundary, not at each place that prints it.
+	err := upload4xx(t, 426, nil, map[string]any{
+		"min_client_version": "2.0.0\x1b[2J",
+		"message":            "upgrade\r\x1b[Atrajector: everything is fine",
+	})
+	var upgrade *platform.UpgradeRequiredError
+	if !errors.As(err, &upgrade) {
+		t.Fatalf("error = %v", err)
+	}
+	if strings.ContainsAny(upgrade.Message, "\x1b\r\n") || strings.ContainsAny(upgrade.MinClientVersion, "\x1b\r\n") {
+		t.Fatalf("version = %q, message = %q, want both disarmed", upgrade.MinClientVersion, upgrade.Message)
+	}
+}
+
+func TestUploadBatchAckWordingCannotDrawOnTheTerminal(t *testing.T) {
+	c, server := client(t)
+	server.Stub("POST", "/v1/batches", fakeplatform.JSON(200, map[string]any{
+		"batch_id": "batch-1",
+		"notice":   "scheduled\x1b[2J\rmaintenance",
+	}))
+	ack, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(ack.Handshake.Notice, "\x1b\r\n") {
+		t.Fatalf("notice = %q, want it disarmed", ack.Handshake.Notice)
+	}
+}
+
 func TestUploadBatch429CarriesRetryAfterSeconds(t *testing.T) {
 	h := http.Header{}
 	h.Set("Retry-After", "7")

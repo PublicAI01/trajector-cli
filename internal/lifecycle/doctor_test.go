@@ -381,6 +381,26 @@ func TestDoctorRelaysTheServiceHandshakeWithoutJudgingIt(t *testing.T) {
 	}
 }
 
+func TestDoctorRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
+	e := newEnv(t)
+	writeUploadFile(t, e, "handshake.json", map[string]any{
+		"min_client_version": "9.9.9",
+		"upgrade_message":    "Upload format 0.1.x is retired on 2026-09-01.",
+	})
+	problems, out := e.doctor()
+
+	// Being behind the service is not a broken machine; doctor reports
+	// it and says what to run, without claiming there is a fault.
+	if problems != 0 {
+		t.Fatalf("problems = %d, want a version refusal relayed without an exit code, output:\n%s", problems, out)
+	}
+	for _, want := range []string{"the service says:", "retired on 2026-09-01", "trajector upgrade"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor = %q, want it to contain %q", out, want)
+		}
+	}
+}
+
 func TestStatusAndDoctorPresentAnUnusableSpoolAlike(t *testing.T) {
 	e := newEnv(t)
 	e.obstruct(e.layout().SpoolDir())

@@ -49,7 +49,10 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeUploadFile(t, e, "state.json", map[string]any{"last_error": "boom"})
-	writeUploadFile(t, e, "handshake.json", map[string]any{"min_client_version": "9.9.9"})
+	writeUploadFile(t, e, "handshake.json", map[string]any{
+		"min_client_version": "9.9.9",
+		"upgrade_message":    "Upload format 0.1.x is retired on 2026-09-01.",
+	})
 	writeUploadFile(t, e, "pending-unreadable.json", map[string]any{"batch_id": "b-half"})
 	seedRejectedBatch(t, e, "b-poison", "413 Request Entity Too Large", map[string][]byte{
 		"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
@@ -109,6 +112,9 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 		`"usage_bytes"`,
 		`"413 Request Entity Too Large"`,
 		`"min_client_version": "9.9.9"`,
+		// Support needs the service's own words to tell "this client is
+		// behind" apart from "the service wants something else".
+		`"upgrade_message": "Upload format 0.1.x is retired on 2026-09-01."`,
 	} {
 		if !strings.Contains(diagnosis, want) {
 			t.Errorf("diagnosis.json = %s\nwant it to contain %q", diagnosis, want)

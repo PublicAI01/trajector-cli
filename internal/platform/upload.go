@@ -83,6 +83,17 @@ type Handshake struct {
 	Notice           string `json:"notice,omitempty"`
 }
 
+// Safe returns the handshake with its free text made printable. Both
+// string fields end up on a terminal line beside the client's own
+// words, so they are cleaned wherever they enter the process — off the
+// network here, and off disk where the last one is read back — rather
+// than at each place that prints them. See SafeServiceText.
+func (h Handshake) Safe() Handshake {
+	h.MinClientVersion = SafeServiceText(h.MinClientVersion)
+	h.Notice = SafeServiceText(h.Notice)
+	return h
+}
+
 // BatchAck is the service's answer to one accepted batch upload.
 type BatchAck struct {
 	BatchID   string
@@ -96,7 +107,14 @@ type BatchAck struct {
 // reaches the status and Temporary stays answerable.
 type UpgradeRequiredError struct {
 	MinClientVersion string
-	status           *StatusError
+	// Message is what the service wants the user to read about the
+	// refusal, empty when it said nothing. A version number cannot say
+	// why the upgrade is required or by when; without this the client
+	// can only relay a number and speak for the service in its own
+	// words. It is shown as the service's words, never used to decide
+	// anything.
+	Message string
+	status  *StatusError
 }
 
 func (e *UpgradeRequiredError) Error() string {
@@ -230,7 +248,7 @@ func (c *Client) UploadBatch(deviceToken, batchID string, envelope []byte, recor
 	if reply.BatchID != batchID {
 		return BatchAck{}, fmt.Errorf("platform: acknowledgement names batch %q, uploaded %q", reply.BatchID, batchID)
 	}
-	return BatchAck{BatchID: reply.BatchID, Handshake: reply.Handshake}, nil
+	return BatchAck{BatchID: reply.BatchID, Handshake: reply.Handshake.Safe()}, nil
 }
 
 // uploadFailure classifies a transport-level upload error: a deadline
@@ -254,10 +272,15 @@ func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, bu
 	case resp.StatusCode == http.StatusUpgradeRequired:
 		var deny struct {
 			MinClientVersion string `json:"min_client_version"`
+			Message          string `json:"message"`
 		}
 		// Best-effort detail: a 426 without a parseable body still gates.
 		_ = json.Unmarshal(body, &deny)
-		return &UpgradeRequiredError{MinClientVersion: deny.MinClientVersion, status: status}
+		return &UpgradeRequiredError{
+			MinClientVersion: SafeServiceText(deny.MinClientVersion),
+			Message:          SafeServiceText(deny.Message),
+			status:           status,
+		}
 	case resp.StatusCode == http.StatusTooManyRequests:
 		pause := retryAfter(resp.Header.Get("Retry-After"))
 		if pause > MaxRetryAfter {

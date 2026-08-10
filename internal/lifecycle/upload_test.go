@@ -182,6 +182,33 @@ func TestUploadExplainsARequiredUpgradeFromTheFirstEncounter(t *testing.T) {
 	}
 }
 
+func TestUploadRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
+	e := newEnv(t)
+	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
+		"min_client_version": "9.9.9",
+		"message":            "Upload format 0.1.x is retired on 2026-09-01.",
+	}))
+	servedProxy(t, e)
+	m := e.machine()
+
+	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
+	if err := m.Upload(true, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	out := e.stdout.String()
+	for _, want := range []string{"requires trajector 9.9.9 or newer", "The service says:", "retired on 2026-09-01", "Captured data is kept."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout = %q, want it to contain %q", out, want)
+		}
+	}
+	// The kept-data line is the one a paused user needs most; the
+	// service's sentence must not be able to push it out of sight or
+	// pass itself off as ours.
+	if strings.Contains(out, "\x1b") || strings.Index(out, "Captured data is kept.") < strings.Index(out, "The service says:") {
+		t.Errorf("stdout = %q, want the service's words above our own kept-data line", out)
+	}
+}
+
 func TestUploadReportsProgressBeforeAPauseStopsTheDrain(t *testing.T) {
 	e := newEnv(t)
 	e.service.StubFunc("POST", "/v1/batches", ackBatch(map[string]any{"flush_bytes": 1}))

@@ -124,7 +124,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	m.doctorDiscoveryHint(r, d.TokenStore)
 	doctorSpool(r, d.Spool, m.deps.Layout.SpoolDir())
 	doctorRejected(r, d.Rejected, d.RejectedErr, m.deps.Layout.RejectedDir())
-	doctorService(r, d.Handshake, m.deps.Version)
+	doctorService(r, d.Handshake, d.UpgradeMessage, m.deps.Version)
 	doctorEnvironmentNote(r)
 	m.doctorSelfcheck(r, d)
 
@@ -340,9 +340,14 @@ func doctorRejected(r *doctorReport, rejected []upload.RejectedBatch, listErr er
 // doctorService relays what the service last said. The client never
 // parses the version — it cannot judge whether this build satisfies it
 // — so both fields are shown verbatim and count toward nothing.
-func doctorService(r *doctorReport, h platform.Handshake, version string) {
+func doctorService(r *doctorReport, h platform.Handshake, upgradeMessage, version string) {
 	if h.MinClientVersion != "" {
 		r.note("the service requires client version %s or newer; this build is %s", h.MinClientVersion, version)
+	}
+	if upgradeMessage != "" {
+		r.note("the service says: %s", upgradeMessage)
+	}
+	if h.MinClientVersion != "" || upgradeMessage != "" {
 		r.detail("%s", upgradeHint)
 	}
 	if h.Notice != "" {
