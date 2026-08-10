@@ -45,6 +45,48 @@ The full behavior description lives in [PRIVACY.md](PRIVACY.md) (what data,
 when, what processing, where it goes) and [ARCHITECTURE.md](ARCHITECTURE.md)
 (how the pieces fit); vulnerabilities go through [SECURITY.md](SECURITY.md).
 
+## Installation
+
+On macOS and Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/PublicAI01/trajector-cli/main/install.sh | sh
+```
+
+The script picks the archive for your platform, verifies it against the
+release's checksum file — refusing to install anything that does not match —
+and puts `trajector` in `~/.local/bin`. Set `TRAJECTOR_INSTALL_DIR` to
+install elsewhere, or `TRAJECTOR_VERSION=v0.1.0` to pin a release.
+
+**On macOS, install with the command above rather than downloading the
+archive in a browser.** Releases are not yet code-signed, and macOS marks
+anything a browser downloaded; unpacking such an archive in Finder passes
+that mark to the binary, and Gatekeeper then refuses to run it. A download
+made by `curl` carries no mark. The same applies on Windows, where
+SmartScreen acts on the equivalent mark.
+
+Windows has no install script yet. Download
+`trajector_<version>_windows_<arch>.zip` from the
+[releases page](https://github.com/PublicAI01/trajector-cli/releases), then
+in PowerShell:
+
+```powershell
+Get-FileHash .\trajector_<version>_windows_<arch>.zip -Algorithm SHA256
+# compare against trajector_checksums.txt from the same release
+Expand-Archive .\trajector_<version>_windows_<arch>.zip
+Unblock-File .\trajector.exe
+```
+
+Move `trajector.exe` somewhere on your `PATH`. Homebrew and Scoop are not
+available yet.
+
+Then pair the device and enable a project:
+
+```sh
+trajector login
+cd your-project && trajector enable
+```
+
 ## Releases and verification
 
 Every release is built by GitHub Actions from this repository and ships with

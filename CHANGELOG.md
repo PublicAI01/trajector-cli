@@ -6,6 +6,13 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `install.sh`: a one-line install for macOS and Linux that picks the
+  right archive, verifies it against the release's checksums, and
+  refuses to install anything unverified. Windows gets printed manual
+  instructions, including how to clear the download mark.
+
 ## [0.1.0] - 2026-08-09
 
 First release: local capture proxy with lazy lifecycle, consent-gated
