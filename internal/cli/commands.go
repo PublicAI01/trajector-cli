@@ -104,6 +104,12 @@ func (a *app) discardCmd(args []string) int {
 	})
 }
 
+func (a *app) upgradeCmd(args []string) int {
+	return a.with("usage: trajector upgrade", args, 0, func(m *lifecycle.Machine, _ string) error {
+		return m.Upgrade(a.io())
+	})
+}
+
 func (a *app) uninstallCmd(args []string) int {
 	args, deleteData := takeFlag(args, "--delete-data")
 	return a.with("usage: trajector uninstall [--delete-data]", args, 0, func(m *lifecycle.Machine, _ string) error {

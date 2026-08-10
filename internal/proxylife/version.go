@@ -17,15 +17,27 @@ const ReuseReason = "only a strictly older release is replaced"
 // coexisting builds that each replaced the other would trade the port
 // on every session start, cutting live streams at each turn.
 func Supersedes(ours, holder string) bool {
-	o, ok := parseVersion(ours)
+	order, ok := Compare(holder, ours)
+	return ok && order < 0
+}
+
+// Compare orders two release versions by semantic-version precedence,
+// returning a negative number when a precedes b, zero when they are
+// equal, and a positive number when a follows b. The second result is
+// false when either side is not a semantic version — a dev build, say
+// — and no order exists; the numeric result is meaningless then. This
+// is the only version comparison in the repository: the port takeover
+// rule and the choice of release to upgrade to answer from it.
+func Compare(a, b string) (int, bool) {
+	x, ok := parseVersion(a)
 	if !ok {
-		return false
+		return 0, false
 	}
-	h, ok := parseVersion(holder)
+	y, ok := parseVersion(b)
 	if !ok {
-		return false
+		return 0, false
 	}
-	return h.compare(o) < 0
+	return x.compare(y), true
 }
 
 // semver is a parsed semantic version: the numeric core and the

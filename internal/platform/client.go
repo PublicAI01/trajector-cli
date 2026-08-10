@@ -9,6 +9,11 @@ import (
 // body. Service calls are never unbounded.
 const requestTimeout = 30 * time.Second
 
+// UserAgent is how a trajector build names itself to any HTTP service
+// it calls — this service client, and the release source the upgrade
+// command reads. One spelling, so every service sees one client name.
+func UserAgent(version string) string { return "trajector/" + version }
+
 // newClient builds the HTTP client used for service calls. The
 // forwarding proxy never uses it; forwarding has its own transport.
 func newClient(version string) *http.Client {
@@ -17,7 +22,7 @@ func newClient(version string) *http.Client {
 	transport.ResponseHeaderTimeout = 30 * time.Second
 	return &http.Client{
 		Timeout:   requestTimeout,
-		Transport: userAgentTransport{agent: "trajector/" + version, next: transport},
+		Transport: userAgentTransport{agent: UserAgent(version), next: transport},
 	}
 }
 

@@ -87,6 +87,19 @@ trajector login
 cd your-project && trajector enable
 ```
 
+### Updating
+
+```sh
+trajector upgrade
+```
+
+`upgrade` moves to the newest published release, verifying its checksum
+before replacing anything: a download that fails verification leaves the
+binary you have exactly as it was. Releases before 1.0.0 are published as
+pre-releases and `upgrade` moves to them, which is what a beta wants. An
+installation a package manager owns is handed back to that manager rather
+than overwritten.
+
 ## Releases and verification
 
 Every release is built by GitHub Actions from this repository and ships with
@@ -121,5 +134,6 @@ deleting the binary alone leaves the settings injections behind.
 | `internal/platform` | The client for the trajector service API |
 | `internal/tokenstore` | The device pairing secret, in the OS keyring or owner-only files |
 | `internal/fsatomic` | Atomic file writes, and updates serialized across processes |
+| `internal/selfupdate` | Finding, verifying, and installing a newer published release over this one |
 | `internal/cli` | argv, exit codes, and what the user reads |
 | `internal/harness` | Test doubles and sandboxes: a fake upstream, a fake service, a real proxy in a temp directory |

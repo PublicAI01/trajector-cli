@@ -11,6 +11,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
@@ -102,6 +103,12 @@ func (r *doctorReport) render(out io.Writer) {
 // running doctor twice is always safe.
 func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	fmt.Fprintf(io.Out, "trajector %s doctor\n\n", m.deps.Version)
+
+	// An upgrade that could not delete the binary it replaced — on
+	// Windows the previous one is still the running image — leaves a
+	// file beside this one. It is housekeeping, not a diagnosis: the
+	// user never had to know, so it is swept without a finding.
+	selfupdate.SweepResidue(m.deps.ExecPath)
 
 	d, err := m.Diagnose(dir)
 	if err != nil {
@@ -336,6 +343,7 @@ func doctorRejected(r *doctorReport, rejected []upload.RejectedBatch, listErr er
 func doctorService(r *doctorReport, h platform.Handshake, version string) {
 	if h.MinClientVersion != "" {
 		r.note("the service requires client version %s or newer; this build is %s", h.MinClientVersion, version)
+		r.detail("%s", upgradeHint)
 	}
 	if h.Notice != "" {
 		r.note("notice from the service: %s", h.Notice)

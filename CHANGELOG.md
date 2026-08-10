@@ -12,6 +12,12 @@ All notable changes to trajector are documented here. The format follows
   right archive, verifies it against the release's checksums, and
   refuses to install anything unverified. Windows gets printed manual
   instructions, including how to clear the download mark.
+- `trajector upgrade`: replaces this binary with the newest published
+  release. The archive is verified before anything is replaced, a
+  failed upgrade leaves the working binary untouched, and an
+  installation a package manager owns is handed back to that manager.
+- Every surface that reports the service asking for a newer client —
+  `upload`, `status`, `doctor` — now names `trajector upgrade`.
 
 ## [0.1.0] - 2026-08-09
 

@@ -27,9 +27,11 @@ type Deps struct {
 	Tokens   *tokenstore.Store
 	Platform *platform.Client
 	Version  string
-	// ExecPath is this binary, injected into session hooks and used to
-	// spawn the proxy.
-	ExecPath  string
+	// ExecPath is this binary, injected into session hooks, used to
+	// spawn the proxy, and replaced in place by upgrade.
+	ExecPath string
+	// Releases is the index of published releases upgrade reads.
+	Releases  string
 	ProxyAddr string
 	// Home is the user's home directory, where user-wide Claude Code
 	// settings live.

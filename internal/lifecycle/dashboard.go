@@ -114,6 +114,7 @@ func (m *Machine) Status(dir string, io IO) error {
 		if d.Handshake.MinClientVersion != "" {
 			fmt.Fprintf(io.Out, "  The service requires client version %s or newer; this build is %s.\n",
 				d.Handshake.MinClientVersion, m.deps.Version)
+			fmt.Fprintf(io.Out, "  %s\n", upgradeHint)
 		}
 		if d.Handshake.Notice != "" {
 			fmt.Fprintf(io.Out, "  Notice from the service: %s\n", d.Handshake.Notice)

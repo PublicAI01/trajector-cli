@@ -17,6 +17,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
@@ -65,6 +66,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return a.doctorCmd(args[1:])
 	case "upload":
 		return a.uploadCmd(args[1:])
+	case "upgrade":
+		return a.upgradeCmd(args[1:])
 	case "hook":
 		return a.hookCmd(args[1:])
 	case proxylife.Command:
@@ -88,6 +91,7 @@ commands:
   status       show pairing, project, proxy, capture, and upload state
   doctor       diagnose and repair injection, hooks, proxy, and spool issues
   upload       upload captured data now [--force]
+  upgrade      install the newest published release over this one
   version      print the trajector version
   proxy run    run the local proxy (internal; started automatically)
   hook         session hook entry points (internal; injected by enable)
@@ -102,6 +106,7 @@ type runtimeEnv struct {
 	execPath    string
 	proxyAddr   string
 	platformURL string
+	releasesURL string
 }
 
 func resolveEnv() (runtimeEnv, error) {
@@ -123,42 +128,52 @@ func resolveEnv() (runtimeEnv, error) {
 		execPath:    execPath,
 		proxyAddr:   proxylife.Addr,
 		platformURL: platform.DefaultBaseURL,
+		releasesURL: selfupdate.DefaultReleasesURL,
 	}
 	if addr := os.Getenv(ProxyAddrEnv); addr != "" {
 		env.proxyAddr = addr
 	}
-	platformURL, err := configuredPlatformURL(layout.ConfigFile())
+	cfg, err := readUserConfig(layout.ConfigFile())
 	if err != nil {
 		return runtimeEnv{}, err
 	}
-	if platformURL != "" {
-		env.platformURL = platformURL
+	if cfg.PlatformURL != "" {
+		env.platformURL = cfg.PlatformURL
+	}
+	if cfg.ReleasesURL != "" {
+		env.releasesURL = cfg.ReleasesURL
 	}
 	return env, nil
 }
 
-// configuredPlatformURL reads the service endpoint override from the
-// user config file. The endpoint decides where captured data and the
-// device token go, so it is never read from an environment variable: a
-// repository's committed settings reach this process's environment
-// through the session hooks, and must not be able to choose the
-// destination. An absent file means no override; an unreadable one
-// fails the command loudly rather than silently uploading elsewhere.
-func configuredPlatformURL(path string) (string, error) {
+// userConfig is what the user config file may override. Both entries
+// name a place this machine will trust with something: where captured
+// data and the device token go, and where the next binary comes from.
+type userConfig struct {
+	PlatformURL string `json:"platform_url"`
+	ReleasesURL string `json:"releases_url"`
+}
+
+// readUserConfig reads the overrides from the user config file. Neither
+// is ever read from an environment variable: a repository's committed
+// settings reach this process's environment through the session hooks,
+// and must not be able to choose where data goes or where a replacement
+// binary comes from. An absent file means no overrides; an unreadable
+// one fails the command loudly rather than silently using a default the
+// user thought they had changed.
+func readUserConfig(path string) (userConfig, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
+		return userConfig{}, nil
 	}
 	if err != nil {
-		return "", err
+		return userConfig{}, err
 	}
-	var cfg struct {
-		PlatformURL string `json:"platform_url"`
-	}
+	var cfg userConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return "", fmt.Errorf("reading %s: %w", path, err)
+		return userConfig{}, fmt.Errorf("reading %s: %w", path, err)
 	}
-	return cfg.PlatformURL, nil
+	return cfg, nil
 }
 
 // machine assembles the lifecycle machine for this invocation.
@@ -182,6 +197,7 @@ func machineAt(addr string) (*lifecycle.Machine, error) {
 		Platform:  platform.New(env.platformURL, version),
 		Version:   version,
 		ExecPath:  env.execPath,
+		Releases:  env.releasesURL,
 		ProxyAddr: env.proxyAddr,
 		Home:      env.home,
 		Getenv:    os.Getenv,

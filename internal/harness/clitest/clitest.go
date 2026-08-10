@@ -32,6 +32,9 @@ type Env struct {
 	project string
 	service *fakeplatform.Server
 	client  *http.Client
+	// config accumulates what the user config file says, so pointing
+	// the CLI at one destination does not unset another.
+	config map[string]string
 }
 
 // New isolates the process environment and returns the harness. The
@@ -47,7 +50,14 @@ func New(t *testing.T) *Env {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	e := &Env{t: t, home: home, project: project, service: fakeplatform.New(t), client: proxytest.Client(t)}
+	e := &Env{
+		t:       t,
+		home:    home,
+		project: project,
+		service: fakeplatform.New(t),
+		client:  proxytest.Client(t),
+		config:  map[string]string{},
+	}
 
 	userdirs.Isolate(t.Setenv, home)
 	t.Setenv("ANTHROPIC_BASE_URL", "")
@@ -66,7 +76,24 @@ func New(t *testing.T) *Env {
 // sets an environment variable for this: the CLI must not honor one.
 func (e *Env) SetPlatformURL(url string) {
 	e.t.Helper()
-	data, err := json.Marshal(map[string]string{"platform_url": url})
+	e.setConfig("platform_url", url)
+}
+
+// SetReleasesURL points the CLI at a release source, through the same
+// file and for the same reason: where a replacement binary comes from
+// is the user's setting, not something a session's environment can
+// choose.
+func (e *Env) SetReleasesURL(url string) {
+	e.t.Helper()
+	e.setConfig("releases_url", url)
+}
+
+// setConfig rewrites the user config file with one key changed, leaving
+// the keys an earlier call set in place.
+func (e *Env) setConfig(key, value string) {
+	e.t.Helper()
+	e.config[key] = value
+	data, err := json.Marshal(e.config)
 	if err != nil {
 		e.t.Fatal(err)
 	}
