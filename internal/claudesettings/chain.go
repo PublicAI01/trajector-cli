@@ -42,14 +42,46 @@ func effectiveEnv(projectRoot, home, key string, getenv func(string) string) (st
 	return firstEnv(projectRoot, home, key, getenv, func(string) bool { return true })
 }
 
+// BaseURLResolution says how much the configuration chain could tell us
+// about where a project's traffic would go without trajector.
+type BaseURLResolution int
+
+const (
+	// BaseURLNone: nothing in the chain sets a base URL, so the
+	// official endpoint is what the project would use.
+	BaseURLNone BaseURLResolution = iota
+	// BaseURLExternal: the user configured a base URL of their own.
+	BaseURLExternal
+	// BaseURLMasked: the shell environment carries trajector's own
+	// injection, applied by a Claude Code process that already read the
+	// settings. Whatever the user's shell configured is hidden behind
+	// it, so the answer is "unknown" — never "the official endpoint".
+	BaseURLMasked
+)
+
 // ExternalBaseURL resolves the base URL the project's traffic would use
 // without trajector: the effective ANTHROPIC_BASE_URL with
 // trajector-injected values skipped, so re-running enable sees through
 // its own injection to the user's real configuration.
-func ExternalBaseURL(projectRoot, home string, getenv func(string) string) (string, Source, bool) {
-	return firstEnv(projectRoot, home, envBaseURL, getenv, func(value string) bool {
+//
+// Skipping our injection in the settings files is always right — we
+// wrote those. Meeting it in the shell environment is a different
+// situation: a Claude Code process applied the settings env block to
+// everything it spawns, so our own value has replaced the one the
+// user's shell exported. That reads as BaseURLMasked, because treating
+// it as "nothing configured" would send a relay user's traffic — and
+// their relay credentials — to the official endpoint.
+func ExternalBaseURL(projectRoot, home string, getenv func(string) string) (string, Source, BaseURLResolution) {
+	value, source, found := firstEnv(projectRoot, home, envBaseURL, getenv, func(value string) bool {
 		return !isProxyBaseURL(value)
 	})
+	if found {
+		return value, source, BaseURLExternal
+	}
+	if isProxyBaseURL(getenv(envBaseURL)) {
+		return "", SourceShell, BaseURLMasked
+	}
+	return "", "", BaseURLNone
 }
 
 // UnsupportedChannel reports a Bedrock or Vertex configuration anywhere

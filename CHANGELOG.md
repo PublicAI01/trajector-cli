@@ -22,8 +22,24 @@ All notable changes to trajector are documented here. The format follows
   A required version number alone cannot explain why or by when; the
   sentence beside it can. The diagnostic bundle carries it too.
 
+### Fixed
+
+- A session started from a shell that configures its own base URL no
+  longer has that relay replaced by the official endpoint. The hook
+  that reconciles a project's upstream runs inside a session whose
+  environment already carries our injection, which hid the shell's own
+  setting from it; it now recognises that it cannot see the answer and
+  keeps what the grant recorded, instead of guessing.
+
 ### Security
 
+- The service's wording for a rejected batch is stripped of anything
+  that could draw on a terminal, both where it arrives off the network
+  and where it is read back from a quarantined batch's reason file.
+  It is printed by `upload`, printed again by `doctor` among `ok:` and
+  `problem:` lines, and carried in the diagnostic bundle, so it could
+  otherwise forge a whole line the user reads as our own verdict. It is
+  also cut without breaking a character.
 - Free text the service supplies — the upgrade explanation and the
   handshake notice — is stripped of anything that could draw on a
   terminal before it is stored or printed: escape sequences, carriage

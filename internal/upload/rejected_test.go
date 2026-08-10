@@ -222,3 +222,35 @@ func rejectedRecords(t *testing.T, dir string) int {
 	}
 	return n
 }
+
+func TestAReasonFileCannotDrawItsOwnLineWhenTheQuarantineIsListed(t *testing.T) {
+	// Reason files written by an older build hold whatever the service
+	// sent, and the file sits in a directory the user can edit. Every
+	// surface that lists the quarantine prints Details among its own
+	// lines, so what comes off disk is disarmed like what comes off the
+	// network.
+	dir := t.TempDir()
+	seedBatch(t, dir, "b-1", map[string][]byte{"req-1": rawcallBytes(t, "req-1")})
+	reason, err := json.Marshal(map[string]any{
+		"batch_id": "b-1", "records": 1, "at": "2026-08-02T09:00:00Z",
+		"details": "400 Bad Request\r\x1b[2K  ok: everything checks out",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b-1", "reason.json"), reason, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	batches, err := upload.ListRejected(dir)
+	if err != nil || len(batches) != 1 {
+		t.Fatalf("ListRejected = %+v, %v; want the one batch", batches, err)
+	}
+	got := batches[0].Reason.Details
+	if strings.ContainsAny(got, "\r\n\x1b") {
+		t.Fatalf("details = %q, want no rune that can move the cursor", got)
+	}
+	if !strings.Contains(got, "400 Bad Request") {
+		t.Errorf("details = %q, want the recorded reason still readable", got)
+	}
+}

@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/textproto"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/redact"
@@ -338,12 +337,19 @@ func HumanBytes(n int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
+// trimDetails turns a rejection's response body into one line safe to
+// print. The body is free text the service wrote, and it is printed
+// among doctor's own verdicts, kept on the quarantined batch, and
+// carried in the diagnostic bundle — so it goes through the same
+// disarming every other sentence the service supplies does. The byte
+// bound comes first so a large body is not decoded rune by rune;
+// SafeServiceText then caps it properly and cannot leave a rune split
+// in half.
 func trimDetails(body []byte) string {
-	s := strings.TrimSpace(string(body))
-	if len(s) > 500 {
-		s = s[:500]
+	if len(body) > 4096 {
+		body = body[:4096]
 	}
-	return s
+	return SafeServiceText(string(body))
 }
 
 func writePart(mw *multipart.Writer, field, filename, contentType string, data []byte) error {

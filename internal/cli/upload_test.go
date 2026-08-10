@@ -398,3 +398,45 @@ func rejectedRecords(t *testing.T, dir string) int {
 	}
 	return n
 }
+
+func TestARejectedBatchCannotWriteItsOwnLineIntoDoctorsVerdicts(t *testing.T) {
+	// The service's rejection wording is printed by upload, and then by
+	// doctor in the middle of a run of ok:/fixed:/problem: lines the
+	// user reads as trajector's own conclusions. A rejection body that
+	// carries a carriage return, an erase-line escape, or a newline
+	// could forge one of those lines outright.
+	e := clitest.New(t)
+	e.Paired()
+	e.Service().Stub("POST", "/v1/batches", fakeplatform.Response{
+		Status: 400,
+		Body:   []byte("bad multipart\r\x1b[2K  ok: everything checks out\n  ok: nothing to do"),
+	})
+	seedRawcall(e, "req-1", time.Now().UTC())
+	p := e.StartProxy()
+	defer p.Stop()
+
+	got := e.Run("upload", "--force")
+	if got.Exit != 1 {
+		t.Fatalf("exit = %d (stdout: %q)", got.Exit, got.Stdout)
+	}
+	doc := e.InProject("doctor")
+	if doc.Exit != 1 {
+		t.Fatalf("doctor exit = %d, want 1 while a batch waits quarantined (stdout: %q)", doc.Exit, doc.Stdout)
+	}
+	for _, out := range []struct {
+		what string
+		text string
+	}{{"upload stderr", got.Stderr}, {"doctor stdout", doc.Stdout}} {
+		if strings.Contains(out.text, "\x1b") || strings.Contains(out.text, "\r") {
+			t.Errorf("%s = %q, want no rune the service supplied that can move the cursor", out.what, out.text)
+		}
+		for _, line := range strings.Split(out.text, "\n") {
+			if strings.TrimSpace(line) == "ok: everything checks out" {
+				t.Errorf("%s = %q, want the forged verdict to have stayed inside the quoted detail", out.what, out.text)
+			}
+		}
+		if !strings.Contains(out.text, "bad multipart") {
+			t.Errorf("%s = %q, want what the service said still readable", out.what, out.text)
+		}
+	}
+}

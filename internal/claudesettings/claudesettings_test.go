@@ -501,14 +501,46 @@ func TestExternalBaseURLSkipsOwnInjection(t *testing.T) {
 		}
 		return ""
 	}
-	value, source, ok := ExternalBaseURL(project, home, getenv)
-	if !ok || value != "https://relay.example.com" || source != SourceShell {
-		t.Errorf("ExternalBaseURL = %q, %q, %v", value, source, ok)
+	value, source, resolution := ExternalBaseURL(project, home, getenv)
+	if resolution != BaseURLExternal || value != "https://relay.example.com" || source != SourceShell {
+		t.Errorf("ExternalBaseURL = %q, %q, %v", value, source, resolution)
 	}
 
 	noShell := func(string) string { return "" }
-	if _, _, ok := ExternalBaseURL(project, home, noShell); ok {
-		t.Error("own injection reported as an external base URL")
+	if _, _, resolution := ExternalBaseURL(project, home, noShell); resolution != BaseURLNone {
+		t.Errorf("own injection reported as %v, want nothing configured", resolution)
+	}
+}
+
+func TestOurOwnInjectionInTheEnvironmentHidesTheAnswerRatherThanBeingOne(t *testing.T) {
+	// Claude Code applies the settings env block to everything it
+	// spawns, so a hook it runs sees our injected base URL in place of
+	// whatever the user's shell exported. The chain cannot see the
+	// user's relay from there — and must say so, because answering
+	// "nothing configured" is how a relay user's traffic ends up at the
+	// official endpoint carrying credentials that endpoint will reject.
+	project, home := t.TempDir(), t.TempDir()
+	if err := InjectProject(ProjectLocalPath(project), testBaseURL, testHookCmd); err != nil {
+		t.Fatal(err)
+	}
+	inSession := func(key string) string {
+		if key == envBaseURL {
+			return testBaseURL
+		}
+		return ""
+	}
+	if _, _, resolution := ExternalBaseURL(project, home, inSession); resolution != BaseURLMasked {
+		t.Errorf("ExternalBaseURL = %v, want the answer reported as hidden", resolution)
+	}
+
+	// A relay the user put in the project's shared settings is still
+	// visible from inside a session: only the shell layer is masked.
+	if err := os.WriteFile(projectSharedPath(project), []byte(`{"env":{"ANTHROPIC_BASE_URL":"https://relay.example.com"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value, source, resolution := ExternalBaseURL(project, home, inSession)
+	if resolution != BaseURLExternal || value != "https://relay.example.com" || source != SourceProject {
+		t.Errorf("ExternalBaseURL = %q, %q, %v; want the relay in the shared settings", value, source, resolution)
 	}
 }
 

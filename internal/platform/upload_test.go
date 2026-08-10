@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
@@ -353,4 +354,47 @@ func readParts(t *testing.T, req fakeplatform.Request) map[string][]byte {
 		parts[p.FormName()] = data
 	}
 	return parts
+}
+
+func TestARejectionBodyCannotDrawItsOwnLinesOnTheTerminal(t *testing.T) {
+	// The rejection detail is printed by upload, printed again by
+	// doctor among its own ok:/problem: verdicts, kept on the
+	// quarantined batch and shipped in the diagnostic bundle. It is
+	// free text the service wrote, so it is disarmed where it enters
+	// the process, like every other sentence the service supplies.
+	c, server := client(t)
+	server.Stub("POST", "/v1/batches", fakeplatform.Response{
+		Status: 400,
+		Body:   []byte("rejected\r\x1b[2K  ok: everything checks out\n  ok: nothing to do"),
+	})
+	_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
+	var rejected *platform.BatchRejectedError
+	if !errors.As(err, &rejected) {
+		t.Fatalf("error = %v, want BatchRejectedError", err)
+	}
+	if strings.ContainsAny(rejected.Details, "\r\n\x1b") {
+		t.Fatalf("details = %q, want no rune that can move the cursor or start a line", rejected.Details)
+	}
+	if !strings.Contains(rejected.Details, "rejected") {
+		t.Errorf("details = %q, want the words the service wrote still readable", rejected.Details)
+	}
+}
+
+func TestALongRejectionBodyIsCutWithoutBreakingACharacter(t *testing.T) {
+	c, server := client(t)
+	server.Stub("POST", "/v1/batches", fakeplatform.Response{
+		Status: 400,
+		Body:   []byte(strings.Repeat("界", 8192)),
+	})
+	_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
+	var rejected *platform.BatchRejectedError
+	if !errors.As(err, &rejected) {
+		t.Fatalf("error = %v, want BatchRejectedError", err)
+	}
+	if !utf8.ValidString(rejected.Details) {
+		t.Fatalf("details = %q, want valid UTF-8 after the cut", rejected.Details)
+	}
+	if n := utf8.RuneCountInString(rejected.Details); n > 512 {
+		t.Fatalf("details kept %d runes, want a detail that cannot fill the screen", n)
+	}
 }

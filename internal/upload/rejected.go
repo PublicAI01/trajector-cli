@@ -12,6 +12,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
@@ -57,6 +58,18 @@ type Rejection struct {
 	Records int       `json:"records"`
 	Details string    `json:"details,omitempty"`
 	At      time.Time `json:"at"`
+}
+
+// readReason loads a batch's recorded reason. Details is free text the
+// service wrote, and it is printed among doctor's own verdicts every
+// time a quarantined batch is listed, so it is disarmed here as well as
+// where it arrives off the network — a reason file written by an older
+// build, or edited since, must not be able to draw its own line.
+func readReason(path string) Rejection {
+	var rej Rejection
+	readJSON(path, &rej)
+	rej.Details = platform.SafeServiceText(rej.Details)
+	return rej
 }
 
 // quarantine moves one batch's records from the spool into the rejected
@@ -185,7 +198,7 @@ func ListRejected(rejectedDir string) ([]RejectedBatch, error) {
 				continue
 			}
 			if f.Name() == reasonName {
-				readJSON(filepath.Join(rejectedDir, b.Name(), f.Name()), &rb.Reason)
+				rb.Reason = readReason(filepath.Join(rejectedDir, b.Name(), f.Name()))
 				continue
 			}
 			rb.Records++
@@ -215,8 +228,7 @@ func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, in
 	if err != nil {
 		return Rejection{}, 0, err
 	}
-	var rej Rejection
-	readJSON(filepath.Join(dir, reasonName), &rej)
+	rej := readReason(filepath.Join(dir, reasonName))
 
 	moved := 0
 	var stuck []error
@@ -269,8 +281,7 @@ func Discard(rejectedDir, batchID string) (Rejection, int, error) {
 	if err != nil {
 		return Rejection{}, 0, err
 	}
-	var rej Rejection
-	readJSON(filepath.Join(dir, reasonName), &rej)
+	rej := readReason(filepath.Join(dir, reasonName))
 
 	records := 0
 	for _, f := range files {
