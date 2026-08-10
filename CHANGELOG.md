@@ -24,6 +24,11 @@ All notable changes to trajector are documented here. The format follows
 
 ### Fixed
 
+- `trajector upgrade` no longer installs over a path that is not a
+  file. What a rename does when a directory stands where the binary
+  belongs differs between systems, and on Windows it moved the
+  directory aside and left the new binary in its place. The refusal is
+  now the program's own, before anything is written.
 - A session started from a shell that configures its own base URL no
   longer has that relay replaced by the official endpoint. The hook
   that reconciles a project's upstream runs inside a session whose

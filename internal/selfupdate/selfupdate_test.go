@@ -417,8 +417,18 @@ func TestInstallOverSomethingThatIsNotAFileChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := selfupdate.Install(occupied, []byte("the new binary")); err == nil {
+	err := selfupdate.Install(occupied, []byte("the new binary"))
+	if err == nil {
 		t.Fatal("Install replaced a directory with a binary")
+	}
+	// What a rename does over a directory differs between systems, and
+	// on one of them it takes the directory away. The refusal has to be
+	// ours, not the platform's.
+	if !strings.Contains(err.Error(), "is not a file") {
+		t.Errorf("error does not say what stood in the way: %v", err)
+	}
+	if info, err := os.Stat(occupied); err != nil || !info.IsDir() {
+		t.Errorf("the directory did not survive: %v, %v", info, err)
 	}
 	// The staged file must not survive a replacement that could not
 	// happen: the next run would sweep it, but until then it is a

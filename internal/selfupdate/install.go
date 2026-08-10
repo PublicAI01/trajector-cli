@@ -27,6 +27,16 @@ const executablePerm = 0o755
 // previous binary in place and runnable: a machine that cannot be
 // upgraded must still be a machine that works.
 func Install(execPath string, binary []byte) error {
+	// Whatever occupies execPath must be a file before anything is
+	// staged over it. What a rename does when a directory stands there
+	// is not the same everywhere — POSIX refuses it, Windows can move
+	// the directory aside and leave the binary in its place, taking the
+	// directory with it — so the case is settled here, once, rather
+	// than left to the platform. A path that holds nothing yet is fine:
+	// staging then fails, or the install lands, on its own merits.
+	if info, err := os.Stat(execPath); err == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("selfupdate: %s is not a file; nothing was installed over it", execPath)
+	}
 	dir := filepath.Dir(execPath)
 	f, err := os.CreateTemp(dir, filepath.Base(execPath)+incomingMarker+"*")
 	if err != nil {
