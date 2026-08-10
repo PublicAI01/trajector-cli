@@ -98,14 +98,45 @@ fetch_to_file() {
 	fi
 }
 
-# newest_tag reads the release index and returns the first entry's tag.
-# The /releases/latest endpoint is deliberately not used: it omits
+# newest_tag reads the release index and returns the highest version in
+# it. The /releases/latest endpoint is deliberately not used: it omits
 # pre-releases, and every 0.x release is published as one.
+#
+# The index is ordered by publication, which is not version order: a
+# patch to an older line, published after a newer minor, is listed
+# first and would otherwise be handed to every new install. So the tags
+# are compared as numbers, the way `trajector upgrade` compares them.
+# A tag that is not three numbers behind an optional "v" is skipped;
+# between tags with the same three numbers the one published most
+# recently wins, which puts a finished release ahead of its own
+# candidates.
 newest_tag() {
 	fetch "$API_BASE/repos/$REPO/releases" |
 		tr ',' '\n' |
 		sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-		head -n 1
+		awk '
+			{
+				version = $0
+				sub(/^v/, "", version)
+				sub(/[-+].*$/, "", version)
+				if (version !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) next
+				split(version, n, ".")
+				major = n[1] + 0
+				minor = n[2] + 0
+				patch = n[3] + 0
+				if (!found ||
+				    major > best_major ||
+				    (major == best_major && minor > best_minor) ||
+				    (major == best_major && minor == best_minor && patch > best_patch)) {
+					found = 1
+					best_major = major
+					best_minor = minor
+					best_patch = patch
+					best_tag = $0
+				}
+			}
+			END { if (found) print best_tag }
+		'
 }
 
 # verify_checksum checks archive against its line in the release's

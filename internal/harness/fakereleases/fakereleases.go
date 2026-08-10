@@ -68,6 +68,16 @@ func New(t *testing.T) *Server {
 // IndexURL is the release index, the address a client is pointed at.
 func (s *Server) IndexURL() string { return s.HTTP.URL + "/releases" }
 
+// APIBase is the origin the install script is pointed at. That script
+// is given an origin rather than a URL because it builds the index path
+// itself, out of the repository slug compiled into it — so the fake
+// answers the index under a repository path as well as at IndexURL.
+func (s *Server) APIBase() string { return s.HTTP.URL }
+
+// AssetBase is the origin release assets hang under, the shape the
+// install script joins a tag and an asset name onto.
+func (s *Server) AssetBase() string { return s.HTTP.URL + "/download" }
+
 // Publish adds a release of the given version — tagged "v" plus the
 // version, the way the pipeline tags — carrying body as the binary
 // inside every platform's archive, and a checksum file that matches.
@@ -260,7 +270,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rate limit exceeded", http.StatusForbidden)
 		return
 	}
-	if r.URL.Path == "/releases" {
+	// Any path ending in /releases is the index: clients handed a full
+	// URL ask for IndexURL, while a client given only an origin builds
+	// the real source's /repos/<owner>/<repo>/releases path itself.
+	if strings.HasSuffix(r.URL.Path, "/releases") {
 		s.serveIndex(w)
 		return
 	}

@@ -137,3 +137,4 @@ deleting the binary alone leaves the settings injections behind.
 | `internal/selfupdate` | Finding, verifying, and installing a newer published release over this one |
 | `internal/cli` | argv, exit codes, and what the user reads |
 | `internal/harness` | Test doubles and sandboxes: a fake upstream, a fake service, a real proxy in a temp directory |
+| `internal/installscript` | Where `install.sh` is run end to end against a local release source |
