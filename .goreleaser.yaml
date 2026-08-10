@@ -40,6 +40,33 @@ snapshot:
 changelog:
   sort: asc
 
+# The Homebrew cask is rendered on every release but not published:
+# `skip_upload: true` stays until the PublicAI01/homebrew-tap repository
+# exists and a token that may write to it is available to this workflow
+# as HOMEBREW_TAP_TOKEN. Rendering it meanwhile keeps the definition
+# validated by `goreleaser check` and visible in dist/, so turning the
+# channel on is one line and not a first attempt.
+homebrew_casks:
+  - name: trajector
+    binaries: [trajector]
+    homepage: https://github.com/PublicAI01/trajector-cli
+    description: Turn your own Claude Code sessions into compensated data contributions
+    skip_upload: true
+    repository:
+      owner: PublicAI01
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    # Releases are not code-signed yet, and Homebrew's download carries
+    # the quarantine mark a browser download would. Without this the
+    # binary is refused by Gatekeeper on first run. Remove it once the
+    # macOS build is signed and notarized.
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/trajector"]
+          end
+
 # Stated explicitly so validation does not depend on a configured git
 # remote; this repository builds locally long before it is pushed.
 release:
