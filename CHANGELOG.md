@@ -24,6 +24,18 @@ All notable changes to trajector are documented here. The format follows
 
 ### Fixed
 
+- `status` and `doctor` no longer tell a client that already meets the
+  service's minimum version to upgrade. The service announces that
+  minimum on every acknowledgement, so one successful upload used to
+  leave a compliant build carrying the requirement and the instruction
+  for good — and reading the very same two lines on the one occasion
+  they meant something. Both surfaces now compare the two versions:
+  a build that meets the minimum hears nothing about it, a build that
+  is behind is told so and told what to run, and a pair no order covers
+  — a development build, say — is stated without a remedy it cannot
+  act on. A refusal the service explained is still relayed in full
+  whatever the comparison says: while it stands, uploads really are
+  stopped.
 - `trajector upgrade` no longer installs over a path that is not a
   file. What a rename does when a directory stands where the binary
   belongs differs between systems, and on Windows it moved the

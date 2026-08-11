@@ -59,55 +59,48 @@ func TestUpgradeFailsLoudlyOnAConfigFileItCannotRead(t *testing.T) {
 }
 
 func TestUpgradeIsNamedWhereverThisBuildIsFoundTooOld(t *testing.T) {
-	// The service can pause uploads over the client version. Every
-	// surface that reports that has to name the one command that
-	// resolves it, or the user is told they have a problem and not what
-	// to do about it.
+	// A refusal is the service's word, and it does not need arithmetic to
+	// be believed: uploads are stopped whether or not this build can be
+	// ordered against the version named. So the surface that carries the
+	// refusal names the one command that resolves it.
 	const hint = "trajector upgrade"
 
-	t.Run("upload", func(t *testing.T) {
-		e := clitest.New(t)
-		e.Paired()
-		e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
-		seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
-		p := e.StartProxy()
-		defer p.Stop()
+	e := clitest.New(t)
+	e.Paired()
+	e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
+	p := e.StartProxy()
+	defer p.Stop()
 
-		got := e.Run("upload", "--force")
-		if got.Exit != 0 {
-			t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
-		}
-		// The kept-data reassurance and the remedy are separate lines:
-		// a user who reads only the first still learns nothing was lost.
-		if !strings.Contains(got.Stdout, "Captured data is kept.\n") {
-			t.Errorf("stdout = %q, want the kept-data line on its own", got.Stdout)
-		}
-		if !strings.Contains(got.Stdout, hint) {
-			t.Errorf("stdout = %q, want it to name %q", got.Stdout, hint)
-		}
+	got := e.Run("upload", "--force")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	// The kept-data reassurance and the remedy are separate lines:
+	// a user who reads only the first still learns nothing was lost.
+	if !strings.Contains(got.Stdout, "Captured data is kept.\n") {
+		t.Errorf("stdout = %q, want the kept-data line on its own", got.Stdout)
+	}
+	if !strings.Contains(got.Stdout, hint) {
+		t.Errorf("stdout = %q, want it to name %q", got.Stdout, hint)
+	}
 
-		t.Run("status", func(t *testing.T) {
-			// status reports what the service last said, which it
-			// learned from the upload above.
-			got := e.InProject("status")
+	// After the refusal, status and doctor read the version the service
+	// named off disk. This build announces "dev", which no order covers,
+	// so they state the requirement and stop there: `upgrade` has nothing
+	// to install for a development build, and sending the user to a
+	// command that will tell them so is worse than saying nothing.
+	for _, surface := range []string{"status", "doctor"} {
+		t.Run(surface, func(t *testing.T) {
+			got := e.InProject(surface)
 			if !strings.Contains(got.Stdout, "requires client version 9.9.9") {
 				t.Fatalf("stdout = %q, want the service's requirement", got.Stdout)
 			}
-			if !strings.Contains(got.Stdout, hint) {
-				t.Errorf("stdout = %q, want it to name %q", got.Stdout, hint)
+			if strings.Contains(got.Stdout, hint) {
+				t.Errorf("stdout = %q, want no remedy this build cannot act on", got.Stdout)
 			}
 		})
-
-		t.Run("doctor", func(t *testing.T) {
-			got := e.InProject("doctor")
-			if !strings.Contains(got.Stdout, "requires client version 9.9.9") {
-				t.Fatalf("stdout = %q, want the service's requirement", got.Stdout)
-			}
-			if !strings.Contains(got.Stdout, hint) {
-				t.Errorf("stdout = %q, want it to name %q", got.Stdout, hint)
-			}
-		})
-	})
+	}
 }
 
 func TestWhatTheServiceSaysAboutTheVersionReachesTheUser(t *testing.T) {
@@ -140,6 +133,13 @@ func TestWhatTheServiceSaysAboutTheVersionReachesTheUser(t *testing.T) {
 			}
 			if !strings.Contains(out, said) {
 				t.Errorf("%s stdout = %q, want the service's sentence", surface, out)
+			}
+			// A refusal the service explained outranks the version
+			// arithmetic — it is cleared the moment the service accepts an
+			// upload, so while it is on disk uploads really are stopped and
+			// every surface names the remedy, dev build or not.
+			if !strings.Contains(out, "trajector upgrade") {
+				t.Errorf("%s stdout = %q, want the remedy named alongside the reason", surface, out)
 			}
 			if strings.Contains(out, "\rtrajector") || strings.Contains(out, "\ntrajector: everything is fine") {
 				t.Errorf("%s stdout = %q, want the forged line disarmed", surface, out)

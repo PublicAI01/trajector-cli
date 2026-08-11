@@ -340,21 +340,86 @@ func TestStatusWarnsWhenTheRejectedBatchesCannotBeRead(t *testing.T) {
 
 func TestStatusShowsServiceMinVersionAndNotice(t *testing.T) {
 	e := newEnv(t)
+	e.deps.Version = "0.1.0" // behind the minimum below
 	writeUploadFile(t, e, "handshake.json", map[string]any{
 		"min_client_version": "9.9.9",
 		"notice":             "scheduled maintenance on Friday",
 	})
 	out := e.statusOutput()
 
-	for _, want := range []string{"9.9.9", "testv", "scheduled maintenance on Friday"} {
+	for _, want := range []string{"9.9.9", "0.1.0", "scheduled maintenance on Friday", "trajector upgrade"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status = %q, want it to contain %q", out, want)
 		}
 	}
 }
 
+// The service announces its minimum on every acknowledgement, so a
+// build that meets it would otherwise carry the requirement and the
+// instruction to upgrade in every status for good — and be reading the
+// same two lines on the one occasion they mean something.
+func TestStatusSaysNothingAboutAMinimumThisBuildMeets(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Version = "0.1.0"
+	for _, minimum := range []string{"0.1.0", "0.0.9"} {
+		e.stdout.Reset()
+		writeUploadFile(t, e, "handshake.json", map[string]any{"min_client_version": minimum})
+		out := e.statusOutput()
+
+		for _, unwanted := range []string{"trajector upgrade", "requires client version", "\nService"} {
+			if strings.Contains(out, unwanted) {
+				t.Errorf("status with minimum %s on build 0.1.0 = %q, want no %q", minimum, out, unwanted)
+			}
+		}
+	}
+}
+
+// A satisfied minimum silences the version lines, not the whole block:
+// a notice is the service talking about something else entirely.
+func TestStatusStillRelaysANoticeWhenTheVersionIsFine(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Version = "0.2.0"
+	writeUploadFile(t, e, "handshake.json", map[string]any{
+		"min_client_version": "0.1.0",
+		"notice":             "scheduled maintenance on Friday",
+	})
+	out := e.statusOutput()
+
+	if !strings.Contains(out, "scheduled maintenance on Friday") {
+		t.Errorf("status = %q, want the notice relayed", out)
+	}
+	if strings.Contains(out, "trajector upgrade") {
+		t.Errorf("status = %q, want no upgrade instruction for a build that meets the minimum", out)
+	}
+}
+
+// Not knowing is not the same as being behind. A dev build cannot be
+// ordered against a release, so the requirement is stated and the
+// remedy is not — upgrade has nothing to install for one.
+func TestStatusStatesAnUnorderableMinimumWithoutSendingTheUserToUpgrade(t *testing.T) {
+	for _, tc := range []struct{ name, version, minimum string }{
+		{"dev build", "dev", "0.1.0"},
+		{"minimum is not a version", "0.1.0", "latest"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.deps.Version = tc.version
+			writeUploadFile(t, e, "handshake.json", map[string]any{"min_client_version": tc.minimum})
+			out := e.statusOutput()
+
+			if !strings.Contains(out, tc.minimum) || !strings.Contains(out, tc.version) {
+				t.Errorf("status = %q, want both versions stated", out)
+			}
+			if strings.Contains(out, "trajector upgrade") {
+				t.Errorf("status = %q, want no upgrade instruction on an unorderable pair", out)
+			}
+		})
+	}
+}
+
 func TestStatusRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	e := newEnv(t)
+	e.deps.Version = "0.1.0"
 	writeUploadFile(t, e, "handshake.json", map[string]any{
 		"min_client_version": "9.9.9",
 		"upgrade_message":    "Upload format 0.1.x is retired on 2026-09-01.",
@@ -362,6 +427,25 @@ func TestStatusRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	out := e.statusOutput()
 
 	for _, want := range []string{"9.9.9", "The service says:", "retired on 2026-09-01", "trajector upgrade"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want it to contain %q", out, want)
+		}
+	}
+}
+
+// A refusal the service explained is cleared the moment it accepts an
+// upload, so its presence outranks any comparison this build can make:
+// uploads are stopped now, whatever the arithmetic says.
+func TestStatusRelaysALiveRefusalEvenWhenTheMinimumLooksMet(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Version = "0.1.0"
+	writeUploadFile(t, e, "handshake.json", map[string]any{
+		"min_client_version": "0.1.0",
+		"upgrade_message":    "This build is blocked; move to 0.2.0.",
+	})
+	out := e.statusOutput()
+
+	for _, want := range []string{"This build is blocked", "trajector upgrade"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status = %q, want it to contain %q", out, want)
 		}

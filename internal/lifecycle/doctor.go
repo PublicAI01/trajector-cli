@@ -337,17 +337,21 @@ func doctorRejected(r *doctorReport, rejected []upload.RejectedBatch, listErr er
 	r.detail("or `trajector doctor discard <batch-id>` (or `--all`) to delete them for good.")
 }
 
-// doctorService relays what the service last said. The client never
-// parses the version — it cannot judge whether this build satisfies it
-// — so both fields are shown verbatim and count toward nothing.
+// doctorService relays what the service last said, minus what this
+// build has already answered. A minimum client version this build meets
+// is left unsaid — see standing for why relaying it verbatim was worse
+// than saying nothing. Nothing here is a problem: being behind the
+// service is not a broken machine, and none of these lines move the
+// exit code.
 func doctorService(r *doctorReport, h platform.Handshake, upgradeMessage, version string) {
-	if h.MinClientVersion != "" {
+	v := standing(h.MinClientVersion, version)
+	if v != versionSatisfied {
 		r.note("the service requires client version %s or newer; this build is %s", h.MinClientVersion, version)
 	}
 	if upgradeMessage != "" {
 		r.note("the service says: %s", upgradeMessage)
 	}
-	if h.MinClientVersion != "" || upgradeMessage != "" {
+	if v == versionBehind || upgradeMessage != "" {
 		r.detail("%s", upgradeHint)
 	}
 	if h.Notice != "" {

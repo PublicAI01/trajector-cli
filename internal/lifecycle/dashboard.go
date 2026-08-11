@@ -109,9 +109,16 @@ func (m *Machine) Status(dir string, io IO) error {
 		fmt.Fprintln(io.Out, "  Run `trajector doctor` to inspect them, then requeue or discard them.")
 	}
 
-	if d.Handshake.MinClientVersion != "" || d.Handshake.Notice != "" || d.UpgradeMessage != "" {
+	// A minimum this build already meets is not news: it arrives on every
+	// acknowledgement, and reporting it would leave a compliant machine
+	// permanently told to upgrade. See standing.
+	version := standing(d.Handshake.MinClientVersion, m.deps.Version)
+	// The service's own words about a refusal are cleared the moment it
+	// acknowledges an upload, so their presence is a live refusal and is
+	// reported whatever the comparison says.
+	if version != versionSatisfied || d.Handshake.Notice != "" || d.UpgradeMessage != "" {
 		fmt.Fprintln(io.Out, "\nService")
-		if d.Handshake.MinClientVersion != "" {
+		if version != versionSatisfied {
 			fmt.Fprintf(io.Out, "  The service requires client version %s or newer; this build is %s.\n",
 				d.Handshake.MinClientVersion, m.deps.Version)
 		}
@@ -121,7 +128,11 @@ func (m *Machine) Status(dir string, io IO) error {
 		if d.UpgradeMessage != "" {
 			fmt.Fprintf(io.Out, "  The service says: %s\n", d.UpgradeMessage)
 		}
-		if d.Handshake.MinClientVersion != "" || d.UpgradeMessage != "" {
+		// Only a build known to be behind is told to upgrade. On an
+		// unorderable pair the requirement is stated and the remedy is
+		// not: upgrade has nothing to install for a dev build, and would
+		// send the user somewhere that tells them so.
+		if version == versionBehind || d.UpgradeMessage != "" {
 			fmt.Fprintf(io.Out, "  %s\n", upgradeHint)
 		}
 		if d.Handshake.Notice != "" {

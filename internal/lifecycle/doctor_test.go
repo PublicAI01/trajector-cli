@@ -361,28 +361,75 @@ func TestDoctorListsRejectedBatches(t *testing.T) {
 	}
 }
 
-func TestDoctorRelaysTheServiceHandshakeWithoutJudgingIt(t *testing.T) {
+func TestDoctorRelaysTheServiceHandshakeWithoutCallingItAFault(t *testing.T) {
 	e := newEnv(t)
+	e.deps.Version = "0.1.0" // behind the minimum below
 	writeUploadFile(t, e, "handshake.json", map[string]any{
 		"min_client_version": "9.9.9",
 		"notice":             "maintenance on Friday",
 	})
 	problems, out := e.doctor()
 
-	// The client never parses the version, so it cannot judge this build
-	// against it: both fields are relayed and neither is a problem.
+	// Being behind the service is not a broken machine: both fields are
+	// relayed and neither moves the exit code.
 	if problems != 0 {
 		t.Fatalf("problems = %d, want the handshake relayed without affecting the exit code, output:\n%s", problems, out)
 	}
-	for _, want := range []string{"9.9.9", "testv", "maintenance on Friday"} {
+	for _, want := range []string{"9.9.9", "0.1.0", "maintenance on Friday", "trajector upgrade"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor = %q, want it to contain %q", out, want)
 		}
 	}
 }
 
+// doctor answers the same question status does, from the same
+// judgement — a build that meets the service's minimum is told nothing
+// about versions on either surface. Two spellings of this rule would
+// eventually disagree, and the user would have no way to know which
+// one to believe.
+func TestDoctorSaysNothingAboutAMinimumThisBuildMeets(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Version = "0.1.0"
+	writeUploadFile(t, e, "handshake.json", map[string]any{
+		"min_client_version": "0.1.0",
+		"notice":             "maintenance on Friday",
+	})
+	problems, out := e.doctor()
+
+	if problems != 0 {
+		t.Fatalf("problems = %d, want a compliant build reported clean, output:\n%s", problems, out)
+	}
+	if !strings.Contains(out, "maintenance on Friday") {
+		t.Errorf("doctor = %q, want the notice still relayed", out)
+	}
+	for _, unwanted := range []string{"trajector upgrade", "requires client version"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("doctor = %q, want no %q for a build that meets the minimum", out, unwanted)
+		}
+	}
+}
+
+func TestDoctorStatesAnUnorderableMinimumWithoutSendingTheUserToUpgrade(t *testing.T) {
+	e := newEnv(t) // this build announces "testv", which no order covers
+	writeUploadFile(t, e, "handshake.json", map[string]any{"min_client_version": "9.9.9"})
+	problems, out := e.doctor()
+
+	if problems != 0 {
+		t.Fatalf("problems = %d on an unorderable version pair, output:\n%s", problems, out)
+	}
+	for _, want := range []string{"9.9.9", "testv"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor = %q, want both versions stated", out)
+		}
+	}
+	if strings.Contains(out, "trajector upgrade") {
+		t.Errorf("doctor = %q, want no upgrade instruction on an unorderable pair", out)
+	}
+}
+
 func TestDoctorRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	e := newEnv(t)
+	e.deps.Version = "0.1.0"
 	writeUploadFile(t, e, "handshake.json", map[string]any{
 		"min_client_version": "9.9.9",
 		"upgrade_message":    "Upload format 0.1.x is retired on 2026-09-01.",
