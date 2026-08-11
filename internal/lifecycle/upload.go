@@ -47,9 +47,9 @@ func (m *Machine) Upload(force bool, io IO) error {
 		// The kept-data line stands alone: a user reading a pause needs
 		// to know nothing was lost before they read what to do about it.
 		fmt.Fprintln(io.Out, "Captured data is kept.")
-		fmt.Fprintf(io.Out, "%s Or retry with --force.\n", upgradeHint)
+		fmt.Fprintln(io.Out, upgradeHint+retry(force, " Or retry with --force."))
 	case upload.Deferred:
-		fmt.Fprintln(io.Out, "The service asked to slow down; uploads resume automatically. Use --force to try now.")
+		fmt.Fprintln(io.Out, "The service asked to slow down; uploads resume automatically."+retry(force, " Use --force to try now."))
 	case upload.Rejected:
 		return errors.New(reply.Error)
 	default:
@@ -59,4 +59,17 @@ func (m *Machine) Upload(force bool, io IO) error {
 		fmt.Fprintf(io.Out, "Flush finished: %s\n", reply.Outcome)
 	}
 	return nil
+}
+
+// retry returns the sentence offering --force, or nothing when this run
+// already used it. Both pauses that offer it are reachable under
+// --force: the service can refuse a forced attempt outright, and it can
+// ask a forced attempt to slow down. Repeating the offer there sends the
+// user back to the switch they just held down, which cannot move either
+// pause — only the service can.
+func retry(force bool, offer string) string {
+	if force {
+		return ""
+	}
+	return offer
 }

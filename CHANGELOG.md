@@ -36,6 +36,20 @@ All notable changes to trajector are documented here. The format follows
   act on. A refusal the service explained is still relayed in full
   whatever the comparison says: while it stands, uploads really are
   stopped.
+- `trajector upload --force` no longer answers a pause by suggesting
+  `--force`. Neither pause the service can impose — a refusal or a
+  request to slow down — is what `--force` bypasses; it bypasses this
+  client's own upload thresholds. A run that already used it was being
+  sent back to the switch it was holding down. The offer now appears
+  only where it is the real next step: on a run that has not tried it.
+- `trajector status` names the span its capture counts cover. They
+  count one proxy's run, and the proxy exits when it goes idle, when a
+  newer release takes the port, and with the machine — so calling them
+  a day's work read low in exactly the direction a user takes for "it
+  has stopped recording", and a restart could print a spool holding
+  captures beside a count of zero. They are now labelled for the run
+  whose uptime is on the line above, and no longer reset at midnight
+  as well: two origins for one number left no span a reader could name.
 - `trajector upgrade` no longer installs over a path that is not a
   file. What a rename does when a directory stands where the binary
   belongs differs between systems, and on Windows it moved the

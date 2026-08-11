@@ -224,7 +224,7 @@ func (r *recorder) write(ctx context.Context) {
 			r.abandon(abandonSpoolWrite, "spooling rawcall: %v", err)
 			return
 		}
-		r.s.stats.recorded(obs.At, env.Garbled())
+		r.s.stats.recorded(env.Garbled())
 	})
 }
 

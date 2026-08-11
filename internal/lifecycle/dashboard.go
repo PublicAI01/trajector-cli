@@ -59,7 +59,13 @@ func (m *Machine) Status(dir string, io IO) error {
 		h := d.Proxy.Health
 		up := time.Duration(h.UptimeSeconds) * time.Second
 		fmt.Fprintf(io.Out, "  Running at %s: version %s, up %s.\n", d.Proxy.Addr, h.Version, up)
-		fmt.Fprintf(io.Out, "  Recorded today: %d (SSE degraded: %d, dropped: %d).\n",
+		// These counters live in the running proxy's memory, so they
+		// begin at the uptime printed on the line above — not at
+		// midnight. The proxy restarts often enough (idle exit, version
+		// handover, reboot) that calling them a day's work made the
+		// number read low, in the one direction a user reads as "it is
+		// not recording". They are named for what they actually count.
+		fmt.Fprintf(io.Out, "  Recorded since it started: %d (SSE degraded: %d, dropped: %d).\n",
 			h.RecordedToday, h.SSEDegradedToday, h.CapturesDropped)
 		if n := len(h.RecentRecordingErrors); n > 0 {
 			fmt.Fprintf(io.Out, "  Recent recording errors: %d (last: %s)\n", n, h.RecentRecordingErrors[n-1])

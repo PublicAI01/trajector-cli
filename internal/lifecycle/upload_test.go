@@ -182,6 +182,72 @@ func TestUploadExplainsARequiredUpgradeFromTheFirstEncounter(t *testing.T) {
 	}
 }
 
+func TestUploadDoesNotOfferForceToARunThatAlreadyUsedIt(t *testing.T) {
+	// Both pauses the service can impose are reachable under --force: it
+	// bypasses this client's own thresholds, not the service's refusal or
+	// its request to slow down. Offering --force to the run that just
+	// used it points at the one switch already held down, and the user
+	// spends a retry learning it changes nothing.
+	pauses := []struct {
+		name  string
+		reply fakeplatform.Response
+		pause string
+		offer string
+	}{
+		{
+			name:  "upgrade required",
+			reply: fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}),
+			pause: "requires trajector 9.9.9 or newer",
+			offer: "--force",
+		},
+		{
+			name: "deferral",
+			reply: fakeplatform.Response{
+				Status: 429,
+				Header: http.Header{"Retry-After": {"3600"}},
+				Body:   []byte(`{"error":"slow down"}`),
+			},
+			pause: "asked to slow down",
+			offer: "--force",
+		},
+	}
+	for _, p := range pauses {
+		t.Run(p.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.service.Stub("POST", "/v1/batches", p.reply)
+			servedProxy(t, e)
+			m := e.machine()
+			e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
+
+			if err := m.Upload(true, e.io()); err != nil {
+				t.Fatal(err)
+			}
+			forced := e.stdout.String()
+			if !strings.Contains(forced, p.pause) {
+				t.Fatalf("stdout = %q, want the pause reported", forced)
+			}
+			if strings.Contains(forced, p.offer) {
+				t.Errorf("stdout = %q, want no %s offered to the run that used it", forced, p.offer)
+			}
+
+			// Unforced, the offer is the real next step: this pause is
+			// what stopped an automatic flush, and --force is how the
+			// user asks for one anyway.
+			e.stdout.Reset()
+			if err := m.Upload(false, e.io()); err != nil {
+				t.Fatal(err)
+			}
+			unforced := e.stdout.String()
+			if !strings.Contains(unforced, p.pause) {
+				t.Fatalf("stdout = %q, want the pause reported", unforced)
+			}
+			if !strings.Contains(unforced, p.offer) {
+				t.Errorf("stdout = %q, want %s offered to a run that has not tried it", unforced, p.offer)
+			}
+		})
+	}
+}
+
 func TestUploadRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	e := newEnv(t)
 	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{

@@ -500,11 +500,21 @@ func (s *Server) serveHealthz(w http.ResponseWriter) {
 	json.NewEncoder(w).Encode(s.Health())
 }
 
-// stats counts recording outcomes. Counters feed healthz and, later,
-// batch run metadata; they never influence forwarding.
+// stats counts recording outcomes over one proxy's lifetime. Counters
+// feed healthz and, later, batch run metadata; they never influence
+// forwarding.
+//
+// Every counter has that one scope. Two of them used to reset at UTC
+// midnight as well, which made a day their nominal span — but a proxy
+// exits when it goes idle, hands the port to a newer release, and dies
+// with the machine, so the reset that actually governed them was the
+// restart. Counting from two unrelated origins only meant no reader
+// could name the span; counting from one, the uptime beside them says
+// what it is. The wire names keep their spelling: healthz is read
+// across versions during a handover, and the service stores the run
+// block as opaque telemetry.
 type stats struct {
 	mu               sync.Mutex
-	day              string
 	recordedToday    int
 	degradedToday    int
 	dropped          int
@@ -512,19 +522,9 @@ type stats struct {
 	recentErrors     []string
 }
 
-func (st *stats) roll(now time.Time) {
-	day := now.UTC().Format("20060102")
-	if st.day != day {
-		st.day = day
-		st.recordedToday = 0
-		st.degradedToday = 0
-	}
-}
-
-func (st *stats) recorded(now time.Time, degraded bool) {
+func (st *stats) recorded(degraded bool) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.roll(now)
 	st.recordedToday++
 	if degraded {
 		st.degradedToday++
@@ -558,7 +558,6 @@ func (st *stats) recordError(msg string) {
 func (st *stats) snapshot() Health {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.roll(time.Now())
 	return Health{
 		RecordedToday:         st.recordedToday,
 		SSEDegradedToday:      st.degradedToday,

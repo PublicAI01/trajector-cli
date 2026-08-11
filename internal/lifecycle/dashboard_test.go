@@ -58,7 +58,10 @@ func TestStatusShowsAnEnabledProjectAndRunningProxy(t *testing.T) {
 		"Contributing",
 		"Running at " + e.deps.ProxyAddr,
 		"version testv",
-		"Recorded today: 0",
+		// Named for the span it counts — this proxy's run, the one the
+		// uptime on the line above measures — not for a calendar day
+		// no restart respects.
+		"Recorded since it started: 0",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status = %q, want it to contain %q", out, want)
