@@ -71,11 +71,17 @@ Windows has no install script yet. Download
 in PowerShell:
 
 ```powershell
-Get-FileHash .\trajector_<version>_windows_<arch>.zip -Algorithm SHA256
+$archive = ".\trajector_<version>_windows_<arch>.zip"
+Get-FileHash $archive -Algorithm SHA256
 # compare against trajector_checksums.txt from the same release
-Expand-Archive .\trajector_<version>_windows_<arch>.zip
-Unblock-File .\trajector.exe
+Unblock-File $archive
+Expand-Archive $archive -DestinationPath .\trajector
+Unblock-File .\trajector\trajector.exe
 ```
+
+`Expand-Archive` unpacks into a folder rather than the current directory, so
+name the destination yourself; unblocking the archive before unpacking keeps
+SmartScreen's mark off the binary.
 
 Move `trajector.exe` somewhere on your `PATH`. Homebrew and Scoop are not
 available yet.
