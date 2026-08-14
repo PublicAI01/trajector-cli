@@ -62,29 +62,16 @@ install elsewhere, or `TRAJECTOR_VERSION=v0.1.0` to pin a release.
 archive in a browser.** Releases are not yet code-signed, and macOS marks
 anything a browser downloaded; unpacking such an archive in Finder passes
 that mark to the binary, and Gatekeeper then refuses to run it. A download
-made by `curl` carries no mark. The same applies on Windows, where
-SmartScreen acts on the equivalent mark.
+made by `curl` carries no mark.
 
-Windows has no install script yet. Download
-`trajector_<version>_windows_<arch>.zip` from the
-[releases page](https://github.com/PublicAI01/trajector-cli/releases), then
-in PowerShell:
-
-```powershell
-$archive = ".\trajector_<version>_windows_<arch>.zip"
-Get-FileHash $archive -Algorithm SHA256
-# compare against trajector_checksums.txt from the same release
-Unblock-File $archive
-Expand-Archive $archive -DestinationPath .\trajector
-Unblock-File .\trajector\trajector.exe
-```
-
-`Expand-Archive` unpacks into a folder rather than the current directory, so
-name the destination yourself; unblocking the archive before unpacking keeps
-SmartScreen's mark off the binary.
-
-Move `trajector.exe` somewhere on your `PATH`. Homebrew and Scoop are not
-available yet.
+**Windows has no published build.** The client compiles and is tested for
+it, but the end-to-end pass against the service has only been run on macOS
+and Linux, and an archive on the releases page would read as a platform we
+support. On Windows, run trajector under
+[WSL](https://learn.microsoft.com/windows/wsl/install): install a Linux
+distribution and use the command above inside it. The v0.1.0 Windows
+archives are still on the releases page — they are what they were, a
+release behind and untested. Homebrew and Scoop are not available yet.
 
 Then pair the device and enable a project:
 

@@ -6,6 +6,20 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-14
+
+### Changed
+
+- Releases carry macOS and Linux only. The Windows build is not
+  published: the code compiles and is tested for it, but the end-to-end
+  pass against the service has only been run on the other two, and an
+  archive on the releases page reads as a platform we support. The
+  0.1.0 Windows archives stay published — nothing that already runs
+  stops running — but `trajector upgrade` on such a build now reports
+  that this release's archive is not published and leaves the working
+  binary in place, and `install.sh` sends Windows to WSL instead of to
+  a download that would 404. Publishing resumes with the platform.
+
 ### Added
 
 - `install.sh`: a one-line install for macOS and Linux that picks the

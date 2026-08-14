@@ -10,7 +10,14 @@ builds:
     binary: trajector
     env:
       - CGO_ENABLED=0
-    goos: [darwin, linux, windows]
+    # Windows is not published. The code still builds and is tested for
+    # it — CI compiles every platform, and the Windows-specific paths
+    # have their own tests — but the end-to-end pass against the live
+    # service has only been run on macOS and Linux. An archive on the
+    # releases page reads as a supported platform, and this one is not
+    # one yet. Add `windows` back here when that pass is done; the zip
+    # override below is kept ready for it.
+    goos: [darwin, linux]
     goarch: [amd64, arm64]
     flags:
       - -trimpath
@@ -21,6 +28,8 @@ builds:
 archives:
   - name_template: "trajector_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
+    # Inert while windows is out of the build list above, and kept so
+    # restoring that platform is one word rather than two decisions.
     format_overrides:
       - goos: windows
         formats: [zip]

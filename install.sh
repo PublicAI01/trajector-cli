@@ -54,22 +54,21 @@ detect_arch() {
 	esac
 }
 
-# windows_instructions explains the manual path and exits non-zero:
-# nothing was installed, and a caller chaining off this script must see
-# that. Unblocking is spelled out because an archive saved by a browser
-# carries a Mark-of-the-Web that SmartScreen acts on.
-windows_instructions() {
-	say "trajector does not install itself on Windows from this script."
+# no_windows_build says what is missing and exits non-zero: nothing was
+# installed, and a caller chaining off this script must see that. It
+# names WSL rather than an archive, because there is no archive to name
+# — releases stopped carrying Windows builds until that platform has
+# been tested end to end against the service.
+no_windows_build() {
+	say "trajector does not publish a Windows build yet."
 	say ""
-	say "Download and unpack the archive for your machine:"
-	say "  $DL_BASE/<tag>/trajector_<version>_windows_$1.zip"
+	say "Run it under WSL: install a Linux distribution, then run this"
+	say "same command inside it."
+	say "  https://learn.microsoft.com/windows/wsl/install"
 	say ""
-	say "Then, in PowerShell, verify it and clear the download mark:"
-	say "  Get-FileHash .\\trajector_<version>_windows_$1.zip -Algorithm SHA256"
-	say "  # compare against $CHECKSUMS from the same release"
-	say "  Unblock-File .\\trajector.exe"
-	say ""
-	say "Finally move trajector.exe somewhere on your PATH."
+	say "Windows archives return once that platform is tested end to end;"
+	say "until then the releases page carries macOS and Linux only:"
+	say "  https://github.com/$REPO/releases"
 	exit 1
 }
 
@@ -183,7 +182,7 @@ main() {
 	os=$(detect_os)
 	arch=$(detect_arch)
 	if [ "$os" = windows ]; then
-		windows_instructions "$arch"
+		no_windows_build
 	fi
 	need_downloader
 

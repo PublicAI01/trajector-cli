@@ -36,7 +36,9 @@ jobs:
       # built by this workflow from this repository's source.
       - uses: actions/attest-build-provenance@v4
         with:
+          # No dist/*.zip: Windows is not published (see .goreleaser.yaml),
+          # and a pattern matching nothing fails this step. Restore it
+          # together with the platform.
           subject-path: |
             dist/*.tar.gz
-            dist/*.zip
             dist/trajector_checksums.txt
