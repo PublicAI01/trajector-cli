@@ -1547,3 +1547,54 @@ func TestJSONLBytes_ImageObjectScansSiblingsButKeepsPayload(t *testing.T) {
 		t.Errorf("image payload was altered: %s", got)
 	}
 }
+
+// TestJSONLBytes_ImageLookalikeTypeIsScanned pins the object skip policy
+// to exact type names: "type" is free text a model or an MCP tool
+// writes, and a prefix match on "image" let any object naming itself
+// image_metadata carry url and data past every detection layer.
+func TestJSONLBytes_ImageLookalikeTypeIsScanned(t *testing.T) {
+	t.Parallel()
+	for _, typeName := range []string{"image_metadata", "image_reference", "images", "imagery"} {
+		t.Run(typeName, func(t *testing.T) {
+			t.Parallel()
+			in := `{"type":"` + typeName + `","url":"` + highEntropySecret + `","data":"` + highEntropySecret + `"}`
+			got := redactedString(t, in)
+			if strings.Contains(got, highEntropySecret) {
+				t.Errorf("secret survived under type %q: %s", typeName, got)
+			}
+		})
+	}
+}
+
+// TestJSONLBytes_CredentialKeyMasksWholeValue pins the credential-key
+// rule: a key naming its value a password masks the value whole. It used
+// to apply only when nothing else had matched, so a password holding one
+// recognizable high-entropy token kept its remaining plaintext.
+func TestJSONLBytes_CredentialKeyMasksWholeValue(t *testing.T) {
+	t.Parallel()
+	// The segment before the slash is high-entropy enough for the entropy
+	// layer on its own; "tail" is below the pattern's length floor, so
+	// before the fix the result was "REDACTED/tail".
+	const value = "aB3dEfGh1JkLmN0pQrStUvWxYz2/tail"
+	got := redactedString(t, `{"db_password":"`+value+`"}`)
+	if want := `{"db_password":"REDACTED"}`; got != want {
+		t.Errorf("redacted = %s, want %s", got, want)
+	}
+}
+
+// TestDatabaseURLPasswordWithPercent pins that a query-string password
+// is found in the raw text. url.Query drops any pair whose value holds
+// an invalid percent escape, which made the whole URL read as
+// password-free and leave the machine unmasked.
+func TestDatabaseURLPasswordWithPercent(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{
+		"postgresql://db.example.com/app?user=svc&password=p%ssw0rd",
+		"mysql://db.example.com/app?password=100%sure&user=svc",
+	} {
+		got := redactedString(t, in)
+		if strings.Contains(got, "ssw0rd") || strings.Contains(got, "sure") {
+			t.Errorf("database URL password survived: %q -> %q", in, got)
+		}
+	}
+}

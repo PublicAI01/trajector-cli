@@ -112,6 +112,12 @@ func (s *fallbackStore) Save(name string, secret []byte) error {
 		_ = s.fallback.Delete(name)
 		return nil
 	}
+	// And the same the other way, which this left out until 2026-08-14.
+	// Load reads the primary first, so a copy left in a keyring that has
+	// since become unwritable shadows this one forever: pairing again
+	// from a headless session stored a token the desktop session never
+	// saw, while the old one kept working and nothing revoked it.
+	_ = s.primary.Delete(name)
 	return s.fallback.Save(name, secret)
 }
 
@@ -132,8 +138,18 @@ func (s *fallbackStore) Delete(name string) error {
 	}
 	primaryErr := s.primary.Delete(name)
 	fallbackErr := s.fallback.Delete(name)
-	if primaryErr == nil || fallbackErr == nil {
-		return nil
+	// Deleting has to leave nothing behind in either backend. Answering
+	// success because one of them managed it — as this did until
+	// 2026-08-14 — let `trajector logout` report the device signed out
+	// while a still-valid, never-revoked token sat in the primary, which
+	// Load prefers. The verdict is therefore what Load can still reach,
+	// not what Delete said: a primary that is merely unavailable fails
+	// both calls, holds nothing readable, and stays a clean sign-out.
+	if _, err := s.primary.Load(name); err == nil {
+		if primaryErr == nil {
+			primaryErr = fmt.Errorf("tokenstore: %q is still readable after deletion", name)
+		}
+		return primaryErr
 	}
 	return fallbackErr
 }

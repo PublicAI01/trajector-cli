@@ -101,6 +101,21 @@ func RemoveProject(path string) error {
 	return removeInjection(path, true, EnsureProxyMarker)
 }
 
+// SetBaseURL writes value as this settings file's own base URL. It
+// exists for one caller: removal has to be able to put back a value the
+// injection displaced, because injection writes into the very key — in
+// the very file — the user's own configuration lives in.
+func SetBaseURL(path, value string) error {
+	return edit(path, func(root map[string]any) error {
+		env, err := childObject(root, "env")
+		if err != nil {
+			return err
+		}
+		env[envBaseURL] = value
+		return nil
+	})
+}
+
 // InjectedBaseURL reads the trajector-injected base URL from the
 // settings file at path.
 func InjectedBaseURL(path string) (string, bool) {

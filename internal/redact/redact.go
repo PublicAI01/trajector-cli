@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -332,26 +331,17 @@ func hasJDBCPassword(candidate string) bool {
 	return hasNonPlaceholderPasswordAssignment(candidate)
 }
 
+// hasDatabaseURLSecret reports whether a database URL carries a password
+// in its query string. databaseURLPattern already settled the scheme.
+//
+// The search runs on the raw text through the same assignment regex the
+// JDBC and keyword-DSN rules use. It went through url.Parse and Query
+// until 2026-08-14, and Query silently drops any pair whose value holds
+// an invalid percent escape: a password containing a bare '%' made this
+// answer "no password here" and left the whole URL unmasked. Redaction
+// must not fail open on a parsing quirk.
 func hasDatabaseURLSecret(candidate string) bool {
-	u, err := url.Parse(candidate)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return false
-	}
-	for key, values := range u.Query() {
-		if !isPasswordQueryKey(key) {
-			continue
-		}
-		for _, value := range values {
-			if hasNonPlaceholderPasswordValue(value) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func isPasswordQueryKey(key string) bool {
-	return strings.EqualFold(key, "password") || strings.EqualFold(key, "pwd")
+	return hasNonPlaceholderPasswordAssignment(candidate)
 }
 
 func hasKeywordDSNPassword(candidate string) bool {
@@ -786,7 +776,13 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 			}
 		case string:
 			redacted := redactString(val)
-			if redacted == val && isCredentialJSONSecretKey(key, credentialContext) && hasNonPlaceholderPasswordValue(val) {
+			// The key itself says this value is a password, so the whole
+			// value goes — never just the parts the pattern layers caught.
+			// Until 2026-08-14 this ran only when redactString had changed
+			// nothing, which inverted the guarantee: a password holding one
+			// recognizable token kept the rest of itself in the clear,
+			// while one nothing recognized was masked entirely.
+			if isCredentialJSONSecretKey(key, credentialContext) && hasNonPlaceholderPasswordValue(val) {
 				redacted = redactedPlaceholder
 			}
 			if redacted != val {
@@ -836,9 +832,21 @@ func shouldSkipJSONLField(key string) bool {
 // shouldSkipJSONLObject reports whether the object carries a binary
 // payload — "type":"image"/"image_url" or "type":"base64" — whose data or
 // url field is preserved verbatim rather than scanned.
+//
+// The type is matched exactly. It was a prefix match on "image" until
+// 2026-08-14, but "type" is free text a model or an MCP tool writes into
+// a recorded body, so anything calling itself image_metadata carried its
+// url and data past all seven detection layers.
 func shouldSkipJSONLObject(obj map[string]any) bool {
 	t, ok := obj["type"].(string)
-	return ok && (strings.HasPrefix(t, "image") || t == "base64")
+	if !ok {
+		return false
+	}
+	switch t {
+	case "image", "image_url", "base64":
+		return true
+	}
+	return false
 }
 
 func shannonEntropy(s string) float64 {

@@ -51,7 +51,19 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 	if want.unsupportedKey != "" {
 		return fmt.Errorf("%s is set: Bedrock and Vertex channels are not supported and nothing was injected", want.unsupportedKey)
 	}
-	if want.external {
+	upstream := want.upstream
+	if !want.external && st.Injected() && st.Enabled && st.Upstream != "" && st.Upstream != upstream {
+		// The chain names no base URL of the user's own — but our own
+		// injection stands in the first file it reads, and this project
+		// already has a grant naming one, so the silence is ours: enable
+		// overwrote that value on the way in. Re-granting the official
+		// endpoint here would send a relay user's credentialed traffic
+		// elsewhere on a guess, which is what the session hook refuses to
+		// do for a masked upstream. Repair must not re-key the upstream
+		// any more than it re-keys the token. 2026-08-14.
+		upstream = st.Upstream
+		fmt.Fprintf(io.Out, "Keeping the base URL this project was enabled with: %s\n", upstream)
+	} else if want.external {
 		fmt.Fprintf(io.Out, "Detected an existing base URL (%s): %s\n", want.source, want.upstream)
 		fmt.Fprintln(io.Out, "Your traffic will keep flowing through it unchanged. Records from this")
 		fmt.Fprintln(io.Out, "project are marked as third-party origin; reward terms are the same")
@@ -76,7 +88,7 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		return err
 	}
 
-	if err := m.installAndVerify(io, st, want.upstream); err != nil {
+	if err := m.installAndVerify(io, st, upstream); err != nil {
 		restoreErr := errors.Join(snap.restore(), m.routes.RestoreGrants(grants), m.consent.RestoreProject(decision))
 		if restoreErr != nil {
 			return fmt.Errorf("%w (rollback incomplete: %v)", err, restoreErr)

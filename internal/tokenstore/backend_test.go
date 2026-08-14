@@ -205,3 +205,82 @@ func TestDeleteMissingEverywhere(t *testing.T) {
 		t.Errorf("Delete(absent) = %v, want ErrNotFound", err)
 	}
 }
+
+// stubBackend stands in for an OS keyring that is present and readable
+// but will not take a write or a delete — the state a desktop keyring
+// is in for a headless session on the same machine.
+type stubBackend struct {
+	secrets   map[string][]byte
+	saveErr   error
+	deleteErr error
+}
+
+func newStub(name, secret string) *stubBackend {
+	return &stubBackend{secrets: map[string][]byte{name: []byte(secret)}}
+}
+
+func (b *stubBackend) Save(name string, secret []byte) error {
+	if b.saveErr != nil {
+		return b.saveErr
+	}
+	b.secrets[name] = append([]byte(nil), secret...)
+	return nil
+}
+
+func (b *stubBackend) Load(name string) ([]byte, error) {
+	secret, ok := b.secrets[name]
+	if !ok {
+		return nil, errNotFound
+	}
+	return secret, nil
+}
+
+func (b *stubBackend) Delete(name string) error {
+	if b.deleteErr != nil {
+		return b.deleteErr
+	}
+	if _, ok := b.secrets[name]; !ok {
+		return errNotFound
+	}
+	delete(b.secrets, name)
+	return nil
+}
+
+// TestSaveToTheFallbackClearsAShadowingPrimaryCopy pins the cleanup that
+// was only ever done in one direction. Load prefers the primary, so a
+// copy left in a keyring that has since become unwritable hides every
+// later save.
+func TestSaveToTheFallbackClearsAShadowingPrimaryCopy(t *testing.T) {
+	primary := newStub("token", "old")
+	primary.saveErr = errors.New("keyring is unavailable")
+	s := &fallbackStore{primary: primary, fallback: fileStore{dir: t.TempDir()}}
+
+	if err := s.Save("token", []byte("new")); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := s.Load("token")
+	if err != nil || string(got) != "new" {
+		t.Errorf("Load = %q, %v, want %q, nil: the primary's stale copy shadows the saved secret", got, err, "new")
+	}
+}
+
+// TestDeleteFailsWhileThePrimaryStillHoldsTheSecret pins that a
+// half-completed delete is reported as one. Answering success because
+// the fallback copy went let `trajector logout` say the device was
+// signed out while a still-valid, never-revoked token sat in the keyring.
+func TestDeleteFailsWhileThePrimaryStillHoldsTheSecret(t *testing.T) {
+	primary := newStub("token", "old")
+	primary.deleteErr = errors.New("keyring entry is locked")
+	dir := t.TempDir()
+	if err := (fileStore{dir: dir}).Save("token", []byte("filed")); err != nil {
+		t.Fatal(err)
+	}
+	s := &fallbackStore{primary: primary, fallback: fileStore{dir: dir}}
+
+	if err := s.Delete("token"); err == nil {
+		t.Fatal("Delete reported success while the primary still hands the secret back")
+	}
+	if got, err := s.Load("token"); err != nil || string(got) != "old" {
+		t.Errorf("Load = %q, %v; the secret Delete could not remove is still there", got, err)
+	}
+}

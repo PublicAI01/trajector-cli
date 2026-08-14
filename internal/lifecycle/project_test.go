@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
@@ -387,4 +388,80 @@ func rejectedRecordFor(t *testing.T, projectIDHash string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// TestDisableRerunFinishesAnInterruptedWithdrawal pins that a disable
+// interrupted after the grant is revoked can be finished by rerunning
+// it. Traffic is stopped before records are deleted, so a failure in
+// between leaves a project that looks untouched to the early "nothing to
+// do" check while its rawcalls are still on disk — and the uploader does
+// not consult consent, so they would ship on the next flush.
+func TestDisableRerunFinishesAnInterruptedWithdrawal(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	route := e.status()
+	seedRejectedBatch(t, e, "b-poison", "", map[string][]byte{
+		"req-rejected": rejectedRecordFor(t, route.GrantHash),
+	})
+
+	// Break the spool so the first disable fails at its deletion step,
+	// after it has already removed the injection and revoked the grant.
+	e.obstruct(e.layout().SpoolDir())
+	if err := e.machine().Disable(e.project, false, e.io()); err == nil {
+		t.Fatal("precondition: the first disable must fail at the deletion step")
+	}
+	if st := e.status(); st.Injected() || st.Enabled {
+		t.Fatal("precondition: the first disable must have removed the injection and revoked the grant")
+	}
+	if err := os.Remove(e.layout().SpoolDir()); err != nil {
+		t.Fatal(err)
+	}
+	e.stdout.Reset()
+
+	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+		t.Fatalf("rerun: %v\nstdout: %s", err, e.stdout)
+	}
+	record := filepath.Join(e.layout().RejectedDir(), "b-poison", "req-rejected.json")
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Errorf("a withdrawn project's quarantined rawcall survived the rerun (stat: %v)\nstdout: %s", err, e.stdout)
+	}
+}
+
+// TestEnableAndDisableKeepAUsersOwnBaseURL pins both halves of one
+// defect. Injection writes ANTHROPIC_BASE_URL into the project-local
+// settings file, which is also the first link of the configuration
+// chain, so a relay configured there is overwritten on the way in. That
+// made re-running enable re-grant the official endpoint under it, and
+// made disable delete the last copy of the value — either way the next
+// session went to the official endpoint carrying relay credentials.
+func TestEnableAndDisableKeepAUsersOwnBaseURL(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	const relay = "https://relay.example.com"
+	if err := os.MkdirAll(filepath.Dir(e.settingsPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.settingsPath(), []byte(`{"env":{"ANTHROPIC_BASE_URL":"`+relay+`"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range 2 {
+		if err := e.machine().Enable(e.project, e.io()); err != nil {
+			t.Fatalf("enable %d: %v\nstdout: %s", i, err, e.stdout)
+		}
+		if got := e.status().Upstream; got != relay {
+			t.Fatalf("after enable %d the grant routes at %q, want the user's own %q", i, got, relay)
+		}
+	}
+
+	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	value, source, res := claudesettings.ExternalBaseURL(e.canonicalRoot(), e.deps.Home, e.deps.Getenv)
+	if value != relay {
+		t.Errorf("after disable the user's own base URL is %q (%s, %v), want %q back", value, source, res, relay)
+	}
 }
