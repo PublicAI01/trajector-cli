@@ -435,3 +435,44 @@ func TestUninstallDeletesEverythingWhenAsked(t *testing.T) {
 		t.Error("device token survived confirmed cleanup")
 	}
 }
+
+// Until 2026-08-15 logout cleared the device token before pausing
+// recording. A pause that then failed left the device signed out and
+// still recording every enabled project, and nothing could put it
+// right: a rerun found no token and reported "nothing to do", and no
+// surface looks for a signed-out device that is not paused. Pausing
+// first fails safe — the device stays paired, so the command is simply
+// retryable.
+func TestLogoutStaysRetryableWhenPausingFails(t *testing.T) {
+	e := newEnv(t)
+	e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(200, map[string]any{}))
+	table := e.layout().RoutingTable()
+	if err := os.MkdirAll(filepath.Dir(table), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// An unparseable routing table is one way the pause cannot be
+	// written; a full or read-only disk is another.
+	if err := os.WriteFile(table, []byte("{ not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.machine().Logout(e.io()); err == nil {
+		t.Fatal("logout reported success while recording was left unpaused")
+	}
+	if !e.machine().Paired() {
+		t.Fatal("logout dropped the device token without pausing, so no rerun can finish the sign-out")
+	}
+
+	if err := os.Remove(table); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.machine().Logout(e.io()); err != nil {
+		t.Fatalf("rerun: %v", err)
+	}
+	if e.machine().Paired() {
+		t.Error("the rerun kept the device token")
+	}
+	if reason := e.sandbox.PausedReason(); reason != routing.PauseSignedOut {
+		t.Errorf("pause = %q, want signed_out", reason)
+	}
+}

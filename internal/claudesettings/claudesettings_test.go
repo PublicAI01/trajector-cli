@@ -11,6 +11,9 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
 const (
@@ -686,5 +689,115 @@ func TestEnsureGitIgnoredSkipsOutsideRepo(t *testing.T) {
 	}
 	if action != IgnoreSkipped {
 		t.Errorf("action = %q, want skipped", action)
+	}
+}
+
+// Injection spells the base URL from whatever address the proxy is
+// serving, and the proxy may serve any loopback address. Recognizing
+// only 127.0.0.1 left an injection on any other one unrecognized, so
+// removal walked past it and left the user's sessions pointing at a
+// port that would soon be dead, with no command able to clear it.
+// 2026-08-15.
+func TestRemoveProjectClearsAnInjectionOnAnyLoopbackAddress(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:41100", "127.0.0.2:41100", "127.9.9.9:8080", "localhost:41100", "[::1]:41100"} {
+		t.Run(addr, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			url := "http://" + addr + "/t/tok-abc123"
+			if token, ok := TokenFromBaseURL(url); !ok || token != "tok-abc123" {
+				t.Fatalf("TokenFromBaseURL(%q) = %q, %v; an injection it cannot read is one it cannot remove", url, token, ok)
+			}
+			if err := InjectProject(path, url, testHookCmd); err != nil {
+				t.Fatal(err)
+			}
+			if err := RemoveProject(path); err != nil {
+				t.Fatal(err)
+			}
+			if root := readJSON(t, path); root["env"] != nil {
+				t.Errorf("removal left the injected base URL behind: %v", root)
+			}
+		})
+	}
+}
+
+// The recognizer stays narrow in the other direction: removal must
+// never mistake a base URL the user configured themselves for ours.
+func TestTokenFromBaseURLRefusesWhatTrajectorDidNotInject(t *testing.T) {
+	for _, url := range []string{
+		"http://relay.example.com:8080/t/tok",
+		"http://10.0.0.5:41100/t/tok",
+		"http://127.0.0.1.evil.example:41100/t/tok",
+		"http://0.0.0.0:41100/t/tok",
+		"https://127.0.0.1:41100/t/tok",
+	} {
+		if token, ok := TokenFromBaseURL(url); ok {
+			t.Errorf("TokenFromBaseURL(%q) = %q, want it unrecognized", url, token)
+		}
+	}
+}
+
+// enable appends three ignore rules and a diagnostic bundle two, from
+// separate short-lived processes. The truncating write this used to do
+// read the file before a concurrent append had landed and then replaced
+// it, so one of the two was erased — and the rule that can go is the one
+// keeping the injected settings file, which carries a consent token, out
+// of the repository. 2026-08-15.
+func TestEnsureGitIgnoredDoesNotClobberAConcurrentAppend(t *testing.T) {
+	root := initRepo(t)
+	path := filepath.Join(root, ".gitignore")
+
+	holding := make(chan struct{})
+	held := make(chan error, 1)
+	go func() {
+		held <- fsatomic.Update(path, 0o644, func(old []byte) ([]byte, error) {
+			close(holding)
+			// Long enough that an unsynchronized appender reads the file
+			// before this write lands, which is the race being pinned.
+			time.Sleep(750 * time.Millisecond)
+			return append(append([]byte{}, old...), []byte("held-rule\n")...), nil
+		})
+	}()
+	<-holding
+
+	action, err := EnsureGitIgnored(root, ".claude/settings.local.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != IgnoreAppended {
+		t.Fatalf("action = %q, want appended", action)
+	}
+	if err := <-held; err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"held-rule", ".claude/settings.local.json"} {
+		if !bytes.Contains(data, []byte(want)) {
+			t.Errorf(".gitignore = %q, want it to still carry %q", data, want)
+		}
+	}
+}
+
+// The user owns this file, so an append must not quietly widen it.
+func TestEnsureGitIgnoredKeepsTheExistingFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Chmod only toggles the read-only bit on windows")
+	}
+	root := initRepo(t)
+	path := filepath.Join(root, ".gitignore")
+	if err := os.WriteFile(path, []byte("build/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureGitIgnored(root, ".claude/settings.local.json"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want the user's own 0600 kept", info.Mode().Perm())
 	}
 }

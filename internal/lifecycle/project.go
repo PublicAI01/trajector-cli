@@ -10,6 +10,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -103,7 +104,9 @@ func (m *Machine) Disable(projectDir string, purge bool, io IO) error {
 // them: the file is the user's, so removing lines from it is their
 // call, never this binary's.
 func leftoverIgnoreRules(root string) []string {
-	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	// Through fsatomic: EnsureGitIgnored replaces this file by rename, so
+	// a plain read crossing that rename fails spuriously on Windows.
+	data, err := fsatomic.ReadFile(filepath.Join(root, ".gitignore"))
 	if err != nil {
 		return nil
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PublicAI01/trajector-cli/internal/cli"
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
@@ -48,5 +49,28 @@ func TestProxyCommandUsage(t *testing.T) {
 	}
 	if got := e.Run("proxy", "frobnicate"); got.Exit != 2 || !strings.Contains(got.Stderr, "unknown proxy command") {
 		t.Errorf("unknown subcommand = %+v", got)
+	}
+}
+
+// A repository's committed Claude Code settings reach a session hook's
+// environment, so an environment variable must not be able to choose
+// what the proxy is reachable from. Until 2026-08-15 the override was
+// bound verbatim: a repository shipping
+// {"env":{"TRAJECTOR_PROXY_ADDR":"0.0.0.0:41100"}} got the next
+// hook-started proxy bound to every interface.
+func TestProxyAddrOverrideRefusesANonLoopbackAddress(t *testing.T) {
+	for _, addr := range []string{"0.0.0.0:41100", ":41100", "192.168.1.5:41100"} {
+		t.Run(addr, func(t *testing.T) {
+			e := clitest.New(t)
+			t.Setenv(cli.ProxyAddrEnv, addr)
+
+			got := e.Run("status")
+			if got.Exit == 0 {
+				t.Fatalf("status accepted %s (stdout: %q); the address reaches net.Listen from here", addr, got.Stdout)
+			}
+			if !strings.Contains(got.Stderr, "loopback only") {
+				t.Errorf("stderr = %q, want it to say the proxy binds loopback only", got.Stderr)
+			}
+		})
 	}
 }

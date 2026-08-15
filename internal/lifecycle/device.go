@@ -97,6 +97,20 @@ func (m *Machine) Logout(io IO) error {
 		fmt.Fprintln(io.Out, "This device is not paired; nothing to do.")
 		return nil
 	}
+	// Recording pauses before anything else, and in particular before the
+	// token goes. The pause is the step that actually stops collection;
+	// the token is what makes this command retryable. Clearing the token
+	// first — as this did until 2026-08-15 — meant a pause that failed
+	// (a routing table that cannot be written: full disk, read-only
+	// mount, unparseable file) left the device signed out and still
+	// recording every enabled project, with no way back: rerunning
+	// logout found no token and reported "nothing to do", and neither
+	// status nor doctor looks for a signed-out device that is not paused.
+	// Pausing first fails safe instead: the device stays paired, so the
+	// whole command can simply be run again.
+	if err := m.routes.Pause(routing.PauseSignedOut); err != nil {
+		return fmt.Errorf("pausing recording: %w", err)
+	}
 	if err := m.deps.Platform.RevokeDevice(token); err != nil && !errors.Is(err, platform.ErrAlreadyRevoked) {
 		// An already-revoked token is the goal state and stays silent;
 		// everything else is a warning with the right next step.
@@ -109,9 +123,6 @@ func (m *Machine) Logout(io IO) error {
 	}
 	if err := m.deps.Tokens.ClearDeviceToken(); err != nil {
 		return fmt.Errorf("removing the device token: %w", err)
-	}
-	if err := m.routes.Pause(routing.PauseSignedOut); err != nil {
-		return fmt.Errorf("pausing recording: %w", err)
 	}
 	fmt.Fprintln(io.Out, "Signed out. Forwarding for enabled projects is unaffected; recording is")
 	fmt.Fprintln(io.Out, "paused everywhere until you run `trajector login` again, and kept data")

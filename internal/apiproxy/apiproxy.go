@@ -41,6 +41,35 @@ func httpURL(s string) bool {
 // reachable from outside the machine.
 const Addr = "127.0.0.1:41100"
 
+// ValidateAddr reports whether addr may be bound. Binding loopback-only
+// is the invariant: enabled projects route API credentials at this
+// address, and the proxy must never be reachable from outside the
+// machine. The address is checked rather than trusted because it does
+// not arrive from here — it travels through `proxy serve --addr` and
+// through an environment variable, and a repository's committed Claude
+// Code settings reach a session hook's environment, which is why the
+// CLI already refuses to read its service endpoint from one. Nothing a
+// repository can write may widen what this listener accepts, so every
+// resolver of the address and the bind itself answer from this one
+// spelling. An address with no host ("":41100") binds every interface
+// and is named separately: it looks harmless and is not. 2026-08-15.
+func ValidateAddr(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("apiproxy: %q is not a host:port listen address: %w", addr, err)
+	}
+	switch {
+	case host == "localhost":
+		return nil
+	case host == "":
+		return fmt.Errorf("apiproxy: refusing to listen on %q: an address with no host binds every interface, and the proxy binds loopback only", addr)
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("apiproxy: refusing to listen on %q: the proxy binds loopback only, so %q is not an address it may serve", addr, host)
+}
+
 // Reserved path prefix for the proxy's own endpoints; requests under
 // it are never forwarded upstream.
 const internalPrefix = "/trajector/"

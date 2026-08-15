@@ -62,7 +62,16 @@ func UserSettingsPath(home string) string {
 // proxyBaseURL recognizes a base URL injected by trajector: loopback
 // host with a /t/<token> path. Matching stays narrow so removal can
 // never mistake a user's own relay URL for our injection.
-var proxyBaseURL = regexp.MustCompile(`^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]+/t/([A-Za-z0-9._-]+)$`)
+//
+// The host alternatives must cover every address apiproxy.ValidateAddr
+// lets the proxy bind, because injection spells this URL from whatever
+// address the proxy is serving. Recognizing 127.0.0.1 alone left an
+// injection on any other address in the 127/8 block unrecognized — so
+// disable and uninstall walked past it, and the user's own sessions
+// kept pointing at a port that would soon be dead, with no command able
+// to clear it. The whole block is matched here for that reason; it is
+// still narrower than "any host". 2026-08-15.
+var proxyBaseURL = regexp.MustCompile(`^http://(127(?:\.[0-9]{1,3}){3}|localhost|\[::1\]):[0-9]+/t/([A-Za-z0-9._-]+)$`)
 
 // isProxyBaseURL reports whether value is a trajector-injected base
 // URL.

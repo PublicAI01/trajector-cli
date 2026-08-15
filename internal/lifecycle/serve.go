@@ -48,6 +48,14 @@ func (m *Machine) SuperviseProxy(ctx context.Context, idle time.Duration, stdout
 // a fallback to another port, which would strand every injected base
 // URL.
 func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, stderr io.Writer) error {
+	// The bind is the invariant: enabled projects route API credentials
+	// at this address, so it must name this machine and nothing else.
+	// Checked here as well as where the address was resolved, because
+	// this is the line that actually makes the proxy reachable — every
+	// other caller only passes the address along. 2026-08-15.
+	if err := apiproxy.ValidateAddr(m.proxy.Addr()); err != nil {
+		return err
+	}
 	logf := func(format string, a ...any) {
 		fmt.Fprintf(stderr, format+"\n", a...)
 	}

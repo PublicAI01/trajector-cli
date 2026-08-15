@@ -11,11 +11,11 @@ import (
 // all aimed at paths WriteFile never replaces, so the Windows rename
 // collision that fsatomic.ReadFile absorbs cannot occur there.
 var plainReadFiles = map[string]bool{
-	// The user's Claude settings and .gitignore belong to programs
-	// outside this codebase, which replace them plainly.
+	// The user's Claude settings belong to programs outside this
+	// codebase, which replace them plainly. The project .gitignore no
+	// longer belongs here: EnsureGitIgnored replaces it by rename since
+	// 2026-08-15, so every reader of it goes through ReadFile.
 	"internal/claudesettings/claudesettings.go": true,
-	"internal/claudesettings/gitignore.go":      true,
-	"internal/lifecycle/project.go":             true,
 	// The user config file has no writer in this codebase.
 	"internal/cli/cli.go": true,
 	// Lock files are created exclusively and removed, never replaced.

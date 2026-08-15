@@ -51,7 +51,12 @@ func (s snapshots) restore() error {
 	for _, snap := range s {
 		var err error
 		if snap.existed {
-			err = os.WriteFile(snap.path, snap.data, snap.mode)
+			// Through fsatomic, not a plain truncating write: these are the
+			// user's own project files, and a rollback that dies partway
+			// through restoring one would leave it worse than the failure
+			// being rolled back. It also matches how takeSnapshots read
+			// them. 2026-08-15.
+			err = fsatomic.WriteFile(snap.path, snap.data, snap.mode)
 		} else {
 			err = os.Remove(snap.path)
 			if os.IsNotExist(err) {

@@ -14,6 +14,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
@@ -26,7 +27,9 @@ import (
 var version = "dev"
 
 // ProxyAddrEnv overrides the proxy address, for tests and unusual
-// setups. Production always uses the fixed address.
+// setups. Production always uses the fixed address. Whatever it names
+// still has to pass apiproxy.ValidateAddr: an override may move the
+// port, never widen what the listener is reachable from.
 const ProxyAddrEnv = "TRAJECTOR_PROXY_ADDR"
 
 // NowEnv pins the machine's clock to a fixed RFC3339 instant, for
@@ -190,6 +193,16 @@ func machineAt(addr string) (*lifecycle.Machine, error) {
 	}
 	if addr != "" {
 		env.proxyAddr = addr
+	}
+	// The listen address decides what this machine's proxy is reachable
+	// from, and it arrives from --addr and from an environment variable
+	// — which a repository's committed settings reach through the session
+	// hooks, the same reason the endpoint overrides above are read from
+	// the user config file alone. It is refused here rather than bound,
+	// and refused before it can also be injected into a project's base
+	// URL. 2026-08-15.
+	if err := apiproxy.ValidateAddr(env.proxyAddr); err != nil {
+		return nil, err
 	}
 	deps := lifecycle.Deps{
 		Layout:    env.layout,
