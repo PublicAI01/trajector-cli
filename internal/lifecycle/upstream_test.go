@@ -2,9 +2,12 @@ package lifecycle_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
 
 // injectedBaseURL is the base URL enable wrote into the project's
@@ -177,6 +180,42 @@ func TestASessionsOwnInjectionIsNotReadAsTheRelayBeingGone(t *testing.T) {
 	}
 	if got := e.status().Upstream; got != relay {
 		t.Errorf("upstream after doctor = %q, want the relay kept", got)
+	}
+}
+
+// TestEnableRefusesToGuessAMaskedUpstream is the granting half of what
+// TestASessionsOwnInjectionIsNotReadAsTheRelayBeingGone pins for the
+// hook. The relay lives in the user's shell; once a session starts, our
+// own injection stands where it was, so the chain reads as masked. With
+// no standing grant to fall back on — a fresh project, or this one right
+// after disable — enable has nothing that says where the traffic went.
+// Until 2026-08-16 it granted the official endpoint anyway, and every
+// later request carried the relay's credentials to Anthropic. Refusing
+// is the only answer that does not guess.
+func TestEnableRefusesToGuessAMaskedUpstream(t *testing.T) {
+	const relay = "https://relay.example.com"
+	e := newEnv(t)
+	e.startProxy()
+	e.environ["ANTHROPIC_BASE_URL"] = relay
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	// A session is running now, so the CLI's own environment carries our
+	// injection rather than the relay. The user disables from inside it.
+	e.environ["ANTHROPIC_BASE_URL"] = injectedBaseURL(t, e)
+	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	e.stdout.Reset()
+	err := e.machine().Enable(e.project, e.io())
+	if !errors.Is(err, lifecycle.ErrUpstreamMasked) {
+		t.Fatalf("re-enable with the upstream masked returned %v and granted %q; the relay was replaced by a guess",
+			err, e.status().Upstream)
+	}
+	if st := e.status(); st.Enabled || st.Injected() {
+		t.Errorf("a refused enable left the project enabled=%v injected=%v, want nothing written", st.Enabled, st.Injected())
 	}
 }
 

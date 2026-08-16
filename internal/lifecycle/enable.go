@@ -52,7 +52,11 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		return fmt.Errorf("%s is set: Bedrock and Vertex channels are not supported and nothing was injected", want.unsupportedKey)
 	}
 	upstream := want.upstream
-	if !want.external && st.Injected() && st.Enabled && st.Upstream != "" && st.Upstream != upstream {
+	// A standing grant of this project's own is the one record of where
+	// its traffic went that survives our injection standing in the
+	// configuration chain.
+	keep := !want.external && st.Injected() && st.Enabled && st.Upstream != ""
+	if keep && st.Upstream != upstream {
 		// The chain names no base URL of the user's own — but our own
 		// injection stands in the first file it reads, and this project
 		// already has a grant naming one, so the silence is ours: enable
@@ -63,6 +67,20 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		// any more than it re-keys the token. 2026-08-14.
 		upstream = st.Upstream
 		fmt.Fprintf(io.Out, "Keeping the base URL this project was enabled with: %s\n", upstream)
+	} else if want.masked && !keep {
+		// Masked and nothing of this project's own to fall back on: our
+		// injection stands in the shell where the user's own base URL
+		// would be, and no grant records what it was. want.upstream is
+		// the official endpoint here, but only as the best guess a
+		// surface that must name one gets — and granting is not such a
+		// surface. Until 2026-08-16 this fell through and granted that
+		// guess silently, so a relay user who ran enable from inside a
+		// Claude Code session (a fresh project, or the same one right
+		// after disable) had every later request carry their relay's
+		// credentials to the official endpoint instead. reconcileUpstream
+		// and disable already refuse to act on masked; granting is the
+		// one path that did not. 2026-08-16.
+		return ErrUpstreamMasked
 	} else if want.external {
 		fmt.Fprintf(io.Out, "Detected an existing base URL (%s): %s\n", want.source, want.upstream)
 		fmt.Fprintln(io.Out, "Your traffic will keep flowing through it unchanged. Records from this")

@@ -22,6 +22,17 @@ var ErrDeclined = errors.New("data agreement declined")
 // ErrNotPaired reports an operation that needs a paired device.
 var ErrNotPaired = errors.New("this device is not paired")
 
+// ErrUpstreamMasked reports an enable that cannot see where this
+// project's traffic goes, because trajector's own injection stands in
+// the environment where the user's own base URL would be and no grant
+// of this project's records what it was. Guessing the official endpoint
+// there would send a relay user's credentials somewhere they never
+// chose, so enable stops and says how to get an unmasked view.
+var ErrUpstreamMasked = errors.New(
+	"cannot tell where this project's traffic should go: trajector's own base URL stands in ANTHROPIC_BASE_URL here, " +
+		"so any setting of your own is hidden behind it. Run `trajector enable` from a terminal outside a Claude Code session, " +
+		"where your real configuration is visible")
+
 // ErrPortOccupied reports that the proxy's port is held by something
 // else, which the caller must surface loudly rather than retry.
 var ErrPortOccupied = proxylife.ErrPortOccupied

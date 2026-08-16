@@ -175,8 +175,11 @@ type Config struct {
 	// token. Such traffic is forwarded untouched and never recorded.
 	DefaultUpstream string
 	Spool           *spool.Spool
-	// IdleTimeout is how long authorized traffic may be silent before
-	// the proxy exits on its own. Zero selects a default.
+	// IdleTimeout is how long traffic carrying a resolving consent token
+	// may be silent before the proxy exits on its own. Whether such
+	// traffic is recorded never enters it: a paused device forwards and
+	// records nothing, and it must not be counted as silence. Zero
+	// selects a default.
 	IdleTimeout time.Duration
 	// DrainTimeout bounds how long shutdown waits for in-flight
 	// requests. Zero selects a default.
@@ -471,6 +474,10 @@ func (s *Server) trackInflight(serve func()) {
 	serve()
 }
 
+// touchAuthorized marks that the proxy is still carrying traffic a
+// consent token named. Every exchange whose token resolves counts,
+// recorded or not: see the note in decide for why tying this to the
+// recording decision made a paused proxy exit under load.
 func (s *Server) touchAuthorized() {
 	s.mu.Lock()
 	s.lastAuthorized = time.Now()

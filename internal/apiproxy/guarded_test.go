@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeupstream"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
@@ -213,6 +214,40 @@ func TestPausedDeviceForwardsWithoutRecording(t *testing.T) {
 	}
 	if h := e.Healthz(); h.RecordedToday != 0 {
 		t.Errorf("recorded_today = %d while paused", h.RecordedToday)
+	}
+}
+
+// TestPausedTrafficKeepsTheProxyAlive pins what the idle clock measures.
+// A device-wide pause forwards every request and records none, and until
+// 2026-08-16 only a recorded request touched the clock — so the clock
+// never left the process start and the proxy drained itself one idle
+// timeout after boot however much traffic was flowing through it. The
+// next request of a live session then met a closed port. Traffic here
+// keeps flowing for several timeouts; if the proxy exits under it, a
+// request fails and this test says so.
+func TestPausedTrafficKeepsTheProxyAlive(t *testing.T) {
+	const idle = 300 * time.Millisecond
+	e := proxytest.New(t, proxytest.WithIdleTimeout(idle))
+	e.WriteTable(pausedTable(e.Upstream.URL(), routing.PauseSignedOut))
+
+	started := time.Now()
+	for i := 0; time.Since(started) < 3*idle; i++ {
+		e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_alive"}`)})
+		req, err := http.NewRequest(http.MethodPost, e.BaseURL()+"/t/tok1/v1/messages", strings.NewReader(`{"m":1}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := e.Do(req)
+		if err != nil {
+			t.Fatalf("request %d failed %s into continuous forwarding: %v; the proxy stopped serving while it was still carrying traffic",
+				i, time.Since(started).Round(time.Millisecond), err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("request %d status = %d, want the exchange forwarded untouched", i, resp.StatusCode)
+		}
+		time.Sleep(idle / 5)
 	}
 }
 

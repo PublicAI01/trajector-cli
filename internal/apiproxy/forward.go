@@ -85,11 +85,25 @@ func (s *Server) decide(r *http.Request) *decision {
 		d.restPath = rest
 		found, verdict := s.cfg.Table.Lookup(token)
 		if verdict.Resolves() {
+			// The idle clock asks whether this proxy is still carrying
+			// someone's traffic, which every resolving token answers — not
+			// whether it is recording it. Touching it only under Records()
+			// tied the lifetime of the forwarding path to the recording
+			// decision: a device-wide pause (signed out, or the
+			// consent_reconfirm every device gets when the agreement
+			// changes) and a revoked-but-still-injected project both
+			// forward every request and record none, so the clock never
+			// moved off the process start and the proxy drained itself one
+			// idle timeout after boot however much traffic was flowing.
+			// The next request of a live session then met a closed port,
+			// and the session hooks only run between turns, so a long
+			// agentic turn simply broke. Forwarding is sacred; nothing on
+			// the recording side may decide when it stops. 2026-08-16.
+			s.touchAuthorized()
 			route = found
 			upstream = found.Upstream
 		}
 		if verdict.Records() {
-			s.touchAuthorized()
 			record = s.cfg.Dialect.ShouldRecord(r.Method, rest)
 		}
 	}
