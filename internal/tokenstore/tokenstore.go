@@ -6,6 +6,7 @@
 package tokenstore
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -110,15 +111,35 @@ func (s *fallbackStore) Save(name string, secret []byte) error {
 		// Remove any stale fallback copy so later loads cannot return
 		// an outdated secret.
 		_ = s.fallback.Delete(name)
-		return nil
+	} else {
+		// And the same the other way, which this left out until 2026-08-14.
+		// Load reads the primary first, so a copy left in a keyring that has
+		// since become unwritable shadows this one forever: pairing again
+		// from a headless session stored a token the desktop session never
+		// saw, while the old one kept working and nothing revoked it.
+		_ = s.primary.Delete(name)
+		if err := s.fallback.Save(name, secret); err != nil {
+			return err
+		}
 	}
-	// And the same the other way, which this left out until 2026-08-14.
-	// Load reads the primary first, so a copy left in a keyring that has
-	// since become unwritable shadows this one forever: pairing again
-	// from a headless session stored a token the desktop session never
-	// saw, while the old one kept working and nothing revoked it.
-	_ = s.primary.Delete(name)
-	return s.fallback.Save(name, secret)
+	// Neither cleanup above is trusted, because neither can be: the
+	// condition that makes primary.Save fail — a keyring that is locked,
+	// absent, or read-only — is the same one that makes primary.Delete
+	// fail, so the shadow-clearing added on 2026-08-14 was silently a
+	// no-op in the one case it exists for. What settles a save is
+	// therefore the same thing that settles a delete (see below): what
+	// Load can still reach. Reporting success while every later read
+	// returns the previous secret let `trajector login` pair a device
+	// against a token nothing would ever use, and the uploads that then
+	// failed to authenticate looked like a service problem. 2026-08-20.
+	stored, err := s.Load(name)
+	if err != nil {
+		return fmt.Errorf("tokenstore: %q was stored but could not be read back: %w", name, err)
+	}
+	if !bytes.Equal(stored, secret) {
+		return fmt.Errorf("tokenstore: %q was stored, but reading it back still returns an older secret: an OS keyring that refuses writes holds a copy that shadows it. Unlock the keyring and retry, or set %s=file to keep trajector out of it", name, BackendEnv)
+	}
+	return nil
 }
 
 func (s *fallbackStore) Load(name string) ([]byte, error) {

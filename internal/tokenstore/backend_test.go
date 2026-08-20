@@ -264,6 +264,32 @@ func TestSaveToTheFallbackClearsAShadowingPrimaryCopy(t *testing.T) {
 	}
 }
 
+// TestSaveFailsWhileAnUnwritablePrimaryStillShadowsTheSecret pins the
+// case the shadow-clearing above cannot cover on its own: a keyring that
+// refuses a write refuses the delete too, so the cleanup runs and
+// achieves nothing. Answering success there let `trajector login` report
+// a fresh device token while every later read handed back the old one.
+func TestSaveFailsWhileAnUnwritablePrimaryStillShadowsTheSecret(t *testing.T) {
+	primary := newStub("token", "old")
+	primary.saveErr = errors.New("keyring is unavailable")
+	primary.deleteErr = primary.saveErr
+	dir := t.TempDir()
+	s := &fallbackStore{primary: primary, fallback: fileStore{dir: dir}}
+
+	if err := s.Save("token", []byte("new")); err == nil {
+		t.Fatal("Save reported success while the primary still hands an older secret back")
+	}
+	if got, err := s.Load("token"); err != nil || string(got) != "old" {
+		t.Errorf("Load = %q, %v; the shadowing copy is still what a reader gets", got, err)
+	}
+	// The secret did reach the fallback: refusing to claim success must
+	// not also throw away the write, or retrying after unlocking the
+	// keyring would have nothing to fall back on.
+	if got, err := (fileStore{dir: dir}).Load("token"); err != nil || string(got) != "new" {
+		t.Errorf("fallback copy = %q, %v, want %q, nil", got, err, "new")
+	}
+}
+
 // TestDeleteFailsWhileThePrimaryStillHoldsTheSecret pins that a
 // half-completed delete is reported as one. Answering success because
 // the fallback copy went let `trajector logout` say the device was

@@ -70,10 +70,27 @@ func WriteFile(path string, data []byte, perm fs.FileMode) error {
 	}
 }
 
+// syncFile flushes a temp file's content to stable storage before it is
+// renamed into place. It is a variable only so a test can observe that
+// the flush happens and that a failed one aborts the write; production
+// always uses (*os.File).Sync.
+var syncFile = (*os.File).Sync
+
 // writeTemp creates path's uniquely named temp sibling holding data.
 // The temp is born owner-only and widened to perm only once its content
 // is complete; the explicit chmod applies perm exactly, so a mode taken
 // from the file being replaced is preserved rather than re-masked.
+//
+// The content is flushed before writeTemp returns, so the rename that
+// follows can never outlive the data it installs. Without the flush,
+// rename only orders a directory entry: a crash between the two leaves
+// the entry pointing at blocks that were never written, and the file
+// reads back empty — with the previous content already gone. The paths
+// this package replaces include the user's own Claude Code settings, so
+// the failure is silent and unrecoverable rather than merely annoying:
+// parsing an empty settings file succeeds and yields no settings at
+// all. "Never a torn write" has to hold across a crash, not only across
+// a concurrent reader. 2026-08-20.
 func writeTemp(path string, data []byte, perm fs.FileMode) (string, error) {
 	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+tempMarker+"*")
 	if err != nil {
@@ -81,6 +98,9 @@ func writeTemp(path string, data []byte, perm fs.FileMode) (string, error) {
 	}
 	tmp := f.Name()
 	_, err = f.Write(data)
+	if err == nil {
+		err = syncFile(f)
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
