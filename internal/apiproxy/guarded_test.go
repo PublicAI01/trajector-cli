@@ -21,6 +21,69 @@ func revokedTable(upstream string) string {
 	}}`
 }
 
+// withdrawnTable is what `trajector disable` leaves behind for one
+// project — the grant revoked, kept so the route still forwards — while
+// another project's grant stands.
+func withdrawnTable(upstream string) string {
+	return `{"projects":{
+		"tok-live":{"project_id_hash":"h1","upstream":"` + upstream + `","granted_at":"2026-08-01T00:00:00Z","revoked_at":"2026-08-21T00:00:00Z"},
+		"tok-other":{"project_id_hash":"h3","upstream":"` + upstream + `","granted_at":"2026-08-01T00:00:00Z"}
+	}}`
+}
+
+// TestConsentWithdrawnMidExchangeStopsTheCapture pins where the
+// recording decision has to hold. It is made when an exchange begins
+// and acted on when the exchange ends, and for a streamed message those
+// are minutes apart. `trajector disable` in between revokes the token
+// and deletes the project's spooled records — but a capture that lands
+// after that deletion is never looked at again, because the uploader
+// does not consult consent, so it uploads data the user was told had
+// been deleted. Until 2026-08-21 the verdict was only ever read at the
+// start.
+//
+// The second exchange is the barrier: captures are written by one
+// goroutine in the order they were queued, so once tok-other's record
+// is in the spool, the in-flight capture has already had its turn.
+func TestConsentWithdrawnMidExchangeStopsTheCapture(t *testing.T) {
+	e := proxytest.New(t)
+	e.WriteTable(revokedTable(e.Upstream.URL()))
+	e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_inflight"}`), Delay: 250 * time.Millisecond})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req, err := http.NewRequest(http.MethodPost, e.BaseURL()+"/t/tok-live/v1/messages", strings.NewReader(`{"m":1}`))
+		if err != nil {
+			return
+		}
+		resp, err := e.Do(req)
+		if err != nil {
+			return
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	e.WriteTable(withdrawnTable(e.Upstream.URL()))
+	<-done
+
+	e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_after"}`)})
+	if resp := e.Post("/t/tok-other/v1/messages", `{"m":1}`, nil); resp.StatusCode != 200 {
+		t.Fatalf("barrier request status = %d", resp.StatusCode)
+	}
+	stored := e.WaitRawcalls(1)
+	for _, rc := range stored {
+		if rc.RequestID != "msg_after" {
+			t.Errorf("spool holds %q; consent for that project was withdrawn while the exchange was still open, and disable has already deleted what it could see",
+				rc.RequestID)
+		}
+	}
+	if len(stored) != 1 {
+		t.Errorf("spool holds %d rawcalls, want only the still-consenting project's", len(stored))
+	}
+}
+
 func TestRecordingDoesNotChangeWhatIsSentUpstream(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream

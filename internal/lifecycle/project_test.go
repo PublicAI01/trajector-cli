@@ -437,31 +437,94 @@ func TestDisableRerunFinishesAnInterruptedWithdrawal(t *testing.T) {
 // made re-running enable re-grant the official endpoint under it, and
 // made disable delete the last copy of the value — either way the next
 // session went to the official endpoint carrying relay credentials.
-func TestEnableAndDisableKeepAUsersOwnBaseURL(t *testing.T) {
+// relayInSettingsLocal is what every displaced-base-URL test starts
+// from: the user keeps their own relay in the project-local settings
+// file, which is also the file — and the key — enable injects into, so
+// enabling overwrites the last copy of it.
+const relayInSettingsLocal = "https://relay.example.com"
+
+func enabledOverAUsersOwnRelay(t *testing.T) *env {
+	t.Helper()
 	e := newEnv(t)
 	e.startProxy()
-	const relay = "https://relay.example.com"
 	if err := os.MkdirAll(filepath.Dir(e.settingsPath()), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(e.settingsPath(), []byte(`{"env":{"ANTHROPIC_BASE_URL":"`+relay+`"}}`), 0o600); err != nil {
+	if err := os.WriteFile(e.settingsPath(), []byte(`{"env":{"ANTHROPIC_BASE_URL":"`+relayInSettingsLocal+`"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
+	}
+	if got := e.status().Upstream; got != relayInSettingsLocal {
+		t.Fatalf("test setup: grant routes at %q, want the user's own %q", got, relayInSettingsLocal)
+	}
+	return e
+}
+
+// ownBaseURL reports the base URL the project's configuration chain
+// names once trajector's own injection is out of the way.
+func ownBaseURL(t *testing.T, e *env) string {
+	t.Helper()
+	value, _, _ := claudesettings.ExternalBaseURL(e.canonicalRoot(), e.deps.Home, e.deps.Getenv)
+	return value
+}
+
+// TestUninstallPutsBackAUsersOwnBaseURL is the uninstall half of what
+// TestEnableAndDisableKeepAUsersOwnBaseURL pins for disable. Removal
+// deletes exactly what trajector wrote, which for a relay kept in the
+// project-local settings file is the last copy of the user's own value.
+// Until 2026-08-21 only disable put it back, so `trajector uninstall`
+// left the project with no base URL at all and the user's next session
+// carried their relay's credentials to the official endpoint.
+func TestUninstallPutsBackAUsersOwnBaseURL(t *testing.T) {
+	e := enabledOverAUsersOwnRelay(t)
+
+	if err := e.machine().Uninstall(false, e.io()); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if got := ownBaseURL(t, e); got != relayInSettingsLocal {
+		t.Errorf("after uninstall the project's own base URL is %q, want %q back", got, relayInSettingsLocal)
+	}
+}
+
+// TestDoctorPutsBackAUsersOwnBaseURLWithAStaleInjection is the same
+// guarantee for doctor's stale-injection repair, which reaches an
+// injection whose grant is already revoked — so the revoked entry is by
+// then the only surviving record of the displaced value.
+func TestDoctorPutsBackAUsersOwnBaseURLWithAStaleInjection(t *testing.T) {
+	e := enabledOverAUsersOwnRelay(t)
+	// Revoke without removing the injection, the half-withdrawn state
+	// doctor exists to reconcile.
+	if err := routing.OpenStore(e.layout().RoutingTable()).Revoke(e.canonicalRoot(), "2026-08-21T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 
-	for i := range 2 {
-		if err := e.machine().Enable(e.project, e.io()); err != nil {
-			t.Fatalf("enable %d: %v\nstdout: %s", i, err, e.stdout)
-		}
-		if got := e.status().Upstream; got != relay {
-			t.Fatalf("after enable %d the grant routes at %q, want the user's own %q", i, got, relay)
-		}
+	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if st := e.status(); st.Injected() {
+		t.Fatalf("doctor left the stale injection %q in place", st.InjectedBaseURL)
+	}
+	if got := ownBaseURL(t, e); got != relayInSettingsLocal {
+		t.Errorf("after doctor removed the stale injection the project's own base URL is %q, want %q back", got, relayInSettingsLocal)
+	}
+}
+
+func TestEnableAndDisableKeepAUsersOwnBaseURL(t *testing.T) {
+	e := enabledOverAUsersOwnRelay(t)
+	// Re-running enable repairs rather than re-keys, the relay included.
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatalf("re-enable: %v\nstdout: %s", err, e.stdout)
+	}
+	if got := e.status().Upstream; got != relayInSettingsLocal {
+		t.Fatalf("after re-enable the grant routes at %q, want the user's own %q", got, relayInSettingsLocal)
 	}
 
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	value, source, res := claudesettings.ExternalBaseURL(e.canonicalRoot(), e.deps.Home, e.deps.Getenv)
-	if value != relay {
-		t.Errorf("after disable the user's own base URL is %q (%s, %v), want %q back", value, source, res, relay)
+	if got := ownBaseURL(t, e); got != relayInSettingsLocal {
+		t.Errorf("after disable the user's own base URL is %q, want %q back", got, relayInSettingsLocal)
 	}
 }

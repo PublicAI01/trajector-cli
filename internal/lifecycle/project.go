@@ -159,11 +159,15 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 	removed := 0
 	for _, root := range projects {
 		path := claudesettings.ProjectLocalPath(root)
-		if err := claudesettings.RemoveProject(path); err != nil {
+		restored, err := m.removeInjection(root)
+		if err != nil {
 			fmt.Fprintf(io.Err, "trajector: warning: could not clean %s: %v\n", path, err)
 			continue
 		}
 		removed++
+		if restored != "" {
+			fmt.Fprintf(io.Out, "Restored your own base URL in %s: %s\n", path, restored)
+		}
 	}
 	fmt.Fprintf(io.Out, "Removed injection from %d project(s).\n", removed)
 	for _, root := range projects {
@@ -238,7 +242,7 @@ func (m *Machine) refreshUpstreamDrift(projectDir string, io IO) {
 	if err != nil || !st.Enabled {
 		return
 	}
-	want, moved, refused, _ := m.reconcileUpstream(st.Root, st.Upstream)
+	want, moved, refused, _ := m.reconcileUpstream(st)
 	switch {
 	case moved:
 		fmt.Fprintf(io.Err, "trajector: this project's upstream moved to %s (its base-URL configuration changed; `trajector status` has the details)\n", want.upstream)

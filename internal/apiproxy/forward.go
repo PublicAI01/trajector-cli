@@ -79,10 +79,12 @@ func (s *Server) decide(r *http.Request) *decision {
 	d := &decision{restPath: r.URL.Path}
 	upstream := s.cfg.DefaultUpstream
 	var route routing.Route
+	recordToken := ""
 	record := false
 
 	if token, rest, ok := splitToken(r.URL.Path); ok {
 		d.restPath = rest
+		recordToken = token
 		found, verdict := s.cfg.Table.Lookup(token)
 		if verdict.Resolves() {
 			// The idle clock asks whether this proxy is still carrying
@@ -120,7 +122,7 @@ func (s *Server) decide(r *http.Request) *decision {
 	}
 	d.upstream = u
 	if record {
-		d.rec = s.newRecorder(route, d.restPath, envelope.FormatHints{
+		d.rec = s.newRecorder(recordToken, route, d.restPath, envelope.FormatHints{
 			AnthropicVersion: r.Header.Get("anthropic-version"),
 			AnthropicBeta:    splitBetaHeader(r.Header.Values("anthropic-beta")),
 		})

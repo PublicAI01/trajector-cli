@@ -219,6 +219,41 @@ func TestEnableRefusesToGuessAMaskedUpstream(t *testing.T) {
 	}
 }
 
+// TestOurOwnInjectionIsNotReadAsTheRelayBeingGone is the settings-file
+// spelling of what TestASessionsOwnInjectionIsNotReadAsTheRelayBeingGone
+// pins for the shell. The user keeps their relay in the project-local
+// settings file — the very file, and the very key, injection writes
+// into — so after enable the chain names nothing of the user's own from
+// anywhere, session or not. Reading that silence as "the relay is gone"
+// moved the grant to the official endpoint, and every later request
+// carried the relay's credentials to Anthropic while its records were
+// relabelled official origin. masked covers only the shell spelling;
+// until 2026-08-21 nothing covered this one outside enable.
+func TestOurOwnInjectionIsNotReadAsTheRelayBeingGone(t *testing.T) {
+	e := enabledOverAUsersOwnRelay(t)
+
+	// A plain terminal: no session applied our env block, so the shell
+	// carries nothing at all and the chain reads as empty.
+	e.stderr.Reset()
+	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.status().Upstream; got != relayInSettingsLocal {
+		t.Errorf("upstream after the session hook = %q, want the relay kept", got)
+	}
+
+	e.stdout.Reset()
+	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.status().Upstream; got != relayInSettingsLocal {
+		t.Errorf("upstream after doctor = %q, want the relay kept", got)
+	}
+	if st := e.status(); st.UpstreamMoved.Happened() {
+		t.Errorf("a move from %q was recorded, want none: nothing of the user's own moved", st.UpstreamMoved.From)
+	}
+}
+
 func TestDoctorReportsARefusedUpstreamDrift(t *testing.T) {
 	e := enabledOnOfficial(t)
 	before := e.status().Upstream

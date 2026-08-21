@@ -55,12 +55,13 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 	}
 
 	settingsPath := st.SettingsPath()
-	if err := claudesettings.RemoveProject(settingsPath); err != nil {
-		return w, fmt.Errorf("removing injection from %s: %w", settingsPath, err)
+	restored, err := m.removeInjection(st.Root)
+	if err != nil {
+		return w, err
 	}
 	fmt.Fprintf(io.Out, "Removed injection from %s\n", settingsPath)
-	if err := m.restoreDisplacedBaseURL(st, settingsPath, io); err != nil {
-		return w, err
+	if restored != "" {
+		fmt.Fprintf(io.Out, "Restored your own base URL in %s: %s\n", settingsPath, restored)
 	}
 
 	now := m.now()
@@ -81,32 +82,70 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 	return w, nil
 }
 
-// restoreDisplacedBaseURL puts back a base URL of the user's own that
-// enable overwrote. Injection writes ANTHROPIC_BASE_URL into the
-// project-local settings file, which is also the first link of the
-// configuration chain, so a relay kept there was replaced on the way in
-// — and removal, which deletes exactly what trajector wrote, took the
-// last copy of it. The user's next session then went to the official
-// endpoint carrying relay credentials, silently. 2026-08-14.
+// removeInjection takes trajector's injection out of a project's
+// settings and puts back the base URL of the user's own that enable
+// overwrote, reporting what it restored (empty when nothing was
+// displaced). Every surface that removes an injection goes through
+// here: disable, uninstall, and doctor's stale-injection repair.
+//
+// Injection writes ANTHROPIC_BASE_URL into the project-local settings
+// file, which is also the first link of the configuration chain, so a
+// relay kept there was replaced on the way in — and removal, which
+// deletes exactly what trajector wrote, took the last copy of it. The
+// user's next session then went to the official endpoint carrying relay
+// credentials, silently. 2026-08-14.
+//
+// That restore lived in disable alone until 2026-08-21, so uninstall and
+// doctor destroyed the same value the same way; a guarantee only one of
+// three removers honours is not a guarantee. Remove and restore are one
+// operation here for that reason.
 //
 // The grant holds what the chain said while the user was watching, so it
 // is the copy to restore, and only when the chain now names nothing at
-// all: a value still visible elsewhere was never displaced. A disable
+// all: a value still visible elsewhere was never displaced. A removal
 // run inside a Claude Code session reads as masked rather than as
-// nothing and is left alone, for the same reason the session hook leaves
-// a masked upstream alone.
-func (m *Machine) restoreDisplacedBaseURL(st ProjectStatus, settingsPath string, io IO) error {
-	if !st.Enabled || st.Upstream == "" || st.Upstream == capture.Anthropic.OfficialUpstream {
-		return nil
+// nothing and is left alone, as the session hook leaves a masked
+// upstream alone.
+func (m *Machine) removeInjection(root string) (restored string, err error) {
+	settingsPath := claudesettings.ProjectLocalPath(root)
+	if err := claudesettings.RemoveProject(settingsPath); err != nil {
+		return "", fmt.Errorf("removing injection from %s: %w", settingsPath, err)
 	}
-	if _, _, res := claudesettings.ExternalBaseURL(st.Root, m.deps.Home, m.deps.Getenv); res != claudesettings.BaseURLNone {
-		return nil
+	upstream := m.recordedUpstream(root)
+	if upstream == "" || upstream == capture.Anthropic.OfficialUpstream {
+		return "", nil
 	}
-	if err := claudesettings.SetBaseURL(settingsPath, st.Upstream); err != nil {
-		return fmt.Errorf("restoring your own base URL in %s: %w", settingsPath, err)
+	if _, _, res := claudesettings.ExternalBaseURL(root, m.deps.Home, m.deps.Getenv); res != claudesettings.BaseURLNone {
+		return "", nil
 	}
-	fmt.Fprintf(io.Out, "Restored your own base URL in %s: %s\n", settingsPath, st.Upstream)
-	return nil
+	if err := claudesettings.SetBaseURL(settingsPath, upstream); err != nil {
+		return "", fmt.Errorf("restoring your own base URL in %s: %w", settingsPath, err)
+	}
+	return upstream, nil
+}
+
+// recordedUpstream reports what this project's grant says its traffic
+// goes to. Revoked entries count, and only as a fallback: uninstall and
+// doctor remove injections whose grant was revoked long ago, and that
+// entry is by then the only surviving record of the displaced value. A
+// table that cannot be read yields nothing, so no restore is attempted
+// on a guess.
+func (m *Machine) recordedUpstream(root string) string {
+	grants, err := m.routes.All()
+	if err != nil {
+		return ""
+	}
+	revoked := ""
+	for _, g := range grants {
+		if g.RootPath != root {
+			continue
+		}
+		if !g.Revoked {
+			return g.Upstream
+		}
+		revoked = g.Upstream
+	}
+	return revoked
 }
 
 // purgeProjectRecords deletes one project's unuploaded records from both

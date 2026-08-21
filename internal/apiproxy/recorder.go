@@ -37,7 +37,11 @@ const finalizeTimeout = 30 * time.Second
 // A nil *recorder is the not-recording case and every method accepts it,
 // so the forwarding path never branches on whether it is being watched.
 type recorder struct {
-	s        *Server
+	s *Server
+	// token is the consent token this exchange arrived under, kept so
+	// the verdict can be asked again when the capture is written — see
+	// write for why answering it once, at the start, was not enough.
+	token    string
 	route    routing.Route
 	endpoint string
 	hints    envelope.FormatHints
@@ -57,8 +61,8 @@ type recorder struct {
 	finished     bool
 }
 
-func (s *Server) newRecorder(route routing.Route, endpoint string, hints envelope.FormatHints) *recorder {
-	return &recorder{s: s, route: route, endpoint: endpoint, hints: hints, limit: s.cfg.MaxRecordBytes}
+func (s *Server) newRecorder(token string, route routing.Route, endpoint string, hints envelope.FormatHints) *recorder {
+	return &recorder{s: s, token: token, route: route, endpoint: endpoint, hints: hints, limit: s.cfg.MaxRecordBytes}
 }
 
 // observeRequest starts copying the request body as the transport reads
@@ -209,6 +213,20 @@ func (r *recorder) write(ctx context.Context) {
 	r.guard(func() {
 		if err := ctx.Err(); err != nil {
 			r.abandon(abandonDeadline, "recorder: capture waited past its deadline; not recorded")
+			return
+		}
+		// Consent is read again here, not only where the exchange was
+		// decided. The two moments are far apart: a streamed message is
+		// decided when its request begins and written when its response
+		// body closes, minutes later. A disable in between revokes the
+		// token and deletes the project's spooled records — and a capture
+		// landing after that deletion is never looked at again, because
+		// the uploader does not consult consent, so it would ship data
+		// the user was told had been deleted. Withdrawal has to hold at
+		// the moment of writing. Dropping is silent because it is the
+		// expected outcome, not a failure. 2026-08-21.
+		if _, verdict := r.s.cfg.Table.Lookup(r.token); !verdict.Records() {
+			r.drop()
 			return
 		}
 		obs, ok := r.observation()

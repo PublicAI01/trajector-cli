@@ -54,8 +54,9 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 	upstream := want.upstream
 	// A standing grant of this project's own is the one record of where
 	// its traffic went that survives our injection standing in the
-	// configuration chain.
-	keep := !want.external && st.Injected() && st.Enabled && st.Upstream != ""
+	// configuration chain. The unattended reconcile asks the same
+	// question through the same predicate, so the two cannot drift.
+	keep := want.keepsRecordedUpstream(st)
 	if keep && st.Upstream != upstream {
 		// The chain names no base URL of the user's own — but our own
 		// injection stands in the first file it reads, and this project
