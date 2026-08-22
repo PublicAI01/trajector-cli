@@ -279,13 +279,39 @@ func maskUpstreamCredentials(raw string) string {
 	if u.User != nil {
 		u.User = url.User("redacted")
 	}
-	if q := u.Query(); len(q) > 0 {
-		for k := range q {
-			q.Set(k, "redacted")
-		}
-		u.RawQuery = q.Encode()
+	if u.RawQuery != "" {
+		u.RawQuery = maskQuery(u.RawQuery)
 	}
 	return u.String()
+}
+
+// maskedQuery stands in for a query string that could not be masked pair
+// by pair. It is not a legal key=value pair on purpose: a reader must not
+// mistake it for something the upstream actually carried.
+const maskedQuery = "redacted"
+
+// maskQuery replaces every query value with a placeholder.
+//
+// The decision keys off the raw query, never off how many pairs
+// url.Values managed to parse. Query discards ParseQuery's error and
+// silently skips any pair it cannot unescape — a bare '%' in a value, a
+// ';' anywhere in one — so a query whose pairs all fail parsed as "no
+// query at all", the masking loop never ran, and RawQuery rode into the
+// bundle verbatim. The bundle is the one artifact that leaves this
+// machine, and the command hands it over saying it holds no credentials,
+// so a relay key in `?token=Ab3;Xy9` left with it. That is the same
+// fail-open-on-a-parsing-quirk redaction hit in hasDatabaseURLSecret on
+// 2026-08-14: a query that cannot be parsed cannot be masked
+// selectively, so the whole of it goes. 2026-08-22.
+func maskQuery(rawQuery string) string {
+	q, err := url.ParseQuery(rawQuery)
+	if err != nil || len(q) == 0 {
+		return maskedQuery
+	}
+	for k := range q {
+		q.Set(k, maskedQuery)
+	}
+	return q.Encode()
 }
 
 // maskToken keeps just enough of a token to correlate entries across

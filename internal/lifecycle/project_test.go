@@ -488,6 +488,61 @@ func TestUninstallPutsBackAUsersOwnBaseURL(t *testing.T) {
 	}
 }
 
+// TestUninstallDoesNotWriteABaseURLIntoAProjectItNeverDisplacedOneIn is
+// the other half of the restore rule. removeInjection took "the grant
+// names a relay and the configuration chain is quiet now" as proof that
+// we had displaced that relay out of the project-local settings file. It
+// is not: a relay the user exports from their shell was never displaced
+// in any file, and a shell that does not export it in this terminal is
+// quiet for a reason of its own. Once uninstall started coming through
+// removeInjection on 2026-08-21 it walked every root the routing table
+// ever held and wrote that relay into projects it had nothing injected
+// in — creating .claude/settings.local.json, and through MkdirAll a whole
+// project tree the user had deleted, in the one command whose job is to
+// take our files back out.
+func TestUninstallDoesNotWriteABaseURLIntoAProjectItNeverDisplacedOneIn(t *testing.T) {
+	const shellRelay = "https://relay-from-the-shell.example.com"
+	e := newEnv(t)
+	e.startProxy()
+	// The user's relay lives in their shell, so enable records it without
+	// overwriting anything of theirs in a file.
+	e.environ["ANTHROPIC_BASE_URL"] = shellRelay
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
+	}
+	if got := e.status().Upstream; got != shellRelay {
+		t.Fatalf("test setup: grant routes at %q, want the shell's %q", got, shellRelay)
+	}
+	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+		t.Fatalf("disable: %v\nstdout: %s", err, e.stdout)
+	}
+	// A grant whose project directory the user has since deleted:
+	// uninstall walks it too, and nothing may recreate the tree.
+	gone := filepath.Join(t.TempDir(), "deleted-project")
+	if err := routing.OpenStore(e.layout().RoutingTable()).Grant(routing.Grant{
+		Token: "tok-gone", ProjectIDHash: "hash-gone", RootPath: gone,
+		Upstream: shellRelay, GrantedAt: "2026-08-01T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Uninstall runs from a terminal that is not the one exporting the relay.
+	delete(e.environ, "ANTHROPIC_BASE_URL")
+
+	if err := e.machine().Uninstall(false, e.io()); err != nil {
+		t.Fatalf("uninstall: %v\nstdout: %s", err, e.stdout)
+	}
+
+	if got := ownBaseURL(t, e); got != "" {
+		t.Errorf("uninstall left the project naming %q as its own base URL; it never displaced one here", got)
+	}
+	if data, err := os.ReadFile(e.settingsPath()); err == nil && strings.Contains(string(data), shellRelay) {
+		t.Errorf("uninstall wrote the shell's relay into %s:\n%s", e.settingsPath(), data)
+	}
+	if _, err := os.Stat(gone); !os.IsNotExist(err) {
+		t.Errorf("uninstall recreated the deleted project at %s (stat: %v)", gone, err)
+	}
+}
+
 // TestDoctorPutsBackAUsersOwnBaseURLWithAStaleInjection is the same
 // guarantee for doctor's stale-injection repair, which reaches an
 // injection whose grant is already revoked — so the revoked entry is by

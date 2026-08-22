@@ -1,6 +1,9 @@
 package lifecycle
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The formatters are pure and feed user-facing surfaces; their edges
 // (unit rollover, short tokens) are easier to pin here than through
@@ -27,5 +30,42 @@ func TestMaskTokenNeverRevealsShortTokens(t *testing.T) {
 		if got := maskToken(tt.token); got != tt.want {
 			t.Errorf("maskToken(%q) = %q, want %q", tt.token, got, tt.want)
 		}
+	}
+}
+
+// TestMaskUpstreamCredentialsMasksAQueryThatWillNotParse pins the
+// fail-open the masking had until 2026-08-22. It decided whether to mask
+// by counting the pairs url.Values managed to parse, and Query drops any
+// pair it cannot unescape without saying so — so a query whose pairs all
+// fail parsed as no query at all, the masking loop never ran, and the
+// relay credential went into the shared bundle verbatim.
+func TestMaskUpstreamCredentialsMasksAQueryThatWillNotParse(t *testing.T) {
+	// Each secret must not survive masking, whatever the query does to
+	// url.ParseQuery: a bare '%' is an invalid escape, a ';' is rejected
+	// outright, and a partly-parseable query must not leak the half that
+	// failed either.
+	secrets := []string{
+		"https://relay.example.com/v1?token=Ab3;Xy9",
+		"https://relay.example.com/v1?api_key=sk%ZZlive",
+		"https://relay.example.com/v1?api_key=sk%ZZlive&region=eu",
+		"https://relay.example.com/v1?api_key=sk-live-1234",
+		"https://user:hunter2@relay.example.com/v1",
+	}
+	for _, raw := range secrets {
+		got := maskUpstreamCredentials(raw)
+		for _, secret := range []string{"Ab3;Xy9", "sk%ZZlive", "sk-live-1234", "hunter2"} {
+			if strings.Contains(got, secret) {
+				t.Errorf("maskUpstreamCredentials(%q) = %q, want %q gone", raw, got, secret)
+			}
+		}
+		// The destination itself is the point of the diagnosis and stays.
+		if !strings.Contains(got, "relay.example.com/v1") {
+			t.Errorf("maskUpstreamCredentials(%q) = %q, want the host and path kept", raw, got)
+		}
+	}
+	// A URL with nothing to strip is left exactly as it is.
+	const plain = "https://relay.example.com/v1"
+	if got := maskUpstreamCredentials(plain); got != plain {
+		t.Errorf("maskUpstreamCredentials(%q) = %q, want it unchanged", plain, got)
 	}
 }

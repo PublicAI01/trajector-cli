@@ -106,10 +106,28 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 // run inside a Claude Code session reads as masked rather than as
 // nothing and is left alone, as the session hook leaves a masked
 // upstream alone.
+//
+// A restore additionally needs evidence that this file is where the
+// displacement happened, and the only evidence there is is that an
+// injection of ours stood in it a moment ago. Inferring it from "the
+// grant names a relay and the chain is quiet now" instead was wrong in
+// both directions once uninstall and doctor started coming through here
+// on 2026-08-21: uninstall walks every root the routing table ever held,
+// including long-disabled ones and ones whose directory is gone, so a
+// quiet chain — a relay the user exports from a shell this terminal does
+// not have, say — made it write a settings file into a project that had
+// none, creating .claude/ (and, through MkdirAll, a deleted project tree)
+// in a command whose whole job is to take our files out. 2026-08-22.
 func (m *Machine) removeInjection(root string) (restored string, err error) {
 	settingsPath := claudesettings.ProjectLocalPath(root)
+	_, wasInjected := claudesettings.InjectedBaseURL(settingsPath)
 	if err := claudesettings.RemoveProject(settingsPath); err != nil {
 		return "", fmt.Errorf("removing injection from %s: %w", settingsPath, err)
+	}
+	if !wasInjected {
+		// Nothing of ours stood in this file, so nothing of the user's was
+		// displaced out of it and there is nothing to put back.
+		return "", nil
 	}
 	upstream := m.recordedUpstream(root)
 	if upstream == "" || upstream == capture.Anthropic.OfficialUpstream {
