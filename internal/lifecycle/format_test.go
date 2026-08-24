@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -67,5 +68,39 @@ func TestMaskUpstreamCredentialsMasksAQueryThatWillNotParse(t *testing.T) {
 	const plain = "https://relay.example.com/v1"
 	if got := maskUpstreamCredentials(plain); got != plain {
 		t.Errorf("maskUpstreamCredentials(%q) = %q, want it unchanged", plain, got)
+	}
+}
+
+// TestMaskUpstreamCredentialsMasksAnUpstreamThatWillNotParse pins the
+// fail-open one layer out from the query masking fixed on 2026-08-22:
+// url.Parse refusing the whole value returned it unchanged, credentials
+// and all. Go's parser is stricter than the one Claude Code uses, so
+// "not a URL" here is routinely a working relay URL whose password
+// holds a character url.Parse will not take — exactly the value that
+// carries a secret. The bundle is the one artifact that leaves this
+// machine, and the command hands it over saying it holds no credentials.
+func TestMaskUpstreamCredentialsMasksAnUpstreamThatWillNotParse(t *testing.T) {
+	const secret = "hun|ter2"
+	unparseable := []string{
+		"https://relay-user:" + secret + "@relay.example.com/v1",
+		"https://relay-user:hun%ter2@relay.example.com/v1",
+	}
+	for _, raw := range unparseable {
+		// The premise, asserted rather than assumed: if a future Go took
+		// these, the case below would pass for the wrong reason.
+		if _, err := url.Parse(raw); err == nil {
+			t.Fatalf("test premise: url.Parse(%q) succeeded, pick a value it refuses", raw)
+		}
+		got := maskUpstreamCredentials(raw)
+		for _, leaked := range []string{secret, "hun%ter2", "relay-user"} {
+			if strings.Contains(got, leaked) {
+				t.Errorf("maskUpstreamCredentials(%q) = %q, want %q gone", raw, got, leaked)
+			}
+		}
+	}
+	// An empty upstream is absence, not something to redact: a diagnosis
+	// must still be able to show that nothing was recorded.
+	if got := maskUpstreamCredentials(""); got != "" {
+		t.Errorf("maskUpstreamCredentials(%q) = %q, want it empty", "", got)
 	}
 }

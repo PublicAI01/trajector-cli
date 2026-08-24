@@ -10,6 +10,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
@@ -87,6 +88,23 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		fmt.Fprintln(io.Out, "Your traffic will keep flowing through it unchanged. Records from this")
 		fmt.Fprintln(io.Out, "project are marked as third-party origin; reward terms are the same")
 		fmt.Fprintln(io.Out, "regardless of origin.")
+	}
+
+	// Nothing may enter the routing table that the data path cannot
+	// follow. The unattended reconcile has asked this of every upstream
+	// it writes since it existed; enable never did, so a base URL that
+	// Claude Code accepts and Go's url.Parse refuses (a password holding
+	// '|', a bare '%', a missing scheme) was granted here and then met
+	// the proxy's unusable-route fallback. Checked after the branches
+	// above so a grant carried forward by keep is judged too: a table
+	// written by an older build holds exactly these values, and running
+	// enable is how a user finds out. See ErrUpstreamUnroutable.
+	// 2026-08-24.
+	if !platform.RoutableURL(upstream) {
+		if want.source != "" {
+			return fmt.Errorf("%w (the value comes from your %s)", ErrUpstreamUnroutable, want.source)
+		}
+		return ErrUpstreamUnroutable
 	}
 
 	// The routing table and the consent file are shared with concurrent

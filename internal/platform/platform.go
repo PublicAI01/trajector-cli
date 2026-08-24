@@ -90,11 +90,30 @@ func validateBaseURL(baseURL string) error {
 	return nil
 }
 
+// RoutableURL reports whether a URL is a destination anything could be
+// forwarded to at all: it parses, and its scheme is one the forwarding
+// transport speaks. It is the weaker half of CredentialSafeURL —
+// plaintext http passes wherever the host is — because enable
+// deliberately lets a user keep a plaintext relay after seeing the
+// third-party notice, while a value nothing can parse is not a
+// destination in the first place.
+//
+// It exists because Go's url.Parse is stricter than the WHATWG parser
+// Claude Code uses: a password holding '|' or a bare '%' is a base URL
+// that works for the user and that this proxy cannot resolve. Every
+// surface that writes an upstream into the routing table asks this
+// before writing, so the data path can never be handed a route it
+// cannot follow. 2026-08-24.
+func RoutableURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
+}
+
 // CredentialSafeURL reports whether a URL may receive credentials or
 // captured data: https anywhere, plaintext http only when the host can
 // only name this machine. Every surface that vets a destination —
 // this client's endpoint, the drift-checked forward upstream — answers
-// from this one spelling.
+// from this one spelling. It implies RoutableURL.
 func CredentialSafeURL(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {

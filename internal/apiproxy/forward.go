@@ -25,6 +25,14 @@ type decision struct {
 	upstream *url.URL
 	restPath string
 	rec      *recorder
+	// unroutable marks an exchange whose consent token resolved to a
+	// project whose recorded upstream cannot be parsed. Nothing is
+	// forwarded for it; see refuseUnroutable.
+	unroutable bool
+	// projectIDHash names that project for the log line. The upstream
+	// itself is never carried here: it can embed a password, and the
+	// proxy log is a file.
+	projectIDHash string
 }
 
 // newTransport is the forwarding path's own connection pool. Left nil,
@@ -57,6 +65,11 @@ func (s *Server) newForwarder() http.Handler {
 		ErrorLog: nil,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d := s.decide(r)
+		if d.unroutable {
+			s.refuseUnroutable(w, d)
+			return
+		}
 		// Full duplex, or the server guards the request body against a
 		// handler that responds before reading it: writing the upstream's
 		// header while the body looks unconsumed makes the server drain
@@ -68,11 +81,32 @@ func (s *Server) newForwarder() http.Handler {
 		// stream at once. Only HTTP/2 refuses, where full duplex is
 		// already the rule, so the error is discarded.
 		http.NewResponseController(w).EnableFullDuplex()
-		d := s.decide(r)
 		d.rec.observeRequest(r)
 		ctx := context.WithValue(r.Context(), decisionKey{}, d)
 		proxy.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// refuseUnroutable answers an exchange whose project named an upstream
+// this proxy cannot parse. Sending it to the default upstream instead —
+// what this did until 2026-08-24 — hands the project's own credential
+// headers to the official endpoint, which is precisely the guess
+// enable, disable, and the unattended reconcile each refuse to make.
+// A token that resolves to nothing and a grant that resolves but names
+// nowhere are different situations, and only the first may be answered
+// with the default upstream: without a grant the official endpoint is
+// where the traffic was going anyway, whereas a grant exists to say it
+// was going somewhere else.
+//
+// Neither the URL nor any header is quoted: an upstream can embed a
+// password and this line reaches the proxy log. The sentence names the
+// two commands that end the state, because a client seeing 502 has no
+// other way to learn what happened.
+func (s *Server) refuseUnroutable(w http.ResponseWriter, d *decision) {
+	s.cfg.Logf("refusing to forward for project %s: its recorded upstream is not a usable http(s) URL; nothing was sent upstream", d.projectIDHash)
+	http.Error(w, "trajector: this project's recorded base URL is not a usable http(s) URL, so nothing was forwarded. "+
+		"Run `trajector enable` in the project to set it again, or `trajector disable` to take trajector out of the way.",
+		http.StatusBadGateway)
 }
 
 func (s *Server) decide(r *http.Request) *decision {
@@ -81,6 +115,7 @@ func (s *Server) decide(r *http.Request) *decision {
 	var route routing.Route
 	recordToken := ""
 	record := false
+	resolved := false
 
 	if token, rest, ok := splitToken(r.URL.Path); ok {
 		d.restPath = rest
@@ -104,6 +139,7 @@ func (s *Server) decide(r *http.Request) *decision {
 			s.touchAuthorized()
 			route = found
 			upstream = found.Upstream
+			resolved = true
 		}
 		if verdict.Records() {
 			record = s.cfg.Dialect.ShouldRecord(r.Method, rest)
@@ -112,13 +148,22 @@ func (s *Server) decide(r *http.Request) *decision {
 
 	u, err := url.Parse(upstream)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		// One unusable route upstream is treated exactly like a table
-		// that cannot be read at all: forward at the default upstream
-		// and record nothing. A bad table entry must not cost the user
-		// their traffic.
 		s.stats.countUnusableUpstream()
-		u, _ = url.Parse(s.cfg.DefaultUpstream)
 		record = false
+		if resolved {
+			// This token names a project, and that project's grant is the
+			// record of where its traffic goes. Forwarding somewhere else
+			// because the grant cannot be read is a guess with the user's
+			// credentials attached — see refuseUnroutable.
+			d.unroutable = true
+			d.projectIDHash = route.ProjectIDHash
+			return d
+		}
+		// The token names no project, so there is no recorded destination
+		// to contradict: the default upstream is where this traffic was
+		// going without trajector in the path, and a table that cannot be
+		// read must not cost the user their traffic.
+		u, _ = url.Parse(s.cfg.DefaultUpstream)
 	}
 	d.upstream = u
 	if record {

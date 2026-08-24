@@ -33,6 +33,20 @@ var ErrUpstreamMasked = errors.New(
 		"so any setting of your own is hidden behind it. Run `trajector enable` from a terminal outside a Claude Code session, " +
 		"where your real configuration is visible")
 
+// ErrUpstreamUnroutable reports an enable whose resolved upstream is
+// not a destination the capture proxy could ever forward to: it does
+// not parse, or it names no http(s) scheme. Granting it anyway was the
+// fail-open this replaces — the data path met a route it could not
+// follow and answered by forwarding at the official endpoint, which
+// carried the project's own credential headers to a destination the
+// user never chose, recorded nothing, and said so nowhere a user
+// looks. Refusing beats guessing here exactly as it does for a masked
+// upstream. 2026-08-24.
+var ErrUpstreamUnroutable = errors.New(
+	"this project's ANTHROPIC_BASE_URL is not a URL the capture proxy can forward to: it must be a complete http(s) URL " +
+		"(scheme included), with any reserved character in an embedded user name or password percent-encoded. " +
+		"Nothing was injected; fix the setting and run `trajector enable` again")
+
 // ErrPortOccupied reports that the proxy's port is held by something
 // else, which the caller must surface loudly rather than retry.
 var ErrPortOccupied = proxylife.ErrPortOccupied

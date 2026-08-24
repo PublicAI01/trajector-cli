@@ -273,3 +273,47 @@ func TestDoctorReportsARefusedUpstreamDrift(t *testing.T) {
 		t.Errorf("upstream = %q, want %q kept by doctor as well", got, before)
 	}
 }
+
+// TestEnableRefusesABaseURLTheProxyCannotForwardTo pins the fail-open
+// enable had until 2026-08-24. It wrote whatever the configuration
+// chain named into the routing table without ever asking whether the
+// data path could parse it — the unattended reconcile had asked that of
+// every upstream it wrote since it existed, enable never did. Go's
+// url.Parse is stricter than the parser Claude Code uses, so the values
+// below are base URLs that work for the user and that this proxy cannot
+// resolve; granting one made every later request carry the relay's own
+// credential headers to the official endpoint, record nothing, and say
+// so nowhere a user looks.
+func TestEnableRefusesABaseURLTheProxyCannotForwardTo(t *testing.T) {
+	tests := []struct {
+		name     string
+		upstream string
+	}{
+		{"no scheme", "relay.example.com/v1"},
+		{"userinfo url.Parse refuses", "https://relay-user:hun|ter2@relay.example.com/v1"},
+		{"invalid percent escape in the password", "https://relay-user:hun%ter2@relay.example.com/v1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.startProxy()
+			e.environ["ANTHROPIC_BASE_URL"] = tt.upstream
+
+			err := e.machine().Enable(e.project, e.io())
+			if !errors.Is(err, lifecycle.ErrUpstreamUnroutable) {
+				t.Fatalf("Enable() error = %v, want ErrUpstreamUnroutable", err)
+			}
+			if st := e.status(); st.Enabled {
+				t.Errorf("the project was granted upstream %q, which nothing can forward to", st.Upstream)
+			}
+			if _, statErr := os.Stat(e.settingsPath()); statErr == nil {
+				t.Errorf("%s was injected despite the refusal", e.settingsPath())
+			}
+			// The refusal must not echo the password back into a terminal
+			// whose scrollback gets pasted into bug reports.
+			if strings.Contains(err.Error(), "hun") {
+				t.Errorf("Enable() error = %q, want the credential kept out of it", err)
+			}
+		})
+	}
+}

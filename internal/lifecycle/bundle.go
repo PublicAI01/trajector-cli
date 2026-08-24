@@ -266,15 +266,33 @@ func (m *Machine) summarizeRouting() ([]byte, error) {
 	return mustJSON(summary), nil
 }
 
+// maskedUpstream stands in for an upstream that could not be masked
+// piece by piece. It is deliberately not a URL: a reader must not
+// mistake it for a destination the project actually used.
+const maskedUpstream = "redacted (upstream could not be parsed)"
+
 // maskUpstreamCredentials strips the credentials a user-configured relay
 // URL may carry — userinfo and query values — before the upstream is
 // written into a bundle the user shares. The host and path stay so the
-// diagnosis still shows where traffic was routed. A value that is not a
-// URL is returned unchanged; it carried nothing to strip.
+// diagnosis still shows where traffic was routed.
+//
+// A value url.Parse refuses is replaced whole rather than returned
+// unchanged. Go's parser is stricter than the one Claude Code uses, so
+// "not a URL" here routinely means a working relay URL whose password
+// holds a '|' or a bare '%' — the very case that carries a credential.
+// Returning it verbatim was the same fail-open maskQuery had until
+// 2026-08-22, one layer out: the bundle is the one artifact that leaves
+// this machine, and the command hands it over saying it holds no
+// credentials. What cannot be masked selectively goes entirely; that
+// the value was there and could not be read is itself the diagnosis.
+// 2026-08-24.
 func maskUpstreamCredentials(raw string) string {
+	if raw == "" {
+		return ""
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return raw
+		return maskedUpstream
 	}
 	if u.User != nil {
 		u.User = url.User("redacted")

@@ -197,22 +197,35 @@ func TestPanicInsideTheGuardedRegionDoesNotBreakForwarding(t *testing.T) {
 	}
 }
 
-func TestUnusableRouteUpstreamForwardsAtTheDefaultAndRecordsNothing(t *testing.T) {
+// TestUnusableRouteUpstreamRefusesRatherThanRedirect pins where a grant
+// that names nowhere has to stop. Until 2026-08-24 the proxy answered an
+// unparseable route upstream by forwarding at the default upstream —
+// which in production is the official endpoint — so a relay user's own
+// credential headers went there instead, nothing was recorded, and the
+// only trace was a healthz counter no surface prints. A grant exists to
+// say this project's traffic goes somewhere else; when it cannot be
+// read the destination is unknown, and unknown must not be answered
+// with a guess that carries credentials.
+//
+// TestUnknownTokenForwardsToDefaultUpstreamUnrecorded holds the other
+// half: a token naming no project has no recorded destination to
+// contradict, so it still forwards at the default upstream.
+func TestUnusableRouteUpstreamRefusesRatherThanRedirect(t *testing.T) {
 	e := proxytest.New(t)
 	defaultUp := e.Upstream
 	e.WriteTable(activeTable("tok1", "not a url at all"))
 
+	// Queued so that a redirect would succeed rather than fail for want
+	// of a canned answer: this must fail on the redirect happening, not
+	// on the fake upstream running dry.
 	defaultUp.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_fallback"}`)})
 	resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		t.Fatalf("status = %d (%s), a broken table entry must not cost the user their traffic", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d (%s), want 502: a resolved token whose upstream cannot be parsed must not be forwarded anywhere", resp.StatusCode, body)
 	}
-	if string(body) != `{"id":"msg_fallback"}` {
-		t.Errorf("client body = %s", body)
-	}
-	if reqs := defaultUp.Requests(); len(reqs) != 1 || reqs[0].URL != "/v1/messages" {
-		t.Errorf("default upstream requests = %+v", reqs)
+	if reqs := defaultUp.Requests(); len(reqs) != 0 {
+		t.Errorf("default upstream received %+v, want nothing: forwarding there carries this project's credential headers to a destination it never chose", reqs)
 	}
 
 	h := e.WaitHealthz(func(h proxytest.Health) bool { return h.UnusableRouteUpstream > 0 })
