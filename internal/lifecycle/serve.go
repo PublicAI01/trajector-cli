@@ -11,6 +11,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/capture"
+	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -83,6 +84,14 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 		DeviceToken: func() (string, error) {
 			token, _, err := m.deps.Tokens.DeviceToken()
 			return token, err
+		},
+		// The consent store is the durable record of withdrawal, and it
+		// outlives both the proxy's cached routing verdict and the
+		// short-lived process that ran `disable`; see dropWithdrawn. A
+		// store that cannot be read is not a withdrawal.
+		Withdrawn: func(projectIDHash string) bool {
+			state, ok, err := m.consent.ProjectState(projectIDHash)
+			return err == nil && ok && state == consent.StateDenied
 		},
 		Version:     m.deps.Version,
 		Dir:         layout.UploadDir(),

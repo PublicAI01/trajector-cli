@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/batch"
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
@@ -84,7 +85,11 @@ type Deps struct {
 	// DeviceToken reads the device pairing token; empty with no error
 	// means the device is signed out and uploads pause.
 	DeviceToken func() (string, error)
-	Version     string
+	// Withdrawn reports whether a project's consent has since been
+	// withdrawn, by project id hash. It must answer false when it cannot
+	// tell: see dropWithdrawn. Nil means nothing is withdrawn.
+	Withdrawn func(projectIDHash string) bool
+	Version   string
 	// Dir holds the uploader's bookkeeping files.
 	Dir string
 	// RejectedDir is where the records of a service-rejected batch are
@@ -133,6 +138,9 @@ func New(deps Deps) (*Uploader, error) {
 	}
 	if deps.Run == nil {
 		deps.Run = func() batch.Run { return batch.Run{} }
+	}
+	if deps.Withdrawn == nil {
+		deps.Withdrawn = func(string) bool { return false }
 	}
 	if deps.Logf == nil {
 		deps.Logf = func(string, ...any) {}
@@ -375,6 +383,16 @@ func (u *Uploader) discardUnreadablePending(raw []byte) error {
 // refused, which move to the rejected store so one unreadable file
 // cannot stall every upload behind it.
 func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result, deadline time.Time) error {
+	rawcalls, err := u.dropWithdrawn(rawcalls)
+	if err != nil {
+		return fmt.Errorf("upload: %w", err)
+	}
+	if len(rawcalls) == 0 {
+		// Every record of this batch belonged to a project that has since
+		// withdrawn; they are deleted, so no later flush can find them and
+		// the pending record has nothing left to protect.
+		return clearPending(u.deps.Dir)
+	}
 	b, rawcalls, err := u.buildReadable(id, rawcalls, res)
 	if err != nil {
 		u.noteAttempt(err)
@@ -434,6 +452,44 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result,
 		At:      u.deps.Now().UTC(),
 	})
 	return nil
+}
+
+// dropWithdrawn takes out of a batch every rawcall whose project has
+// since withdrawn consent, and deletes those records from the spool.
+//
+// Withdrawal is enforced in two processes that cannot order themselves
+// against each other: the proxy re-reads the routing table when it
+// writes a capture — through a cache with a lifetime of its own — while
+// `disable` deletes the project's spooled records from a separate,
+// short-lived process. A streamed exchange whose response closes just
+// after a revoke is written on a stale verdict, and if disable's scan
+// has already swept the day directory that record stays. Nothing looked
+// at it again, because the uploader did not consult consent, so it
+// shipped: data captured after the user withdrew.
+//
+// The consent store is the durable record of the decision and outlives
+// both processes, so the last door out asks it. It is a gate, never an
+// oracle to guess with: a record no project can be read out of, and a
+// store that cannot be read, both count as not withdrawn — deleting
+// captured data on a failed read is the worse error. 2026-08-25.
+func (u *Uploader) dropWithdrawn(rawcalls []spool.Rawcall) ([]spool.Rawcall, error) {
+	kept := rawcalls[:0:0]
+	withdrawn := map[string]bool{}
+	for _, rc := range rawcalls {
+		if hash, ok := envelope.ProjectIDHashOf(rc.Data); ok && u.deps.Withdrawn(hash) {
+			withdrawn[rc.RequestID] = true
+			continue
+		}
+		kept = append(kept, rc)
+	}
+	if len(withdrawn) == 0 {
+		return kept, nil
+	}
+	if _, err := u.deps.Spool.DeleteWhere(func(id string) bool { return withdrawn[id] }); err != nil {
+		return nil, fmt.Errorf("deleting %d rawcall(s) of a project that withdrew consent: %w", len(withdrawn), err)
+	}
+	u.deps.Logf("upload: deleted %d rawcall(s) captured for a project that has since withdrawn consent; they were never sent", len(withdrawn))
+	return kept, nil
 }
 
 // buildReadable packs one batch from whichever of the rawcalls still

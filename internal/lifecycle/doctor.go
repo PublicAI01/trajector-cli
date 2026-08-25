@@ -224,7 +224,7 @@ func (m *Machine) doctorInjection(r *doctorReport, st ProjectStatus) error {
 		return nil
 
 	case !st.Enabled && st.Injected():
-		restored, err := m.removeInjection(st.Root)
+		restored, unrestored, err := m.removeInjection(st.Root)
 		if err != nil {
 			r.problem("a stale injection points traffic at a token that no longer records, and removing it failed: %v", err)
 			return nil
@@ -232,6 +232,9 @@ func (m *Machine) doctorInjection(r *doctorReport, st ProjectStatus) error {
 		r.fixed("removed a stale injection from %s (its token no longer records)", settingsPath)
 		if restored != "" {
 			r.detail("Put back the base URL of your own that the injection had displaced: %s", restored)
+		}
+		if unrestored != "" {
+			r.problem("%s", unrestoredBaseURLWarning(settingsPath, unrestored))
 		}
 		return nil
 	}

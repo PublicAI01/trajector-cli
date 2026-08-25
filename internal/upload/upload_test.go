@@ -30,17 +30,21 @@ type fixture struct {
 	logs strings.Builder
 	// now is the uploader's clock; tests advance it to cross gates.
 	now time.Time
+	// withdrawn stands in for the consent store: project hashes the user
+	// has since disabled.
+	withdrawn map[string]bool
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{
-		server:   fakeplatform.New(t),
-		dir:      filepath.Join(t.TempDir(), "upload"),
-		rejected: filepath.Join(t.TempDir(), "rawcalls-rejected"),
-		spoolDir: filepath.Join(t.TempDir(), "rawcalls"),
-		token:    "dev-tok-fake",
-		now:      time.Now().UTC(),
+		server:    fakeplatform.New(t),
+		dir:       filepath.Join(t.TempDir(), "upload"),
+		rejected:  filepath.Join(t.TempDir(), "rawcalls-rejected"),
+		spoolDir:  filepath.Join(t.TempDir(), "rawcalls"),
+		token:     "dev-tok-fake",
+		now:       time.Now().UTC(),
+		withdrawn: map[string]bool{},
 	}
 	sp, err := spool.Create(f.spoolDir, 0)
 	if err != nil {
@@ -51,6 +55,7 @@ func newFixture(t *testing.T) *fixture {
 		Spool:       sp,
 		Service:     platform.New(f.server.URL(), "test"),
 		DeviceToken: func() (string, error) { return f.token, nil },
+		Withdrawn:   func(hash string) bool { return f.withdrawn[hash] },
 		Version:     "1.0.0",
 		Dir:         f.dir,
 		RejectedDir: f.rejected,
@@ -89,12 +94,17 @@ func (f *fixture) tearStoredRawcall(t *testing.T, id string) []byte {
 
 func (f *fixture) storeRawcall(t *testing.T, id string, at time.Time) {
 	t.Helper()
+	f.storeRawcallFor(t, id, "hash-p1", at)
+}
+
+func (f *fixture) storeRawcallFor(t *testing.T, id, projectIDHash string, at time.Time) {
+	t.Helper()
 	env, err := envelope.Record(envelope.Observation{
 		Provider:          "anthropic",
 		Endpoint:          "/v1/messages",
 		HTTPStatus:        200,
 		ClientVersion:     "test",
-		ProjectIDHash:     "hash-p1",
+		ProjectIDHash:     projectIDHash,
 		At:                at,
 		Upstream:          "https://api.anthropic.com",
 		OfficialUpstream:  "https://api.anthropic.com",

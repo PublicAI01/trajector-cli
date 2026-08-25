@@ -173,7 +173,7 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 	removed := 0
 	for _, root := range projects {
 		path := claudesettings.ProjectLocalPath(root)
-		restored, err := m.removeInjection(root)
+		restored, unrestored, err := m.removeInjection(root)
 		if err != nil {
 			fmt.Fprintf(io.Err, "trajector: warning: could not clean %s: %v\n", path, err)
 			continue
@@ -181,6 +181,9 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 		removed++
 		if restored != "" {
 			fmt.Fprintf(io.Out, "Restored your own base URL in %s: %s\n", path, restored)
+		}
+		if unrestored != "" {
+			fmt.Fprintf(io.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(path, unrestored))
 		}
 	}
 	fmt.Fprintf(io.Out, "Removed injection from %d project(s).\n", removed)

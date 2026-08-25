@@ -55,13 +55,16 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 	}
 
 	settingsPath := st.SettingsPath()
-	restored, err := m.removeInjection(st.Root)
+	restored, unrestored, err := m.removeInjection(st.Root)
 	if err != nil {
 		return w, err
 	}
 	fmt.Fprintf(io.Out, "Removed injection from %s\n", settingsPath)
 	if restored != "" {
 		fmt.Fprintf(io.Out, "Restored your own base URL in %s: %s\n", settingsPath, restored)
+	}
+	if unrestored != "" {
+		fmt.Fprintf(io.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(settingsPath, unrestored))
 	}
 
 	now := m.now()
@@ -118,28 +121,61 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 // not have, say — made it write a settings file into a project that had
 // none, creating .claude/ (and, through MkdirAll, a deleted project tree)
 // in a command whose whole job is to take our files out. 2026-08-22.
-func (m *Machine) removeInjection(root string) (restored string, err error) {
+// The second result, unrestored, is the value removal could not put
+// back because the chain read as masked. Refusing to guess there is
+// right — see below — but until 2026-08-25 the refusal was silent, which
+// made masked reach exactly the outcome the restore exists to prevent: a
+// relay kept in the project-local settings file went with the injection
+// and was never mentioned, so the user's next session carried their
+// relay's credentials to the official endpoint. Masked is no corner
+// either — it is what any of these commands look like run from inside a
+// Claude Code session, which exported our own injected value to every
+// process it spawns. Every remover reports this value.
+func (m *Machine) removeInjection(root string) (restored, unrestored string, err error) {
 	settingsPath := claudesettings.ProjectLocalPath(root)
 	_, wasInjected := claudesettings.InjectedBaseURL(settingsPath)
 	if err := claudesettings.RemoveProject(settingsPath); err != nil {
-		return "", fmt.Errorf("removing injection from %s: %w", settingsPath, err)
+		return "", "", fmt.Errorf("removing injection from %s: %w", settingsPath, err)
 	}
 	if !wasInjected {
 		// Nothing of ours stood in this file, so nothing of the user's was
 		// displaced out of it and there is nothing to put back.
-		return "", nil
+		return "", "", nil
 	}
 	upstream := m.recordedUpstream(root)
 	if upstream == "" || upstream == capture.Anthropic.OfficialUpstream {
-		return "", nil
+		return "", "", nil
 	}
-	if _, _, res := claudesettings.ExternalBaseURL(root, m.deps.Home, m.deps.Getenv); res != claudesettings.BaseURLNone {
-		return "", nil
+	switch _, _, res := claudesettings.ExternalBaseURL(root, m.deps.Home, m.deps.Getenv); res {
+	case claudesettings.BaseURLNone:
+	case claudesettings.BaseURLMasked:
+		// Our own value stands in the shell, hiding whatever the user's
+		// exports. Writing the grant's upstream into the file would pin a
+		// value they may keep — and change — in that shell, so the restore
+		// cannot be made here. It is handed back instead: the grant is the
+		// last surviving copy, and saying so is the difference between
+		// losing a setting and knowing which one to put back.
+		return "", upstream, nil
+	default:
+		// A value still visible elsewhere was never displaced.
+		return "", "", nil
 	}
 	if err := claudesettings.SetBaseURL(settingsPath, upstream); err != nil {
-		return "", fmt.Errorf("restoring your own base URL in %s: %w", settingsPath, err)
+		return "", "", fmt.Errorf("restoring your own base URL in %s: %w", settingsPath, err)
 	}
-	return upstream, nil
+	return upstream, "", nil
+}
+
+// unrestoredBaseURLWarning is the one sentence every surface prints when
+// removal could not put back the base URL its injection displaced, so
+// disable, uninstall, and doctor cannot describe the same loss
+// differently.
+func unrestoredBaseURLWarning(settingsPath, upstream string) string {
+	return fmt.Sprintf("removed the injection from %s but could not put back a base URL of your own: "+
+		"trajector's own value stands in ANTHROPIC_BASE_URL here and hides whatever your shell sets, "+
+		"so this cannot tell whether it displaced one. This project was enabled with %s — "+
+		"if that setting was yours, put it back, or rerun this command from a terminal outside a Claude Code session.",
+		settingsPath, upstream)
 }
 
 // recordedUpstream reports what this project's grant says its traffic

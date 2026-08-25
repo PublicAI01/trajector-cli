@@ -583,3 +583,28 @@ func TestEnableAndDisableKeepAUsersOwnBaseURL(t *testing.T) {
 		t.Errorf("after disable the user's own base URL is %q, want %q back", got, relayInSettingsLocal)
 	}
 }
+
+// TestDisableInsideASessionNamesTheBaseURLItCouldNotPutBack is the
+// masked half of the restore rule TestEnableAndDisableKeepAUsersOwnBaseURL
+// pins. Run from inside a Claude Code session — which is where a user
+// asks their agent to turn trajector off — the configuration chain reads
+// as masked, because that session exported our own injected value to
+// every process it spawns. Removal therefore cannot tell whether it
+// displaced anything in this file and must not guess. Until 2026-08-25
+// it also said nothing: the relay went with the injection, rerunning
+// disable took the purge-only path and never came back through here, and
+// the user's next session carried their relay's credentials to the
+// official endpoint with no sign anywhere that a setting had been lost.
+func TestDisableInsideASessionNamesTheBaseURLItCouldNotPutBack(t *testing.T) {
+	e := enabledOverAUsersOwnRelay(t)
+	// The session's environment carries trajector's own injected base URL.
+	e.environ["ANTHROPIC_BASE_URL"] = e.status().InjectedBaseURL
+
+	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+		t.Fatalf("disable: %v\nstdout: %s", err, e.stdout)
+	}
+	if !strings.Contains(e.stderr.String(), relayInSettingsLocal) {
+		t.Errorf("disable dropped the user's own base URL %q without naming it:\nstdout: %s\nstderr: %s",
+			relayInSettingsLocal, e.stdout, e.stderr)
+	}
+}

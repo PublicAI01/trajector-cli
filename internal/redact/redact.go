@@ -117,19 +117,34 @@ func AlreadyRedacted(data []byte) RedactedBytes {
 }
 
 var (
-	betterleaksDetector     *detect.Detector
-	betterleaksDetectorOnce sync.Once
+	betterleaksDetector    *detect.Detector
+	betterleaksDetectorErr error
+	betterleaksDetectorSet bool
+	betterleaksDetectorMu  sync.Mutex
+	// newDetector builds the pattern layer. It is a variable so a test can
+	// make construction fail: the refusal in JSONLBytes is the guarantee,
+	// and a guarantee no test can reach is not one.
+	newDetector = detect.NewDetectorDefaultConfig
 )
 
+// loadDetector builds the betterleaks detector once and remembers how it
+// went. The error is kept rather than dropped: this layer carries 260+
+// known credential formats no other layer covers, so losing it silently
+// would leave every later upload looking masked while it is not.
+// 2026-08-25.
+func loadDetector() (*detect.Detector, error) {
+	betterleaksDetectorMu.Lock()
+	defer betterleaksDetectorMu.Unlock()
+	if !betterleaksDetectorSet {
+		betterleaksDetector, betterleaksDetectorErr = newDetector()
+		betterleaksDetectorSet = true
+	}
+	return betterleaksDetector, betterleaksDetectorErr
+}
+
 func getDetector() *detect.Detector {
-	betterleaksDetectorOnce.Do(func() {
-		d, err := detect.NewDetectorDefaultConfig()
-		if err != nil {
-			return
-		}
-		betterleaksDetector = d
-	})
-	return betterleaksDetector
+	d, _ := loadDetector()
+	return d
 }
 
 // region represents a byte range to redact.
@@ -490,6 +505,15 @@ func normalizeCredentialJSONKey(key string) string {
 // JSONLBytes redacts secrets in JSONL-formatted byte content and returns
 // the result as RedactedBytes, certifying the output has been through redaction.
 func JSONLBytes(b []byte) (RedactedBytes, error) {
+	// The pattern layer is not optional: content it never saw cannot be
+	// certified as redacted, so the refusal travels as an error and the
+	// batch packer turns it into a quarantined record rather than
+	// shipping it. Failing closed is the only reading of "unredacted data
+	// never leaves the machine" that survives a detector that will not
+	// load. 2026-08-25.
+	if _, err := loadDetector(); err != nil {
+		return RedactedBytes{}, fmt.Errorf("redact: the pattern-based secret detector is unavailable, so this content cannot be masked: %w", err)
+	}
 	s := string(b)
 	redacted, err := jsonlContent(s)
 	if err != nil {
