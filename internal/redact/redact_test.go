@@ -1151,7 +1151,9 @@ func TestJSONLBytes_ObjectSkipPolicy(t *testing.T) {
 	t.Parallel()
 	// Objects with "type":"image", "type":"image_url", or "type":"base64" carry
 	// binary payloads, not text; their high-entropy data must be preserved
-	// verbatim. Any other object has its string values redacted normally.
+	// verbatim. The exemption covers "data" only — see
+	// TestJSONLBytes_ImagePayloadSkipDoesNotCoverURL. Any other object has its
+	// string values redacted normally.
 	tests := []struct {
 		name      string
 		input     string
@@ -1163,9 +1165,14 @@ func TestJSONLBytes_ObjectSkipPolicy(t *testing.T) {
 			preserved: true,
 		},
 		{
-			name:      "image_url type is skipped",
-			input:     `{"type":"image_url","url":"` + highEntropySecret + `"}`,
+			name:      "image_url type skips only its data payload",
+			input:     `{"type":"image_url","data":"` + highEntropySecret + `"}`,
 			preserved: true,
+		},
+		{
+			name:      "image_url url is not a binary payload and is scanned",
+			input:     `{"type":"image_url","url":"` + highEntropySecret + `"}`,
+			preserved: false,
 		},
 		{
 			name:      "base64 type is skipped",
@@ -1545,6 +1552,37 @@ func TestJSONLBytes_ImageObjectScansSiblingsButKeepsPayload(t *testing.T) {
 	}
 	if !strings.Contains(got, payload) {
 		t.Errorf("image payload was altered: %s", got)
+	}
+}
+
+// TestJSONLBytes_ImagePayloadSkipDoesNotCoverURL pins the binary-payload
+// exemption to "data". A url is an ordinary short string and is the one
+// shape that routinely carries a credential; exempting it too — as this
+// did until 2026-08-26 — let any object naming itself image_url hand a
+// userinfo password or a signed query past all seven layers and out to
+// the service unmasked. "type" is free text a model or an MCP tool
+// writes into a recorded body, so that is not a corner.
+func TestJSONLBytes_ImagePayloadSkipDoesNotCoverURL(t *testing.T) {
+	t.Parallel()
+	const payload = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+	const signedURL = "https://s3.example.com/shot.png?X-Amz-Credential=AKIAIOSFODNN7EXAMPLE&X-Amz-Signature=b4a1c9e77d2f5061"
+	const userinfoURL = "https://svc:hunter2Passw0rd@images.example.com/shot.png"
+	for _, typeName := range []string{"image", "image_url", "base64"} {
+		t.Run(typeName, func(t *testing.T) {
+			t.Parallel()
+			in := `{"type":"` + typeName + `","url":"` + signedURL +
+				`","thumbnail_url":"` + userinfoURL + `","data":"` + payload + `"}`
+			got := redactedString(t, in)
+			if strings.Contains(got, "AKIAIOSFODNN7EXAMPLE") || strings.Contains(got, "b4a1c9e77d2f5061") {
+				t.Errorf("signed url survived under type %q: %s", typeName, got)
+			}
+			if strings.Contains(got, "hunter2Passw0rd") {
+				t.Errorf("userinfo password survived under type %q: %s", typeName, got)
+			}
+			if !strings.Contains(got, payload) {
+				t.Errorf("binary data payload was altered under type %q: %s", typeName, got)
+			}
+		})
 	}
 }
 

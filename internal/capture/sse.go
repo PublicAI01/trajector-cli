@@ -92,12 +92,26 @@ func Assemble(raw []byte) (json.RawMessage, error) {
 				return nil, err
 			}
 			if pending, ok := pendingInput[idx]; ok {
-				input, err := decodeValue([]byte(pending.String()))
-				if err != nil {
-					return nil, fmt.Errorf("capture: accumulated tool input: %w", err)
-				}
-				block["input"] = input
 				delete(pendingInput, idx)
+				// Fragments that concatenate to nothing are the absence of a
+				// fragment stream, not malformed JSON. Every tool input opens
+				// with an input_json_delta carrying "", and for a tool with no
+				// parameters the model emits no input tokens, so that empty
+				// delta is the whole of it. Parsing it anyway failed the whole
+				// assembly, which degraded the exchange to raw stream text —
+				// and a degraded record is one JSON string, so the entropy
+				// layer then masked the thinking signatures and ids the record
+				// exists to preserve verbatim, with no way to recover them by
+				// reassembling later. content_block_start already carried this
+				// block's own input; leaving it is the observed truth.
+				// 2026-08-26.
+				if fragments := strings.TrimSpace(pending.String()); fragments != "" {
+					input, err := decodeValue([]byte(fragments))
+					if err != nil {
+						return nil, fmt.Errorf("capture: accumulated tool input: %w", err)
+					}
+					block["input"] = input
+				}
 			}
 
 		case "message_delta":

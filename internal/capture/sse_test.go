@@ -78,6 +78,23 @@ func TestAssembleEquivalentNonStreamingObject(t *testing.T) {
 			want: `{"id":"msg_020","type":"message","role":"assistant","model":"claude-fable-5","content":[{"type":"tool_use","id":"toolu_02","name":"list_files","input":{}}],"usage":{"input_tokens":5,"output_tokens":1}}`,
 		},
 		{
+			// A tool with no parameters produces no input tokens, so its
+			// whole fragment stream is the one empty input_json_delta every
+			// tool input opens with. That is the absence of fragments, not
+			// malformed JSON: parsing it failed the entire assembly and
+			// degraded the exchange to raw stream text, where the entropy
+			// layer then masked the signatures and ids the record must keep
+			// verbatim. 2026-08-26.
+			name: "tool use whose only input fragment is empty keeps starting input",
+			stream: ev("message_start", `{"type":"message_start","message":{"id":"msg_024","type":"message","role":"assistant","model":"claude-fable-5","content":[],"usage":{"input_tokens":5,"output_tokens":1}}}`) +
+				ev("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_05","name":"get_time","input":{}}}`) +
+				ev("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}`) +
+				ev("content_block_stop", `{"type":"content_block_stop","index":0}`) +
+				ev("message_delta", `{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":4}}`) +
+				ev("message_stop", `{"type":"message_stop"}`),
+			want: `{"id":"msg_024","type":"message","role":"assistant","model":"claude-fable-5","content":[{"type":"tool_use","id":"toolu_05","name":"get_time","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":5,"output_tokens":4}}`,
+		},
+		{
 			name: "citations appended in delta order",
 			stream: ev("message_start", `{"type":"message_start","message":{"id":"msg_021","type":"message","role":"assistant","model":"claude-fable-5","content":[],"usage":{"input_tokens":2,"output_tokens":1}}}`) +
 				ev("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"","citations":[]}}`) +

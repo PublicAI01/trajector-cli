@@ -782,14 +782,14 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 	walk = func(key string, credentialContext bool, v any) {
 		switch val := v.(type) {
 		case map[string]any:
-			// An image/base64 object carries a binary payload in its data or
-			// url field: that value is preserved verbatim, but the object's
-			// other fields (captions, ids, arbitrary siblings) are still text
-			// and are scanned normally.
+			// An image/base64 object carries a binary payload in its data
+			// field: that value is preserved verbatim, but the object's other
+			// fields (captions, ids, arbitrary siblings) are still text and
+			// are scanned normally.
 			skipPayload := shouldSkipJSONLObject(val)
 			childCredentialContext := credentialContext || isCredentialJSONObject(val)
 			for k, child := range val {
-				if skipPayload && (k == "data" || k == "url") {
+				if skipPayload && k == "data" {
 					continue
 				}
 				walk(k, childCredentialContext, child)
@@ -854,13 +854,22 @@ func shouldSkipJSONLField(key string) bool {
 }
 
 // shouldSkipJSONLObject reports whether the object carries a binary
-// payload — "type":"image"/"image_url" or "type":"base64" — whose data or
-// url field is preserved verbatim rather than scanned.
+// payload — "type":"image"/"image_url" or "type":"base64" — whose data
+// field is preserved verbatim rather than scanned.
+//
+// Only "data" is exempt, and only because it is base64 bytes that no
+// text layer can say anything useful about. A sibling "url" was exempt
+// too until 2026-08-26, which had no such justification: a url is an
+// ordinary short string, and it is the one shape that routinely carries
+// a credential — userinfo (https://user:pass@host/x.png) or a signed
+// query (?X-Amz-Credential=…&X-Amz-Signature=…). Because "type" is free
+// text a model or an MCP tool writes into a recorded body, any tool
+// result naming itself image_url handed such a url past all seven
+// detection layers and out to the service unmasked.
 //
 // The type is matched exactly. It was a prefix match on "image" until
-// 2026-08-14, but "type" is free text a model or an MCP tool writes into
-// a recorded body, so anything calling itself image_metadata carried its
-// url and data past all seven detection layers.
+// 2026-08-14, but "type" is free text, so anything calling itself
+// image_metadata carried its url and data past all seven layers.
 func shouldSkipJSONLObject(obj map[string]any) bool {
 	t, ok := obj["type"].(string)
 	if !ok {
