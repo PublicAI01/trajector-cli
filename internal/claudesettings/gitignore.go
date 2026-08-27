@@ -6,9 +6,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
+
+// ignoreFileName is the project file EnsureGitIgnored appends to and
+// RemoveGitIgnored takes lines back out of. One spelling, so the two
+// halves of the pair can never disagree about which file they mean.
+const ignoreFileName = ".gitignore"
 
 // IgnoreAction reports what EnsureGitIgnored did.
 type IgnoreAction string
@@ -55,7 +61,7 @@ func EnsureGitIgnored(projectRoot, rel string) (IgnoreAction, error) {
 		return IgnoreSkipped, nil
 	}
 
-	path := filepath.Join(projectRoot, ".gitignore")
+	path := filepath.Join(projectRoot, ignoreFileName)
 	// The append must never write through a symbolic link: a repository
 	// can ship .gitignore as a link to a file outside its own tree, and
 	// following it would turn enable into an out-of-tree write at a
@@ -94,4 +100,53 @@ func EnsureGitIgnored(projectRoot, rel string) (IgnoreAction, error) {
 		return "", err
 	}
 	return IgnoreAppended, nil
+}
+
+// RemoveGitIgnored takes back out the lines EnsureGitIgnored appended
+// for rules — and nothing else in the file. It is the undo half of the
+// pair: an enable that fails after appending has to withdraw its own
+// ignore lines, and only its own.
+//
+// Withdrawing them by restoring a whole-file snapshot, which is what
+// enable did until 2026-08-27, was wrong twice over. This file belongs
+// to the user and concurrent trajector processes append to it — enable
+// adds three rules, a diagnostic bundle two — so rewriting it wholesale
+// takes whatever landed in between with it. And a wholesale write ran
+// even when the enable had appended nothing at all (the rules were
+// already covered, or the project is not a git work tree), which on a
+// .gitignore that is a symbolic link replaced the link with a regular
+// file: exactly the write EnsureGitIgnored refuses to make, arrived at
+// through the back door. So the removal reads and rewrites under the
+// same cross-process lock the append uses, and answers the symlink
+// question the same way the append does.
+//
+// Only the last occurrence of each rule goes, because that is the one
+// the append wrote; a line the user had already put there themselves
+// stays. A file that did not end in a newline gains one, which is the
+// same normalization the append itself performs.
+func RemoveGitIgnored(projectRoot string, rules []string) error {
+	if len(rules) == 0 {
+		return nil
+	}
+	path := filepath.Join(projectRoot, ignoreFileName)
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		// Already gone, or a link this package never writes through:
+		// either way there is nothing of ours in it to take out.
+		return nil
+	}
+	return fsatomic.Update(path, info.Mode().Perm(), func(existing []byte) ([]byte, error) {
+		lines := strings.Split(string(existing), "\n")
+		for _, rule := range rules {
+			for i := len(lines) - 1; i >= 0; i-- {
+				// Matched exactly, as written: trimming here could take a
+				// user's own line that differs only in trailing space.
+				if lines[i] == rule {
+					lines = append(lines[:i], lines[i+1:]...)
+					break
+				}
+			}
+		}
+		return []byte(strings.Join(lines, "\n")), nil
+	})
 }

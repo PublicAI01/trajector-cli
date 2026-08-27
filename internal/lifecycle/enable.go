@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -107,12 +106,15 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		return ErrUpstreamUnroutable
 	}
 
-	// The routing table and the consent file are shared with concurrent
-	// processes, so rollback restores them entry-wise through their
-	// stores' serialized updates; a byte-for-byte restore would hand a
-	// concurrent enable's grant to the rollback. Only the project-local
-	// files are snapshotted whole.
-	snap, err := takeSnapshots(st.SettingsPath(), filepath.Join(st.Root, ".gitignore"))
+	// The routing table, the consent file, and the project's .gitignore
+	// are all shared with concurrent processes, so rollback undoes them
+	// entry-wise through their own writers; a byte-for-byte restore would
+	// hand a concurrent enable's grant — or a concurrent bundle's ignore
+	// line — to the rollback. .gitignore was snapshotted whole until
+	// 2026-08-27; see RemoveGitIgnored for what that cost. Only the
+	// project-local settings file, which is this tool's own, is
+	// snapshotted whole.
+	snap, err := takeSnapshots(st.SettingsPath())
 	if err != nil {
 		return err
 	}
@@ -125,8 +127,14 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		return err
 	}
 
-	if err := m.installAndVerify(io, st, upstream); err != nil {
-		restoreErr := errors.Join(snap.restore(), m.routes.RestoreGrants(grants), m.consent.RestoreProject(decision))
+	var undo enableUndo
+	if err := m.installAndVerify(io, st, upstream, &undo); err != nil {
+		restoreErr := errors.Join(
+			snap.restore(),
+			claudesettings.RemoveGitIgnored(st.Root, undo.ignoreRules),
+			m.routes.RestoreGrants(grants),
+			m.consent.RestoreProject(decision),
+		)
 		if restoreErr != nil {
 			return fmt.Errorf("%w (rollback incomplete: %v)", err, restoreErr)
 		}
@@ -135,7 +143,18 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 	return nil
 }
 
-func (m *Machine) installAndVerify(io IO, st ProjectStatus, upstream string) error {
+// enableUndo records what an install changed outside the files enable
+// snapshots whole, so a rollback can undo exactly that. It is filled in
+// as the install proceeds rather than returned from it: an install that
+// fails midway has already made some of these changes, and a value
+// threaded through every error return is one an error return can drop.
+type enableUndo struct {
+	// ignoreRules are the .gitignore lines this install appended, in the
+	// order it appended them.
+	ignoreRules []string
+}
+
+func (m *Machine) installAndVerify(io IO, st ProjectStatus, upstream string, undo *enableUndo) error {
 	token, err := projectToken(st)
 	if err != nil {
 		return err
@@ -159,7 +178,6 @@ func (m *Machine) installAndVerify(io IO, st ProjectStatus, upstream string) err
 	}
 	fmt.Fprintf(io.Out, "Injected %s (base URL and session hooks)\n", settingsPath)
 
-	var appended []string
 	symlinked := false
 	for _, rule := range projectIgnoreRules {
 		action, err := claudesettings.EnsureGitIgnored(st.Root, rule)
@@ -168,13 +186,15 @@ func (m *Machine) installAndVerify(io IO, st ProjectStatus, upstream string) err
 		}
 		switch action {
 		case claudesettings.IgnoreAppended:
-			appended = append(appended, rule)
+			// Recorded on the undo before anything else can fail, so a
+			// rollback takes back every line that actually landed.
+			undo.ignoreRules = append(undo.ignoreRules, rule)
 		case claudesettings.IgnoreSymlinked:
 			symlinked = true
 		}
 	}
-	if len(appended) > 0 {
-		fmt.Fprintf(io.Out, "Added %s to .gitignore\n", strings.Join(appended, ", "))
+	if len(undo.ignoreRules) > 0 {
+		fmt.Fprintf(io.Out, "Added %s to .gitignore\n", strings.Join(undo.ignoreRules, ", "))
 	}
 	if symlinked {
 		fmt.Fprintf(io.Err, "WARNING: .gitignore is a symbolic link and was left alone; add %s to your git ignores so the injected settings and diagnostic bundles are never committed.\n", strings.Join(projectIgnoreRules, ", "))

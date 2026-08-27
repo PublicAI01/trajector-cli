@@ -1,6 +1,7 @@
 package lifecycle_test
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
@@ -210,6 +212,99 @@ func TestEnableLeavesASymlinkedGitIgnoreAloneAndWarns(t *testing.T) {
 	if err != nil || string(after) != string(before) {
 		t.Errorf("link target = %q, %v, want it untouched", after, err)
 	}
+}
+
+// A rolled-back enable used to restore .gitignore from a whole-file
+// snapshot, and the snapshot was taken through the link. Restoring it
+// wrote a regular file over the link — the write EnsureGitIgnored
+// refuses to make, arrived at through the rollback path.
+func TestEnableRollbackLeavesASymlinkedGitIgnoreAlone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs privilege on windows")
+	}
+	e := newEnv(t)
+	e.gitRepo()
+	target := filepath.Join(e.deps.Home, "shared-gitignore")
+	if err := os.WriteFile(target, []byte("build/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(e.canonicalRoot(), ".gitignore")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	e.startProxy()
+	// Fails the self-check, so enable rolls back everything it did.
+	e.sandbox.Pause(routing.PauseSignedOut)
+
+	if err := e.machine().Enable(e.project, e.io()); err == nil {
+		t.Fatal("enable succeeded while capture was paused")
+	}
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("lstat .gitignore after rollback: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Error("rollback replaced the symlinked .gitignore with a regular file")
+	}
+}
+
+// A rolled-back enable must take back its own ignore lines and leave
+// everything else in the file, including whatever another writer added
+// while the enable was running. Restoring the file from a whole-file
+// snapshot took those lines with it.
+func TestEnableRollbackKeepsGitIgnoreLinesAddedMeanwhile(t *testing.T) {
+	e := newEnv(t)
+	e.gitRepo()
+	ignorePath := filepath.Join(e.canonicalRoot(), ".gitignore")
+	if err := os.WriteFile(ignorePath, []byte("build/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.startProxy()
+	e.sandbox.Pause(routing.PauseSignedOut)
+
+	// The injection line is printed after the snapshot is taken and
+	// before the ignore rules are appended, which is where a concurrent
+	// writer — another trajector process, or the user — would land.
+	out := &hookWriter{sink: e.stdout, on: "Injected ", run: func() {
+		f, err := os.OpenFile(ignorePath, os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer f.Close()
+		if _, err := f.WriteString("notes.txt\n"); err != nil {
+			t.Error(err)
+		}
+	}}
+	err := e.machine().Enable(e.project, lifecycle.IO{In: strings.NewReader(e.stdin), Out: out, Err: e.stderr})
+	if err == nil {
+		t.Fatal("enable succeeded while capture was paused")
+	}
+
+	const want = "build/\nnotes.txt\n"
+	after, readErr := os.ReadFile(ignorePath)
+	if readErr != nil || string(after) != want {
+		t.Errorf(".gitignore after rollback = %q, %v, want %q", after, readErr, want)
+	}
+}
+
+// hookWriter runs run once, the first time a write contains on, so a
+// test can interleave another writer's change with one command's own
+// steps at a known point.
+type hookWriter struct {
+	sink  io.Writer
+	on    string
+	run   func()
+	fired bool
+}
+
+func (w *hookWriter) Write(p []byte) (int, error) {
+	n, err := w.sink.Write(p)
+	if !w.fired && strings.Contains(string(p), w.on) {
+		w.fired = true
+		w.run()
+	}
+	return n, err
 }
 
 func readOnly(t *testing.T, dir string) {

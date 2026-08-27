@@ -10,9 +10,13 @@ import (
 
 // fileSnapshot remembers one file's exact pre-enable state so rollback
 // can restore it byte for byte, including "did not exist". Only files
-// this process exclusively owns belong here (the project-local settings
-// and .gitignore); state shared with concurrent processes is restored
-// entry-wise through its store.
+// this process exclusively owns belong here — the project-local settings
+// file, which trajector writes and nothing else does. State shared with
+// concurrent processes is undone entry-wise through its own writer
+// instead: the routing table and the consent store through their stores,
+// the project's .gitignore through claudesettings.RemoveGitIgnored. That
+// last one was in this list until 2026-08-27, which made a rolled-back
+// enable rewrite a file it may never have touched.
 type fileSnapshot struct {
 	path    string
 	data    []byte
