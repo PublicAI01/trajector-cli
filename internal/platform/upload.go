@@ -130,6 +130,42 @@ func (e *UpgradeRequiredError) Unwrap() error {
 	return e.status
 }
 
+// DataAuthorizationRequiredError reports a 451: the service will not
+// take uploads from this account until its data authorization is
+// completed on the web. Nothing is wrong with the data or with this
+// build; the caller keeps everything and stops offering it until the
+// user has done that. Like UpgradeRequiredError it refines the
+// underlying StatusError rather than replacing it.
+//
+// It is deliberately a class of its own rather than a second meaning for
+// UpgradeRequiredError: both conditions can hold at once — an old build
+// whose account is also unauthorized — and one carrier could then only
+// say one of them.
+type DataAuthorizationRequiredError struct {
+	// AuthorizeURL is where the user completes the authorization, empty
+	// when the service named none or named one that did not survive
+	// SafeServiceURL. The client never composes this address from an
+	// origin of its own: doing so would freeze the page's location on the
+	// service's side forever.
+	AuthorizeURL string
+	// Message is what the service wants the user to read about the
+	// refusal, empty when it said nothing. Shown as the service's words,
+	// never used to decide anything.
+	Message string
+	status  *StatusError
+}
+
+func (e *DataAuthorizationRequiredError) Error() string {
+	return "the service requires this account's data authorization to be completed"
+}
+
+func (e *DataAuthorizationRequiredError) Unwrap() error {
+	if e.status == nil {
+		return nil
+	}
+	return e.status
+}
+
 // MaxRetryAfter caps how long a Retry-After can silence automatic
 // flushes, so a service misconfiguration cannot mute every client
 // indefinitely. The cap is applied once, where the 429 is classified,
@@ -279,6 +315,24 @@ func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, bu
 			MinClientVersion: SafeServiceText(deny.MinClientVersion),
 			Message:          SafeServiceText(deny.Message),
 			status:           status,
+		}
+	// This arm must stay above the generic 4xx one below. Reaching that
+	// one instead quarantines the batch — the exact outcome this status
+	// exists to avoid, and one the client would report as the data being
+	// refused rather than the account needing attention.
+	case resp.StatusCode == http.StatusUnavailableForLegalReasons:
+		var deny struct {
+			AuthorizeURL string `json:"authorize_url"`
+			Message      string `json:"message"`
+		}
+		// Best-effort detail: a 451 without a parseable body still gates.
+		_ = json.Unmarshal(body, &deny)
+		return &DataAuthorizationRequiredError{
+			// The address goes through its own check, not SafeServiceText:
+			// that one truncates, and a truncated address is a dead link.
+			AuthorizeURL: SafeServiceURL(deny.AuthorizeURL),
+			Message:      SafeServiceText(deny.Message),
+			status:       status,
 		}
 	case resp.StatusCode == http.StatusTooManyRequests:
 		pause := retryAfter(resp.Header.Get("Retry-After"))

@@ -357,6 +357,52 @@ func TestStatusShowsServiceMinVersionAndNotice(t *testing.T) {
 	}
 }
 
+func TestStatusReportsAPausedUploaderWaitingOnDataAuthorization(t *testing.T) {
+	// Without this the uploader is simply silent: nothing uploads, no
+	// error is shown, and the user has no way to learn that the thing
+	// stopping it is something they finish in a browser.
+	e := newEnv(t)
+	e.deps.Version = "0.1.0"
+	writeUploadFile(t, e, "handshake.json", map[string]any{
+		"min_client_version":     "0.1.0",
+		"authorization_required": true,
+		"authorize_url":          "https://dashboard.example.com/authorization",
+		"authorization_message":  "Your data authorization is not complete.",
+	})
+	out := e.statusOutput()
+
+	for _, want := range []string{
+		"data authorization is not complete",
+		"Your data authorization is not complete.",
+		"https://dashboard.example.com/authorization",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want it to contain %q", out, want)
+		}
+	}
+	// A satisfied minimum must not drag the upgrade lines in with it.
+	if strings.Contains(out, "trajector upgrade") {
+		t.Errorf("status = %q, want no upgrade instruction for a build that meets the minimum", out)
+	}
+}
+
+func TestStatusDropsAnAuthorizeAddressAUserCannotSafelyOpen(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Version = "0.1.0"
+	writeUploadFile(t, e, "handshake.json", map[string]any{
+		"authorization_required": true,
+		"authorize_url":          "http://dashboard.example.com/authorization",
+	})
+	out := e.statusOutput()
+
+	if strings.Contains(out, "http://dashboard.example.com") {
+		t.Errorf("status = %q, want the unusable address dropped", out)
+	}
+	if !strings.Contains(out, "Trajector dashboard") {
+		t.Errorf("status = %q, want wording of our own in its place", out)
+	}
+}
+
 // The service announces its minimum on every acknowledgement, so a
 // build that meets it would otherwise carry the requirement and the
 // instruction to upgrade in every status for good — and be reading the

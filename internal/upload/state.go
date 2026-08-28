@@ -68,8 +68,34 @@ type storedHandshake struct {
 	// service accepting this version, which makes the refusal it
 	// explained no longer true. applyHandshake writes a fresh record
 	// with this field zero, which is that clearing.
-	UpgradeMessage string    `json:"upgrade_message,omitempty"`
-	ReceivedAt     time.Time `json:"received_at,omitzero"`
+	UpgradeMessage string `json:"upgrade_message,omitempty"`
+	// AuthorizeURL and AuthorizationMessage are what the service last
+	// said when it refused this account for want of a completed data
+	// authorization. They sit beside the handshake for the same reason
+	// UpgradeMessage does — they arrive on a 451, not on an
+	// acknowledgement, and must not survive one — and they are kept apart
+	// from it because both refusals can stand at the same time.
+	//
+	// AuthorizationRequired is stored on its own because the service may
+	// supply neither the URL nor the message: without it, a refusal that
+	// said nothing would read back as no refusal at all.
+	AuthorizationRequired bool      `json:"authorization_required,omitempty"`
+	AuthorizeURL          string    `json:"authorize_url,omitempty"`
+	AuthorizationMessage  string    `json:"authorization_message,omitempty"`
+	ReceivedAt            time.Time `json:"received_at,omitzero"`
+}
+
+// AuthorizationNotice is what the service last said when it refused this
+// account's uploads for want of a completed data authorization. A zero
+// value means it never refused, or has since acknowledged an upload.
+type AuthorizationNotice struct {
+	// Required is the fact itself. The other two fields are detail the
+	// service may or may not have supplied, so neither can stand in for
+	// it: a refusal that named no URL and no message is still a refusal,
+	// and surfaces must still report it.
+	Required bool
+	URL      string
+	Message  string
 }
 
 // LoadState reads the uploader's state; a missing or unreadable file is
@@ -98,6 +124,25 @@ func LoadUpgradeMessage(dir string) string {
 	var h storedHandshake
 	readJSON(filepath.Join(dir, handshakeName), &h)
 	return platform.SafeServiceText(h.UpgradeMessage)
+}
+
+// LoadAuthorizationNotice reads what the service said when it last
+// refused this account for want of a completed data authorization, for
+// status and doctor to relay from a process that never made the upload
+// itself.
+func LoadAuthorizationNotice(dir string) AuthorizationNotice {
+	var h storedHandshake
+	readJSON(filepath.Join(dir, handshakeName), &h)
+	if !h.AuthorizationRequired {
+		return AuthorizationNotice{}
+	}
+	// Cleaned again on the way out: this file may have been written by a
+	// build that predates the cleaning, or edited by hand.
+	return AuthorizationNotice{
+		Required: true,
+		URL:      platform.SafeServiceURL(h.AuthorizeURL),
+		Message:  platform.SafeServiceText(h.AuthorizationMessage),
+	}
 }
 
 func saveHandshake(dir string, h storedHandshake) error {
@@ -224,12 +269,37 @@ func (u *Uploader) noteUpgradeRequired(minVersion, message string) {
 	if minVersion == "" && message == "" {
 		return
 	}
-	if err := saveHandshake(u.deps.Dir, storedHandshake{
-		Handshake:      mergeHandshake(LoadHandshake(u.deps.Dir), platform.Handshake{MinClientVersion: minVersion}),
-		UpgradeMessage: message,
-		ReceivedAt:     u.deps.Now().UTC(),
-	}); err != nil {
-		u.deps.Logf("upload: persisting the required client version: %v", err)
+	u.noteRefusal(func(h *storedHandshake) {
+		h.Handshake = mergeHandshake(h.Handshake, platform.Handshake{MinClientVersion: minVersion})
+		h.UpgradeMessage = message
+	}, "the required client version")
+}
+
+// noteAuthorizationRequired keeps the refusal and whatever the service
+// said about it where status and doctor read the handshake, preserving
+// the rest of it. Unlike noteUpgradeRequired it records even when both
+// details are empty: the refusal itself is the part surfaces must
+// report. Best-effort.
+func (u *Uploader) noteAuthorizationRequired(authorizeURL, message string) {
+	u.noteRefusal(func(h *storedHandshake) {
+		h.AuthorizationRequired = true
+		h.AuthorizeURL = authorizeURL
+		h.AuthorizationMessage = message
+	}, "the data authorization refusal")
+}
+
+// noteRefusal records one kind of refusal into the stored handshake
+// without disturbing the other. Both kinds can stand at the same time —
+// an old build whose account is also unauthorized — so neither writer
+// may build its record from scratch, or noting one would silently clear
+// the other and leave a surface reporting half of what is wrong.
+func (u *Uploader) noteRefusal(apply func(*storedHandshake), what string) {
+	var h storedHandshake
+	readJSON(filepath.Join(u.deps.Dir, handshakeName), &h)
+	apply(&h)
+	h.ReceivedAt = u.deps.Now().UTC()
+	if err := saveHandshake(u.deps.Dir, h); err != nil {
+		u.deps.Logf("upload: persisting %s: %v", what, err)
 	}
 }
 

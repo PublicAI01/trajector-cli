@@ -187,6 +187,71 @@ func TestUploadBatch426WordingCannotDrawOnTheTerminal(t *testing.T) {
 	}
 }
 
+func TestUploadBatch451ReportsDataAuthorizationRequired(t *testing.T) {
+	err := upload4xx(t, 451, nil, map[string]any{
+		"error":         "data_authorization_required",
+		"authorize_url": "https://dashboard.example.com/authorization",
+	})
+	var unauthorized *platform.DataAuthorizationRequiredError
+	if !errors.As(err, &unauthorized) {
+		t.Fatalf("error = %v, want DataAuthorizationRequiredError", err)
+	}
+	if unauthorized.AuthorizeURL != "https://dashboard.example.com/authorization" {
+		t.Fatalf("authorize URL = %q", unauthorized.AuthorizeURL)
+	}
+}
+
+func TestUploadBatch451IsNotAPoisonBatch(t *testing.T) {
+	// The catch-all 4xx arm quarantines the batch. Reaching it here would
+	// lock the user's data away over a state they fix in a browser, and
+	// report it as the data having been refused.
+	err := upload4xx(t, 451, nil, map[string]any{"error": "data_authorization_required"})
+	var rejected *platform.BatchRejectedError
+	if errors.As(err, &rejected) {
+		t.Fatalf("451 classified as a rejected batch: %v", err)
+	}
+	var unauthorized *platform.DataAuthorizationRequiredError
+	if !errors.As(err, &unauthorized) {
+		t.Fatalf("error = %v, want the gate to hold even with no detail in the body", err)
+	}
+}
+
+func TestUploadBatch451WithAnUnusableURLKeepsTheGateAndDropsTheLink(t *testing.T) {
+	// A link that opens nothing is worse than none: the caller has its
+	// own wording, and can only use it if the bad address is gone.
+	for _, bad := range []string{
+		"http://dashboard.example.com/authorization",
+		"/authorization",
+		"https://dashboard.example.com/a\x1b[2Jb",
+	} {
+		err := upload4xx(t, 451, nil, map[string]any{
+			"error":         "data_authorization_required",
+			"authorize_url": bad,
+		})
+		var unauthorized *platform.DataAuthorizationRequiredError
+		if !errors.As(err, &unauthorized) {
+			t.Fatalf("authorize_url %q: error = %v", bad, err)
+		}
+		if unauthorized.AuthorizeURL != "" {
+			t.Errorf("authorize_url %q survived as %q, want it dropped", bad, unauthorized.AuthorizeURL)
+		}
+	}
+}
+
+func TestUploadBatch451WordingCannotDrawOnTheTerminal(t *testing.T) {
+	err := upload4xx(t, 451, nil, map[string]any{
+		"error":   "data_authorization_required",
+		"message": "authorize\r\x1b[Atrajector: everything is fine",
+	})
+	var unauthorized *platform.DataAuthorizationRequiredError
+	if !errors.As(err, &unauthorized) {
+		t.Fatalf("error = %v", err)
+	}
+	if strings.ContainsAny(unauthorized.Message, "\x1b\r\n") {
+		t.Fatalf("message = %q, want it disarmed", unauthorized.Message)
+	}
+}
+
 func TestUploadBatchAckWordingCannotDrawOnTheTerminal(t *testing.T) {
 	c, server := client(t)
 	server.Stub("POST", "/v1/batches", fakeplatform.JSON(200, map[string]any{

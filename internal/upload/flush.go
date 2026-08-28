@@ -37,7 +37,13 @@ type FlushReply struct {
 	// for the same reason: the caller relays them without reaching
 	// across processes for the handshake file.
 	UpgradeMessage string `json:"upgrade_message,omitempty"`
-	Error          string `json:"error,omitempty"`
+	// AuthorizeURL and AuthorizationMessage carry, for an
+	// AuthorizationRequired outcome, where the user completes the
+	// authorization and what the service said about it — again so the
+	// caller relays them without reaching for the handshake file.
+	AuthorizeURL         string `json:"authorize_url,omitempty"`
+	AuthorizationMessage string `json:"authorization_message,omitempty"`
+	Error                string `json:"error,omitempty"`
 }
 
 // Handler serves the flush endpoint, for the composition root to mount
@@ -59,6 +65,9 @@ func (u *Uploader) Handler(serviceName string) http.Handler {
 			Unreadable:       result.Unreadable,
 			MinClientVersion: result.MinClientVersion,
 			UpgradeMessage:   result.UpgradeMessage,
+
+			AuthorizeURL:         result.AuthorizeURL,
+			AuthorizationMessage: result.AuthorizationMessage,
 		}
 		if err != nil {
 			reply.Error = err.Error()

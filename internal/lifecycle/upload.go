@@ -42,12 +42,23 @@ func (m *Machine) Upload(force bool, io IO) error {
 	case upload.UpgradeRequired:
 		fmt.Fprintf(io.Out, "Uploads are paused: the service requires trajector %s or newer (this is %s).\n", reply.MinClientVersion, m.deps.Version)
 		if reply.UpgradeMessage != "" {
-			fmt.Fprintf(io.Out, "The service says: %s\n", reply.UpgradeMessage)
+			fmt.Fprintf(io.Out, serviceSays+"\n", reply.UpgradeMessage)
 		}
 		// The kept-data line stands alone: a user reading a pause needs
 		// to know nothing was lost before they read what to do about it.
 		fmt.Fprintln(io.Out, "Captured data is kept.")
 		fmt.Fprintln(io.Out, upgradeHint+retry(force, " Or retry with --force."))
+	case upload.AuthorizationRequired:
+		fmt.Fprintln(io.Out, authorizationPaused)
+		if reply.AuthorizationMessage != "" {
+			fmt.Fprintf(io.Out, serviceSays+"\n", reply.AuthorizationMessage)
+		}
+		fmt.Fprintln(io.Out, "Captured data is kept.")
+		// --force is offered here where the upgrade pause offers an
+		// install, because it is the recovery: the user fixes this in a
+		// browser, nothing on this machine changes, and without --force
+		// they would wait out a flush cycle for uploads that could go now.
+		fmt.Fprintln(io.Out, authorizeHint(reply.AuthorizeURL)+retry(force, " Then retry with --force."))
 	case upload.Deferred:
 		fmt.Fprintln(io.Out, "The service asked to slow down; uploads resume automatically."+retry(force, " Use --force to try now."))
 	case upload.Rejected:

@@ -47,6 +47,13 @@ const (
 	// automatic flushes stop for this process. Data is untouched, and a
 	// forced flush may still try.
 	UpgradeRequired Outcome = "upgrade_required"
+	// AuthorizationRequired means the service will not take uploads from
+	// this account until its data authorization is completed on the web;
+	// automatic flushes stop for this process. Data is untouched, and a
+	// forced flush may still try — which is the recovery path, since the
+	// user completes the authorization elsewhere and nothing local has to
+	// change for uploads to resume.
+	AuthorizationRequired Outcome = "authorization_required"
 	// Deferred means the service asked to slow down and the pause has
 	// not elapsed. A forced flush ignores it.
 	Deferred Outcome = "deferred"
@@ -70,6 +77,12 @@ type Result struct {
 	// UpgradeMessage is what the service said about the refusal, in its
 	// own words, empty when it said nothing. Relayed, never parsed.
 	UpgradeMessage string
+	// AuthorizeURL and AuthorizationMessage carry, for an
+	// AuthorizationRequired outcome, where the user completes the
+	// authorization and what the service said about it. Either may be
+	// empty; the caller has wording of its own for both.
+	AuthorizeURL         string
+	AuthorizationMessage string
 	// Unreadable counts rawcalls this flush moved into the rejected
 	// store because they no longer read back as rawcalls. They were
 	// never sent; they stop blocking the uploads behind them, and
@@ -123,7 +136,13 @@ type Uploader struct {
 	// both ride out with the gate's outcome.
 	minClientVersion string
 	upgradeMessage   string
-	notBefore        time.Time
+	// authorization is a gate of its own rather than a second meaning
+	// for upgradeRequired: an old build whose account is also
+	// unauthorized holds both conditions at once, and sharing one
+	// carrier would let status and doctor name only one of them — which
+	// is the whole of what this gate buys the user.
+	authorization AuthorizationNotice
+	notBefore     time.Time
 	// timeouts counts consecutive timed-out upload attempts. Each one
 	// widens the next attempt's budget and lengthens the pause before
 	// it, so the batch at the head of the queue is never retried forever
@@ -181,6 +200,7 @@ func (u *Uploader) Flush(force bool) (Result, error) {
 	res, err := u.flush(force, time.Time{})
 	if err != nil {
 		res.Outcome, res.MinClientVersion, res.UpgradeMessage = "", "", ""
+		res.AuthorizeURL, res.AuthorizationMessage = "", ""
 		classifyFailure(err, &res)
 	}
 	return res, err
@@ -191,6 +211,7 @@ func (u *Uploader) Flush(force bool) (Result, error) {
 // — not only after an in-process gate remembers the condition.
 func classifyFailure(err error, res *Result) {
 	var upgrade *platform.UpgradeRequiredError
+	var unauthorized *platform.DataAuthorizationRequiredError
 	var limited *platform.RateLimitedError
 	var rejection *errRejected
 	switch {
@@ -198,6 +219,10 @@ func classifyFailure(err error, res *Result) {
 		res.Outcome = UpgradeRequired
 		res.MinClientVersion = upgrade.MinClientVersion
 		res.UpgradeMessage = upgrade.Message
+	case errors.As(err, &unauthorized):
+		res.Outcome = AuthorizationRequired
+		res.AuthorizeURL = unauthorized.AuthorizeURL
+		res.AuthorizationMessage = unauthorized.Message
 	case errors.As(err, &limited):
 		res.Outcome = Deferred
 	case errors.As(err, &rejection):
@@ -248,6 +273,16 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 			res.Outcome = UpgradeRequired
 			res.MinClientVersion = u.minClientVersion
 			res.UpgradeMessage = u.upgradeMessage
+			return res, nil
+		}
+		// The upgrade gate is reported first when both are held: a build
+		// the service refuses cannot upload however the account stands, so
+		// telling the user to go authorize would send them to finish
+		// something that changes nothing until they also upgrade.
+		if u.authorization.Required {
+			res.Outcome = AuthorizationRequired
+			res.AuthorizeURL = u.authorization.URL
+			res.AuthorizationMessage = u.authorization.Message
 			return res, nil
 		}
 		if u.deps.Now().Before(u.notBefore) {
@@ -425,6 +460,7 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result,
 	}
 	u.upgradeRequired = false
 	u.minClientVersion, u.upgradeMessage = "", ""
+	u.authorization = AuthorizationNotice{}
 	u.notBefore = time.Time{}
 	u.timeouts = 0
 
@@ -566,6 +602,7 @@ func splitOut(rawcalls []spool.Rawcall, requestID string) (kept []spool.Rawcall,
 // the pending record stay, and the next flush retries.
 func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error) error {
 	var upgrade *platform.UpgradeRequiredError
+	var unauthorized *platform.DataAuthorizationRequiredError
 	var limited *platform.RateLimitedError
 	var rejected *platform.BatchRejectedError
 	var timedOut *platform.UploadTimeoutError
@@ -586,6 +623,17 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 		u.minClientVersion = upgrade.MinClientVersion
 		u.upgradeMessage = upgrade.Message
 		u.noteUpgradeRequired(upgrade.MinClientVersion, upgrade.Message)
+	case errors.As(err, &unauthorized):
+		// The data is fine and so is this build; the account has not
+		// completed its data authorization. Automatic flushes stop so the
+		// batch is not re-offered pointlessly every minute, and nothing is
+		// quarantined — the user fixes this on the web, not here.
+		u.authorization = AuthorizationNotice{
+			Required: true,
+			URL:      unauthorized.AuthorizeURL,
+			Message:  unauthorized.Message,
+		}
+		u.noteAuthorizationRequired(unauthorized.AuthorizeURL, unauthorized.Message)
 	case errors.As(err, &limited):
 		// RetryAfter arrives already capped at platform.MaxRetryAfter. A
 		// rate limit that names no pause still demanded one: without a

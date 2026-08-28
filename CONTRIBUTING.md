@@ -13,6 +13,22 @@ go test ./...            # the full suite; -race is worth the time
 ./scripts/check_coverage.sh   # the CI coverage gate, runnable locally
 ```
 
+To build a binary you intend to *run against the service*, use the build
+script rather than a bare `go build`:
+
+```sh
+./scripts/build.sh            # stamps `git describe --tags`
+./scripts/build.sh v0.4.1     # from a source tarball, name the release
+```
+
+The service gates uploads on the version a client reports. A bare
+`go build` reports `dev` — "this build cannot say which release it is" —
+and the service treats that as a client it cannot place, which is the safe
+answer for an unknown binary and the wrong one for a checkout that knows
+exactly where it sits. The script stamps that answer in. `go install
+<module>@<version>` needs nothing extra: the version it resolved is
+already recorded in the binary.
+
 Tests drive the system at its three seams — the CLI in a sandboxed HOME, the
 proxy over real HTTP against a fake upstream, and the uploader against a
 fake service. Inside those seams there are no mocks: tests assert observable

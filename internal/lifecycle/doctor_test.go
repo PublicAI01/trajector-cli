@@ -387,6 +387,34 @@ func TestDoctorRelaysTheServiceHandshakeWithoutCallingItAFault(t *testing.T) {
 // about versions on either surface. Two spellings of this rule would
 // eventually disagree, and the user would have no way to know which
 // one to believe.
+func TestDoctorRelaysAPausedUploaderWithoutCallingTheMachineBroken(t *testing.T) {
+	// Nothing here is broken and nothing doctor can do would change it:
+	// the user finishes this in a browser. Counting it as a problem would
+	// fail `trajector doctor` on a healthy install.
+	e := newEnv(t)
+	e.deps.Version = "0.1.0"
+	writeUploadFile(t, e, "handshake.json", map[string]any{
+		"authorization_required": true,
+		"authorize_url":          "https://dashboard.example.com/authorization",
+		"authorization_message":  "Your data authorization is not complete.",
+	})
+	problems, out := e.doctor()
+
+	if problems != 0 {
+		t.Fatalf("problems = %d, want a paused uploader reported without failing doctor, output:\n%s", problems, out)
+	}
+	for _, want := range []string{
+		"data authorization is not complete",
+		"Your data authorization is not complete.",
+		"https://dashboard.example.com/authorization",
+		"Captured data is kept",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor = %q, want it to contain %q", out, want)
+		}
+	}
+}
+
 func TestDoctorSaysNothingAboutAMinimumThisBuildMeets(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Version = "0.1.0"

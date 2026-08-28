@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
@@ -23,8 +24,37 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
-// version is stamped at build time by the release pipeline.
-var version = "dev"
+// version is stamped at build time by the release pipeline, and by
+// scripts/build.sh for anyone building from a checkout. It is what the
+// client reports to the service on every request, and the service gates
+// uploads on it, so a build that cannot say which release it is gets
+// treated as one that cannot be placed.
+//
+// The fallback below narrows who ends up in that position. `go install
+// <module>@<version>` records the version it resolved, and a build made
+// that way is as identifiable as a released one — reporting "dev" for it
+// would gate a user who is demonstrably on a real release. What is left
+// unstamped after that is a plain `go build` from an unknown tree, and
+// for that one "dev" is the honest answer: nothing here knows which
+// release it is, and the service must not assume.
+var version = unstampedVersion
+
+// unstampedVersion is what version holds when the linker did not stamp
+// it. The initializer must stay a plain constant string: -X can only
+// patch a variable initialized that way, and any runtime initializer
+// here would run afterwards and overwrite the stamp.
+const unstampedVersion = "dev"
+
+func init() {
+	if version != unstampedVersion {
+		return
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			version = v
+		}
+	}
+}
 
 // ProxyAddrEnv overrides the proxy address, for tests and unusual
 // setups. Production always uses the fixed address. Whatever it names

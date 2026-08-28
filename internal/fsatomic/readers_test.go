@@ -25,6 +25,9 @@ var plainReadFiles = map[string]bool{
 	// This module's own sources sit in the checkout, where nothing in
 	// this codebase writes them.
 	"internal/harness/repotest/repotest.go": true,
+	// The shared contract fixtures are read-only test data kept outside
+	// this repository; nothing here writes them.
+	"internal/harness/conformance/conformance.go": true,
 }
 
 // Reads of a path that WriteFile replaces must come through ReadFile:

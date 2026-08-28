@@ -125,6 +125,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	doctorSpool(r, d.Spool, m.deps.Layout.SpoolDir())
 	doctorRejected(r, d.Rejected, d.RejectedErr, m.deps.Layout.RejectedDir())
 	doctorService(r, d.Handshake, d.UpgradeMessage, m.deps.Version)
+	doctorAuthorization(r, d.Authorization)
 	doctorEnvironmentNote(r)
 	m.doctorSelfcheck(r, d)
 
@@ -364,6 +365,26 @@ func doctorService(r *doctorReport, h platform.Handshake, upgradeMessage, versio
 	if h.Notice != "" {
 		r.note("notice from the service: %s", h.Notice)
 	}
+}
+
+// doctorAuthorization relays the service's refusal of this account's
+// uploads for want of a completed data authorization.
+//
+// It is a note, not a problem, for the same reason being behind the
+// service's minimum version is: nothing on this machine is broken, and
+// nothing doctor can do would change it. Making it move the exit code
+// would fail `trajector doctor` on a healthy install over a state the
+// user resolves in a browser.
+func doctorAuthorization(r *doctorReport, a upload.AuthorizationNotice) {
+	if !a.Required {
+		return
+	}
+	r.note("%s", doctorClause(authorizationPaused))
+	if a.Message != "" {
+		r.detail(serviceSays, a.Message)
+	}
+	r.detail("%s", authorizeHint(a.URL))
+	r.detail("Captured data is kept; nothing was quarantined.")
 }
 
 // doctorSelfcheck closes an enabled project's diagnosis by asking the

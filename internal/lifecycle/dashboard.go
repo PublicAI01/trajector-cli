@@ -122,7 +122,7 @@ func (m *Machine) Status(dir string, io IO) error {
 	// The service's own words about a refusal are cleared the moment it
 	// acknowledges an upload, so their presence is a live refusal and is
 	// reported whatever the comparison says.
-	if version != versionSatisfied || d.Handshake.Notice != "" || d.UpgradeMessage != "" {
+	if version != versionSatisfied || d.Handshake.Notice != "" || d.UpgradeMessage != "" || d.Authorization.Required {
 		fmt.Fprintln(io.Out, "\nService")
 		if version != versionSatisfied {
 			fmt.Fprintf(io.Out, "  The service requires client version %s or newer; this build is %s.\n",
@@ -132,7 +132,7 @@ func (m *Machine) Status(dir string, io IO) error {
 		// say why, or by when, and a user who reads only the first line
 		// should read the reason rather than the remedy.
 		if d.UpgradeMessage != "" {
-			fmt.Fprintf(io.Out, "  The service says: %s\n", d.UpgradeMessage)
+			fmt.Fprintf(io.Out, "  "+serviceSays+"\n", d.UpgradeMessage)
 		}
 		// Only a build known to be behind is told to upgrade. On an
 		// unorderable pair the requirement is stated and the remedy is
@@ -140,6 +140,13 @@ func (m *Machine) Status(dir string, io IO) error {
 		// send the user somewhere that tells them so.
 		if version == versionBehind || d.UpgradeMessage != "" {
 			fmt.Fprintf(io.Out, "  %s\n", upgradeHint)
+		}
+		if d.Authorization.Required {
+			fmt.Fprintln(io.Out, "  "+authorizationPaused)
+			if d.Authorization.Message != "" {
+				fmt.Fprintf(io.Out, "  "+serviceSays+"\n", d.Authorization.Message)
+			}
+			fmt.Fprintf(io.Out, "  %s\n", authorizeHint(d.Authorization.URL))
 		}
 		if d.Handshake.Notice != "" {
 			fmt.Fprintf(io.Out, "  Notice from the service: %s\n", d.Handshake.Notice)

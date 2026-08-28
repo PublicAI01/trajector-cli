@@ -182,6 +182,59 @@ func TestUploadExplainsARequiredUpgradeFromTheFirstEncounter(t *testing.T) {
 	}
 }
 
+func TestUploadExplainsAMissingDataAuthorizationAndWhereToComplete(t *testing.T) {
+	e := newEnv(t)
+	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{
+		"error":         "data_authorization_required",
+		"authorize_url": "https://dashboard.example.com/authorization",
+		"message":       "Your data authorization is not complete.",
+	}))
+	servedProxy(t, e)
+	m := e.machine()
+
+	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
+	if err := m.Upload(true, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	out := e.stdout.String()
+	for _, want := range []string{
+		"data authorization is not complete",
+		"The service says:",
+		"https://dashboard.example.com/authorization",
+		"Captured data is kept.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout = %q, want it to contain %q", out, want)
+		}
+	}
+	if n := len(e.sandbox.Rawcalls()); n != 1 {
+		t.Errorf("spool holds %d rawcalls, want the refused record kept and not quarantined", n)
+	}
+}
+
+func TestUploadFallsBackToItsOwnWordingWhenTheServiceNamesNoUsableAddress(t *testing.T) {
+	// A link that opens nothing is worse than none. The client drops it
+	// and still has to say what to do.
+	e := newEnv(t)
+	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{
+		"error":         "data_authorization_required",
+		"authorize_url": "http://dashboard.example.com/authorization",
+	}))
+	servedProxy(t, e)
+
+	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
+	if err := e.machine().Upload(true, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	out := e.stdout.String()
+	if strings.Contains(out, "http://dashboard.example.com") {
+		t.Errorf("stdout = %q, want the unusable address dropped", out)
+	}
+	if !strings.Contains(out, "Trajector dashboard") {
+		t.Errorf("stdout = %q, want wording of our own in its place", out)
+	}
+}
+
 func TestUploadDoesNotOfferForceToARunThatAlreadyUsedIt(t *testing.T) {
 	// Both pauses the service can impose are reachable under --force: it
 	// bypasses this client's own thresholds, not the service's refusal or
@@ -198,6 +251,15 @@ func TestUploadDoesNotOfferForceToARunThatAlreadyUsedIt(t *testing.T) {
 			name:  "upgrade required",
 			reply: fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}),
 			pause: "requires trajector 9.9.9 or newer",
+			offer: "--force",
+		},
+		{
+			name: "authorization required",
+			reply: fakeplatform.JSON(451, map[string]any{
+				"error":         "data_authorization_required",
+				"authorize_url": "https://dashboard.example.com/authorization",
+			}),
+			pause: "data authorization is not complete",
 			offer: "--force",
 		},
 		{

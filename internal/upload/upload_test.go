@@ -588,6 +588,10 @@ func TestAClassifiedFailureCarriesItsOutcomeAlongsideTheError(t *testing.T) {
 		want upload.Outcome
 	}{
 		{"upgrade required", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}), upload.UpgradeRequired},
+		{"authorization required", fakeplatform.JSON(451, map[string]any{
+			"error":         "data_authorization_required",
+			"authorize_url": "https://dashboard.example.com/authorization",
+		}), upload.AuthorizationRequired},
 		{"deferred", limited, upload.Deferred},
 		{"rejected", rejectStub(400, "bad multipart"), upload.Rejected},
 	}
@@ -606,6 +610,9 @@ func TestAClassifiedFailureCarriesItsOutcomeAlongsideTheError(t *testing.T) {
 			}
 			if tc.want == upload.UpgradeRequired && res.MinClientVersion != "9.9.9" {
 				t.Errorf("min client version = %q, want it carried with the outcome", res.MinClientVersion)
+			}
+			if tc.want == upload.AuthorizationRequired && res.AuthorizeURL != "https://dashboard.example.com/authorization" {
+				t.Errorf("authorize URL = %q, want it carried with the outcome", res.AuthorizeURL)
 			}
 		})
 	}
@@ -658,6 +665,116 @@ func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
 	}
 	if res2, err := f.uploader.Flush(false); err != nil || res2.Outcome != upload.Empty {
 		t.Fatalf("flush after a success = %+v, %v; the gate must have lifted", res2, err)
+	}
+}
+
+func TestAnAuthorizationGatePausesAutomaticFlushesWithoutTouchingData(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{
+		"error":         "data_authorization_required",
+		"authorize_url": "https://dashboard.example.com/authorization",
+	}))
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("451 did not surface")
+	}
+	if f.spool.Usage() == 0 {
+		t.Fatal("data was touched by an authorization refusal")
+	}
+	if n := rejectedRecords(t, f.rejected); n != 0 {
+		t.Fatal("an authorization refusal quarantined valid data")
+	}
+
+	res, err := f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.AuthorizationRequired {
+		t.Fatalf("automatic flush under the gate = %+v, %v", res, err)
+	}
+	if f.uploadCount() != 1 {
+		t.Fatal("automatic flush uploaded despite the gate")
+	}
+
+	// Forcing is the recovery path: the user authorizes in a browser and
+	// nothing on this machine changes, so without it they would wait out
+	// a flush cycle for uploads that could go now.
+	res, err = f.uploader.Flush(true)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("forced flush past the gate = %+v, %v", res, err)
+	}
+	if res2, err := f.uploader.Flush(false); err != nil || res2.Outcome != upload.Empty {
+		t.Fatalf("flush after a success = %+v, %v; the gate must have lifted", res2, err)
+	}
+	if upload.LoadAuthorizationNotice(f.dir).Required {
+		t.Error("the persisted refusal outlived the acknowledgement that answered it")
+	}
+}
+
+func TestAnAuthorizationRefusalIsRememberedAcrossProcesses(t *testing.T) {
+	const said = "Your data authorization is not complete."
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{
+		"error":         "data_authorization_required",
+		"authorize_url": "https://dashboard.example.com/authorization",
+		"message":       said,
+	}))
+	f.storeRawcall(t, "req-1", f.now)
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("451 did not surface")
+	}
+	got := upload.LoadAuthorizationNotice(f.dir)
+	if !got.Required || got.URL != "https://dashboard.example.com/authorization" || got.Message != said {
+		t.Fatalf("persisted notice = %+v", got)
+	}
+}
+
+func TestAnAuthorizationRefusalWithNoDetailIsStillRemembered(t *testing.T) {
+	// The refusal itself is what status and doctor must report. A service
+	// that named neither a URL nor a message has still stopped uploads,
+	// and reading that back as "nothing is wrong" would leave the user
+	// with a silent uploader and no reason for it.
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{}))
+	f.storeRawcall(t, "req-1", f.now)
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("451 did not surface")
+	}
+	if got := upload.LoadAuthorizationNotice(f.dir); !got.Required {
+		t.Fatalf("persisted notice = %+v, want the refusal recorded", got)
+	}
+}
+
+func TestTheTwoRefusalsDoNotEraseEachOther(t *testing.T) {
+	// An old build whose account is also unauthorized holds both at once.
+	// Sharing one record would let status and doctor name only the last
+	// one seen, sending the user to fix half of what is wrong.
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{
+		"error":         "data_authorization_required",
+		"authorize_url": "https://dashboard.example.com/authorization",
+	}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
+		"min_client_version": "9.9.9",
+		"message":            "please upgrade",
+	}))
+	f.storeRawcall(t, "req-1", f.now)
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("451 did not surface")
+	}
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("426 did not surface")
+	}
+	if got := upload.LoadUpgradeMessage(f.dir); got != "please upgrade" {
+		t.Errorf("persisted upgrade message = %q", got)
+	}
+	if got := upload.LoadAuthorizationNotice(f.dir); !got.Required {
+		t.Errorf("the authorization refusal = %+v, want it still recorded", got)
+	}
+	if got := upload.LoadHandshake(f.dir).MinClientVersion; got != "9.9.9" {
+		t.Errorf("persisted min client version = %q", got)
 	}
 }
 
