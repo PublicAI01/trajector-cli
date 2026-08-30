@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -77,7 +78,7 @@ func (m *Machine) Upload(force bool, io IO) error {
 func explainStanding(io IO, s upload.Standing, remedy string, reassurance ...string) {
 	fmt.Fprintln(io.Out, s.Explain())
 	if s.Message != "" {
-		fmt.Fprintf(io.Out, serviceSays+"\n", s.Message)
+		fmt.Fprintf(io.Out, report.ServiceSays+"\n", s.Message)
 	}
 	for _, line := range reassurance {
 		fmt.Fprintln(io.Out, line)

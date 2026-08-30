@@ -21,29 +21,10 @@ func (e *env) statusOutput() string {
 	return e.stdout.String()
 }
 
-func TestStatusOnAFreshDevice(t *testing.T) {
-	e := newUnpairedEnv(t)
-	out := e.statusOutput()
-
-	for _, want := range []string{
-		"Not signed in",
-		"`trajector login`",
-		"Not enabled",
-		"`trajector enable`",
-		"Not running",
-		"0 B of 2.0 GiB used",
-		"Never uploaded",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("status = %q, want it to contain %q", out, want)
-		}
-	}
-	if strings.Contains(out, "WARNING") {
-		t.Errorf("status on a healthy fresh device warns: %q", out)
-	}
-}
-
-func TestStatusShowsAnEnabledProjectAndRunningProxy(t *testing.T) {
+// The one pass over the whole path: a real enable against a real proxy,
+// read back by a real diagnosis. What each line says is settled where
+// the renderer lives; this is that the renderer is handed the truth.
+func TestStatusShowsTheStateOfADeviceThatJustEnabledAProject(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
@@ -68,80 +49,6 @@ func TestStatusShowsAnEnabledProjectAndRunningProxy(t *testing.T) {
 	}
 	if strings.Contains(out, "third-party") {
 		t.Errorf("official upstream labelled third-party: %q", out)
-	}
-}
-
-func TestStatusLabelsAThirdPartyUpstream(t *testing.T) {
-	e := newEnv(t)
-	e.startProxy()
-	e.environ["ANTHROPIC_BASE_URL"] = "https://relay.example.com"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
-		t.Fatal(err)
-	}
-	e.stdout.Reset()
-	out := e.statusOutput()
-
-	if !strings.Contains(out, "https://relay.example.com") || !strings.Contains(out, "third-party") {
-		t.Errorf("status = %q, want the third-party upstream shown and labelled", out)
-	}
-}
-
-func TestStatusExplainsADeviceWidePause(t *testing.T) {
-	e := newEnv(t)
-	e.sandbox.Pause(proxytest.PauseSignedOut)
-	out := e.statusOutput()
-
-	if !strings.Contains(out, "paused") || !strings.Contains(out, "`trajector login`") {
-		t.Errorf("status = %q, want the signed-out pause explained with the command to run", out)
-	}
-}
-
-func TestStatusExplainsAConsentReconfirmPause(t *testing.T) {
-	e := newEnv(t)
-	e.sandbox.Pause(proxytest.PauseConsentReconfirm)
-	out := e.statusOutput()
-
-	if !strings.Contains(out, "agreement") || !strings.Contains(out, "`trajector enable`") {
-		t.Errorf("status = %q, want the reconfirm pause explained with the command to run", out)
-	}
-}
-
-func TestStatusShowsAnUnrecognizedPauseReasonVerbatim(t *testing.T) {
-	e := newEnv(t)
-	// A pause reason this build does not know (say, written by a newer
-	// one) must still be shown, not hidden.
-	e.sandbox.Pause("some_future_reason")
-	out := e.statusOutput()
-
-	if !strings.Contains(out, "some_future_reason") {
-		t.Errorf("status = %q, want the unknown pause reason shown verbatim", out)
-	}
-}
-
-func TestStatusWarnsWhenInjectionAndRoutingDisagree(t *testing.T) {
-	e := newEnv(t)
-	// A grant with no matching injection: the routing table says this
-	// project contributes, the settings say nothing routes here.
-	e.sandbox.GrantProject(proxytest.Grant{
-		Token:         "tok-orphaned-grant",
-		ProjectIDHash: e.status().Hash,
-		RootPath:      e.canonicalRoot(),
-		Upstream:      "https://api.anthropic.com",
-	})
-	out := e.statusOutput()
-
-	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "`trajector doctor`") {
-		t.Errorf("status = %q, want a loud disagreement warning pointing at doctor", out)
-	}
-}
-
-func TestStatusReportsAForeignPortHolder(t *testing.T) {
-	e := newEnv(t)
-	e.occupyPort()
-	out := e.statusOutput()
-
-	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "not the trajector proxy") {
-		t.Errorf("status = %q, want a loud foreign-process warning", out)
 	}
 }
 
@@ -195,47 +102,6 @@ func TestStatusAnswersAboutAnUnprovenHolderWithoutPayingTheStartupGrace(t *testi
 	}
 }
 
-func TestStatusPresentsAnUnverifiableProxyAsAuthentication(t *testing.T) {
-	e := newEnv(t)
-	e.startProxy()
-	e.proxyEnv.AdminToken()
-	proxytest.RemoveAdminTokens(t, e.layout(), e.proxyEnv.Addr())
-	out := e.statusOutput()
-
-	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "could not verify the proxy") {
-		t.Errorf("status = %q, want the failed verification reported", out)
-	}
-	if !strings.Contains(out, "authentication problem") {
-		t.Errorf("status = %q, want the authentication reading offered", out)
-	}
-	if strings.Contains(out, "find and stop the process") {
-		t.Errorf("status = %q, must not advise hunting a process that may be our own proxy", out)
-	}
-}
-
-func TestStatusShowsSpoolUsageAndLastUpload(t *testing.T) {
-	e := newEnv(t)
-	e.sandbox.SeedRawcall("req-1", "hash-project", e.deps.Now())
-	writeUploadFile(t, e, "state.json", map[string]any{
-		"last_upload": map[string]any{
-			"batch_id": "b-1", "records": 3, "bytes": 2048,
-			"at": "2026-08-02T10:00:00Z",
-		},
-		"last_error":    "boom",
-		"last_error_at": "2026-08-02T11:00:00Z",
-	})
-	out := e.statusOutput()
-
-	if strings.Contains(out, "0 B of") {
-		t.Errorf("status = %q, want nonzero spool usage after a seeded rawcall", out)
-	}
-	for _, want := range []string{"Last upload: 3 rawcall(s)", "2026-08-02T10:00:00Z", "boom"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("status = %q, want it to contain %q", out, want)
-		}
-	}
-}
-
 func TestStatusWarnsWhenTheSpoolIsFull(t *testing.T) {
 	e := newEnv(t)
 	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
@@ -264,70 +130,6 @@ func TestStatusReportsRecordingStoppedByAnUnwritableSpool(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("status = %q, want the sections after the spool still rendered (%q)", out, want)
 		}
-	}
-}
-
-func TestStatusWarnsAboutRejectedBatches(t *testing.T) {
-	e := newEnv(t)
-	e.sandbox.QuarantineBatch(
-		proxytest.Rejection{BatchID: "b-poison", Details: "413 Request Entity Too Large"},
-		map[string][]byte{"req-1": []byte(`{}`), "req-2": []byte(`{}`)})
-	out := e.statusOutput()
-
-	for _, want := range []string{"WARNING", "2 rawcall(s)", "1 rejected batch(es)", "not be retried automatically", "`trajector doctor`"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("status = %q, want it to contain %q", out, want)
-		}
-	}
-}
-
-func TestStatusRendersEverySectionWhenTheSpoolCannotOpen(t *testing.T) {
-	e := newEnv(t)
-	e.sandbox.SeedHandshake(proxytest.Handshake{Notice: "scheduled maintenance on Friday"})
-	e.obstruct(e.layout().SpoolDir())
-	out := e.statusOutput()
-
-	if want := "the capture spool at " + e.layout().SpoolDir() + " is not usable"; !strings.Contains(out, want) {
-		t.Errorf("status = %q, want the spool section to contain %q", out, want)
-	}
-	for _, want := range []string{"Uploads", "Never uploaded", "scheduled maintenance on Friday", "`trajector doctor`"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("status = %q, want it to contain %q", out, want)
-		}
-	}
-	for _, unwanted := range []string{"full", "not writable"} {
-		if strings.Contains(out, unwanted) {
-			t.Errorf("status = %q, want no writability verdict for a spool that never opened (%q)", out, unwanted)
-		}
-	}
-}
-
-func TestStatusShowsRejectedBatchesAlongsideASpoolError(t *testing.T) {
-	e := newEnv(t)
-	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison", Details: "413 Request Entity Too Large"},
-		map[string][]byte{
-			"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
-		})
-	e.obstruct(e.layout().SpoolDir())
-	out := e.statusOutput()
-
-	for _, want := range []string{"is not usable", "1 rejected batch(es)", "not be retried automatically"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("status = %q, want it to contain %q", out, want)
-		}
-	}
-}
-
-func TestStatusWarnsWhenTheRejectedBatchesCannotBeRead(t *testing.T) {
-	e := newEnv(t)
-	e.obstruct(e.layout().RejectedDir())
-	out := e.statusOutput()
-
-	if want := "the rejected batches at " + e.layout().RejectedDir() + " could not be read"; !strings.Contains(out, want) {
-		t.Errorf("status = %q, want it to contain %q", out, want)
-	}
-	if !strings.Contains(out, "`trajector doctor`") {
-		t.Errorf("status = %q, want it to point at doctor", out)
 	}
 }
 

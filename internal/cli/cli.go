@@ -17,10 +17,9 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
-	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
-	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -134,10 +133,13 @@ commands:
 // runtimeEnv is everything a command needs to know about the machine
 // it runs on, resolved in one place.
 type runtimeEnv struct {
-	layout      userdirs.Layout
-	home        string
-	execPath    string
-	proxyAddr   string
+	layout    userdirs.Layout
+	home      string
+	execPath  string
+	proxyAddr string
+	// platformURL is empty unless the user config names an endpoint of
+	// their own: which service the default is stays with the machine
+	// that talks to it, not with the command line.
 	platformURL string
 	releasesURL string
 }
@@ -160,7 +162,6 @@ func resolveEnv() (runtimeEnv, error) {
 		home:        home,
 		execPath:    execPath,
 		proxyAddr:   proxylife.Addr,
-		platformURL: platform.DefaultBaseURL,
 		releasesURL: selfupdate.DefaultReleasesURL,
 	}
 	if addr := os.Getenv(ProxyAddrEnv); addr != "" {
@@ -235,15 +236,14 @@ func machineAt(addr string) (*lifecycle.Machine, error) {
 		return nil, err
 	}
 	deps := lifecycle.Deps{
-		Layout:    env.layout,
-		Tokens:    tokenstore.Open(env.layout.SecretsDir()),
-		Platform:  platform.New(env.platformURL, version),
-		Version:   version,
-		ExecPath:  env.execPath,
-		Releases:  env.releasesURL,
-		ProxyAddr: env.proxyAddr,
-		Home:      env.home,
-		Getenv:    os.Getenv,
+		Layout:      env.layout,
+		PlatformURL: env.platformURL,
+		Version:     version,
+		ExecPath:    env.execPath,
+		Releases:    env.releasesURL,
+		ProxyAddr:   env.proxyAddr,
+		Home:        env.home,
+		Getenv:      os.Getenv,
 	}
 	if v := os.Getenv(NowEnv); v != "" {
 		at, err := time.Parse(time.RFC3339, v)
@@ -252,7 +252,7 @@ func machineAt(addr string) (*lifecycle.Machine, error) {
 		}
 		deps.Now = func() time.Time { return at }
 	}
-	return lifecycle.Open(deps)
+	return lifecycle.Open(deps), nil
 }
 
 // io hands the machine this invocation's streams.
@@ -317,7 +317,7 @@ func (a *app) exit(err error) int {
 		return 1
 	case errors.Is(err, lifecycle.ErrPortOccupied), errors.Is(err, lifecycle.ErrProxyUnverified):
 		fmt.Fprintf(a.stderr, "trajector: WARNING: %v\n", err)
-		if remedy := lifecycle.ProxyRemedy(err); remedy != "" {
+		if remedy := report.ProxyRemedy(err); remedy != "" {
 			fmt.Fprintf(a.stderr, "trajector: %s\n", remedy)
 		}
 		return 1

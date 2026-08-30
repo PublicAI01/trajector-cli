@@ -1,11 +1,11 @@
-package lifecycle
+package report
 
 import "strings"
 
-// serviceSays is the one prefix marking words as the service's own
+// ServiceSays is the one prefix marking words as the service's own
 // rather than this client's. `upload`, `status` and `doctor` all relay
 // them, so the mark is spelled once.
-const serviceSays = "The service says: %s"
+const ServiceSays = "The service says: %s"
 
 // doctorClause lowers a sentence into doctor's report style — a bare
 // lowercase clause — so doctor shares a spelling with the surfaces that

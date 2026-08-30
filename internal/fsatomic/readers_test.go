@@ -21,7 +21,7 @@ var plainReadFiles = map[string]bool{
 	// Lock files are created exclusively and removed, never replaced.
 	"internal/fsatomic/fsatomic.go": true,
 	// /proc/version is provided by the kernel.
-	"internal/lifecycle/doctor.go": true,
+	"internal/report/doctor.go": true,
 	// This module's own sources sit in the checkout, where nothing in
 	// this codebase writes them.
 	"internal/harness/repotest/repotest.go": true,

@@ -322,7 +322,7 @@ func TestPurgeWithoutAPairedDeviceStillDisablesLocally(t *testing.T) {
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.deps.Tokens.ClearDeviceToken(); err != nil {
+	if err := e.tokens.ClearDeviceToken(); err != nil {
 		t.Fatal(err)
 	}
 

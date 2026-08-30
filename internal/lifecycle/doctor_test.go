@@ -5,10 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -47,19 +45,6 @@ func TestDoctorOnAHealthyEnabledProject(t *testing.T) {
 	}
 	if strings.Contains(out, "fixed") {
 		t.Errorf("doctor = %q, want the second pass to have nothing to repair", out)
-	}
-}
-
-func TestDoctorExplainsADeviceWidePause(t *testing.T) {
-	e := newEnv(t)
-	e.sandbox.Pause(proxytest.PauseSignedOut)
-
-	problems, out := e.doctor()
-	if problems == 0 {
-		t.Error("doctor found no problem on a paused device")
-	}
-	if !strings.Contains(out, "trajector login") {
-		t.Errorf("doctor = %q, want the pause explained with its remedy", out)
 	}
 }
 
@@ -108,7 +93,7 @@ func TestDoctorFlagsALiveProxyThatWillNotRecord(t *testing.T) {
 	}
 }
 
-func TestDoctorReportsAnUnreadableTokenStore(t *testing.T) {
+func TestDoctorSurfacesAStoredTokenThatCannotBeRead(t *testing.T) {
 	e := newEnv(t)
 	// Make the stored token unreadable (not absent): the pairing state
 	// is now unknown, which must never present as signed out.
@@ -335,23 +320,6 @@ func TestDoctorReinstallsTheDiscoveryHint(t *testing.T) {
 	}
 }
 
-func TestDoctorListsRejectedBatches(t *testing.T) {
-	e := newEnv(t)
-	e.sandbox.QuarantineBatch(
-		proxytest.Rejection{BatchID: "b-poison", Details: "413 Request Entity Too Large"},
-		map[string][]byte{"req-1": []byte(`{}`)})
-	problems, out := e.doctor()
-
-	if problems == 0 {
-		t.Fatalf("problems = 0 with a quarantined batch, output:\n%s", out)
-	}
-	for _, want := range []string{"b-poison", "413 Request Entity Too Large", "requeue", "discard"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("doctor = %q, want it to contain %q", out, want)
-		}
-	}
-}
-
 func TestDoctorRelaysTheServiceHandshakeWithoutCallingItAFault(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Version = "0.1.0" // behind the minimum below
@@ -367,37 +335,6 @@ func TestDoctorRelaysTheServiceHandshakeWithoutCallingItAFault(t *testing.T) {
 		t.Fatalf("problems = %d, want the handshake relayed without affecting the exit code, output:\n%s", problems, out)
 	}
 	for _, want := range []string{"9.9.9", "0.1.0", "maintenance on Friday", "trajector upgrade"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("doctor = %q, want it to contain %q", out, want)
-		}
-	}
-}
-
-// doctor answers the same question status does, from the same
-// judgement — a build that meets the service's minimum is told nothing
-// about versions on either surface. Two spellings of this rule would
-// eventually disagree, and the user would have no way to know which
-// one to believe.
-func TestDoctorRelaysAPausedUploaderWithoutCallingTheMachineBroken(t *testing.T) {
-	// Nothing here is broken and nothing doctor can do would change it:
-	// the user finishes this in a browser. Counting it as a problem would
-	// fail `trajector doctor` on a healthy install.
-	e := newEnv(t)
-	e.deps.Version = "0.1.0"
-	e.sandbox.SeedAuthorizationRefusal(
-		"https://dashboard.example.com/authorization",
-		"Your data authorization is not complete.")
-	problems, out := e.doctor()
-
-	if problems != 0 {
-		t.Fatalf("problems = %d, want a paused uploader reported without failing doctor, output:\n%s", problems, out)
-	}
-	for _, want := range []string{
-		"data authorization is not complete",
-		"Your data authorization is not complete.",
-		"https://dashboard.example.com/authorization",
-		"Captured data is kept",
-	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor = %q, want it to contain %q", out, want)
 		}
@@ -462,81 +399,6 @@ func TestDoctorRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	}
 }
 
-func TestStatusAndDoctorPresentAnUnusableSpoolAlike(t *testing.T) {
-	e := newEnv(t)
-	e.obstruct(e.layout().SpoolDir())
-	want := "the capture spool at " + e.layout().SpoolDir() + " is not usable"
-
-	statusOut := e.statusOutput()
-	e.stdout.Reset()
-	problems, doctorOut := e.doctor()
-
-	if problems == 0 {
-		t.Fatalf("problems = 0 with an unusable spool, output:\n%s", doctorOut)
-	}
-	for surface, out := range map[string]string{"status": statusOut, "doctor": doctorOut} {
-		if !strings.Contains(out, want) {
-			t.Errorf("%s = %q, want it to contain %q", surface, out, want)
-		}
-	}
-}
-
-func TestDoctorReportsRejectedBatchesItCannotRead(t *testing.T) {
-	e := newEnv(t)
-	e.obstruct(e.layout().RejectedDir())
-	problems, out := e.doctor()
-
-	if problems == 0 {
-		t.Fatalf("problems = 0 with an unreadable quarantine, output:\n%s", out)
-	}
-	if want := "the rejected batches at " + e.layout().RejectedDir() + " could not be read"; !strings.Contains(out, want) {
-		t.Errorf("doctor = %q, want it to contain %q", out, want)
-	}
-}
-
-func TestStatusAndDoctorPresentAFullSpoolAlike(t *testing.T) {
-	e := newEnv(t)
-	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
-	e.sandbox.SeedRawcall("req-1", "hash-project", e.deps.Now())
-
-	statusOut := e.statusOutput()
-	e.stdout.Reset()
-	problems, doctorOut := e.doctor()
-
-	if problems == 0 {
-		t.Fatalf("problems = 0 with a full spool, output:\n%s", doctorOut)
-	}
-	for surface, out := range map[string]string{"status": statusOut, "doctor": doctorOut} {
-		if !strings.Contains(out, "not writable, so recording is stopped") {
-			t.Errorf("%s = %q, want the stopped-recording sentence", surface, out)
-		}
-		if !strings.Contains(out, "The spool is full. Run `trajector upload --force`") {
-			t.Errorf("%s = %q, want the full-spool remedy", surface, out)
-		}
-	}
-}
-
-func TestStatusAndDoctorPresentAnUnwritableSpoolAlike(t *testing.T) {
-	e := newEnv(t)
-	readOnly(t, e.layout().SpoolDir())
-
-	statusOut := e.statusOutput()
-	e.stdout.Reset()
-	problems, doctorOut := e.doctor()
-
-	if problems == 0 {
-		t.Fatalf("problems = 0 with an unwritable spool, output:\n%s", doctorOut)
-	}
-	for surface, out := range map[string]string{"status": statusOut, "doctor": doctorOut} {
-		if !strings.Contains(out, "not writable, so recording is stopped") {
-			t.Errorf("%s = %q, want the stopped-recording sentence", surface, out)
-		}
-		if strings.Contains(out, "The spool is full") {
-			t.Errorf("%s = %q, want no quota remedy for a spool that is not full", surface, out)
-		}
-	}
-}
-
 func TestDoctorWarnsWhenTheSpoolIsFull(t *testing.T) {
 	e := newEnv(t)
 	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
@@ -548,51 +410,6 @@ func TestDoctorWarnsWhenTheSpoolIsFull(t *testing.T) {
 	}
 	if !strings.Contains(out, "full") {
 		t.Errorf("doctor = %q, want the full spool called out", out)
-	}
-}
-
-// The one shape doctor uses for every reason uploads are held back: the
-// standing's own sentence as the finding, then whatever the service
-// said, then the standing's own remedy. A user who has learned to read
-// one of the three gates can read the other two.
-func TestDoctorExplainsEveryUploadGateInTheSameShape(t *testing.T) {
-	e := newEnv(t)
-	e.deps.Version = "0.1.0"
-	until := e.deps.Now().Add(45 * time.Minute)
-	e.sandbox.SeedUpgradeRefusal("9.9.9", "Upload format 0.1.x is retired on 2026-09-01.")
-	e.sandbox.SeedAuthorizationRefusal("https://dashboard.example.com/authorization", "Your data authorization is not complete.")
-	e.sandbox.SeedUploadPause(proxytest.RateLimited, until)
-
-	problems, out := e.doctor()
-	if problems != 0 {
-		t.Fatalf("problems = %d, want three pauses reported without failing doctor, output:\n%s", problems, out)
-	}
-	for _, gate := range []struct{ name, finding, remedy string }{
-		{
-			name:    "426",
-			finding: "the service requires client version 9.9.9 or newer; this build is 0.1.0",
-			remedy:  "Run `trajector upgrade` to install the newest release.",
-		},
-		{
-			name:    "451",
-			finding: "uploads are paused: this account's data authorization is not complete",
-			remedy:  "Complete your data authorization at https://dashboard.example.com/authorization — then uploads resume.",
-		},
-		{
-			name:    "429",
-			finding: "uploads are paused until " + until.Format(time.RFC3339) + ": the service asked to slow down",
-			remedy:  "Uploads resume automatically; `trajector upload --force` offers them now.",
-		},
-	} {
-		t.Run(gate.name, func(t *testing.T) {
-			details, ok := detailsUnder(out, "  note: "+gate.finding)
-			if !ok {
-				t.Fatalf("doctor = %q, want the finding %q", out, gate.finding)
-			}
-			if !slices.Contains(details, "      "+gate.remedy) {
-				t.Errorf("details under %q = %q, want the remedy %q", gate.finding, details, gate.remedy)
-			}
-		})
 	}
 }
 
@@ -616,24 +433,4 @@ func TestDoctorNamesBothRefusalsWhenBothStand(t *testing.T) {
 			t.Errorf("doctor = %q, want it to contain %q", out, want)
 		}
 	}
-}
-
-// detailsUnder is the follow-up lines doctor printed under one finding,
-// which is where every remedy lands.
-func detailsUnder(report, finding string) ([]string, bool) {
-	lines := strings.Split(report, "\n")
-	for i, line := range lines {
-		if line != finding {
-			continue
-		}
-		var details []string
-		for _, next := range lines[i+1:] {
-			if !strings.HasPrefix(next, "      ") {
-				break
-			}
-			details = append(details, next)
-		}
-		return details, true
-	}
-	return nil, false
 }

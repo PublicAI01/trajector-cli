@@ -19,7 +19,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
-	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
@@ -31,6 +31,7 @@ import (
 type env struct {
 	t        *testing.T
 	deps     lifecycle.Deps
+	tokens   *tokenstore.Store
 	service  *fakeplatform.Server
 	project  string
 	stdin    string
@@ -46,6 +47,10 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	home := t.TempDir()
 	layout := proxytest.SandboxLayout(t, t.TempDir())
+	// The file token backend keeps these tests away from the developer's
+	// OS keyring; the machine opens the store itself, so this is the one
+	// place that can choose which backend it opens.
+	t.Setenv(tokenstore.BackendEnv, "file")
 	e := &env{
 		t:       t,
 		service: fakeplatform.New(t),
@@ -56,16 +61,16 @@ func newEnv(t *testing.T) *env {
 		environ: map[string]string{},
 		sandbox: proxytest.Open(t, layout),
 		client:  proxytest.Client(t),
+		tokens:  tokenstore.Files(layout.SecretsDir()),
 	}
 	e.deps = lifecycle.Deps{
-		Layout:   layout,
-		Tokens:   tokenstore.Files(layout.SecretsDir()),
-		Platform: platform.New(e.service.URL(), "testv"),
-		Version:  "testv",
-		ExecPath: home + "/bin/trajector",
-		Home:     home,
-		Getenv:   func(key string) string { return e.environ[key] },
-		Now:      func() time.Time { return time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC) },
+		Layout:      layout,
+		PlatformURL: e.service.URL(),
+		Version:     "testv",
+		ExecPath:    home + "/bin/trajector",
+		Home:        home,
+		Getenv:      func(key string) string { return e.environ[key] },
+		Now:         func() time.Time { return time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC) },
 	}
 	// Most of what the machine does presumes a paired device; the tests
 	// that care about pairing itself start from newUnpairedEnv.
@@ -77,7 +82,7 @@ func newEnv(t *testing.T) *env {
 func newUnpairedEnv(t *testing.T) *env {
 	t.Helper()
 	e := newEnv(t)
-	if err := e.deps.Tokens.ClearDeviceToken(); err != nil {
+	if err := e.tokens.ClearDeviceToken(); err != nil {
 		t.Fatal(err)
 	}
 	return e
@@ -85,11 +90,7 @@ func newUnpairedEnv(t *testing.T) *env {
 
 func (e *env) machine() *lifecycle.Machine {
 	e.t.Helper()
-	m, err := lifecycle.Open(e.deps)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return m
+	return lifecycle.Open(e.deps)
 }
 
 func (e *env) io() lifecycle.IO {
@@ -176,7 +177,7 @@ func (e *env) settingsPath() string {
 // status is the machine's own answer about the project, the read half
 // every assertion goes through instead of re-deriving state from the
 // underlying stores.
-func (e *env) status() lifecycle.ProjectStatus {
+func (e *env) status() report.ProjectStatus {
 	e.t.Helper()
 	st, err := e.machine().Project(e.project)
 	if err != nil {
@@ -305,7 +306,39 @@ func ackBatch(extra map[string]any) func(fakeplatform.Request) fakeplatform.Resp
 
 func (e *env) seedDeviceToken() {
 	e.t.Helper()
-	if err := e.deps.Tokens.SetDeviceToken("dev-tok-fake"); err != nil {
+	if err := e.tokens.SetDeviceToken("dev-tok-fake"); err != nil {
 		e.t.Fatal(err)
 	}
+}
+
+func freeAddr(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+	return addr
+}
+
+func waitHealthy(t *testing.T, e *env, addr string) {
+	t.Helper()
+	proxytest.WaitServing(t, e.client, addr, e.deps.Layout)
+}
+
+// adminPost posts to a served proxy's reserved endpoint with the admin
+// token it published.
+func adminPost(t *testing.T, e *env, url string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxytest.Authorize(req, e.deps.Layout)
+	resp, err := e.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
 }

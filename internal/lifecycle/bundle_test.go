@@ -98,31 +98,15 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 		}
 	}
 
+	// The diagnosis this device resolved reaches the archive; what the
+	// serialization says about each part of it is asserted where that
+	// rendering lives.
 	diagnosis, ok := entries["diagnosis.json"]
 	if !ok {
 		t.Fatalf("bundle is missing diagnosis.json (has: %v)", keysOf(entries))
 	}
-	// One serialized Diagnosis carries what used to be scattered over
-	// prose and per-surface files: project, live proxy report, spool
-	// days, and the rejected batch's recorded reason.
-	for _, want := range []string{
-		`"hooks_installed": true`,
-		`"holder": "ours"`,
-		`"service": "trajector-proxy"`,
-		`"usage_bytes"`,
-		`"413 Request Entity Too Large"`,
-		`"min_client_version": "9.9.9"`,
-		// Support reads why uploads were held back as the client itself
-		// judged it, with the service's own words beside the judgement:
-		// "this client is behind" and "the service wants something else"
-		// are different reports and must not have to be told apart by
-		// re-deriving anything from the handshake.
-		`"reason": "version_gate"`,
-		`"message": "Upload format 0.1.x is retired on 2026-09-01."`,
-	} {
-		if !strings.Contains(diagnosis, want) {
-			t.Errorf("diagnosis.json = %s\nwant it to contain %q", diagnosis, want)
-		}
+	if !strings.Contains(diagnosis, string(rootInJSON)) {
+		t.Errorf("diagnosis.json = %s\nwant it to name the diagnosed project %s", diagnosis, rootInJSON)
 	}
 }
 

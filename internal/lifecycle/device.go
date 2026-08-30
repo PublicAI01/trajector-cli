@@ -26,7 +26,7 @@ func (m *Machine) Login(io IO) error {
 
 // Pair runs the browser pairing flow and signs the device in.
 func (m *Machine) Pair(io IO) error {
-	pairing, err := m.deps.Platform.StartPairing(m.deps.Version)
+	pairing, err := m.service.StartPairing(m.deps.Version)
 	if err != nil {
 		return fmt.Errorf("starting pairing: %w", err)
 	}
@@ -39,7 +39,7 @@ func (m *Machine) Pair(io IO) error {
 	deadline := m.deps.Now().Add(pairingTimeout)
 	var lastPollErr error
 	for {
-		result, err := m.deps.Platform.PollPairing(pairing.PairingID)
+		result, err := m.service.PollPairing(pairing.PairingID)
 		switch {
 		case err != nil:
 			// Only the service positively refusing the check ends the wait
@@ -52,7 +52,7 @@ func (m *Machine) Pair(io IO) error {
 			}
 			lastPollErr = err
 		case result.Status == platform.PairingPaired:
-			if err := m.deps.Tokens.SetDeviceToken(result.DeviceToken); err != nil {
+			if err := m.tokens.SetDeviceToken(result.DeviceToken); err != nil {
 				return fmt.Errorf("storing the device token: %w", err)
 			}
 			fmt.Fprintln(io.Out, "Device paired.")
@@ -111,7 +111,7 @@ func (m *Machine) Logout(io IO) error {
 	if err := m.routes.Pause(routing.PauseSignedOut); err != nil {
 		return fmt.Errorf("pausing recording: %w", err)
 	}
-	if err := m.deps.Platform.RevokeDevice(token); err != nil && !errors.Is(err, platform.ErrAlreadyRevoked) {
+	if err := m.service.RevokeDevice(token); err != nil && !errors.Is(err, platform.ErrAlreadyRevoked) {
 		// An already-revoked token is the goal state and stays silent;
 		// everything else is a warning with the right next step.
 		var status *platform.StatusError
@@ -121,7 +121,7 @@ func (m *Machine) Logout(io IO) error {
 			fmt.Fprintf(io.Err, "trajector: warning: could not revoke the token with the service (%v); it was removed locally, revoke it from your account page as well\n", err)
 		}
 	}
-	if err := m.deps.Tokens.ClearDeviceToken(); err != nil {
+	if err := m.tokens.ClearDeviceToken(); err != nil {
 		return fmt.Errorf("removing the device token: %w", err)
 	}
 	fmt.Fprintln(io.Out, "Signed out. Forwarding for enabled projects is unaffected; recording is")

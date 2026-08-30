@@ -1,4 +1,4 @@
-package lifecycle
+package report
 
 import (
 	"net/url"

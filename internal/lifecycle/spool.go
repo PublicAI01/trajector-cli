@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/proxyserve"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
@@ -14,11 +15,11 @@ func (m *Machine) handshake() platform.Handshake {
 	return upload.LoadHandshake(m.deps.Layout.UploadDir())
 }
 
-// spool opens the capture spool with the quota the service last set
-// through the upload handshake; a machine that never uploaded runs on
-// the default. Every surface answers "what is the quota" this one way.
+// spool opens the capture spool the served proxy writes into, so a
+// surface reporting on it reports on the same store, opened the same
+// way.
 func (m *Machine) spool() (*spool.Spool, error) {
-	return spool.Create(m.deps.Layout.SpoolDir(), m.handshake().SpoolQuotaBytes)
+	return proxyserve.OpenSpool(m.deps.Layout)
 }
 
 // spoolUnbounded opens the spool with no quota at all. It exists for

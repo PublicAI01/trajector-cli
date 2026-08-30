@@ -6,36 +6,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
-	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
-	"github.com/PublicAI01/trajector-cli/internal/platform"
-	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 )
-
-func TestOpenRequiresItsCollaborators(t *testing.T) {
-	e := newEnv(t)
-	base := e.deps
-
-	withoutTokens := base
-	withoutTokens.Tokens = nil
-	if _, err := lifecycle.Open(withoutTokens); err == nil {
-		t.Error("Open succeeded without a token store")
-	}
-
-	withoutService := base
-	withoutService.Platform = nil
-	if _, err := lifecycle.Open(withoutService); err == nil {
-		t.Error("Open succeeded without a service client")
-	}
-
-	minimal := lifecycle.Deps{
-		Layout:   base.Layout,
-		Tokens:   tokenstore.Files(base.Layout.SecretsDir()),
-		Platform: platform.New("http://127.0.0.1:1", "testv"),
-	}
-	if _, err := lifecycle.Open(minimal); err != nil {
-		t.Errorf("Open with only the required collaborators = %v", err)
-	}
-}
 
 // Each pause reason must reach the user as something they can act on,
 // not as "this project would not be recorded".

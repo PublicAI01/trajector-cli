@@ -11,6 +11,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
@@ -154,7 +155,7 @@ type enableUndo struct {
 	ignoreRules []string
 }
 
-func (m *Machine) installAndVerify(io IO, st ProjectStatus, upstream string, undo *enableUndo) error {
+func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream string, undo *enableUndo) error {
 	token, err := projectToken(st)
 	if err != nil {
 		return err
@@ -242,7 +243,7 @@ func (m *Machine) confirmAgreement(io IO) error {
 // projectToken reuses the active token when the project is already
 // enabled — re-running enable must repair, not re-key — and mints a
 // fresh 128-bit token otherwise.
-func projectToken(st ProjectStatus) (string, error) {
+func projectToken(st report.ProjectStatus) (string, error) {
 	if st.Enabled {
 		return st.Token, nil
 	}
@@ -258,7 +259,7 @@ func projectToken(st ProjectStatus) (string, error) {
 // No upstream call is made and nothing is billed.
 func (m *Machine) selfCheck(token string) error {
 	if err := m.proxy.Ensure(); err != nil {
-		if remedy := ProxyRemedy(err); remedy != "" {
+		if remedy := report.ProxyRemedy(err); remedy != "" {
 			return fmt.Errorf("self-check failed: %v. %s", err, remedy)
 		}
 		return fmt.Errorf("self-check failed: %w", err)

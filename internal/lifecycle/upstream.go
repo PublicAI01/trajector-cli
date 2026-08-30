@@ -4,6 +4,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 )
 
 // nonLoopbackUpstreamRemedy is the one explanation every surface
@@ -49,7 +50,7 @@ type upstreamResolution struct {
 // the official endpoint and every later request carried the relay's
 // credentials to Anthropic. Enable and the unattended reconcile answer
 // from this one spelling so they cannot drift apart again.
-func (r upstreamResolution) keepsRecordedUpstream(st ProjectStatus) bool {
+func (r upstreamResolution) keepsRecordedUpstream(st report.ProjectStatus) bool {
 	return !r.external && st.Enabled && st.Injected() && st.Upstream != "" && !st.UpstreamMoved.Happened()
 }
 
@@ -88,7 +89,7 @@ func (m *Machine) desiredUpstream(root string) upstreamResolution {
 // it, so it must not silently point credentialed traffic somewhere
 // that would carry it unencrypted. enable is untouched — there the
 // user sees the third-party notice and decides.
-func (m *Machine) reconcileUpstream(st ProjectStatus) (want upstreamResolution, moved, refused bool, err error) {
+func (m *Machine) reconcileUpstream(st report.ProjectStatus) (want upstreamResolution, moved, refused bool, err error) {
 	want = m.desiredUpstream(st.Root)
 	if want.unsupportedKey != "" || want.masked || want.keepsRecordedUpstream(st) || want.upstream == st.Upstream {
 		return want, false, false, nil

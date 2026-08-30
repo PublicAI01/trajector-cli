@@ -16,12 +16,12 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
-	"github.com/PublicAI01/trajector-cli/internal/cli"
+	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
-	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/proxyserve"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
@@ -29,13 +29,12 @@ import (
 
 // serveProxy is the only behavior the spawned process tree needs: parse
 // the argv proxylife itself constructs, and be the proxy through the
-// composition root, the same assembly the CLI would run. The service
-// URL is unroutable, so the resident uploader never reaches a network.
+// same assembly a serving process runs. The service URL is unroutable,
+// so the resident uploader never reaches a network.
 func serveProxy(args []string) int {
 	if len(args) < 4 || args[0] != proxylife.Command {
 		return 96
 	}
-	addr := args[3]
 	layout, err := userdirs.Resolve(userdirs.Host())
 	if err != nil {
 		return 95
@@ -48,22 +47,20 @@ func serveProxy(args []string) int {
 	if version == "" {
 		version = "dev"
 	}
-	m, err := lifecycle.Open(lifecycle.Deps{
-		Layout:    layout,
-		Tokens:    tokenstore.Files(layout.SecretsDir()),
-		Platform:  platform.New("http://127.0.0.1:1", version),
-		Version:   version,
-		ExecPath:  exe,
-		ProxyAddr: addr,
-	})
-	if err != nil {
-		return 94
+	assembly := proxyserve.Assembly{
+		Layout:   layout,
+		Tokens:   tokenstore.Files(layout.SecretsDir()),
+		Service:  platform.New("http://127.0.0.1:1", version),
+		Consent:  consent.Open(layout.ConsentFile()),
+		Version:  version,
+		ExecPath: exe,
+		Addr:     args[3],
 	}
 	ctx := context.Background()
 	if args[1] == proxylife.Supervise {
-		err = m.SuperviseProxy(ctx, 30*time.Second, os.Stdout, os.Stderr)
+		err = proxyserve.Supervise(ctx, assembly, 30*time.Second, os.Stdout, os.Stderr)
 	} else {
-		err = m.ServeProxy(ctx, 30*time.Second, os.Stdout, os.Stderr)
+		err = proxyserve.Serve(ctx, assembly, 30*time.Second, os.Stdout, os.Stderr)
 	}
 	if err != nil {
 		return 1
@@ -81,12 +78,7 @@ const versionEnv = "TRAJECTOR_TEST_PROXY_VERSION"
 
 func TestMain(m *testing.M) {
 	procbin.Main(m, map[string]func(args []string) int{
-		"proxy": serveProxy,
-		// The full CLI entry point, so a spawned process tree prints
-		// exactly what production would print into the proxy log.
-		"cli": func(args []string) int {
-			return cli.Run(args, strings.NewReader(""), os.Stdout, os.Stderr)
-		},
+		"proxy":        serveProxy,
 		"exit-clean":   func([]string) int { return 0 },
 		"always-crash": func([]string) int { return 1 },
 		"sleep": func([]string) int {
@@ -158,16 +150,6 @@ func waitLogReleased(t *testing.T, layout userdirs.Layout) {
 	}
 }
 
-// portFree reports whether nothing accepts connections at addr.
-func portFree(addr string) bool {
-	conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
-	if err != nil {
-		return true
-	}
-	conn.Close()
-	return false
-}
-
 // logRemoved removes the proxy log, reporting whether it is gone — on
 // Windows the remove is refused while any process holds the file open.
 func logRemoved(layout userdirs.Layout) bool {
@@ -206,62 +188,6 @@ func TestEnsureStartsSupervisedProxyAndIsIdempotent(t *testing.T) {
 
 	if err := p.Ensure(); err != nil {
 		t.Errorf("second Ensure: %v, want nil against the healthy instance", err)
-	}
-}
-
-func TestConcurrentStartsConvergeWithoutBlamingAForeignProcess(t *testing.T) {
-	addr := freeAddr(t)
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("XDG_DATA_HOME", dir)
-	t.Setenv("XDG_STATE_HOME", dir)
-	t.Setenv(tokenstore.BackendEnv, "file")
-	layout := proxytest.SandboxLayout(t, dir)
-	exe := procbin.Self(t, "cli")
-	first := proxylife.For(layout, "dev", exe, addr)
-	second := proxylife.For(layout, "dev", exe, addr)
-	t.Cleanup(func() {
-		// A sibling still inside its startup grace when the winner
-		// drains exits on its bind error and is restarted by its
-		// supervisor onto the now-free port — the self-healing working
-		// as designed — so one drain is not always the last. Drain
-		// until both trees are gone: the port coming free says the
-		// serving child exited, the log becoming removable says no
-		// process holds its append handle anymore, which is the release
-		// Windows' delete refusal measures.
-		deadline := time.Now().Add(30 * time.Second)
-		for {
-			first.Stop()
-			if portFree(addr) && logRemoved(layout) {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Error("spawned proxies kept the port or the log through repeated drains")
-				return
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-	})
-
-	done := make(chan error, 2)
-	for _, p := range []*proxylife.Proxy{first, second} {
-		go func() { done <- p.Ensure() }()
-	}
-	for range 2 {
-		if err := <-done; err != nil {
-			t.Fatalf("concurrent Ensure: %v", err)
-		}
-	}
-
-	if v := first.Observe(); v.Holder != proxylife.HolderOurs {
-		t.Fatalf("holder = %v after concurrent starts, want ours", v.Holder)
-	}
-	log := proxyLogContents(t, layout)
-	if strings.Contains(log, proxylife.ErrPortOccupied.Error()) {
-		t.Errorf("the proxy log blames a foreign process for a sibling's win:\n%s", log)
-	}
-	if strings.Contains(log, lifecycle.ProxyRemedy(proxylife.ErrPortOccupied)) {
-		t.Errorf("the proxy log advises stopping a process that is a sibling proxy:\n%s", log)
 	}
 }
 

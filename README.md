@@ -113,7 +113,9 @@ deleting the binary alone leaves the settings injections behind.
 |---|---|
 | `internal/apiproxy` | The local proxy: forwards traffic, and records eligible calls inside one guarded region |
 | `internal/proxylife` | The proxy as seen from outside its process: start, probe, flush, stop |
-| `internal/lifecycle` | Device and project consent, and the composition root: pairing, enable, disable, uninstall, session hooks, serving the proxy |
+| `internal/lifecycle` | Device and project consent, and the composition root: pairing, enable, disable, uninstall, session hooks, and the diagnosis every surface reads |
+| `internal/proxyserve` | What a serving proxy process is assembled from: the spool, the routing table, and its resident uploader |
+| `internal/report` | The device's state as one value, and the three ways it is shown: status, doctor, and the diagnostic bundle |
 | `internal/routing` | Which token routes where, and whether this exchange may be recorded |
 | `internal/consent` | The durable record of what the user agreed to |
 | `internal/capture` | Which calls are eligible, and reassembly of streamed responses |

@@ -2,8 +2,14 @@
 // projects: pairing, signing out, enabling and disabling a project,
 // uninstalling, and keeping the capture proxy up. It is the composition
 // root — the directories, the token store, the service client, and this
-// build's identity are assembled once here — so no command has to know
-// how any of them are put together.
+// build's identity are assembled once here, from plain values — so no
+// command has to know how any of them are put together, and no command
+// can hand the machine a collaborator of its own.
+//
+// The one assembly it does not perform itself is the serving proxy's:
+// that process wires a spool, a routing table, and a resident uploader
+// no command has any use for, so proxyserve states what it is built
+// from and this package hands it those values.
 package lifecycle
 
 import (
@@ -21,12 +27,19 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
-// Deps is everything the machine needs from the world outside it.
+// Deps is everything the machine needs from the world outside it:
+// where this device's files are, where its data goes, who this build
+// is, and how it reads the clock and the environment. The stores and
+// the service client are not among them — Open builds those, so no
+// caller has to know how they are put together.
 type Deps struct {
-	Layout   userdirs.Layout
-	Tokens   *tokenstore.Store
-	Platform *platform.Client
-	Version  string
+	Layout userdirs.Layout
+	// PlatformURL is the trajector service this device pairs with and
+	// uploads to; empty means the default one. The token store that
+	// authenticates those requests is opened from Layout's secrets
+	// directory.
+	PlatformURL string
+	Version     string
 	// ExecPath is this binary, injected into session hooks, used to
 	// spawn the proxy, and replaced in place by upgrade.
 	ExecPath string
@@ -65,19 +78,20 @@ func askYesNo(io IO, prompt string) (bool, error) {
 // Machine drives the device and project consent lifecycle.
 type Machine struct {
 	deps    Deps
+	tokens  *tokenstore.Store
+	service *platform.Client
 	proxy   *proxylife.Proxy
 	routes  *routing.Store
 	consent *consent.Store
 }
 
 // Open assembles the machine. It is the only place these collaborators
-// are wired together.
-func Open(deps Deps) (*Machine, error) {
-	switch {
-	case deps.Tokens == nil:
-		return nil, fmt.Errorf("lifecycle: a token store is required")
-	case deps.Platform == nil:
-		return nil, fmt.Errorf("lifecycle: a service client is required")
+// are wired together, so a caller cannot hand the machine a store or a
+// client of its own — and nothing it assembles can fail, which is why
+// there is nothing to report back.
+func Open(deps Deps) *Machine {
+	if deps.PlatformURL == "" {
+		deps.PlatformURL = platform.DefaultBaseURL
 	}
 	if deps.Getenv == nil {
 		deps.Getenv = func(string) string { return "" }
@@ -87,10 +101,12 @@ func Open(deps Deps) (*Machine, error) {
 	}
 	return &Machine{
 		deps:    deps,
+		tokens:  tokenstore.Open(deps.Layout.SecretsDir()),
+		service: platform.New(deps.PlatformURL, deps.Version),
 		proxy:   proxylife.For(deps.Layout, deps.Version, deps.ExecPath, deps.ProxyAddr),
 		routes:  routing.OpenStore(deps.Layout.RoutingTable()),
 		consent: consent.Open(deps.Layout.ConsentFile()),
-	}, nil
+	}
 }
 
 // warnNonDefaultEndpoint prints one line when this machine is
@@ -99,7 +115,7 @@ func Open(deps Deps) (*Machine, error) {
 // commit data to the endpoint — enable and the serving proxy — print
 // it on their way in.
 func (m *Machine) warnNonDefaultEndpoint(w io.Writer) {
-	if url := m.deps.Platform.BaseURL(); url != platform.DefaultBaseURL {
+	if url := m.service.BaseURL(); url != platform.DefaultBaseURL {
 		fmt.Fprintf(w, "WARNING: uploads go to %s, not the default trajector service.\n", url)
 	}
 }
@@ -111,7 +127,7 @@ func (m *Machine) Paired() bool {
 }
 
 func (m *Machine) deviceToken() (string, bool) {
-	token, ok, err := m.deps.Tokens.DeviceToken()
+	token, ok, err := m.tokens.DeviceToken()
 	if err != nil {
 		return "", false
 	}
