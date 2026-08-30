@@ -6,6 +6,61 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-30
+
+### Added
+
+- Uploads pause when the service refuses them until the account's data
+  authorization is complete. Everything captured is kept, nothing is
+  quarantined, automatic uploads stop instead of re-offering the batch
+  every cycle, and `upload`, `status`, and `doctor` all point at the
+  page the service names for completing it. This refusal can stand
+  together with a required upgrade, and the surfaces name both.
+- `status` and `doctor` can now see an upload backoff. When the service
+  asks uploads to slow down, or an attempt runs out of time, the pause
+  and its expiry are recorded beside the uploader's other state — so
+  both surfaces say uploads are paused and until when, a proxy
+  restarted inside the wait honours what is left of it, and the next
+  acknowledged upload clears it.
+- `doctor` explains every upload gate the same way — the required
+  upgrade, the incomplete data authorization, an active backoff — one
+  sentence for what is true and one for what ends it.
+- `doctor` tells a batch the service refused apart from records this
+  machine set aside because they no longer read back as rawcalls, and
+  offers each kind only the way out that works: requeue or discard for
+  a refusal, discard alone for unreadable records — which requeue now
+  refuses up front instead of failing one record at a time.
+
+### Changed
+
+- One unreadable record no longer slows the batch it is in: packing
+  answers for every record in one pass, uploads the readable ones, and
+  reports everything set aside at once.
+- After an attempt that ran out of time, `trajector upload` reports the
+  resulting pause the same way every later flush does, and says the
+  last attempt timed out — which is not the service asking to slow
+  down, and no longer reads like it.
+- Building from source embeds the version git describes instead of
+  reporting `dev`, so the service's version gates see a real version.
+
+### Fixed
+
+- `install.sh` picks the same release `trajector upgrade` picks. It
+  used to select a draft release when one named the highest version —
+  failing the install against assets that do not exist — and to let a
+  release candidate published after its finished version win on
+  publication order. Both installers now rank releases by
+  semantic-version precedence, skipping drafts, and one test drives
+  both against the same release index so their answers cannot drift
+  apart again.
+- `enable` and `disable` against a configuration directory this user
+  cannot write fail within a second with the real permission error,
+  instead of retrying for thirty seconds and reporting a lock timeout.
+- Ten batches of small robustness fixes across capture, redaction,
+  forwarding, settings handling, and the lifecycle commands, produced
+  by an unattended scan-fix-review pipeline with the full test suite
+  and an independent review pass gating each batch.
+
 ## [0.1.1] - 2026-08-14
 
 ### Changed
@@ -121,3 +176,8 @@ Hardened ahead of the tag:
   stays whole when a store cannot be read.
 - State files are replaced and read atomically on every platform,
   Windows rename collisions included.
+
+[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/PublicAI01/trajector-cli/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/PublicAI01/trajector-cli/releases/tag/v0.1.0
