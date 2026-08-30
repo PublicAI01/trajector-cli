@@ -145,6 +145,16 @@ const (
 	lockRetry   = 5 * time.Millisecond
 	lockStale   = 10 * time.Second
 	lockTimeout = 30 * time.Second
+
+	// permissionGrace exists for one situation only: Windows reports a
+	// create-exclusive claim against a lock file whose holder is unlocking
+	// as a permission error rather than an existence one, because the name
+	// stays visible while the delete is pending. That handoff clears in
+	// milliseconds, and each one is granted its own grace — a claim refused
+	// for contention ends the window in progress. A refusal that outlasts
+	// the grace is a directory this process cannot write, which waiting
+	// never fixes.
+	permissionGrace = 200 * time.Millisecond
 )
 
 // Update rewrites path through fn while holding a same-directory lock
@@ -213,18 +223,22 @@ func lock(path string) (unlock func(), err error) {
 	}
 	owner := []byte(hex.EncodeToString(mark[:]))
 	deadline := time.Now().Add(lockTimeout)
+	var graceDeadline time.Time
 	for {
 		err := claimLock(path, owner)
 		if err == nil {
 			return func() { releaseLock(path, owner) }, nil
 		}
-		// Windows reports create-exclusive against a lock file whose
-		// holder is unlocking as a permission error rather than an
-		// existence one: the name stays visible while the delete is
-		// pending. Both mean the same thing here — someone else has it —
-		// and treating only one as contention makes an ordinary handoff
-		// fail outright instead of waiting the few milliseconds it takes.
-		if !os.IsExist(err) && !os.IsPermission(err) {
+		switch {
+		case os.IsExist(err):
+			graceDeadline = time.Time{}
+		case os.IsPermission(err):
+			if graceDeadline.IsZero() {
+				graceDeadline = time.Now().Add(permissionGrace)
+			} else if time.Now().After(graceDeadline) {
+				return nil, err
+			}
+		default:
 			return nil, err
 		}
 		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > lockStale {
@@ -235,9 +249,6 @@ func lock(path string) (unlock func(), err error) {
 			ejectStaleLock(path)
 		}
 		if time.Now().After(deadline) {
-			// A directory this process genuinely cannot write reaches
-			// the deadline the same way a held lock does, so the reason
-			// travels with it rather than being guessed from the path.
 			return nil, fmt.Errorf("fsatomic: %s held past the stale deadline: %w", path, err)
 		}
 		time.Sleep(lockRetry)

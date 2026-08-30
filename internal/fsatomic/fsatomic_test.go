@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -303,6 +305,67 @@ func TestAnOutlivedHolderReleaseSparesTheNextHoldersLock(t *testing.T) {
 	if _, err := os.Stat(lock); !os.IsNotExist(err) {
 		t.Error("lock file left behind after both updates finished")
 	}
+}
+
+func TestUpdateOnAnUnwritableDirectoryReturnsThePermissionError(t *testing.T) {
+	dir := t.TempDir()
+	readOnly(t, dir)
+
+	err := fsatomic.Update(filepath.Join(dir, "state.json"), 0o600, func([]byte) ([]byte, error) {
+		t.Error("the update body ran without a writable directory")
+		return []byte("unreachable"), nil
+	})
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("Update = %v, want a permission error", err)
+	}
+	if strings.Contains(err.Error(), "stale deadline") {
+		t.Errorf("Update = %v, want the permission cause rather than a lock timeout", err)
+	}
+}
+
+func TestUpdateBehindAHeldLockBuildsOnTheHoldersWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- fsatomic.Update(path, 0o600, func([]byte) ([]byte, error) {
+			close(entered)
+			<-release
+			return []byte("holder"), nil
+		})
+	}()
+	<-entered
+
+	waiterDone := make(chan error, 1)
+	go func() {
+		waiterDone <- fsatomic.Update(path, 0o600, func(old []byte) ([]byte, error) {
+			return append(old, "+waiter"...), nil
+		})
+	}()
+	close(release)
+
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holding update = %v", err)
+	}
+	if err := <-waiterDone; err != nil {
+		t.Fatalf("update behind a held lock = %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "holder+waiter" {
+		t.Errorf("stored = %q, %v, want %q", got, err, "holder+waiter")
+	}
+}
+
+func readOnly(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not block writes on windows")
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
 }
 
 func TestUpdateSweepsAbandonedTempAndClaimFiles(t *testing.T) {
