@@ -78,36 +78,32 @@ type Batch struct {
 	RequestIDs []string
 }
 
-// RecordError names the one rawcall that stopped a Build: a record
+// Refusal is one rawcall Build set aside instead of packing: a record
 // that no longer reads back as a rawcall, or that redaction could not
-// mask. Build refuses such a record rather than packing it — it cannot
-// be attributed or masked field-aware, so it must not ship — and the
-// error carries the record's identity so the caller can set exactly
-// that record aside and pack the rest. Refusal is never silent loss:
-// the record stays wherever the caller keeps it.
-type RecordError struct {
-	RequestID string
-	Err       error
+// mask. Such a record cannot be attributed or masked field-aware, so it
+// must not ship. Refusal is never silent loss: the record rides out
+// whole so the caller decides where it waits.
+type Refusal struct {
+	Rawcall spool.Rawcall
+	Err     error
 }
-
-func (e *RecordError) Error() string {
-	return fmt.Sprintf("rawcall %s cannot be packed: %v", e.RequestID, e.Err)
-}
-
-func (e *RecordError) Unwrap() error { return e.Err }
 
 // Build packs rawcalls into one batch. Records of the same session are
 // laid out adjacently — their bodies share long prefixes, which is what
 // makes the compressed stream small — and every record passes through
 // redaction before it is packed: nothing leaves this function unmasked.
-// A record that cannot be read back or masked stops the build with a
-// RecordError naming it.
-func Build(id string, createdAt time.Time, clientVersion string, rawcalls []spool.Rawcall, run Run) (Batch, error) {
+//
+// One pass answers for every input record: it is either packed into the
+// batch or returned among the refusals, so one bad record never stops
+// or slows the rest and the caller learns of every refusal at once. The
+// error reports what failed the build itself; a zero batch with a nil
+// error means no packable record was left.
+func Build(id string, createdAt time.Time, clientVersion string, rawcalls []spool.Rawcall, run Run) (Batch, []Refusal, error) {
 	if id == "" {
-		return Batch{}, fmt.Errorf("batch: a batch needs an id")
+		return Batch{}, nil, fmt.Errorf("batch: a batch needs an id")
 	}
 	if len(rawcalls) == 0 {
-		return Batch{}, fmt.Errorf("batch: a batch needs at least one rawcall")
+		return Batch{}, nil, fmt.Errorf("batch: a batch needs at least one rawcall")
 	}
 
 	ordered := append([]spool.Rawcall(nil), rawcalls...)
@@ -138,17 +134,20 @@ func Build(id string, createdAt time.Time, clientVersion string, rawcalls []spoo
 	})
 
 	var stream bytes.Buffer
+	var refused []Refusal
 	items := make([]wireItem, 0, len(ordered))
 	ids := make([]string, 0, len(ordered))
 	for _, rc := range ordered {
 		env, err := envelope.Parse(rc.Data)
 		if err != nil {
-			return Batch{}, &RecordError{RequestID: rc.RequestID, Err: err}
+			refused = append(refused, Refusal{Rawcall: rc, Err: err})
+			continue
 		}
 		masked, err := redact.JSONLBytes(rc.Data)
 		if err != nil {
 			// An unmaskable record must not be shipped.
-			return Batch{}, &RecordError{RequestID: rc.RequestID, Err: fmt.Errorf("redacting: %w", err)}
+			refused = append(refused, Refusal{Rawcall: rc, Err: fmt.Errorf("redacting: %w", err)})
+			continue
 		}
 		item := index(rc, env)
 		item.Offset = int64(stream.Len())
@@ -157,12 +156,15 @@ func Build(id string, createdAt time.Time, clientVersion string, rawcalls []spoo
 		items = append(items, item)
 		ids = append(ids, rc.RequestID)
 	}
+	if len(items) == 0 {
+		return Batch{}, refused, nil
+	}
 
 	// The stream is assembled exclusively from RedactedBytes above, so
 	// its compressed form is still redacted data.
 	compressed, err := compress(stream.Bytes())
 	if err != nil {
-		return Batch{}, fmt.Errorf("batch: compressing records: %w", err)
+		return Batch{}, refused, fmt.Errorf("batch: compressing records: %w", err)
 	}
 
 	env, err := json.Marshal(wire{
@@ -176,9 +178,9 @@ func Build(id string, createdAt time.Time, clientVersion string, rawcalls []spoo
 		Run:           run,
 	})
 	if err != nil {
-		return Batch{}, fmt.Errorf("batch: serializing envelope: %w", err)
+		return Batch{}, refused, fmt.Errorf("batch: serializing envelope: %w", err)
 	}
-	return Batch{ID: id, Envelope: env, Records: redact.AlreadyRedacted(compressed), RequestIDs: ids}, nil
+	return Batch{ID: id, Envelope: env, Records: redact.AlreadyRedacted(compressed), RequestIDs: ids}, refused, nil
 }
 
 // index copies what a rawcall's envelope says about it.

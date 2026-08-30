@@ -120,6 +120,24 @@ func TestRequeueUnknownBatchFails(t *testing.T) {
 	}
 }
 
+func TestRequeueRefusesABatchThisMachineSetAsideAsUnreadable(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.QuarantineBatch(
+		proxytest.Rejection{BatchID: "b-torn", Cause: proxytest.CauseUnreadable, Details: "bad envelope"},
+		map[string][]byte{"req-bad": []byte("not an envelope")})
+
+	err := e.machine().RequeueRejected("b-torn", false, e.io())
+	if err == nil || !strings.Contains(err.Error(), "never sent") || !strings.Contains(err.Error(), "discard") {
+		t.Fatalf("err = %v, want the refusal to name the cause and the discard remedy", err)
+	}
+	if got := len(e.sandbox.Rawcalls()); got != 0 {
+		t.Errorf("spool holds %d rawcall(s), want nothing moved", got)
+	}
+	if q := e.sandbox.QuarantinedBatches(); len(q) != 1 || q[0].Records != 1 {
+		t.Fatalf("quarantine = %+v, want the batch kept whole", q)
+	}
+}
+
 func TestRequeueLeavesAnUnreadableRecordQuarantined(t *testing.T) {
 	e := newEnv(t)
 	at := e.deps.Now()

@@ -150,6 +150,16 @@ func (s *Sandbox) statedFields(v any) map[string]json.RawMessage {
 // Rejection is why a batch was set aside, in the uploader's own type.
 type Rejection = upload.Rejection
 
+// Cause is which side set a batch aside, with both values re-exported
+// so CLI-layer tests name a scenario without importing the domain
+// package.
+type Cause = upload.Cause
+
+const (
+	CauseRefused    = upload.CauseRefused
+	CauseUnreadable = upload.CauseUnreadable
+)
+
 // RejectedBatch is one quarantined batch as the rejected store holds it.
 type RejectedBatch = upload.RejectedBatch
 

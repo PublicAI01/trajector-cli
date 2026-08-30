@@ -128,11 +128,12 @@ type Result struct {
 	// empty; the caller has wording of its own for both.
 	AuthorizeURL         string
 	AuthorizationMessage string
-	// Unreadable counts rawcalls this flush moved into the rejected
-	// store because they no longer read back as rawcalls. They were
-	// never sent; they stop blocking the uploads behind them, and
-	// status and doctor keep pointing at them.
-	Unreadable int
+	// SetAside lists the rejections this flush itself wrote for rawcalls
+	// that no longer read back as rawcalls. They were never sent; they
+	// stop blocking the uploads behind them, and status and doctor keep
+	// pointing at them. Each entry carries its Cause, so a renderer says
+	// why without re-deriving it.
+	SetAside []Rejection
 }
 
 // Deps is everything the uploader needs from the world outside it.
@@ -396,17 +397,11 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 		if !deadline.IsZero() && time.Until(deadline) <= 0 {
 			return res, errBudgetSpent
 		}
-		id, err := newBatchID()
+		l, err := openLease(u.deps.Dir, rawcalls)
 		if err != nil {
 			return res, fmt.Errorf("upload: %w", err)
 		}
-		if err := savePending(u.deps.Dir, pending{BatchID: id, RequestIDs: requestIDs(rawcalls)}); err != nil {
-			// Without the pending record a lost acknowledgement could be
-			// re-uploaded under a fresh id and ingested twice; better not
-			// to start.
-			return res, fmt.Errorf("upload: recording the batch before sending it: %w", err)
-		}
-		if err := u.send(token, id, rawcalls, &res, deadline); err != nil {
+		if err := u.send(token, l, rawcalls, &res, deadline); err != nil {
 			return res, err
 		}
 	}
@@ -421,7 +416,7 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 // earlier attempt was ingested and only the acknowledgement was lost,
 // the service recognizes the id and does not ingest it again.
 func (u *Uploader) resendPending(token string, res *Result, deadline time.Time) error {
-	p, ok, err := loadPending(u.deps.Dir)
+	l, ok, err := resumeLease(u.deps.Dir)
 	var unreadable *errUnreadablePending
 	if errors.As(err, &unreadable) {
 		return u.discardUnreadablePending(unreadable.raw)
@@ -433,7 +428,7 @@ func (u *Uploader) resendPending(token string, res *Result, deadline time.Time) 
 		return nil
 	}
 	wanted := map[string]bool{}
-	for _, id := range p.RequestIDs {
+	for _, id := range l.requestIDs() {
 		wanted[id] = true
 	}
 	var rawcalls []spool.Rawcall
@@ -449,9 +444,9 @@ func (u *Uploader) resendPending(token string, res *Result, deadline time.Time) 
 	if len(rawcalls) == 0 {
 		// Every record is gone — consent withdrawal deletes spool records
 		// out from under a pending batch. Nothing is left to send.
-		return clearPending(u.deps.Dir)
+		return l.release()
 	}
-	return u.send(token, p.BatchID, rawcalls, res, deadline)
+	return u.send(token, l, rawcalls, res, deadline)
 }
 
 // discardUnreadablePending is the recovery for a pending file whose
@@ -473,12 +468,11 @@ func (u *Uploader) discardUnreadablePending(raw []byte) error {
 }
 
 // send builds, uploads, and settles one batch: on acknowledgement the
-// records leave the spool, the pending record is released, and the
-// handshake is applied. Failures leave the spool and the pending
-// record exactly as they were — except records the build itself
-// refused, which move to the rejected store so one unreadable file
-// cannot stall every upload behind it.
-func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result, deadline time.Time) error {
+// records leave the spool, the lease is settled, and the handshake is
+// applied. Failures leave the spool and the lease exactly as they were
+// — except records the build itself refused, which move to the rejected
+// store so one unreadable file cannot stall every upload behind it.
+func (u *Uploader) send(token string, l lease, rawcalls []spool.Rawcall, res *Result, deadline time.Time) error {
 	rawcalls, err := u.dropWithdrawn(rawcalls)
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
@@ -486,20 +480,38 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result,
 	if len(rawcalls) == 0 {
 		// Every record of this batch belonged to a project that has since
 		// withdrawn; they are deleted, so no later flush can find them and
-		// the pending record has nothing left to protect.
-		return clearPending(u.deps.Dir)
+		// the lease has nothing left to protect.
+		return l.release()
 	}
-	b, rawcalls, err := u.buildReadable(id, rawcalls, res)
+	b, refused, err := batch.Build(l.id(), u.deps.Now(), u.deps.Version, rawcalls, u.deps.Run())
 	if err != nil {
+		u.noteAttempt(err)
+		return fmt.Errorf("upload: %w", err)
+	}
+	if err := u.setAside(l.id(), refused, res); err != nil {
 		u.noteAttempt(err)
 		return fmt.Errorf("upload: %w", err)
 	}
 	if len(b.RequestIDs) == 0 {
 		// Every record of this batch was set aside. Nothing rides under
 		// this id anymore, and the records are out of the spool, so no
-		// later flush can re-upload them under a fresh id: the pending
-		// record has nothing left to protect.
-		return clearPending(u.deps.Dir)
+		// later flush can re-upload them under a fresh id: the lease has
+		// nothing left to protect.
+		return l.release()
+	}
+	if len(refused) > 0 {
+		packed := b.RequestIDs
+		carries := make(map[string]bool, len(packed))
+		for _, rid := range packed {
+			carries[rid] = true
+		}
+		kept := rawcalls[:0:0]
+		for _, rc := range rawcalls {
+			if carries[rc.RequestID] {
+				kept = append(kept, rc)
+			}
+		}
+		rawcalls = kept
 	}
 	// One attempt's budget normally scales with the batch and with the
 	// attempts that timed out before it, up to a cap wide enough for a
@@ -517,7 +529,7 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result,
 	ack, err := u.deps.Service.UploadBatch(token, b.ID, b.Envelope, b.Records, budget)
 	u.noteAttempt(err)
 	if err != nil {
-		res.Disposition, err = u.settleFailure(id, rawcalls, err)
+		res.Disposition, err = u.settleFailure(l, rawcalls, err)
 		return err
 	}
 	res.Disposition = Ack
@@ -527,18 +539,8 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result,
 	u.notBefore = time.Time{}
 	u.timeouts = 0
 
-	uploaded := map[string]bool{}
-	for _, rid := range b.RequestIDs {
-		uploaded[rid] = true
-	}
-	if _, err := u.deps.Spool.DeleteWhere(func(id string) bool { return uploaded[id] }); err != nil {
-		// The batch is acknowledged but its records are still on disk.
-		// The pending record must survive so the next flush retries under
-		// the same id and the service ignores the duplicate.
-		return fmt.Errorf("upload: deleting acknowledged records: %w", err)
-	}
-	if err := clearPending(u.deps.Dir); err != nil {
-		return fmt.Errorf("upload: releasing the pending batch: %w", err)
+	if err := l.settle(u.deps.Spool, b.RequestIDs); err != nil {
+		return fmt.Errorf("upload: %w", err)
 	}
 
 	res.Batches++
@@ -591,72 +593,32 @@ func (u *Uploader) dropWithdrawn(rawcalls []spool.Rawcall) ([]spool.Rawcall, err
 	return kept, nil
 }
 
-// buildReadable packs one batch from whichever of the rawcalls still
-// read back as rawcalls, returning the batch alongside the records it
-// actually carries. A record the build refuses moves into the rejected
-// store — the same quarantine a service-rejected batch uses, so status
-// sees it, doctor lists it, and requeue owns whatever comes next — and
-// packing retries with the rest. A zero batch with a nil error means
-// no readable record was left.
-func (u *Uploader) buildReadable(id string, rawcalls []spool.Rawcall, res *Result) (batch.Batch, []spool.Rawcall, error) {
-	var unreadable []spool.Rawcall
-	var reasons []error
-	for {
-		if len(rawcalls) == 0 {
-			return batch.Batch{}, nil, u.setAside(id, unreadable, reasons, res)
-		}
-		b, err := batch.Build(id, u.deps.Now(), u.deps.Version, rawcalls, u.deps.Run())
-		var record *batch.RecordError
-		if !errors.As(err, &record) {
-			if err != nil {
-				return batch.Batch{}, rawcalls, err
-			}
-			return b, rawcalls, u.setAside(id, unreadable, reasons, res)
-		}
-		kept, refused, found := splitOut(rawcalls, record.RequestID)
-		if !found {
-			// The refusal names a record this batch does not hold; setting
-			// records aside on that answer would guess. Refusing beats
-			// guessing, so the whole batch stays put.
-			return batch.Batch{}, rawcalls, err
-		}
-		rawcalls = kept
-		unreadable = append(unreadable, refused)
-		reasons = append(reasons, record)
-	}
-}
-
-// setAside quarantines rawcalls no batch can carry. They are preserved,
-// not deleted: like a service-rejected batch they wait for the user,
-// and everything queued behind them uploads again.
-func (u *Uploader) setAside(batchID string, unreadable []spool.Rawcall, reasons []error, res *Result) error {
-	if len(unreadable) == 0 {
+// setAside quarantines the rawcalls a build refused — no batch can
+// carry them. They are preserved, not deleted: like a service-rejected
+// batch they wait for the user, and everything queued behind them
+// uploads again.
+func (u *Uploader) setAside(batchID string, refused []batch.Refusal, res *Result) error {
+	if len(refused) == 0 {
 		return nil
+	}
+	records := make([]spool.Rawcall, len(refused))
+	for i, r := range refused {
+		records[i] = r.Rawcall
 	}
 	rej := Rejection{
 		BatchID: batchID,
-		Records: len(unreadable),
-		Details: fmt.Sprintf("never sent: unreadable in the spool (%v)", reasons[0]),
+		Records: len(refused),
+		Cause:   CauseUnreadable,
+		Details: fmt.Sprintf("rawcall %s: %v", refused[0].Rawcall.RequestID, refused[0].Err),
 		At:      u.deps.Now().UTC(),
 	}
-	if err := quarantine(u.deps.RejectedDir, u.deps.Spool, rej, unreadable); err != nil {
-		return fmt.Errorf("setting aside %d unreadable rawcall(s): %w", len(unreadable), err)
+	if err := quarantine(u.deps.RejectedDir, u.deps.Spool, rej, records); err != nil {
+		return fmt.Errorf("setting aside %d unreadable rawcall(s): %w", len(refused), err)
 	}
-	res.Unreadable += len(unreadable)
+	res.SetAside = append(res.SetAside, rej)
 	u.deps.Logf("upload: set aside %d unreadable rawcall(s) under %s; they were never sent — run `trajector doctor` to inspect them",
-		len(unreadable), filepath.Join(u.deps.RejectedDir, batchID))
+		len(refused), filepath.Join(u.deps.RejectedDir, batchID))
 	return nil
-}
-
-// splitOut removes the named record. Each build refusal must shrink the
-// batch by exactly one record, so the retry loop always terminates.
-func splitOut(rawcalls []spool.Rawcall, requestID string) (kept []spool.Rawcall, refused spool.Rawcall, found bool) {
-	for i, rc := range rawcalls {
-		if rc.RequestID == requestID {
-			return append(rawcalls[:i:i], rawcalls[i+1:]...), rc, true
-		}
-	}
-	return rawcalls, spool.Rawcall{}, false
 }
 
 // settleFailure reads one failed upload as the contract reads it: every
@@ -672,7 +634,8 @@ func splitOut(rawcalls []spool.Rawcall, requestID string) (kept []spool.Rawcall,
 // data authorization that reached the rejection row would quarantine a
 // user's data over a condition they resolve elsewhere, which is the one
 // mistake that row exists to prevent.
-func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error) (Disposition, error) {
+func (u *Uploader) settleFailure(l lease, rawcalls []spool.Rawcall, err error) (Disposition, error) {
+	id := l.id()
 	var upgrade *platform.UpgradeRequiredError
 	var unauthorized *platform.DataAuthorizationRequiredError
 	var limited *platform.RateLimitedError
@@ -728,14 +691,15 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 		if rejected.Details != "" {
 			details += ": " + rejected.Details
 		}
-		rej := Rejection{BatchID: id, Records: len(rawcalls), Details: details, At: u.deps.Now().UTC()}
-		if qerr := quarantine(u.deps.RejectedDir, u.deps.Spool, rej, rawcalls); qerr != nil {
-			// Nothing moved, so the batch stays pending: the next flush hits
-			// the same rejection and tries the move again under the same id.
+		rej := Rejection{BatchID: id, Records: len(rawcalls), Cause: CauseRefused, Details: details, At: u.deps.Now().UTC()}
+		moved, qerr := l.quarantine(u.deps.RejectedDir, u.deps.Spool, rej, rawcalls)
+		if !moved {
+			// Nothing moved, so the lease stands: the next flush hits the
+			// same rejection and tries the move again under the same id.
 			return RetrySameID, fmt.Errorf("upload: batch %s was rejected and could not be set aside: %v (%w)", id, qerr, err)
 		}
-		if cerr := clearPending(u.deps.Dir); cerr != nil {
-			return Quarantine, fmt.Errorf("upload: releasing rejected batch %s: %w", id, cerr)
+		if qerr != nil {
+			return Quarantine, fmt.Errorf("upload: releasing rejected batch %s: %w", id, qerr)
 		}
 		u.noteRejection(rej)
 		return Quarantine, &errRejected{rej: rej, dir: filepath.Join(u.deps.RejectedDir, id)}

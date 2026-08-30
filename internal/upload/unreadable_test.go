@@ -22,8 +22,11 @@ func TestATornRawcallIsSetAsideAndTheRestUploads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Outcome != upload.Uploaded || res.Batches != 1 || res.Records != 1 || res.Unreadable != 1 {
+	if res.Outcome != upload.Uploaded || res.Batches != 1 || res.Records != 1 {
 		t.Fatalf("result = %+v, want one uploaded record and one set aside", res)
+	}
+	if len(res.SetAside) != 1 || res.SetAside[0].Records != 1 || res.SetAside[0].Cause != upload.CauseUnreadable {
+		t.Fatalf("set aside = %+v, want one unreadable record reported with its cause", res.SetAside)
 	}
 	if n := spooledCount(t, f.spool); n != 0 {
 		t.Errorf("spool holds %d records; the torn one must move aside, the rest upload", n)
@@ -40,10 +43,11 @@ func TestATornRawcallIsSetAsideAndTheRestUploads(t *testing.T) {
 	if b.Records != 1 {
 		t.Errorf("quarantined records = %d, want 1", b.Records)
 	}
-	for _, want := range []string{"never sent", "req-torn"} {
-		if !strings.Contains(b.Reason.Details, want) {
-			t.Errorf("reason details = %q, want it to contain %q", b.Reason.Details, want)
-		}
+	if b.Reason.Cause != upload.CauseUnreadable {
+		t.Errorf("reason cause = %q, want %q recorded on disk", b.Reason.Cause, upload.CauseUnreadable)
+	}
+	if !strings.Contains(b.Reason.Details, "req-torn") {
+		t.Errorf("reason details = %q, want it to name req-torn", b.Reason.Details)
 	}
 	kept, err := os.ReadFile(filepath.Join(f.rejected, b.BatchID, "req-torn.json"))
 	if err != nil {
@@ -72,7 +76,7 @@ func TestAFlushOfOnlyTornRawcallsSetsThemAsideWithoutUploading(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Outcome != upload.Empty || res.Batches != 0 || res.Unreadable != 1 {
+	if res.Outcome != upload.Empty || res.Batches != 0 || len(res.SetAside) != 1 || res.SetAside[0].Records != 1 {
 		t.Fatalf("result = %+v, want nothing uploaded and one record set aside", res)
 	}
 	if f.uploadCount() != 0 {
@@ -86,7 +90,7 @@ func TestAFlushOfOnlyTornRawcallsSetsThemAsideWithoutUploading(t *testing.T) {
 	}
 
 	res, err = f.uploader.Flush(true)
-	if err != nil || res.Outcome != upload.Empty || res.Unreadable != 0 {
+	if err != nil || res.Outcome != upload.Empty || len(res.SetAside) != 0 {
 		t.Fatalf("second flush = %+v, %v; the set-aside must not repeat", res, err)
 	}
 }
@@ -107,7 +111,7 @@ func TestAPendingBatchWithATornRecordResendsTheRestUnderTheSameID(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Outcome != upload.Uploaded || res.Batches != 1 || res.Records != 1 || res.Unreadable != 1 {
+	if res.Outcome != upload.Uploaded || res.Batches != 1 || res.Records != 1 || len(res.SetAside) != 1 {
 		t.Fatalf("result = %+v, want the readable record resent and the torn one set aside", res)
 	}
 	reqs := f.server.Requests()

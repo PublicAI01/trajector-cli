@@ -3,7 +3,6 @@ package batch_test
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -116,7 +115,7 @@ func TestBuildLaysOutSameSessionRecordsAdjacently(t *testing.T) {
 		simpleRawcall(t, "req-n1", "", buildTime.Add(3*time.Second)),
 		simpleRawcall(t, "req-b2", "session-b", buildTime.Add(4*time.Second)),
 	}
-	b, err := batch.Build("batch-1", buildTime, "test", rawcalls, batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls, batch.Run{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -137,7 +136,7 @@ func TestBuildRecordsRoundTripThroughTheIndex(t *testing.T) {
 		simpleRawcall(t, "req-2", "session-a", buildTime.Add(time.Second)),
 		simpleRawcall(t, "req-3", "", buildTime.Add(2*time.Second)),
 	}
-	b, err := batch.Build("batch-1", buildTime, "test", rawcalls, batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls, batch.Run{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -169,7 +168,7 @@ func TestBuildMasksSecretsBeforePacking(t *testing.T) {
 	rc := storedRawcall(t, "req-1", "session-a", "hash-p1",
 		`{"model":"m","messages":[{"role":"user","content":"the key is `+fakeSecret+`"}]}`,
 		`{"id":"req-1","type":"message"}`, buildTime)
-	b, err := batch.Build("batch-1", buildTime, "test", []spool.Rawcall{rc}, batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", []spool.Rawcall{rc}, batch.Run{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -187,7 +186,7 @@ func TestBuildPreservesThinkingSignatures(t *testing.T) {
 		`{"model":"m","messages":[{"role":"user","content":"hello"}]}`,
 		`{"id":"req-1","type":"message","content":[{"type":"thinking","thinking":"plan","signature":"`+fakeSignature+`"}]}`,
 		buildTime)
-	b, err := batch.Build("batch-1", buildTime, "test", []spool.Rawcall{rc}, batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", []spool.Rawcall{rc}, batch.Run{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -206,7 +205,7 @@ func TestBuildEnvelopeCarriesIdentityIndexAndRunMetadata(t *testing.T) {
 		SpoolUsageBytes:  4096,
 		SpoolQuotaBytes:  2 << 30,
 	}
-	b, err := batch.Build("batch-42", buildTime, "1.2.3", []spool.Rawcall{rc}, run)
+	b, _, err := batch.Build("batch-42", buildTime, "1.2.3", []spool.Rawcall{rc}, run)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -232,49 +231,59 @@ func TestBuildEnvelopeCarriesIdentityIndexAndRunMetadata(t *testing.T) {
 	}
 }
 
-func TestBuildRefusesARecordItCannotReadBackAndNamesIt(t *testing.T) {
-	broken := spool.Rawcall{
-		RequestID: "req-broken",
-		Timestamp: buildTime,
-		Data:      []byte("not a rawcall at all"),
-	}
-	rawcalls := []spool.Rawcall{
-		simpleRawcall(t, "req-good", "session-a", buildTime),
-		broken,
-	}
-	_, err := batch.Build("batch-1", buildTime, "test", rawcalls, batch.Run{})
-	if err == nil {
-		t.Fatal("a batch was built around a record that does not read back")
-	}
-	var record *batch.RecordError
-	if !errors.As(err, &record) {
-		t.Fatalf("err = %v (%T), want a RecordError", err, err)
-	}
-	if record.RequestID != "req-broken" {
-		t.Fatalf("refused record = %q, want req-broken", record.RequestID)
-	}
-	if record.Unwrap() == nil {
-		t.Error("the refusal carries no underlying cause")
-	}
+func TestBuildPacksTheRestAndReturnsEveryRefusalAtOnce(t *testing.T) {
+	brokenOne := spool.Rawcall{RequestID: "req-broken-1", Timestamp: buildTime, Data: []byte("not a rawcall at all")}
+	brokenTwo := spool.Rawcall{RequestID: "req-broken-2", Timestamp: buildTime.Add(time.Second), Data: []byte("{}")}
+	good := simpleRawcall(t, "req-good", "session-a", buildTime)
 
-	b, err := batch.Build("batch-1", buildTime, "test", rawcalls[:1], batch.Run{})
+	b, refused, err := batch.Build("batch-1", buildTime, "test", []spool.Rawcall{good, brokenOne, brokenTwo}, batch.Run{})
 	if err != nil {
-		t.Fatalf("Build without the broken record: %v", err)
+		t.Fatalf("Build: %v", err)
 	}
-	if len(b.RequestIDs) != 1 || b.RequestIDs[0] != rawcalls[0].RequestID {
-		t.Fatalf("RequestIDs = %v, want only the readable record", b.RequestIDs)
+	if len(b.RequestIDs) != 1 || b.RequestIDs[0] != good.RequestID {
+		t.Fatalf("RequestIDs = %v, want only the readable record packed", b.RequestIDs)
+	}
+	if len(refused) != 2 {
+		t.Fatalf("refused = %d record(s), want both broken ones listed in one pass", len(refused))
+	}
+	names := map[string]bool{}
+	for _, r := range refused {
+		names[r.Rawcall.RequestID] = true
+		if r.Err == nil {
+			t.Errorf("refusal of %s carries no cause", r.Rawcall.RequestID)
+		}
+		if len(r.Rawcall.Data) == 0 {
+			t.Errorf("refusal of %s does not carry the record whole", r.Rawcall.RequestID)
+		}
+	}
+	if !names["req-broken-1"] || !names["req-broken-2"] {
+		t.Fatalf("refused records = %v, want req-broken-1 and req-broken-2", names)
+	}
+}
+
+func TestBuildOfOnlyUnpackableRecordsReturnsNoBatchAndNoError(t *testing.T) {
+	broken := spool.Rawcall{RequestID: "req-broken", Timestamp: buildTime, Data: []byte("not a rawcall at all")}
+	b, refused, err := batch.Build("batch-1", buildTime, "test", []spool.Rawcall{broken}, batch.Run{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(b.RequestIDs) != 0 || b.Envelope != nil {
+		t.Fatalf("batch = %+v, want none when nothing packs", b)
+	}
+	if len(refused) != 1 || refused[0].Rawcall.RequestID != "req-broken" {
+		t.Fatalf("refused = %+v, want the one record listed", refused)
 	}
 }
 
 func TestBuildRefusesAnEmptyBatch(t *testing.T) {
-	if _, err := batch.Build("batch-1", buildTime, "test", nil, batch.Run{}); err == nil {
+	if _, _, err := batch.Build("batch-1", buildTime, "test", nil, batch.Run{}); err == nil {
 		t.Fatal("expected an error for an empty batch")
 	}
 }
 
 func TestBuildRefusesAMissingID(t *testing.T) {
 	rc := simpleRawcall(t, "req-1", "session-a", buildTime)
-	if _, err := batch.Build("", buildTime, "test", []spool.Rawcall{rc}, batch.Run{}); err == nil {
+	if _, _, err := batch.Build("", buildTime, "test", []spool.Rawcall{rc}, batch.Run{}); err == nil {
 		t.Fatal("expected an error for a missing batch id")
 	}
 }
@@ -298,7 +307,7 @@ func TestBuildSessionAdjacencySurvivesALostIndex(t *testing.T) {
 	}
 
 	order := func(rawcalls []spool.Rawcall) string {
-		b, err := batch.Build("batch-1", buildTime, "test", rawcalls, batch.Run{})
+		b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls, batch.Run{})
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}

@@ -317,8 +317,11 @@ func doctorSpool(r *doctorReport, s SpoolState, dir string) {
 
 // doctorRejected surfaces quarantined batches. They are never deleted
 // or retried automatically — what happens to them is the user's call —
-// so doctor lists each with its recorded reason and both commands that
-// end its wait.
+// so doctor lists each with its recorded reason and the commands that
+// end its wait. The two causes part ways on the remedy: a batch the
+// service refused can be requeued, while records this machine set aside
+// as unreadable can never re-enter the spool, so offering requeue for
+// them would send the user to a command that refuses.
 func doctorRejected(r *doctorReport, rejected []upload.RejectedBatch, listErr error, dir string) {
 	if listErr != nil {
 		r.problem("%s", rejectedUnreadableHeadline(dir, listErr))
@@ -329,18 +332,34 @@ func doctorRejected(r *doctorReport, rejected []upload.RejectedBatch, listErr er
 		return
 	}
 	r.problem("%s:", quarantineHeadline(rejected))
+	refused, unreadable := false, false
 	for _, b := range rejected {
 		line := fmt.Sprintf("%s: %d rawcall(s)", b.BatchID, b.Records)
+		when := ""
 		if !b.Reason.At.IsZero() {
-			line += ", rejected " + b.Reason.At.UTC().Format(time.RFC3339)
+			when = " " + b.Reason.At.UTC().Format(time.RFC3339)
+		}
+		if b.Reason.Cause == upload.CauseUnreadable {
+			unreadable = true
+			line += ", set aside" + when + " — never sent: unreadable in the spool"
+		} else {
+			refused = true
+			if when != "" {
+				line += ", rejected" + when
+			}
 		}
 		if b.Reason.Details != "" {
 			line += " (" + b.Reason.Details + ")"
 		}
 		r.detail("%s", line)
 	}
-	r.detail("Run `trajector doctor requeue <batch-id>` (or `--all`) to upload them again,")
-	r.detail("or `trajector doctor discard <batch-id>` (or `--all`) to delete them for good.")
+	if refused {
+		r.detail("Run `trajector doctor requeue <batch-id>` (or `--all`) to upload them again,")
+		r.detail("or `trajector doctor discard <batch-id>` (or `--all`) to delete them for good.")
+	}
+	if unreadable {
+		r.detail("Unreadable records cannot be requeued; `trajector doctor discard <batch-id>` deletes them for good.")
+	}
 }
 
 // doctorService relays what the service last said, minus what this

@@ -27,8 +27,8 @@ func (m *Machine) Upload(force bool, io IO) error {
 	if reply.Batches > 0 {
 		fmt.Fprintf(io.Out, "Uploaded %d batch(es), %d rawcall(s).\n", reply.Batches, reply.Records)
 	}
-	if reply.Unreadable > 0 {
-		fmt.Fprintf(io.Out, "Set aside %d unreadable rawcall(s); they were never sent. Run `trajector doctor` to inspect them.\n", reply.Unreadable)
+	if n := setAsideUnreadable(reply.SetAside); n > 0 {
+		fmt.Fprintf(io.Out, "Set aside %d unreadable rawcall(s); they were never sent. Run `trajector doctor` to inspect them.\n", n)
 	}
 	switch reply.Outcome {
 	case upload.Uploaded:
@@ -70,6 +70,19 @@ func (m *Machine) Upload(force bool, io IO) error {
 		fmt.Fprintf(io.Out, "Flush finished: %s\n", reply.Outcome)
 	}
 	return nil
+}
+
+// setAsideUnreadable counts the rawcalls a flush set aside as
+// unreadable, reading each rejection's cause rather than assuming every
+// set-aside is one.
+func setAsideUnreadable(rejections []upload.Rejection) int {
+	n := 0
+	for _, rej := range rejections {
+		if rej.Cause == upload.CauseUnreadable {
+			n += rej.Records
+		}
+	}
+	return n
 }
 
 // retry returns the sentence offering --force, or nothing when this run

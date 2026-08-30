@@ -212,11 +212,7 @@ func setAsideUnreadablePending(dir string, raw []byte) error {
 	if err := fsatomic.WriteFile(filepath.Join(dir, pendingUnreadableName), raw, 0o600); err != nil {
 		return err
 	}
-	err := os.Remove(filepath.Join(dir, pendingName))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	return err
+	return clearPending(dir)
 }
 
 func savePending(dir string, p pending) error {

@@ -51,11 +51,29 @@ func batchDir(rejectedDir, batchID string) (string, error) {
 	return filepath.Join(rejectedDir, batchID), nil
 }
 
+// Cause says which side set a batch aside, and is the whole of that
+// answer: surfaces and requeue read it instead of parsing Details.
+type Cause string
+
+const (
+	// CauseRefused: the service refused the batch as one it will never
+	// accept. Its records were sent, are intact, and may be requeued.
+	CauseRefused Cause = "service_refused"
+	// CauseUnreadable: this machine set the records aside because they
+	// no longer read back as rawcalls. They were never sent, and they
+	// can never re-enter a spool whose index derives from the envelope:
+	// discard is their only exit.
+	CauseUnreadable Cause = "unreadable"
+)
+
 // Rejection describes one rejected batch, both inside reason.json and
-// in the uploader state read by status.
+// in the uploader state read by status. A zero Cause is a reason file
+// written before causes were recorded; surfaces read it as a service
+// refusal, the value whose handling guesses least.
 type Rejection struct {
 	BatchID string    `json:"batch_id"`
 	Records int       `json:"records"`
+	Cause   Cause     `json:"cause,omitempty"`
 	Details string    `json:"details,omitempty"`
 	At      time.Time `json:"at"`
 }
@@ -69,6 +87,11 @@ func readReason(path string) Rejection {
 	var rej Rejection
 	readJSON(path, &rej)
 	rej.Details = platform.SafeServiceText(rej.Details)
+	// A cause outside the two-valued set is a hand-edited file; it reads
+	// as the zero value rather than as a third meaning.
+	if rej.Cause != CauseRefused && rej.Cause != CauseUnreadable {
+		rej.Cause = ""
+	}
 	return rej
 }
 
@@ -229,6 +252,12 @@ func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, in
 		return Rejection{}, 0, err
 	}
 	rej := readReason(filepath.Join(dir, reasonName))
+	if rej.Cause == CauseUnreadable {
+		// The whole batch was set aside because its records stopped
+		// reading back as rawcalls, and bytes do not heal: attempting the
+		// per-record moves would only restate that, one refusal at a time.
+		return rej, 0, fmt.Errorf("batch %s was never sent: its records no longer read back as rawcalls and cannot re-enter the spool; run `trajector doctor discard %s` to delete them for good", batchID, batchID)
+	}
 
 	moved := 0
 	var stuck []error

@@ -38,7 +38,7 @@ func TestDiscardDeletesAQuarantinedBatch(t *testing.T) {
 
 func TestDiscardDeletesRecordsRequeueRefusesToMove(t *testing.T) {
 	e := newEnv(t)
-	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-torn", Details: "never sent: unreadable in the spool (bad envelope)"},
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-torn", Cause: proxytest.CauseUnreadable, Details: "bad envelope"},
 		map[string][]byte{
 			"req-bad": []byte("not an envelope"),
 		})

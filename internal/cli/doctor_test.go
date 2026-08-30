@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 func TestDoctorExitsZeroWhenClean(t *testing.T) {
@@ -28,6 +29,31 @@ func TestDoctorExitsOneWhenProblemsRemain(t *testing.T) {
 	got := e.InProject("doctor")
 	if got.Exit != 1 {
 		t.Fatalf("exit = %d, want 1 with a quarantined batch (stdout: %q)", got.Exit, got.Stdout)
+	}
+}
+
+func TestDoctorSeparatesServiceRefusalsFromUnreadableRecords(t *testing.T) {
+	e := clitest.New(t)
+	e.Sandbox().QuarantineBatch(
+		proxytest.Rejection{BatchID: "b-refused", Cause: proxytest.CauseRefused, Details: "413 Request Entity Too Large"},
+		map[string][]byte{"req-1": []byte(`{}`)})
+	e.Sandbox().QuarantineBatch(
+		proxytest.Rejection{BatchID: "b-torn", Cause: proxytest.CauseUnreadable, Details: "bad envelope"},
+		map[string][]byte{"req-2": []byte("not an envelope")})
+
+	got := e.InProject("doctor")
+	if got.Exit != 1 {
+		t.Fatalf("exit = %d, want 1 with quarantined batches (stdout: %q)", got.Exit, got.Stdout)
+	}
+	for _, want := range []string{
+		"b-refused", "413 Request Entity Too Large",
+		"b-torn", "never sent: unreadable in the spool",
+		"requeue <batch-id>",
+		"Unreadable records cannot be requeued",
+	} {
+		if !strings.Contains(got.Stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", got.Stdout, want)
+		}
 	}
 }
 
