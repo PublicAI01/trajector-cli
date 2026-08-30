@@ -29,7 +29,46 @@ const (
 	DefaultFlushAge         = 24 * time.Hour
 )
 
-// Outcome names the terminal states of one Flush call.
+// Disposition is what this client does with one batch once the service
+// has answered for it. The five values are the whole of the answer set
+// the upload contract defines, and the service side names the same
+// five, so an answer that maps to none of them is a contract this
+// client does not implement rather than a batch it mishandled.
+//
+// A disposition is about one batch. What a whole flush amounts to is an
+// Outcome, derived from the disposition of the batch the flush stopped
+// at plus facts only the flush knows — how many batches it acknowledged,
+// whether the spool was empty, whether it stayed under the thresholds.
+type Disposition string
+
+const (
+	// Ack: the service acknowledged the batch, so its records are
+	// deleted. The only value that deletes anything.
+	Ack Disposition = "ack"
+	// RetrySameID: keep the data and offer it again under the same batch
+	// id. Nothing is deleted and nothing is quarantined, so a service
+	// that already stored the batch recognizes the id and does not store
+	// it twice.
+	RetrySameID Disposition = "retry_same_id"
+	// PauseUploads: the service refuses this client version. Everything
+	// is kept, nothing is quarantined, and automatic flushes stop until
+	// an upload is acknowledged.
+	PauseUploads Disposition = "pause_uploads"
+	// PauseUploadsAuthorize: what PauseUploads does, with the user told
+	// to complete their data authorization instead of to upgrade. It is
+	// a value of its own because what the user reads is the whole of
+	// what this answer exists to get right.
+	PauseUploadsAuthorize Disposition = "pause_uploads_authorize"
+	// Quarantine: the service will never take this batch. Its records
+	// move to the local quarantine — never deleted — so the uploads
+	// behind them flow again.
+	Quarantine Disposition = "quarantine"
+)
+
+// Outcome names the terminal states of one Flush call: what the
+// disposition of the batch the flush stopped at means for the flush as
+// a whole, or, when no batch was offered, what stopped it from
+// offering one.
 type Outcome string
 
 const (
@@ -54,8 +93,9 @@ const (
 	// user completes the authorization elsewhere and nothing local has to
 	// change for uploads to resume.
 	AuthorizationRequired Outcome = "authorization_required"
-	// Deferred means the service asked to slow down and the pause has
-	// not elapsed. A forced flush ignores it.
+	// Deferred means automatic uploads are holding off until a pause
+	// elapses: one the service asked for, or the backoff after an
+	// attempt that ran out of time. A forced flush ignores it.
 	Deferred Outcome = "deferred"
 	// Rejected means the service refused a batch permanently and its
 	// records were quarantined; the flush stopped there.
@@ -70,7 +110,12 @@ const (
 // Outcome is the authoritative signal; an error returned alongside it
 // is detail, never a replacement for it.
 type Result struct {
-	Outcome          Outcome
+	Outcome Outcome
+	// Disposition is what this flush did with the last batch it offered,
+	// empty when it offered none. Outcome is derived from it, so a
+	// caller wanting the flush's answer reads Outcome; a caller checking
+	// this client against the upload contract reads this.
+	Disposition      Disposition
 	Batches          int
 	Records          int
 	MinClientVersion string
@@ -187,10 +232,10 @@ var errBudgetSpent = errors.New("upload: the flush ran out of its budget; what i
 // disk for the next attempt.
 //
 // The result's Outcome stays authoritative when Flush also returns an
-// error: a failure of a known class (UpgradeRequired, Deferred,
-// Rejected) carries its classifying outcome with the error as detail,
-// and a failure of no known class carries no outcome at all — never a
-// leftover in-progress one. Readers act on the outcome first.
+// error: the disposition of the batch the flush stopped at decides it,
+// and a batch whose disposition asks for nothing but another attempt
+// carries no outcome at all — never a leftover in-progress one. Readers
+// act on the outcome first.
 func (u *Uploader) Flush(force bool) (Result, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -201,33 +246,53 @@ func (u *Uploader) Flush(force bool) (Result, error) {
 	if err != nil {
 		res.Outcome, res.MinClientVersion, res.UpgradeMessage = "", "", ""
 		res.AuthorizeURL, res.AuthorizationMessage = "", ""
-		classifyFailure(err, &res)
+		u.reportDisposition(&res)
 	}
 	return res, err
 }
 
-// classifyFailure stamps onto the result the outcome a failure's class
-// implies, so the classified arms are reachable on the first encounter
-// — not only after an in-process gate remembers the condition.
-func classifyFailure(err error, res *Result) {
-	var upgrade *platform.UpgradeRequiredError
-	var unauthorized *platform.DataAuthorizationRequiredError
-	var limited *platform.RateLimitedError
-	var rejection *errRejected
-	switch {
-	case errors.As(err, &upgrade):
-		res.Outcome = UpgradeRequired
-		res.MinClientVersion = upgrade.MinClientVersion
-		res.UpgradeMessage = upgrade.Message
-	case errors.As(err, &unauthorized):
-		res.Outcome = AuthorizationRequired
-		res.AuthorizeURL = unauthorized.AuthorizeURL
-		res.AuthorizationMessage = unauthorized.Message
-	case errors.As(err, &limited):
-		res.Outcome = Deferred
-	case errors.As(err, &rejection):
+// reportDisposition derives a failed flush's outcome from the
+// disposition its last batch reached, reading the gates that
+// disposition raised rather than the answer again. A condition
+// therefore reports identically on the flush that discovers it and on
+// every automatic flush after — the two readings are one reading.
+//
+// Ack is silent here: a flush that acknowledged a batch and then failed
+// at something local has not uploaded successfully, and only a flush
+// that runs to the end may say it did.
+func (u *Uploader) reportDisposition(res *Result) {
+	switch res.Disposition {
+	case PauseUploads:
+		u.reportUpgradeGate(res)
+	case PauseUploadsAuthorize:
+		u.reportAuthorizationGate(res)
+	case Quarantine:
 		res.Outcome = Rejected
+	case RetrySameID:
+		// Nothing on disk changed, so the only thing left to report is a
+		// pause the attempt left behind — which is exactly what the next
+		// automatic flush will refuse to start on.
+		if u.deps.Now().Before(u.notBefore) {
+			res.Outcome = Deferred
+		}
 	}
+}
+
+// reportUpgradeGate and reportAuthorizationGate are the one reading of
+// each gate: what it is called and what the service said when it was
+// raised. The flush that raises a gate and the flush that is stopped by
+// one report through the same pair, so the user is never told two
+// different things about one refusal.
+func (u *Uploader) reportUpgradeGate(res *Result) {
+	res.Outcome = UpgradeRequired
+	res.MinClientVersion = u.minClientVersion
+	res.UpgradeMessage = u.upgradeMessage
+}
+
+func (u *Uploader) reportAuthorizationGate(res *Result) {
+	res.Outcome = AuthorizationRequired
+	res.AuthorizeURL = u.authorization.URL
+	res.AuthorizationMessage = u.authorization.Message
 }
 
 // Close runs the uploader's last flush — unforced, the same threshold
@@ -270,9 +335,7 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 	}
 	if !force {
 		if u.upgradeRequired {
-			res.Outcome = UpgradeRequired
-			res.MinClientVersion = u.minClientVersion
-			res.UpgradeMessage = u.upgradeMessage
+			u.reportUpgradeGate(&res)
 			return res, nil
 		}
 		// The upgrade gate is reported first when both are held: a build
@@ -280,9 +343,7 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 		// telling the user to go authorize would send them to finish
 		// something that changes nothing until they also upgrade.
 		if u.authorization.Required {
-			res.Outcome = AuthorizationRequired
-			res.AuthorizeURL = u.authorization.URL
-			res.AuthorizationMessage = u.authorization.Message
+			u.reportAuthorizationGate(&res)
 			return res, nil
 		}
 		if u.deps.Now().Before(u.notBefore) {
@@ -456,8 +517,10 @@ func (u *Uploader) send(token, id string, rawcalls []spool.Rawcall, res *Result,
 	ack, err := u.deps.Service.UploadBatch(token, b.ID, b.Envelope, b.Records, budget)
 	u.noteAttempt(err)
 	if err != nil {
-		return u.settleFailure(id, rawcalls, err)
+		res.Disposition, err = u.settleFailure(id, rawcalls, err)
+		return err
 	}
+	res.Disposition = Ack
 	u.upgradeRequired = false
 	u.minClientVersion, u.upgradeMessage = "", ""
 	u.authorization = AuthorizationNotice{}
@@ -596,11 +659,20 @@ func splitOut(rawcalls []spool.Rawcall, requestID string) (kept []spool.Rawcall,
 	return rawcalls, spool.Rawcall{}, false
 }
 
-// settleFailure turns one failed upload into the behavior its class
-// demands. The default — and the only option for auth failures,
-// timeouts, and network errors — is to change nothing: the spool and
-// the pending record stay, and the next flush retries.
-func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error) error {
+// settleFailure reads one failed upload as the contract reads it: every
+// answer the service can give is one row of the closed Disposition set,
+// and this is the single place that maps an answer to its row and
+// carries the row out. The row a reader does not find here is
+// RetrySameID, which is also the default — for auth failures, timeouts,
+// and network errors — and which changes nothing: the spool and the
+// pending record stay, and the next flush retries under the same id.
+//
+// The authorization row stays above the rejection row, the same order
+// the answer classes are decided in: a refusal for want of a completed
+// data authorization that reached the rejection row would quarantine a
+// user's data over a condition they resolve elsewhere, which is the one
+// mistake that row exists to prevent.
+func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error) (Disposition, error) {
 	var upgrade *platform.UpgradeRequiredError
 	var unauthorized *platform.DataAuthorizationRequiredError
 	var limited *platform.RateLimitedError
@@ -615,7 +687,7 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 		u.timeouts++
 		pause := timeoutBackoff(u.timeouts)
 		u.notBefore = u.deps.Now().Add(pause)
-		return fmt.Errorf("upload: batch %s: %w; the next attempt waits %s and allows more time", id, err, pause)
+		return RetrySameID, fmt.Errorf("upload: batch %s: %w; the next attempt waits %s and allows more time", id, err, pause)
 	case errors.As(err, &upgrade):
 		// The data is fine; this client is too old. Automatic flushes
 		// stop so the batch is not re-uploaded pointlessly every minute.
@@ -623,6 +695,7 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 		u.minClientVersion = upgrade.MinClientVersion
 		u.upgradeMessage = upgrade.Message
 		u.noteUpgradeRequired(upgrade.MinClientVersion, upgrade.Message)
+		return PauseUploads, fmt.Errorf("upload: batch %s: %w", id, err)
 	case errors.As(err, &unauthorized):
 		// The data is fine and so is this build; the account has not
 		// completed its data authorization. Automatic flushes stop so the
@@ -634,6 +707,7 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 			Message:  unauthorized.Message,
 		}
 		u.noteAuthorizationRequired(unauthorized.AuthorizeURL, unauthorized.Message)
+		return PauseUploadsAuthorize, fmt.Errorf("upload: batch %s: %w", id, err)
 	case errors.As(err, &limited):
 		// RetryAfter arrives already capped at platform.MaxRetryAfter. A
 		// rate limit that names no pause still demanded one: without a
@@ -645,6 +719,7 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 			err = fmt.Errorf("%w; automatic flushes wait %s", err, pause)
 		}
 		u.notBefore = u.deps.Now().Add(pause)
+		return RetrySameID, fmt.Errorf("upload: batch %s: %w", id, err)
 	case errors.As(err, &rejected):
 		// The service says this batch can never be accepted. Move its
 		// records aside so the uploads behind it flow again; nothing is
@@ -655,17 +730,17 @@ func (u *Uploader) settleFailure(id string, rawcalls []spool.Rawcall, err error)
 		}
 		rej := Rejection{BatchID: id, Records: len(rawcalls), Details: details, At: u.deps.Now().UTC()}
 		if qerr := quarantine(u.deps.RejectedDir, u.deps.Spool, rej, rawcalls); qerr != nil {
-			// The batch stays pending: the next flush hits the same
-			// rejection and tries the move again.
-			return fmt.Errorf("upload: batch %s was rejected and could not be set aside: %v (%w)", id, qerr, err)
+			// Nothing moved, so the batch stays pending: the next flush hits
+			// the same rejection and tries the move again under the same id.
+			return RetrySameID, fmt.Errorf("upload: batch %s was rejected and could not be set aside: %v (%w)", id, qerr, err)
 		}
 		if cerr := clearPending(u.deps.Dir); cerr != nil {
-			return fmt.Errorf("upload: releasing rejected batch %s: %w", id, cerr)
+			return Quarantine, fmt.Errorf("upload: releasing rejected batch %s: %w", id, cerr)
 		}
 		u.noteRejection(rej)
-		return &errRejected{rej: rej, dir: filepath.Join(u.deps.RejectedDir, id)}
+		return Quarantine, &errRejected{rej: rej, dir: filepath.Join(u.deps.RejectedDir, id)}
 	}
-	return fmt.Errorf("upload: batch %s: %w", id, err)
+	return RetrySameID, fmt.Errorf("upload: batch %s: %w", id, err)
 }
 
 // applyHandshake persists what the service said and puts the spool

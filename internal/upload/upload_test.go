@@ -187,6 +187,9 @@ func TestForcedFlushUploadsAndDeletesAcknowledgedRecords(t *testing.T) {
 	if res.Outcome != upload.Uploaded || res.Batches != 1 || res.Records != 2 {
 		t.Fatalf("result = %+v", res)
 	}
+	if res.Disposition != upload.Ack {
+		t.Errorf("disposition = %q, want %q", res.Disposition, upload.Ack)
+	}
 	if usage := f.spool.Usage(); usage != 0 {
 		t.Errorf("spool usage after acknowledgement = %d, want 0", usage)
 	}
@@ -583,14 +586,15 @@ func TestAClassifiedFailureCarriesItsOutcomeAlongsideTheError(t *testing.T) {
 	limited := fakeplatform.JSON(429, map[string]any{})
 	limited.Header.Set("Retry-After", "120")
 	cases := []struct {
-		name string
-		stub fakeplatform.Response
-		want upload.Outcome
+		name        string
+		stub        fakeplatform.Response
+		disposition upload.Disposition
+		want        upload.Outcome
 	}{
-		{"upgrade required", fakeplatform.Refuses426("9.9.9", ""), upload.UpgradeRequired},
-		{"authorization required", fakeplatform.Refuses451("https://dashboard.example.com/authorization", ""), upload.AuthorizationRequired},
-		{"deferred", limited, upload.Deferred},
-		{"rejected", rejectStub(400, "bad multipart"), upload.Rejected},
+		{"upgrade required", fakeplatform.Refuses426("9.9.9", ""), upload.PauseUploads, upload.UpgradeRequired},
+		{"authorization required", fakeplatform.Refuses451("https://dashboard.example.com/authorization", ""), upload.PauseUploadsAuthorize, upload.AuthorizationRequired},
+		{"deferred", limited, upload.RetrySameID, upload.Deferred},
+		{"rejected", rejectStub(400, "bad multipart"), upload.Quarantine, upload.Rejected},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -601,6 +605,9 @@ func TestAClassifiedFailureCarriesItsOutcomeAlongsideTheError(t *testing.T) {
 			res, err := f.uploader.Flush(true)
 			if err == nil {
 				t.Fatal("the refusal did not surface as an error")
+			}
+			if res.Disposition != tc.disposition {
+				t.Errorf("disposition = %q, want %q", res.Disposition, tc.disposition)
 			}
 			if res.Outcome != tc.want {
 				t.Errorf("outcome = %q, want %q", res.Outcome, tc.want)
@@ -626,6 +633,9 @@ func TestAnUnclassifiedFailureCarriesNoOutcome(t *testing.T) {
 	}
 	if res.Outcome != "" {
 		t.Errorf("outcome = %q, want none for a failure with no class", res.Outcome)
+	}
+	if res.Disposition != upload.RetrySameID {
+		t.Errorf("disposition = %q, want %q: a failure of no class is kept and offered again", res.Disposition, upload.RetrySameID)
 	}
 }
 

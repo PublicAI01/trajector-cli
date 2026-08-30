@@ -19,7 +19,15 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
+
+// Disposition is the client's own verdict type. The fixtures and the
+// uploader name one closed set between them, so a fixture's word is
+// read as that type instead of being translated into it — a translation
+// is where the two descriptions of the contract would drift apart.
+type Disposition = upload.Disposition
 
 // StrictEnv makes an absent fixture directory a failure instead of a
 // skip. It is for the one environment where the fixtures are certain to
@@ -47,12 +55,14 @@ type Case struct {
 type Meta struct {
 	Name        string `json:"name"`
 	ContractRef string `json:"contract_ref"`
-	// Expect names the client disposition the contract requires. The
-	// values are a closed set shared with the service side; an unknown
-	// one means the contract grew a row this client does not implement.
-	Expect     string `json:"expect"`
-	ReplayOf   string `json:"replay_of,omitempty"`
-	ServerWant string `json:"server_expect,omitempty"`
+	// Expect names the disposition the contract requires of the client.
+	// It decodes straight into the production type: the fixture's word
+	// and the client's value are the same closed set, so a fixture
+	// naming a disposition this client does not implement fails to match
+	// any of them instead of matching a spelling kept here.
+	Expect     Disposition `json:"expect"`
+	ReplayOf   string      `json:"replay_of,omitempty"`
+	ServerWant string      `json:"server_expect,omitempty"`
 }
 
 // Response is the service's answer as the fixture records it.
@@ -61,25 +71,6 @@ type Response struct {
 	Headers map[string]string `json:"headers"`
 	Body    map[string]any    `json:"body"`
 }
-
-// The closed set of client dispositions, matching the shared gate.
-const (
-	// ExpectAck: the batch is acknowledged; records are deleted.
-	ExpectAck = "ack"
-	// ExpectRetrySameID: keep the data, retry under the same batch id.
-	ExpectRetrySameID = "retry_same_id"
-	// ExpectPauseUploads: keep everything, quarantine nothing, stop
-	// automatic flushes for this process.
-	ExpectPauseUploads = "pause_uploads"
-	// ExpectPauseUploadsAuthorize: the same behavior as
-	// ExpectPauseUploads, but the user is told to complete their data
-	// authorization rather than to upgrade. It is a value of its own
-	// because what the user reads is what this row exists to get right.
-	ExpectPauseUploadsAuthorize = "pause_uploads_authorize"
-	// ExpectQuarantine: a poison batch; records move to the local
-	// quarantine directory.
-	ExpectQuarantine = "quarantine"
-)
 
 // Find locates the fixture directory, returning it and every path
 // tried. An empty directory with a non-empty trail means the fixtures
