@@ -587,11 +587,8 @@ func TestAClassifiedFailureCarriesItsOutcomeAlongsideTheError(t *testing.T) {
 		stub fakeplatform.Response
 		want upload.Outcome
 	}{
-		{"upgrade required", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}), upload.UpgradeRequired},
-		{"authorization required", fakeplatform.JSON(451, map[string]any{
-			"error":         "data_authorization_required",
-			"authorize_url": "https://dashboard.example.com/authorization",
-		}), upload.AuthorizationRequired},
+		{"upgrade required", fakeplatform.Refuses426("9.9.9", ""), upload.UpgradeRequired},
+		{"authorization required", fakeplatform.Refuses451("https://dashboard.example.com/authorization", ""), upload.AuthorizationRequired},
 		{"deferred", limited, upload.Deferred},
 		{"rejected", rejectStub(400, "bad multipart"), upload.Rejected},
 	}
@@ -634,7 +631,7 @@ func TestAnUnclassifiedFailureCarriesNoOutcome(t *testing.T) {
 
 func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
 	f := newFixture(t)
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
@@ -670,10 +667,7 @@ func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
 
 func TestAnAuthorizationGatePausesAutomaticFlushesWithoutTouchingData(t *testing.T) {
 	f := newFixture(t)
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{
-		"error":         "data_authorization_required",
-		"authorize_url": "https://dashboard.example.com/authorization",
-	}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses451("https://dashboard.example.com/authorization", ""))
 	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
@@ -713,11 +707,7 @@ func TestAnAuthorizationGatePausesAutomaticFlushesWithoutTouchingData(t *testing
 func TestAnAuthorizationRefusalIsRememberedAcrossProcesses(t *testing.T) {
 	const said = "Your data authorization is not complete."
 	f := newFixture(t)
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{
-		"error":         "data_authorization_required",
-		"authorize_url": "https://dashboard.example.com/authorization",
-		"message":       said,
-	}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses451("https://dashboard.example.com/authorization", said))
 	f.storeRawcall(t, "req-1", f.now)
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -735,7 +725,7 @@ func TestAnAuthorizationRefusalWithNoDetailIsStillRemembered(t *testing.T) {
 	// and reading that back as "nothing is wrong" would leave the user
 	// with a silent uploader and no reason for it.
 	f := newFixture(t)
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses451("", ""))
 	f.storeRawcall(t, "req-1", f.now)
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -751,14 +741,8 @@ func TestTheTwoRefusalsDoNotEraseEachOther(t *testing.T) {
 	// Sharing one record would let status and doctor name only the last
 	// one seen, sending the user to fix half of what is wrong.
 	f := newFixture(t)
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{
-		"error":         "data_authorization_required",
-		"authorize_url": "https://dashboard.example.com/authorization",
-	}))
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
-		"min_client_version": "9.9.9",
-		"message":            "please upgrade",
-	}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses451("https://dashboard.example.com/authorization", ""))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", "please upgrade"))
 	f.storeRawcall(t, "req-1", f.now)
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -784,10 +768,7 @@ func TestAVersionRefusalRelaysWhatTheServiceSaid(t *testing.T) {
 	// part no local wording can supply.
 	const said = "Upload format 0.1.x is retired on 2026-09-01."
 	f := newFixture(t)
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
-		"min_client_version": "9.9.9",
-		"message":            said,
-	}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", said))
 	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
 	f.storeRawcall(t, "req-1", f.now)
 
@@ -828,7 +809,7 @@ func TestAVersionRefusalRelaysWhatTheServiceSaid(t *testing.T) {
 
 func TestAVersionRefusalWithoutWordsPersistsNone(t *testing.T) {
 	f := newFixture(t)
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 	f.storeRawcall(t, "req-1", f.now)
 
 	res, _ := f.uploader.Flush(true)
@@ -846,10 +827,7 @@ func TestAServiceMessageOnDiskCannotDrawOnTheTerminal(t *testing.T) {
 	// the way out, so a file edited between the two still cannot forge
 	// a line of our output.
 	f := newFixture(t)
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
-		"min_client_version": "9.9.9",
-		"message":            "upgrade now\rtrajector: everything is fine",
-	}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", "upgrade now\rtrajector: everything is fine"))
 	f.storeRawcall(t, "req-1", f.now)
 
 	res, _ := f.uploader.Flush(true)
@@ -1017,7 +995,7 @@ func TestAVersionRefusalPreservesTheRestOfTheStoredHandshake(t *testing.T) {
 		"spool_quota_bytes": 1 << 20,
 		"notice":            "an upgrade is available",
 	}))
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	if _, err := f.uploader.Flush(true); err != nil {

@@ -97,6 +97,46 @@ func (s *Server) stubPairingOutage(pairingID string) {
 	s.Stub("GET", "/v1/pairings/"+pairingID, JSON(502, map[string]any{"error": "bad gateway"}))
 }
 
+// upgradeRefusal is the body of a version refusal. The minimum version
+// travels in the handshake's own field, so the one spelling of that
+// field is the client's; the rest of the body is spelled here because
+// no client type declares it.
+type upgradeRefusal struct {
+	platform.Handshake
+	Error   string `json:"error"`
+	Message string `json:"message,omitempty"`
+}
+
+// authorizationRefusal is the body of a data-authorization refusal.
+type authorizationRefusal struct {
+	Error        string `json:"error"`
+	AuthorizeURL string `json:"authorize_url,omitempty"`
+	Message      string `json:"message,omitempty"`
+}
+
+// Refuses426 is the service refusing uploads from this client version.
+// Both details are optional: the service may name the minimum it will
+// keep accepting, wording for the user, or neither — the refusal stands
+// either way, which is what makes this one stimulus rather than three.
+func Refuses426(minClientVersion, message string) Response {
+	return JSON(http.StatusUpgradeRequired, upgradeRefusal{
+		Handshake: platform.Handshake{MinClientVersion: minClientVersion},
+		Error:     "cli_upgrade_required",
+		Message:   message,
+	})
+}
+
+// Refuses451 is the service refusing this account's uploads until its
+// data authorization is complete. Like Refuses426 both details are
+// optional and the refusal stands without them.
+func Refuses451(authorizeURL, message string) Response {
+	return JSON(http.StatusUnavailableForLegalReasons, authorizationRefusal{
+		Error:        "data_authorization_required",
+		AuthorizeURL: authorizeURL,
+		Message:      message,
+	})
+}
+
 // JSON builds a response with a JSON-encoded body.
 func JSON(status int, v any) Response {
 	body, err := json.Marshal(v)

@@ -1,35 +1,22 @@
 package cli_test
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
-// quarantineBatch plants one batch in the rejected store, whose layout
-// is a documented product contract.
+// quarantineBatch sets aside one batch of records that no longer read
+// back as rawcalls, which is all these commands need to act on.
 func quarantineBatch(t *testing.T, e *clitest.Env, batchID string, requestIDs ...string) {
 	t.Helper()
-	dir := filepath.Join(e.Layout().RejectedDir(), batchID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	records := map[string][]byte{}
 	for _, id := range requestIDs {
-		if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte(`{}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		records[id] = []byte(`{}`)
 	}
-	reason, err := json.Marshal(map[string]any{"batch_id": batchID, "records": len(requestIDs)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "reason.json"), reason, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	e.Sandbox().QuarantineBatch(proxytest.Rejection{BatchID: batchID}, records)
 }
 
 func TestDoctorDiscardUsage(t *testing.T) {
@@ -70,8 +57,8 @@ func TestDoctorDiscardAsksBeforeDeleting(t *testing.T) {
 	if !strings.Contains(got.Stdout, "[y/N]") {
 		t.Errorf("stdout = %q, want the confirmation question", got.Stdout)
 	}
-	if _, err := os.Stat(filepath.Join(e.Layout().RejectedDir(), "b-poison")); err != nil {
-		t.Errorf("the batch was deleted after a no: %v", err)
+	if n := len(e.Sandbox().QuarantinedBatches()); n != 1 {
+		t.Errorf("quarantine holds %d batch(es) after a no, want the batch kept", n)
 	}
 }
 
@@ -86,8 +73,8 @@ func TestDoctorDiscardDeletesAConfirmedBatch(t *testing.T) {
 	if !strings.Contains(got.Stdout, "2 rawcall(s)") {
 		t.Errorf("stdout = %q, want the deletion count", got.Stdout)
 	}
-	if _, err := os.Stat(filepath.Join(e.Layout().RejectedDir(), "b-poison")); !os.IsNotExist(err) {
-		t.Errorf("the batch survived a confirmed discard (stat: %v)", err)
+	if n := len(e.Sandbox().QuarantinedBatches()); n != 0 {
+		t.Errorf("quarantine holds %d batch(es) after a confirmed discard, want none", n)
 	}
 }
 

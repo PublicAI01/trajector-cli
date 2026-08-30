@@ -11,7 +11,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 func (e *env) statusOutput() string {
@@ -89,7 +88,7 @@ func TestStatusLabelsAThirdPartyUpstream(t *testing.T) {
 
 func TestStatusExplainsADeviceWidePause(t *testing.T) {
 	e := newEnv(t)
-	e.sandbox.Pause(routing.PauseSignedOut)
+	e.sandbox.Pause(proxytest.PauseSignedOut)
 	out := e.statusOutput()
 
 	if !strings.Contains(out, "paused") || !strings.Contains(out, "`trajector login`") {
@@ -99,7 +98,7 @@ func TestStatusExplainsADeviceWidePause(t *testing.T) {
 
 func TestStatusExplainsAConsentReconfirmPause(t *testing.T) {
 	e := newEnv(t)
-	e.sandbox.Pause(routing.PauseConsentReconfirm)
+	e.sandbox.Pause(proxytest.PauseConsentReconfirm)
 	out := e.statusOutput()
 
 	if !strings.Contains(out, "agreement") || !strings.Contains(out, "`trajector enable`") {
@@ -239,7 +238,7 @@ func TestStatusShowsSpoolUsageAndLastUpload(t *testing.T) {
 
 func TestStatusWarnsWhenTheSpoolIsFull(t *testing.T) {
 	e := newEnv(t)
-	writeUploadFile(t, e, "handshake.json", map[string]any{"spool_quota_bytes": 1})
+	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
 	e.sandbox.SeedRawcall("req-1", "hash-project", e.deps.Now())
 	out := e.statusOutput()
 
@@ -270,19 +269,9 @@ func TestStatusReportsRecordingStoppedByAnUnwritableSpool(t *testing.T) {
 
 func TestStatusWarnsAboutRejectedBatches(t *testing.T) {
 	e := newEnv(t)
-	batchDir := filepath.Join(e.layout().RejectedDir(), "b-poison")
-	if err := os.MkdirAll(batchDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"req-1.json", "req-2.json"} {
-		if err := os.WriteFile(filepath.Join(batchDir, name), []byte(`{}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	reason, _ := json.Marshal(map[string]any{"batch_id": "b-poison", "records": 2, "details": "413 Request Entity Too Large"})
-	if err := os.WriteFile(filepath.Join(batchDir, "reason.json"), reason, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.QuarantineBatch(
+		proxytest.Rejection{BatchID: "b-poison", Details: "413 Request Entity Too Large"},
+		map[string][]byte{"req-1": []byte(`{}`), "req-2": []byte(`{}`)})
 	out := e.statusOutput()
 
 	for _, want := range []string{"WARNING", "2 rawcall(s)", "1 rejected batch(es)", "not be retried automatically", "`trajector doctor`"} {
@@ -294,7 +283,7 @@ func TestStatusWarnsAboutRejectedBatches(t *testing.T) {
 
 func TestStatusRendersEverySectionWhenTheSpoolCannotOpen(t *testing.T) {
 	e := newEnv(t)
-	writeUploadFile(t, e, "handshake.json", map[string]any{"notice": "scheduled maintenance on Friday"})
+	e.sandbox.SeedHandshake(proxytest.Handshake{Notice: "scheduled maintenance on Friday"})
 	e.obstruct(e.layout().SpoolDir())
 	out := e.statusOutput()
 
@@ -315,9 +304,10 @@ func TestStatusRendersEverySectionWhenTheSpoolCannotOpen(t *testing.T) {
 
 func TestStatusShowsRejectedBatchesAlongsideASpoolError(t *testing.T) {
 	e := newEnv(t)
-	seedRejectedBatch(t, e, "b-poison", "413 Request Entity Too Large", map[string][]byte{
-		"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
-	})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison", Details: "413 Request Entity Too Large"},
+		map[string][]byte{
+			"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
+		})
 	e.obstruct(e.layout().SpoolDir())
 	out := e.statusOutput()
 
@@ -344,9 +334,9 @@ func TestStatusWarnsWhenTheRejectedBatchesCannotBeRead(t *testing.T) {
 func TestStatusShowsServiceMinVersionAndNotice(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Version = "0.1.0" // behind the minimum below
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"min_client_version": "9.9.9",
-		"notice":             "scheduled maintenance on Friday",
+	e.sandbox.SeedHandshake(proxytest.Handshake{
+		MinClientVersion: "9.9.9",
+		Notice:           "scheduled maintenance on Friday",
 	})
 	out := e.statusOutput()
 
@@ -363,12 +353,10 @@ func TestStatusReportsAPausedUploaderWaitingOnDataAuthorization(t *testing.T) {
 	// stopping it is something they finish in a browser.
 	e := newEnv(t)
 	e.deps.Version = "0.1.0"
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"min_client_version":     "0.1.0",
-		"authorization_required": true,
-		"authorize_url":          "https://dashboard.example.com/authorization",
-		"authorization_message":  "Your data authorization is not complete.",
-	})
+	e.sandbox.SeedHandshake(proxytest.Handshake{MinClientVersion: "0.1.0"})
+	e.sandbox.SeedAuthorizationRefusal(
+		"https://dashboard.example.com/authorization",
+		"Your data authorization is not complete.")
 	out := e.statusOutput()
 
 	for _, want := range []string{
@@ -389,10 +377,7 @@ func TestStatusReportsAPausedUploaderWaitingOnDataAuthorization(t *testing.T) {
 func TestStatusDropsAnAuthorizeAddressAUserCannotSafelyOpen(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Version = "0.1.0"
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"authorization_required": true,
-		"authorize_url":          "http://dashboard.example.com/authorization",
-	})
+	e.sandbox.SeedAuthorizationRefusal("http://dashboard.example.com/authorization", "")
 	out := e.statusOutput()
 
 	if strings.Contains(out, "http://dashboard.example.com") {
@@ -412,7 +397,7 @@ func TestStatusSaysNothingAboutAMinimumThisBuildMeets(t *testing.T) {
 	e.deps.Version = "0.1.0"
 	for _, minimum := range []string{"0.1.0", "0.0.9"} {
 		e.stdout.Reset()
-		writeUploadFile(t, e, "handshake.json", map[string]any{"min_client_version": minimum})
+		e.sandbox.SeedHandshake(proxytest.Handshake{MinClientVersion: minimum})
 		out := e.statusOutput()
 
 		for _, unwanted := range []string{"trajector upgrade", "requires client version", "\nService"} {
@@ -428,9 +413,9 @@ func TestStatusSaysNothingAboutAMinimumThisBuildMeets(t *testing.T) {
 func TestStatusStillRelaysANoticeWhenTheVersionIsFine(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Version = "0.2.0"
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"min_client_version": "0.1.0",
-		"notice":             "scheduled maintenance on Friday",
+	e.sandbox.SeedHandshake(proxytest.Handshake{
+		MinClientVersion: "0.1.0",
+		Notice:           "scheduled maintenance on Friday",
 	})
 	out := e.statusOutput()
 
@@ -453,7 +438,7 @@ func TestStatusStatesAnUnorderableMinimumWithoutSendingTheUserToUpgrade(t *testi
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
 			e.deps.Version = tc.version
-			writeUploadFile(t, e, "handshake.json", map[string]any{"min_client_version": tc.minimum})
+			e.sandbox.SeedHandshake(proxytest.Handshake{MinClientVersion: tc.minimum})
 			out := e.statusOutput()
 
 			if !strings.Contains(out, tc.minimum) || !strings.Contains(out, tc.version) {
@@ -469,10 +454,7 @@ func TestStatusStatesAnUnorderableMinimumWithoutSendingTheUserToUpgrade(t *testi
 func TestStatusRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Version = "0.1.0"
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"min_client_version": "9.9.9",
-		"upgrade_message":    "Upload format 0.1.x is retired on 2026-09-01.",
-	})
+	e.sandbox.SeedUpgradeRefusal("9.9.9", "Upload format 0.1.x is retired on 2026-09-01.")
 	out := e.statusOutput()
 
 	for _, want := range []string{"9.9.9", "The service says:", "retired on 2026-09-01", "trajector upgrade"} {
@@ -488,10 +470,7 @@ func TestStatusRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 func TestStatusRelaysALiveRefusalEvenWhenTheMinimumLooksMet(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Version = "0.1.0"
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"min_client_version": "0.1.0",
-		"upgrade_message":    "This build is blocked; move to 0.2.0.",
-	})
+	e.sandbox.SeedUpgradeRefusal("0.1.0", "This build is blocked; move to 0.2.0.")
 	out := e.statusOutput()
 
 	for _, want := range []string{"This build is blocked", "trajector upgrade"} {
@@ -507,11 +486,8 @@ func TestStatusRefusesToLetTheServiceForgeItsOwnLines(t *testing.T) {
 	// message that can move the cursor or start a line could write any
 	// verdict it likes under our name.
 	e := newEnv(t)
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"min_client_version": "9.9.9",
-		"upgrade_message":    "upgrade\n  Capture: off, nothing recorded\x1b[2K",
-		"notice":             "hello\rgoodbye",
-	})
+	e.sandbox.SeedHandshake(proxytest.Handshake{Notice: "hello\rgoodbye"})
+	e.sandbox.SeedUpgradeRefusal("9.9.9", "upgrade\n  Capture: off, nothing recorded\x1b[2K")
 	out := e.statusOutput()
 
 	if strings.Contains(out, "\x1b") || strings.Contains(out, "\r") {

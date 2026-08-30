@@ -11,13 +11,13 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 func TestLoginPairsStoresTheTokenAndResumesRecording(t *testing.T) {
 	e := newUnpairedEnv(t)
 	e.pairable()
-	e.sandbox.Pause(routing.PauseSignedOut)
+	e.sandbox.Pause(proxytest.PauseSignedOut)
 
 	if err := e.machine().Login(e.io()); err != nil {
 		t.Fatalf("login: %v", err)
@@ -38,7 +38,7 @@ func TestLoginPairsStoresTheTokenAndResumesRecording(t *testing.T) {
 
 func TestLoginOnAlreadyPairedDeviceStillReachesTheSignedInState(t *testing.T) {
 	e := newEnv(t)
-	e.sandbox.Pause(routing.PauseSignedOut)
+	e.sandbox.Pause(proxytest.PauseSignedOut)
 
 	if err := e.machine().Login(e.io()); err != nil {
 		t.Fatalf("login: %v", err)
@@ -160,7 +160,7 @@ func TestLogoutRevokesPausesAndKeepsGrants(t *testing.T) {
 	if last.URL != "/v1/device/revoke" || last.Header.Get("Authorization") != "Bearer dev-tok-fake" {
 		t.Errorf("revocation request = %+v", last)
 	}
-	if reason := e.sandbox.PausedReason(); reason != routing.PauseSignedOut {
+	if reason := e.sandbox.PausedReason(); reason != proxytest.PauseSignedOut {
 		t.Errorf("pause = %q, want signed_out", reason)
 	}
 	if known, recording := e.sandbox.Recording(grant.Token); !known || recording {
@@ -180,7 +180,7 @@ func TestLogoutWithAnUnreachableServiceStillSignsOutLocally(t *testing.T) {
 	if e.machine().Paired() {
 		t.Error("device token kept after an offline logout")
 	}
-	if reason := e.sandbox.PausedReason(); reason != routing.PauseSignedOut {
+	if reason := e.sandbox.PausedReason(); reason != proxytest.PauseSignedOut {
 		t.Errorf("pause = %q", reason)
 	}
 }
@@ -472,7 +472,7 @@ func TestLogoutStaysRetryableWhenPausingFails(t *testing.T) {
 	if e.machine().Paired() {
 		t.Error("the rerun kept the device token")
 	}
-	if reason := e.sandbox.PausedReason(); reason != routing.PauseSignedOut {
+	if reason := e.sandbox.PausedReason(); reason != proxytest.PauseSignedOut {
 		t.Errorf("pause = %q, want signed_out", reason)
 	}
 }

@@ -3,7 +3,6 @@ package lifecycle_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -21,7 +20,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
-	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 func freeAddr(t *testing.T) string {
@@ -69,13 +67,8 @@ func TestServeProxyHostsCaptureAndTheFlushEndpoint(t *testing.T) {
 	}()
 	waitHealthy(t, e, addr)
 
-	resp := adminPost(t, e, "http://"+addr+upload.FlushPath+"?force=1")
-	defer resp.Body.Close()
-	var reply upload.FlushReply
-	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
-		t.Fatal(err)
-	}
-	if reply.Service != apiproxy.ServiceName || reply.Outcome != upload.Uploaded || reply.Records != 1 {
+	reply := proxytest.Flush(t, e.client, addr, e.deps.Layout)
+	if reply.Service != apiproxy.ServiceName || reply.Outcome != proxytest.Uploaded || reply.Records != 1 {
 		t.Errorf("flush reply = %+v, want the seeded rawcall uploaded", reply)
 	}
 
@@ -302,13 +295,8 @@ func TestASlowExitFlushReleasesThePortAndLeavesItsRecordsToTheSuccessor(t *testi
 		successor <- e.machine().ServeProxy(context.Background(), time.Hour, io.Discard, io.Discard)
 	}()
 	waitHealthy(t, e, addr)
-	flush := adminPost(t, e, "http://"+addr+upload.FlushPath+"?force=1")
-	var reply upload.FlushReply
-	if err := json.NewDecoder(flush.Body).Decode(&reply); err != nil {
-		t.Fatal(err)
-	}
-	flush.Body.Close()
-	if reply.Outcome != upload.Uploaded || reply.Records != 1 {
+	reply := proxytest.Flush(t, e.client, addr, e.deps.Layout)
+	if reply.Outcome != proxytest.Uploaded || reply.Records != 1 {
 		t.Errorf("successor flush = %+v, want the record the predecessor abandoned uploaded", reply)
 	}
 
@@ -418,8 +406,7 @@ func TestProxyTakeoverNeverUploadsARecordUnderTwoBatchIDs(t *testing.T) {
 		t.Fatal("the port never came free for the successor")
 	}
 	waitHealthy(t, e, addr)
-	firstFlush := adminPost(t, e, "http://"+addr+upload.FlushPath+"?force=1")
-	firstFlush.Body.Close()
+	proxytest.Flush(t, e.client, addr, e.deps.Layout)
 
 	select {
 	case err := <-predecessor:
@@ -430,13 +417,8 @@ func TestProxyTakeoverNeverUploadsARecordUnderTwoBatchIDs(t *testing.T) {
 		t.Fatal("the predecessor proxy did not exit")
 	}
 
-	secondFlush := adminPost(t, e, "http://"+addr+upload.FlushPath+"?force=1")
-	var reply upload.FlushReply
-	if err := json.NewDecoder(secondFlush.Body).Decode(&reply); err != nil {
-		t.Fatal(err)
-	}
-	secondFlush.Body.Close()
-	if reply.Outcome != upload.Empty {
+	reply := proxytest.Flush(t, e.client, addr, e.deps.Layout)
+	if reply.Outcome != proxytest.Empty {
 		t.Errorf("flush after the takeover settled = %+v, want everything already uploaded", reply)
 	}
 

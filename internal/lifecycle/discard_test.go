@@ -5,15 +5,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 func TestDiscardDeletesAQuarantinedBatch(t *testing.T) {
 	e := newEnv(t)
 	at := e.deps.Now()
-	seedRejectedBatch(t, e, "b-poison", "413 Request Entity Too Large", map[string][]byte{
-		"req-1": spooledEnvelope(t, "req-1", at),
-		"req-2": spooledEnvelope(t, "req-2", at),
-	})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison", Details: "413 Request Entity Too Large"},
+		map[string][]byte{
+			"req-1": spooledEnvelope(t, "req-1", at),
+			"req-2": spooledEnvelope(t, "req-2", at),
+		})
 
 	if err := e.machine().DiscardRejected("b-poison", false, false, e.io()); err != nil {
 		t.Fatalf("discard: %v\nstdout: %s", err, e.stdout)
@@ -35,9 +38,10 @@ func TestDiscardDeletesAQuarantinedBatch(t *testing.T) {
 
 func TestDiscardDeletesRecordsRequeueRefusesToMove(t *testing.T) {
 	e := newEnv(t)
-	seedRejectedBatch(t, e, "b-torn", "never sent: unreadable in the spool (bad envelope)", map[string][]byte{
-		"req-bad": []byte("not an envelope"),
-	})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-torn", Details: "never sent: unreadable in the spool (bad envelope)"},
+		map[string][]byte{
+			"req-bad": []byte("not an envelope"),
+		})
 
 	if err := e.machine().RequeueRejected("b-torn", false, e.io()); err == nil {
 		t.Fatal("precondition: requeue must keep refusing an unreadable record")
@@ -57,9 +61,10 @@ func TestDiscardDeletesRecordsRequeueRefusesToMove(t *testing.T) {
 
 func TestDiscardDropsTheQuarantineWarningFromStatusAndDoctor(t *testing.T) {
 	e := newEnv(t)
-	seedRejectedBatch(t, e, "b-poison", "", map[string][]byte{
-		"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
-	})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison"},
+		map[string][]byte{
+			"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
+		})
 	if problems, _ := e.doctor(); problems == 0 {
 		t.Fatal("precondition: a quarantined batch is a doctor problem")
 	}
@@ -112,8 +117,10 @@ func TestDiscardRefusesABatchIdThatLeavesTheQuarantine(t *testing.T) {
 func TestDiscardAllEmptiesTheQuarantine(t *testing.T) {
 	e := newEnv(t)
 	at := e.deps.Now()
-	seedRejectedBatch(t, e, "b-one", "", map[string][]byte{"req-1": spooledEnvelope(t, "req-1", at)})
-	seedRejectedBatch(t, e, "b-two", "", map[string][]byte{"req-2": spooledEnvelope(t, "req-2", at)})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-one"},
+		map[string][]byte{"req-1": spooledEnvelope(t, "req-1", at)})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-two"},
+		map[string][]byte{"req-2": spooledEnvelope(t, "req-2", at)})
 
 	if err := e.machine().DiscardRejected("", true, false, e.io()); err != nil {
 		t.Fatalf("discard --all: %v\nstdout: %s", err, e.stdout)
@@ -139,9 +146,10 @@ func TestDiscardAllWithNothingQuarantinedSaysSo(t *testing.T) {
 func TestDiscardWithoutAnAnswerDeletesNothing(t *testing.T) {
 	e := newEnv(t)
 	e.stdin = ""
-	seedRejectedBatch(t, e, "b-poison", "", map[string][]byte{
-		"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
-	})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison"},
+		map[string][]byte{
+			"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
+		})
 
 	if err := e.machine().DiscardRejected("b-poison", false, false, e.io()); err != nil {
 		t.Fatalf("discard without an answer: %v", err)
@@ -157,9 +165,10 @@ func TestDiscardWithoutAnAnswerDeletesNothing(t *testing.T) {
 func TestDiscardConfirmationFlagSkipsThePrompt(t *testing.T) {
 	e := newEnv(t)
 	e.stdin = ""
-	seedRejectedBatch(t, e, "b-poison", "", map[string][]byte{
-		"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
-	})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison"},
+		map[string][]byte{
+			"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
+		})
 
 	if err := e.machine().DiscardRejected("b-poison", false, true, e.io()); err != nil {
 		t.Fatalf("discard --yes: %v", err)

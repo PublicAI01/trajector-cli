@@ -8,11 +8,9 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/cli"
-	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
-	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 // newUploadEnv is a paired clitest environment whose service
@@ -49,7 +47,7 @@ func stubEchoAck(t *testing.T, service *fakeplatform.Server) {
 // records — client version, upstream origin, session identity, and the
 // upstream's request id — so upload exercises a full envelope.
 func captured(id string) proxytest.RawcallOption {
-	return func(o *envelope.Observation) {
+	return func(o *proxytest.Observation) {
 		o.ClientVersion = "test"
 		o.Upstream = "https://api.anthropic.com"
 		o.OfficialUpstream = "https://api.anthropic.com"
@@ -211,7 +209,7 @@ func TestUploadSurfacesEveryRejectedBatchLoudly(t *testing.T) {
 	if n := len(e.Sandbox().Rawcalls()); n != 0 {
 		t.Errorf("spool still holds %d rawcalls; the rejected batch must move aside", n)
 	}
-	if n := rejectedRecords(t, e.Layout().RejectedDir()); n != 1 {
+	if n := e.Sandbox().QuarantinedRecords(); n != 1 {
 		t.Errorf("rejected store holds %d records, want 1", n)
 	}
 
@@ -220,7 +218,7 @@ func TestUploadSurfacesEveryRejectedBatchLoudly(t *testing.T) {
 	if again.Exit != 1 {
 		t.Fatalf("second rejection exit = %d (stdout: %q)", again.Exit, again.Stdout)
 	}
-	if n := rejectedRecords(t, e.Layout().RejectedDir()); n != 2 {
+	if n := e.Sandbox().QuarantinedRecords(); n != 2 {
 		t.Errorf("rejected store holds %d records after two rejections, want 2", n)
 	}
 }
@@ -247,7 +245,7 @@ func TestUploadSetsAsideATornRawcallAndKeepsUploading(t *testing.T) {
 	if n := len(e.Sandbox().Rawcalls()); n != 0 {
 		t.Errorf("spool holds %d rawcalls; the torn record must move aside, the rest upload", n)
 	}
-	if n := rejectedRecords(t, e.Layout().RejectedDir()); n != 1 {
+	if n := e.Sandbox().QuarantinedRecords(); n != 1 {
 		t.Errorf("rejected store holds %d records, want the torn one", n)
 	}
 	if n := batchUploads(e.Service()); n != 1 {
@@ -270,7 +268,7 @@ func TestUploadSetsAsideATornRawcallAndKeepsUploading(t *testing.T) {
 func TestUploadPausedByARequiredUpgradeExitsZeroEveryTime(t *testing.T) {
 	e := clitest.New(t)
 	e.Paired()
-	e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	e.Service().Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 	seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
 	p := e.StartProxy()
 	defer p.Stop()
@@ -327,7 +325,7 @@ func TestUploadDeferredByTheServiceExitsZeroEveryTime(t *testing.T) {
 func TestUploadReportsSetAsideRecordsEvenWhenTheServicePausesUploads(t *testing.T) {
 	e := clitest.New(t)
 	e.Paired()
-	e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	e.Service().Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 	seedRawcall(e, "req-good", time.Now().UTC().Add(-25*time.Hour))
 	e.Sandbox().SeedTornRawcall("req-torn", e.ProjectHash(), time.Now().UTC().Add(-25*time.Hour))
 	p := e.StartProxy()
@@ -345,7 +343,7 @@ func TestUploadReportsSetAsideRecordsEvenWhenTheServicePausesUploads(t *testing.
 			t.Errorf("stdout = %q, want it to contain %q", got.Stdout, want)
 		}
 	}
-	if n := rejectedRecords(t, e.Layout().RejectedDir()); n != 1 {
+	if n := e.Sandbox().QuarantinedRecords(); n != 1 {
 		t.Errorf("rejected store holds %d records, want the torn one", n)
 	}
 	if n := len(e.Sandbox().Rawcalls()); n != 1 {
@@ -383,20 +381,6 @@ func TestUploadUsage(t *testing.T) {
 	if got := e.Run("upload", "--frobnicate"); got.Exit != 2 || !strings.Contains(got.Stderr, "usage: trajector upload") {
 		t.Errorf("bad flag = %+v", got)
 	}
-}
-
-// rejectedRecords sums the record counts ListRejected reports.
-func rejectedRecords(t *testing.T, dir string) int {
-	t.Helper()
-	batches, err := upload.ListRejected(dir)
-	if err != nil {
-		t.Fatalf("ListRejected: %v", err)
-	}
-	n := 0
-	for _, b := range batches {
-		n += b.Records
-	}
-	return n
 }
 
 func TestARejectedBatchCannotWriteItsOwnLineIntoDoctorsVerdicts(t *testing.T) {

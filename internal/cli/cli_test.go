@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 func TestRootCommand(t *testing.T) {
@@ -101,7 +101,7 @@ func TestEnableExplainsAPausedDevice(t *testing.T) {
 	e.StartProxy()
 	// A paired device whose recording is paused device-wide.
 	e.Paired()
-	e.Sandbox().Pause(routing.PauseSignedOut)
+	e.Sandbox().Pause(proxytest.PauseSignedOut)
 
 	got := e.InProjectInput("yes\n", "enable")
 	if got.Exit != 1 {

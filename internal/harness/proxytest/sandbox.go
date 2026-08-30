@@ -35,15 +35,32 @@ func (e *Env) Sandbox() *Sandbox { return Open(e.t, e.layout) }
 // it does not redeclare the contract.
 type Grant = routing.Grant
 
+// seedTime is the instant every seeder stamps when the test does not
+// care when something happened.
+var seedTime = time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+
 // GrantProject records a project as enabled, as `trajector enable`
 // would. An empty GrantedAt gets a fixed timestamp: most tests do not
 // care when.
 func (s *Sandbox) GrantProject(g Grant) {
 	s.t.Helper()
 	if g.GrantedAt == "" {
-		g.GrantedAt = "2026-08-01T00:00:00Z"
+		g.GrantedAt = seedTime.Format(time.RFC3339)
 	}
 	if err := routing.OpenStore(s.layout.RoutingTable()).Grant(g); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// RevokeProject withdraws a project's grant behind the back of whatever
+// else records it, as a half-finished withdrawal would have left the
+// table.
+func (s *Sandbox) RevokeProject(root, at string) {
+	s.t.Helper()
+	if at == "" {
+		at = seedTime.Format(time.RFC3339)
+	}
+	if err := routing.OpenStore(s.layout.RoutingTable()).Revoke(root, at); err != nil {
 		s.t.Fatal(err)
 	}
 }
@@ -57,6 +74,17 @@ func (s *Sandbox) ActiveGrant(root string) (Grant, bool) {
 	}
 	return g, ok
 }
+
+// PauseReason is why recording is suspended device-wide, in routing's
+// own type, with the reasons the device can be left in. Tests name them
+// through the harness so nothing above the proxy has to reach into the
+// routing table's vocabulary.
+type PauseReason = routing.PauseReason
+
+const (
+	PauseSignedOut        = routing.PauseSignedOut
+	PauseConsentReconfirm = routing.PauseConsentReconfirm
+)
 
 // PausedReason reports why recording is suspended device-wide, or empty
 // when it is not.
@@ -85,9 +113,12 @@ func (s *Sandbox) Recording(token string) (known, recording bool) {
 	return verdict.Resolves(), verdict.Records()
 }
 
+// Observation is what was seen of one exchange, in envelope's own type.
+type Observation = envelope.Observation
+
 // RawcallOption refines the observation a seeded rawcall records
 // beyond the minimal valid default.
-type RawcallOption func(*envelope.Observation)
+type RawcallOption func(*Observation)
 
 // SeedRawcall stores one rawcall for a project, as a capture would.
 func (s *Sandbox) SeedRawcall(id, projectIDHash string, at time.Time, opts ...RawcallOption) {

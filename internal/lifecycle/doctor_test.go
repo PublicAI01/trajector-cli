@@ -12,7 +12,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 func (e *env) doctor() (int, string) {
@@ -51,7 +50,7 @@ func TestDoctorOnAHealthyEnabledProject(t *testing.T) {
 
 func TestDoctorExplainsADeviceWidePause(t *testing.T) {
 	e := newEnv(t)
-	e.sandbox.Pause(routing.PauseSignedOut)
+	e.sandbox.Pause(proxytest.PauseSignedOut)
 
 	problems, out := e.doctor()
 	if problems == 0 {
@@ -144,9 +143,7 @@ func TestDoctorRemovesAStaleInjection(t *testing.T) {
 	}
 	// The grant is revoked behind the settings file's back, leaving an
 	// injection that routes traffic on a token that no longer records.
-	if err := routing.OpenStore(e.layout().RoutingTable()).Revoke(e.canonicalRoot(), "2026-08-02T00:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.RevokeProject(e.canonicalRoot(), "2026-08-02T00:00:00Z")
 	e.stdout.Reset()
 	problems, out := e.doctor()
 
@@ -338,17 +335,9 @@ func TestDoctorReinstallsTheDiscoveryHint(t *testing.T) {
 
 func TestDoctorListsRejectedBatches(t *testing.T) {
 	e := newEnv(t)
-	batchDir := filepath.Join(e.layout().RejectedDir(), "b-poison")
-	if err := os.MkdirAll(batchDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(batchDir, "req-1.json"), []byte(`{}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	reason, _ := json.Marshal(map[string]any{"batch_id": "b-poison", "records": 1, "details": "413 Request Entity Too Large"})
-	if err := os.WriteFile(filepath.Join(batchDir, "reason.json"), reason, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.QuarantineBatch(
+		proxytest.Rejection{BatchID: "b-poison", Details: "413 Request Entity Too Large"},
+		map[string][]byte{"req-1": []byte(`{}`)})
 	problems, out := e.doctor()
 
 	if problems == 0 {
@@ -364,9 +353,9 @@ func TestDoctorListsRejectedBatches(t *testing.T) {
 func TestDoctorRelaysTheServiceHandshakeWithoutCallingItAFault(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Version = "0.1.0" // behind the minimum below
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"min_client_version": "9.9.9",
-		"notice":             "maintenance on Friday",
+	e.sandbox.SeedHandshake(proxytest.Handshake{
+		MinClientVersion: "9.9.9",
+		Notice:           "maintenance on Friday",
 	})
 	problems, out := e.doctor()
 
@@ -393,11 +382,9 @@ func TestDoctorRelaysAPausedUploaderWithoutCallingTheMachineBroken(t *testing.T)
 	// fail `trajector doctor` on a healthy install.
 	e := newEnv(t)
 	e.deps.Version = "0.1.0"
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"authorization_required": true,
-		"authorize_url":          "https://dashboard.example.com/authorization",
-		"authorization_message":  "Your data authorization is not complete.",
-	})
+	e.sandbox.SeedAuthorizationRefusal(
+		"https://dashboard.example.com/authorization",
+		"Your data authorization is not complete.")
 	problems, out := e.doctor()
 
 	if problems != 0 {
@@ -418,9 +405,9 @@ func TestDoctorRelaysAPausedUploaderWithoutCallingTheMachineBroken(t *testing.T)
 func TestDoctorSaysNothingAboutAMinimumThisBuildMeets(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Version = "0.1.0"
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"min_client_version": "0.1.0",
-		"notice":             "maintenance on Friday",
+	e.sandbox.SeedHandshake(proxytest.Handshake{
+		MinClientVersion: "0.1.0",
+		Notice:           "maintenance on Friday",
 	})
 	problems, out := e.doctor()
 
@@ -439,7 +426,7 @@ func TestDoctorSaysNothingAboutAMinimumThisBuildMeets(t *testing.T) {
 
 func TestDoctorStatesAnUnorderableMinimumWithoutSendingTheUserToUpgrade(t *testing.T) {
 	e := newEnv(t) // this build announces "testv", which no order covers
-	writeUploadFile(t, e, "handshake.json", map[string]any{"min_client_version": "9.9.9"})
+	e.sandbox.SeedHandshake(proxytest.Handshake{MinClientVersion: "9.9.9"})
 	problems, out := e.doctor()
 
 	if problems != 0 {
@@ -458,10 +445,7 @@ func TestDoctorStatesAnUnorderableMinimumWithoutSendingTheUserToUpgrade(t *testi
 func TestDoctorRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Version = "0.1.0"
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"min_client_version": "9.9.9",
-		"upgrade_message":    "Upload format 0.1.x is retired on 2026-09-01.",
-	})
+	e.sandbox.SeedUpgradeRefusal("9.9.9", "Upload format 0.1.x is retired on 2026-09-01.")
 	problems, out := e.doctor()
 
 	// Being behind the service is not a broken machine; doctor reports
@@ -510,7 +494,7 @@ func TestDoctorReportsRejectedBatchesItCannotRead(t *testing.T) {
 
 func TestStatusAndDoctorPresentAFullSpoolAlike(t *testing.T) {
 	e := newEnv(t)
-	writeUploadFile(t, e, "handshake.json", map[string]any{"spool_quota_bytes": 1})
+	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
 	e.sandbox.SeedRawcall("req-1", "hash-project", e.deps.Now())
 
 	statusOut := e.statusOutput()
@@ -553,7 +537,7 @@ func TestStatusAndDoctorPresentAnUnwritableSpoolAlike(t *testing.T) {
 
 func TestDoctorWarnsWhenTheSpoolIsFull(t *testing.T) {
 	e := newEnv(t)
-	writeUploadFile(t, e, "handshake.json", map[string]any{"spool_quota_bytes": 1})
+	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
 	e.sandbox.SeedRawcall("req-1", "hash-project", e.deps.Now())
 	problems, out := e.doctor()
 

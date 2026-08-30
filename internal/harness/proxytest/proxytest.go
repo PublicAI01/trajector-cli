@@ -24,6 +24,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeupstream"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -451,6 +452,40 @@ func WaitServing(t *testing.T, client *http.Client, addr string, layout userdirs
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// FlushReply is what a proxy's reserved flush endpoint answers, and
+// Uploaded and Empty are the two outcomes tests wait for. All three are
+// the uploader's own: the harness relays the wire contract, it does not
+// redeclare it.
+type FlushReply = upload.FlushReply
+
+const (
+	Uploaded = upload.Uploaded
+	Empty    = upload.Empty
+)
+
+// Flush asks a proxy served outside this harness — the CLI's serve
+// command, the lifecycle supervisor — to upload what it holds now, and
+// reports what it answered. The flush is forced: a test that asks is
+// asking on purpose, not waiting on a threshold.
+func Flush(t *testing.T, client *http.Client, addr string, layout userdirs.Layout) FlushReply {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, "http://"+addr+upload.FlushPath+"?force=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	Authorize(req, layout)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var reply FlushReply
+	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
+		t.Fatalf("decoding the flush reply: %v", err)
+	}
+	return reply
 }
 
 // Selfcheck is what the proxy reports about one token.

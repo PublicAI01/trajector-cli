@@ -37,7 +37,7 @@ func TestEveryUploadFailureClassCarriesItsStatus(t *testing.T) {
 		response  fakeplatform.Response
 		temporary bool
 	}{
-		{"426 upgrade required", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}), false},
+		{"426 upgrade required", fakeplatform.Refuses426("9.9.9", ""), false},
 		{"429 rate limited", fakeplatform.Response{Status: 429, Body: []byte(`{}`)}, true},
 		{"400 batch rejected", fakeplatform.JSON(400, map[string]any{"error": "malformed"}), false},
 		{"401 unauthorized", fakeplatform.JSON(401, map[string]any{}), false},
@@ -128,21 +128,28 @@ func TestUploadBatchSurfacesServiceFailure(t *testing.T) {
 
 func upload4xx(t *testing.T, status int, header http.Header, body map[string]any) error {
 	t.Helper()
-	c, server := client(t)
 	resp := fakeplatform.JSON(status, body)
 	for k, vs := range header {
 		resp.Header[k] = vs
 	}
+	return uploadRefused(t, resp)
+}
+
+// uploadRefused offers one batch to a service that answers resp and
+// returns what the client made of the answer.
+func uploadRefused(t *testing.T, resp fakeplatform.Response) error {
+	t.Helper()
+	c, server := client(t)
 	server.Stub("POST", "/v1/batches", resp)
 	_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
 	if err == nil {
-		t.Fatalf("status %d did not fail", status)
+		t.Fatalf("status %d did not fail", resp.Status)
 	}
 	return err
 }
 
 func TestUploadBatch426ReportsUpgradeRequired(t *testing.T) {
-	err := upload4xx(t, 426, nil, map[string]any{"min_client_version": "2.0.0"})
+	err := uploadRefused(t, fakeplatform.Refuses426("2.0.0", ""))
 	var upgrade *platform.UpgradeRequiredError
 	if !errors.As(err, &upgrade) || upgrade.MinClientVersion != "2.0.0" {
 		t.Fatalf("error = %v, want UpgradeRequiredError with the version", err)
@@ -152,10 +159,7 @@ func TestUploadBatch426ReportsUpgradeRequired(t *testing.T) {
 func TestUploadBatch426CarriesTheServiceWording(t *testing.T) {
 	// A version number cannot say why the upgrade is required or by
 	// when. Without the message the client can only relay a number.
-	err := upload4xx(t, 426, nil, map[string]any{
-		"min_client_version": "2.0.0",
-		"message":            "the 0.1.x upload format is no longer accepted",
-	})
+	err := uploadRefused(t, fakeplatform.Refuses426("2.0.0", "the 0.1.x upload format is no longer accepted"))
 	var upgrade *platform.UpgradeRequiredError
 	if !errors.As(err, &upgrade) || upgrade.Message != "the 0.1.x upload format is no longer accepted" {
 		t.Fatalf("error = %v, message = %q", err, upgrade.Message)
@@ -163,7 +167,7 @@ func TestUploadBatch426CarriesTheServiceWording(t *testing.T) {
 }
 
 func TestUploadBatch426WithoutAMessageSaysNothingExtra(t *testing.T) {
-	err := upload4xx(t, 426, nil, map[string]any{"min_client_version": "2.0.0"})
+	err := uploadRefused(t, fakeplatform.Refuses426("2.0.0", ""))
 	var upgrade *platform.UpgradeRequiredError
 	if !errors.As(err, &upgrade) || upgrade.Message != "" {
 		t.Fatalf("error = %v, message = %q, want empty so no line is printed", err, upgrade.Message)
@@ -174,10 +178,7 @@ func TestUploadBatch426WordingCannotDrawOnTheTerminal(t *testing.T) {
 	// The 426 body is service-controlled text that lands on a terminal
 	// line beside the client's own words. It is cleaned here, at the
 	// boundary, not at each place that prints it.
-	err := upload4xx(t, 426, nil, map[string]any{
-		"min_client_version": "2.0.0\x1b[2J",
-		"message":            "upgrade\r\x1b[Atrajector: everything is fine",
-	})
+	err := uploadRefused(t, fakeplatform.Refuses426("2.0.0\x1b[2J", "upgrade\r\x1b[Atrajector: everything is fine"))
 	var upgrade *platform.UpgradeRequiredError
 	if !errors.As(err, &upgrade) {
 		t.Fatalf("error = %v", err)
@@ -188,10 +189,7 @@ func TestUploadBatch426WordingCannotDrawOnTheTerminal(t *testing.T) {
 }
 
 func TestUploadBatch451ReportsDataAuthorizationRequired(t *testing.T) {
-	err := upload4xx(t, 451, nil, map[string]any{
-		"error":         "data_authorization_required",
-		"authorize_url": "https://dashboard.example.com/authorization",
-	})
+	err := uploadRefused(t, fakeplatform.Refuses451("https://dashboard.example.com/authorization", ""))
 	var unauthorized *platform.DataAuthorizationRequiredError
 	if !errors.As(err, &unauthorized) {
 		t.Fatalf("error = %v, want DataAuthorizationRequiredError", err)
@@ -205,7 +203,7 @@ func TestUploadBatch451IsNotAPoisonBatch(t *testing.T) {
 	// The catch-all 4xx arm quarantines the batch. Reaching it here would
 	// lock the user's data away over a state they fix in a browser, and
 	// report it as the data having been refused.
-	err := upload4xx(t, 451, nil, map[string]any{"error": "data_authorization_required"})
+	err := uploadRefused(t, fakeplatform.Refuses451("", ""))
 	var rejected *platform.BatchRejectedError
 	if errors.As(err, &rejected) {
 		t.Fatalf("451 classified as a rejected batch: %v", err)
@@ -224,10 +222,7 @@ func TestUploadBatch451WithAnUnusableURLKeepsTheGateAndDropsTheLink(t *testing.T
 		"/authorization",
 		"https://dashboard.example.com/a\x1b[2Jb",
 	} {
-		err := upload4xx(t, 451, nil, map[string]any{
-			"error":         "data_authorization_required",
-			"authorize_url": bad,
-		})
+		err := uploadRefused(t, fakeplatform.Refuses451(bad, ""))
 		var unauthorized *platform.DataAuthorizationRequiredError
 		if !errors.As(err, &unauthorized) {
 			t.Fatalf("authorize_url %q: error = %v", bad, err)
@@ -239,10 +234,7 @@ func TestUploadBatch451WithAnUnusableURLKeepsTheGateAndDropsTheLink(t *testing.T
 }
 
 func TestUploadBatch451WordingCannotDrawOnTheTerminal(t *testing.T) {
-	err := upload4xx(t, 451, nil, map[string]any{
-		"error":   "data_authorization_required",
-		"message": "authorize\r\x1b[Atrajector: everything is fine",
-	})
+	err := uploadRefused(t, fakeplatform.Refuses451("", "authorize\r\x1b[Atrajector: everything is fine"))
 	var unauthorized *platform.DataAuthorizationRequiredError
 	if !errors.As(err, &unauthorized) {
 		t.Fatalf("error = %v", err)

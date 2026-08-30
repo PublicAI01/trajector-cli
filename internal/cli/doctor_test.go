@@ -1,7 +1,6 @@
 package cli_test
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,17 +23,7 @@ func TestDoctorExitsZeroWhenClean(t *testing.T) {
 
 func TestDoctorExitsOneWhenProblemsRemain(t *testing.T) {
 	e := clitest.New(t)
-	batchDir := filepath.Join(e.Layout().RejectedDir(), "b-poison")
-	if err := os.MkdirAll(batchDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(batchDir, "req-1.json"), []byte(`{}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	reason, _ := json.Marshal(map[string]any{"batch_id": "b-poison", "records": 1})
-	if err := os.WriteFile(filepath.Join(batchDir, "reason.json"), reason, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	quarantineBatch(t, e, "b-poison", "req-1")
 
 	got := e.InProject("doctor")
 	if got.Exit != 1 {

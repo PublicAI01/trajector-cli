@@ -11,8 +11,8 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 func TestInjectedHookQuotesBinaryPathsWithSpaces(t *testing.T) {
@@ -81,7 +81,7 @@ func TestEnableRollsBackWhenSettingsFileIsMalformed(t *testing.T) {
 func TestEnableFailsWhileCapturePaused(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	e.sandbox.Pause(routing.PauseSignedOut)
+	e.sandbox.Pause(proxytest.PauseSignedOut)
 
 	err := e.machine().Enable(e.project, e.io())
 	if err == nil || !strings.Contains(err.Error(), "trajector login") {
@@ -234,7 +234,7 @@ func TestEnableRollbackLeavesASymlinkedGitIgnoreAlone(t *testing.T) {
 	}
 	e.startProxy()
 	// Fails the self-check, so enable rolls back everything it did.
-	e.sandbox.Pause(routing.PauseSignedOut)
+	e.sandbox.Pause(proxytest.PauseSignedOut)
 
 	if err := e.machine().Enable(e.project, e.io()); err == nil {
 		t.Fatal("enable succeeded while capture was paused")
@@ -260,7 +260,7 @@ func TestEnableRollbackKeepsGitIgnoreLinesAddedMeanwhile(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.startProxy()
-	e.sandbox.Pause(routing.PauseSignedOut)
+	e.sandbox.Pause(proxytest.PauseSignedOut)
 
 	// The injection line is printed after the snapshot is taken and
 	// before the ignore rules are appended, which is where a concurrent

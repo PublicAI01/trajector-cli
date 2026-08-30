@@ -11,7 +11,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 func TestEnableInjectsRoutesAndSelfChecks(t *testing.T) {
@@ -128,7 +128,7 @@ func TestEnableStaleAgreementRepromptsAndResumesCapture(t *testing.T) {
 	if err := consents.AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	e.sandbox.Pause(routing.PauseConsentReconfirm)
+	e.sandbox.Pause(proxytest.PauseConsentReconfirm)
 
 	if err := e.machine().Enable(e.project, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
@@ -320,11 +320,7 @@ func TestDisableAlsoDeletesRejectedRawcallsOfTheProject(t *testing.T) {
 	}
 	route := e.status()
 
-	batchDir := filepath.Join(e.layout().RejectedDir(), "b-test")
-	if err := os.MkdirAll(batchDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	write := func(name, projectIDHash string) {
+	quarantined := func(name, projectIDHash string) []byte {
 		data, err := json.Marshal(map[string]any{
 			"request_id": name,
 			"capture":    map[string]any{"project_id_hash": projectIDHash},
@@ -332,17 +328,18 @@ func TestDisableAlsoDeletesRejectedRawcallsOfTheProject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(batchDir, name+".json"), data, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		return data
 	}
-	write("req-mine", route.GrantHash)
-	write("req-other", "hash-other-project")
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-test"}, map[string][]byte{
+		"req-mine":  quarantined("req-mine", route.GrantHash),
+		"req-other": quarantined("req-other", "hash-other-project"),
+	})
 
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 
+	batchDir := filepath.Join(e.layout().RejectedDir(), "b-test")
 	if _, err := os.Stat(filepath.Join(batchDir, "req-mine.json")); !os.IsNotExist(err) {
 		t.Error("this project's rejected rawcall survived disable")
 	}
@@ -364,9 +361,10 @@ func TestDisableSplitsTheDeletionCountBySource(t *testing.T) {
 	}
 	route := e.status()
 	e.sandbox.SeedRawcall("req-mine", route.GrantHash, time.Date(2026, 8, 2, 11, 0, 0, 0, time.UTC))
-	seedRejectedBatch(t, e, "b-poison", "", map[string][]byte{
-		"req-rejected": rejectedRecordFor(t, route.GrantHash),
-	})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison"},
+		map[string][]byte{
+			"req-rejected": rejectedRecordFor(t, route.GrantHash),
+		})
 
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
@@ -403,9 +401,10 @@ func TestDisableRerunFinishesAnInterruptedWithdrawal(t *testing.T) {
 		t.Fatal(err)
 	}
 	route := e.status()
-	seedRejectedBatch(t, e, "b-poison", "", map[string][]byte{
-		"req-rejected": rejectedRecordFor(t, route.GrantHash),
-	})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison"},
+		map[string][]byte{
+			"req-rejected": rejectedRecordFor(t, route.GrantHash),
+		})
 
 	// Break the spool so the first disable fails at its deletion step,
 	// after it has already removed the injection and revoked the grant.
@@ -519,12 +518,10 @@ func TestUninstallDoesNotWriteABaseURLIntoAProjectItNeverDisplacedOneIn(t *testi
 	// A grant whose project directory the user has since deleted:
 	// uninstall walks it too, and nothing may recreate the tree.
 	gone := filepath.Join(t.TempDir(), "deleted-project")
-	if err := routing.OpenStore(e.layout().RoutingTable()).Grant(routing.Grant{
+	e.sandbox.GrantProject(proxytest.Grant{
 		Token: "tok-gone", ProjectIDHash: "hash-gone", RootPath: gone,
-		Upstream: shellRelay, GrantedAt: "2026-08-01T00:00:00Z",
-	}); err != nil {
-		t.Fatal(err)
-	}
+		Upstream: shellRelay,
+	})
 	// Uninstall runs from a terminal that is not the one exporting the relay.
 	delete(e.environ, "ANTHROPIC_BASE_URL")
 
@@ -551,9 +548,7 @@ func TestDoctorPutsBackAUsersOwnBaseURLWithAStaleInjection(t *testing.T) {
 	e := enabledOverAUsersOwnRelay(t)
 	// Revoke without removing the injection, the half-withdrawn state
 	// doctor exists to reconcile.
-	if err := routing.OpenStore(e.layout().RoutingTable()).Revoke(e.canonicalRoot(), "2026-08-21T00:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.RevokeProject(e.canonicalRoot(), "2026-08-21T00:00:00Z")
 
 	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
 		t.Fatalf("doctor: %v", err)

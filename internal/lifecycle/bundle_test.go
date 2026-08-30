@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 // readBundle extracts every entry of a diagnostic bundle.
@@ -49,14 +51,12 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeUploadFile(t, e, "state.json", map[string]any{"last_error": "boom"})
-	writeUploadFile(t, e, "handshake.json", map[string]any{
-		"min_client_version": "9.9.9",
-		"upgrade_message":    "Upload format 0.1.x is retired on 2026-09-01.",
-	})
+	e.sandbox.SeedUpgradeRefusal("9.9.9", "Upload format 0.1.x is retired on 2026-09-01.")
 	writeUploadFile(t, e, "pending-unreadable.json", map[string]any{"batch_id": "b-half"})
-	seedRejectedBatch(t, e, "b-poison", "413 Request Entity Too Large", map[string][]byte{
-		"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
-	})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison", Details: "413 Request Entity Too Large"},
+		map[string][]byte{
+			"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
+		})
 
 	out := t.TempDir()
 	t.Chdir(out)
@@ -152,9 +152,10 @@ func TestDoctorBundleNeverLeaksRecordDataOrTokens(t *testing.T) {
 	token := e.status().Token
 	const marker = "MARKER-not-for-export"
 	e.sandbox.SeedRawcall("req-spooled-"+marker, "hash-project", e.deps.Now())
-	seedRejectedBatch(t, e, "b-poison", "", map[string][]byte{
-		"req-1": []byte(`{"request_id":"req-1","request":{"secret":"` + marker + `"}}`),
-	})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison"},
+		map[string][]byte{
+			"req-1": []byte(`{"request_id":"req-1","request":{"secret":"` + marker + `"}}`),
+		})
 
 	t.Chdir(t.TempDir())
 	path, err := e.machine().DoctorBundle(e.project, e.io())

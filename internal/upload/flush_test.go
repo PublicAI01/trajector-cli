@@ -49,7 +49,7 @@ func TestFlushHandlerServesTheWireContract(t *testing.T) {
 func TestFlushHandlerCarriesTheOutcomeWithTheError(t *testing.T) {
 	f := newFixture(t)
 	f.storeRawcall(t, "req-1", f.now)
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 	srv := httptest.NewServer(f.uploader.Handler("test-proxy"))
 	defer srv.Close()
 
@@ -80,10 +80,7 @@ func TestFlushHandlerCarriesWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	const said = "Upload format 0.1.x is retired on 2026-09-01."
 	f := newFixture(t)
 	f.storeRawcall(t, "req-1", f.now)
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
-		"min_client_version": "9.9.9",
-		"message":            said,
-	}))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", said))
 	srv := httptest.NewServer(f.uploader.Handler("test-proxy"))
 	defer srv.Close()
 

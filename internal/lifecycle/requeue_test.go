@@ -1,7 +1,6 @@
 package lifecycle_test
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,31 +9,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
-
-// seedRejectedBatch quarantines records under one batch id, the way a
-// service rejection would have left them.
-func seedRejectedBatch(t *testing.T, e *env, batchID, details string, records map[string][]byte) {
-	t.Helper()
-	dir := filepath.Join(e.layout().RejectedDir(), batchID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for id, data := range records {
-		if err := os.WriteFile(filepath.Join(dir, id+".json"), data, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	reason, err := json.Marshal(map[string]any{
-		"batch_id": batchID, "records": len(records), "details": details,
-		"at": "2026-08-02T09:00:00Z",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "reason.json"), reason, 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
 
 // spooledEnvelope builds valid rawcall bytes as the capture path would
 // have spooled them.
@@ -46,10 +20,12 @@ func spooledEnvelope(t *testing.T, requestID string, at time.Time) []byte {
 func TestRequeueMovesABatchBackIntoTheSpool(t *testing.T) {
 	e := newEnv(t)
 	at := e.deps.Now()
-	seedRejectedBatch(t, e, "b-poison", "413 Request Entity Too Large", map[string][]byte{
-		"req-1": spooledEnvelope(t, "req-1", at),
-		"req-2": spooledEnvelope(t, "req-2", at),
-	})
+	e.sandbox.QuarantineBatch(
+		proxytest.Rejection{BatchID: "b-poison", Details: "413 Request Entity Too Large"},
+		map[string][]byte{
+			"req-1": spooledEnvelope(t, "req-1", at),
+			"req-2": spooledEnvelope(t, "req-2", at),
+		})
 
 	if err := e.machine().RequeueRejected("b-poison", false, e.io()); err != nil {
 		t.Fatalf("requeue: %v\nstdout: %s", err, e.stdout)
@@ -72,8 +48,10 @@ func TestRequeueMovesABatchBackIntoTheSpool(t *testing.T) {
 func TestRequeueAllHandlesEveryBatch(t *testing.T) {
 	e := newEnv(t)
 	at := e.deps.Now()
-	seedRejectedBatch(t, e, "b-one", "", map[string][]byte{"req-1": spooledEnvelope(t, "req-1", at)})
-	seedRejectedBatch(t, e, "b-two", "", map[string][]byte{"req-2": spooledEnvelope(t, "req-2", at)})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-one"},
+		map[string][]byte{"req-1": spooledEnvelope(t, "req-1", at)})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-two"},
+		map[string][]byte{"req-2": spooledEnvelope(t, "req-2", at)})
 
 	if err := e.machine().RequeueRejected("", true, e.io()); err != nil {
 		t.Fatalf("requeue --all: %v\nstdout: %s", err, e.stdout)
@@ -100,10 +78,9 @@ func TestRequeueIsNotRefusedByTheQuota(t *testing.T) {
 	e := newEnv(t)
 	// A quota the batch clearly exceeds: quarantined data already lived
 	// in the spool once and must be allowed back to be uploaded at all.
-	writeUploadFile(t, e, "handshake.json", map[string]any{"spool_quota_bytes": 1})
-	seedRejectedBatch(t, e, "b-poison", "", map[string][]byte{
-		"req-1": spooledEnvelope(t, "req-1", e.deps.Now()),
-	})
+	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison"},
+		map[string][]byte{"req-1": spooledEnvelope(t, "req-1", e.deps.Now())})
 
 	if err := e.machine().RequeueRejected("b-poison", false, e.io()); err != nil {
 		t.Fatalf("requeue against a full quota: %v", err)
@@ -118,8 +95,10 @@ func TestRequeueAllContinuesPastAStuckBatch(t *testing.T) {
 	at := e.deps.Now()
 	// Batch names sort the stuck one first: the batches behind it must
 	// still be attempted.
-	seedRejectedBatch(t, e, "b-a-stuck", "", map[string][]byte{"req-bad": []byte("not an envelope")})
-	seedRejectedBatch(t, e, "b-b-good", "", map[string][]byte{"req-1": spooledEnvelope(t, "req-1", at)})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-a-stuck"},
+		map[string][]byte{"req-bad": []byte("not an envelope")})
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-b-good"},
+		map[string][]byte{"req-1": spooledEnvelope(t, "req-1", at)})
 
 	err := e.machine().RequeueRejected("", true, e.io())
 	if err == nil || !strings.Contains(err.Error(), "req-bad") {
@@ -144,7 +123,7 @@ func TestRequeueUnknownBatchFails(t *testing.T) {
 func TestRequeueLeavesAnUnreadableRecordQuarantined(t *testing.T) {
 	e := newEnv(t)
 	at := e.deps.Now()
-	seedRejectedBatch(t, e, "b-poison", "", map[string][]byte{
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-poison"}, map[string][]byte{
 		"req-good": spooledEnvelope(t, "req-good", at),
 		"req-bad":  []byte("not an envelope"),
 	})
@@ -156,11 +135,13 @@ func TestRequeueLeavesAnUnreadableRecordQuarantined(t *testing.T) {
 	if got := len(e.sandbox.Rawcalls()); got != 1 {
 		t.Errorf("spool holds %d rawcall(s), want the readable one moved", got)
 	}
-	dir := filepath.Join(e.layout().RejectedDir(), "b-poison")
-	if _, statErr := os.Stat(filepath.Join(dir, "req-bad.json")); statErr != nil {
-		t.Error("the unreadable record must stay quarantined, not vanish")
+	quarantined := e.sandbox.QuarantinedBatches()
+	if len(quarantined) != 1 || quarantined[0].Records != 1 {
+		t.Fatalf("quarantine = %+v, want the unreadable record still set aside", quarantined)
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, "reason.json")); statErr != nil {
-		t.Error("reason.json must stay while any record remains")
+	// The reason travels with whatever stays: a record left behind
+	// without one can never be explained to the user again.
+	if quarantined[0].Reason.BatchID != "b-poison" {
+		t.Errorf("quarantined batch = %+v, want its recorded reason kept", quarantined[0])
 	}
 }

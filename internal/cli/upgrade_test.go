@@ -67,7 +67,7 @@ func TestUpgradeIsNamedWhereverThisBuildIsFoundTooOld(t *testing.T) {
 
 	e := clitest.New(t)
 	e.Paired()
-	e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}))
+	e.Service().Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 	seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
 	p := e.StartProxy()
 	defer p.Stop()
@@ -112,10 +112,7 @@ func TestWhatTheServiceSaysAboutTheVersionReachesTheUser(t *testing.T) {
 	const said = "Upload format 0.1.x is retired on 2026-09-01."
 	e := clitest.New(t)
 	e.Paired()
-	e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
-		"min_client_version": "9.9.9",
-		"message":            said + "\rtrajector: everything is fine",
-	}))
+	e.Service().Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", said+"\rtrajector: everything is fine"))
 	seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
 	p := e.StartProxy()
 	defer p.Stop()

@@ -5,8 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -147,9 +145,7 @@ func TestUploadExplainsAServiceDeferralFromTheFirstEncounter(t *testing.T) {
 
 func TestUploadExplainsARequiredUpgradeFromTheFirstEncounter(t *testing.T) {
 	e := newEnv(t)
-	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
-		"min_client_version": "9.9.9",
-	}))
+	e.service.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 	servedProxy(t, e)
 	m := e.machine()
 
@@ -166,9 +162,7 @@ func TestUploadExplainsARequiredUpgradeFromTheFirstEncounter(t *testing.T) {
 
 	// The required version reaches the user through the flush reply, not
 	// by reading the proxy's handshake file across processes.
-	if err := os.Remove(filepath.Join(e.layout().UploadDir(), "handshake.json")); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.ForgetHandshake()
 
 	e.stdout.Reset()
 	if err := m.Upload(false, e.io()); err != nil {
@@ -184,11 +178,9 @@ func TestUploadExplainsARequiredUpgradeFromTheFirstEncounter(t *testing.T) {
 
 func TestUploadExplainsAMissingDataAuthorizationAndWhereToComplete(t *testing.T) {
 	e := newEnv(t)
-	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{
-		"error":         "data_authorization_required",
-		"authorize_url": "https://dashboard.example.com/authorization",
-		"message":       "Your data authorization is not complete.",
-	}))
+	e.service.Stub("POST", "/v1/batches", fakeplatform.Refuses451(
+		"https://dashboard.example.com/authorization",
+		"Your data authorization is not complete."))
 	servedProxy(t, e)
 	m := e.machine()
 
@@ -216,10 +208,7 @@ func TestUploadFallsBackToItsOwnWordingWhenTheServiceNamesNoUsableAddress(t *tes
 	// A link that opens nothing is worse than none. The client drops it
 	// and still has to say what to do.
 	e := newEnv(t)
-	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(451, map[string]any{
-		"error":         "data_authorization_required",
-		"authorize_url": "http://dashboard.example.com/authorization",
-	}))
+	e.service.Stub("POST", "/v1/batches", fakeplatform.Refuses451("http://dashboard.example.com/authorization", ""))
 	servedProxy(t, e)
 
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
@@ -249,16 +238,13 @@ func TestUploadDoesNotOfferForceToARunThatAlreadyUsedIt(t *testing.T) {
 	}{
 		{
 			name:  "upgrade required",
-			reply: fakeplatform.JSON(426, map[string]any{"min_client_version": "9.9.9"}),
+			reply: fakeplatform.Refuses426("9.9.9", ""),
 			pause: "requires trajector 9.9.9 or newer",
 			offer: "--force",
 		},
 		{
-			name: "authorization required",
-			reply: fakeplatform.JSON(451, map[string]any{
-				"error":         "data_authorization_required",
-				"authorize_url": "https://dashboard.example.com/authorization",
-			}),
+			name:  "authorization required",
+			reply: fakeplatform.Refuses451("https://dashboard.example.com/authorization", ""),
 			pause: "data authorization is not complete",
 			offer: "--force",
 		},
@@ -312,10 +298,7 @@ func TestUploadDoesNotOfferForceToARunThatAlreadyUsedIt(t *testing.T) {
 
 func TestUploadRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	e := newEnv(t)
-	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
-		"min_client_version": "9.9.9",
-		"message":            "Upload format 0.1.x is retired on 2026-09-01.",
-	}))
+	e.service.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", "Upload format 0.1.x is retired on 2026-09-01."))
 	servedProxy(t, e)
 	m := e.machine()
 
@@ -341,9 +324,7 @@ func TestUploadReportsProgressBeforeAPauseStopsTheDrain(t *testing.T) {
 	e := newEnv(t)
 	e.service.StubFunc("POST", "/v1/batches", ackBatch(map[string]any{"flush_bytes": 1}))
 	e.service.StubFunc("POST", "/v1/batches", ackBatch(nil))
-	e.service.Stub("POST", "/v1/batches", fakeplatform.JSON(426, map[string]any{
-		"min_client_version": "9.9.9",
-	}))
+	e.service.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 	servedProxy(t, e)
 	m := e.machine()
 
