@@ -113,7 +113,7 @@ deleting the binary alone leaves the settings injections behind.
 |---|---|
 | `internal/apiproxy` | The local proxy: forwards traffic, and records eligible calls inside one guarded region |
 | `internal/proxylife` | The proxy as seen from outside its process: start, probe, flush, stop |
-| `internal/lifecycle` | Device and project consent, and the composition root: pairing, enable, disable, uninstall, session hooks, and the diagnosis every surface reads |
+| `internal/lifecycle` | Device and project consent, and the composition root a command is assembled from: pairing, enable, disable, uninstall, session hooks, and the diagnosis every surface reads |
 | `internal/proxyserve` | What a serving proxy process is assembled from: the spool, the routing table, and its resident uploader |
 | `internal/report` | The device's state as one value, and the three ways it is shown: status, doctor, and the diagnostic bundle |
 | `internal/routing` | Which token routes where, and whether this exchange may be recorded |
@@ -130,6 +130,7 @@ deleting the binary alone leaves the settings injections behind.
 | `internal/tokenstore` | The device pairing secret, in the OS keyring or owner-only files |
 | `internal/fsatomic` | Atomic file writes, and updates serialized across processes |
 | `internal/selfupdate` | Finding, verifying, and installing a newer published release over this one |
+| `internal/semver` | The one version comparison: which release is newer, and which proxy a newer one may replace |
 | `internal/cli` | argv, exit codes, and what the user reads |
 | `internal/harness` | Test doubles and sandboxes: a fake upstream, a fake service, a real proxy in a temp directory |
 | `internal/installscript` | Where `install.sh` is run end to end against a local release source |

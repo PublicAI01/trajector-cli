@@ -25,8 +25,8 @@ import (
 
 // Default flush thresholds, used until a handshake overrides them.
 const (
-	DefaultFlushBytes int64 = 10 << 20
-	DefaultFlushAge         = 24 * time.Hour
+	defaultFlushBytes int64 = 10 << 20
+	defaultFlushAge         = 24 * time.Hour
 )
 
 // Disposition is what this client does with one batch once the service
@@ -355,11 +355,11 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 	handshake := LoadHandshake(u.deps.Dir)
 	flushBytes := handshake.FlushBytes
 	if flushBytes <= 0 {
-		flushBytes = DefaultFlushBytes
+		flushBytes = defaultFlushBytes
 	}
 	flushAge := time.Duration(handshake.FlushAgeSeconds) * time.Second
 	if flushAge <= 0 {
-		flushAge = DefaultFlushAge
+		flushAge = defaultFlushAge
 	}
 
 	if res.Batches == 0 && !force {

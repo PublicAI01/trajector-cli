@@ -96,9 +96,11 @@ data loss:
   upload retries under the same id with a longer time budget after a
   growing pause (the budget scales with the batch's size, so a slow link
   gets more time instead of the same failure), a version gate
-  (426) pauses automatic uploads until upgrade, rate limiting honors
-  Retry-After (capped at one hour). Any other 4xx quarantines the batch
-  locally — visible in status and doctor, recoverable with
+  (426) pauses automatic uploads until upgrade, a data-authorization
+  gate (451) pauses them until the account's authorization is complete
+  and sets nothing aside, rate limiting honors Retry-After (capped at
+  one hour). Any other 4xx quarantines the batch locally — visible in
+  status and doctor, recoverable with
   `trajector doctor requeue`, and deleted only when the user says so:
   `trajector doctor discard` or consent withdrawal.
 

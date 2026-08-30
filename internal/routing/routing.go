@@ -13,9 +13,9 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
-// DefaultCacheTTL bounds how stale a cached table may be. Changes on
+// defaultCacheTTL bounds how stale a cached table may be. Changes on
 // disk are picked up within this window plus one request.
-const DefaultCacheTTL = time.Second
+const defaultCacheTTL = time.Second
 
 // Route is what the data path needs to serve one exchange. It carries
 // nothing else: the identity of the project and when it consented are
@@ -132,10 +132,10 @@ type Table struct {
 }
 
 // New returns a table backed by the file at path. A cacheTTL of zero
-// selects DefaultCacheTTL.
+// selects one second.
 func New(path string, cacheTTL time.Duration) *Table {
 	if cacheTTL == 0 {
-		cacheTTL = DefaultCacheTTL
+		cacheTTL = defaultCacheTTL
 	}
 	return &Table{path: path, ttl: cacheTTL}
 }

@@ -3,11 +3,13 @@
 # lowered.
 set -eu
 
-REPO_MIN=85
+REPO_MIN=87
 CORE_MIN=85
 # Core packages (capture and SSE reassembly, redaction, routing, spool,
-# upload, consent lifecycle) are added here as they land.
-CORE_PACKAGES="internal/apiproxy internal/capture internal/envelope internal/routing internal/spool internal/lifecycle internal/redact internal/upload"
+# upload, consent lifecycle, and what the surfaces render) are added here
+# as they land. A package joins once its own tests hold it above the
+# floor without a knob that exists only for the tests.
+CORE_PACKAGES="internal/apiproxy internal/capture internal/envelope internal/routing internal/spool internal/lifecycle internal/redact internal/report internal/upload"
 
 go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 
