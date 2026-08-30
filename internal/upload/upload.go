@@ -104,30 +104,25 @@ const (
 
 // Result reports what one Flush call did. Batches and Records count
 // acknowledged uploads, so a failed flush can still report the progress
-// it made before failing. MinClientVersion carries the version the
-// service demands when the outcome is UpgradeRequired, so a caller
-// never has to read the handshake file across processes for it.
-// Outcome is the authoritative signal; an error returned alongside it
-// is detail, never a replacement for it.
+// it made before failing. Outcome is the authoritative signal; an error
+// returned alongside it is detail, never a replacement for it.
 type Result struct {
 	Outcome Outcome
 	// Disposition is what this flush did with the last batch it offered,
 	// empty when it offered none. Outcome is derived from it, so a
 	// caller wanting the flush's answer reads Outcome; a caller checking
 	// this client against the upload contract reads this.
-	Disposition      Disposition
-	Batches          int
-	Records          int
-	MinClientVersion string
-	// UpgradeMessage is what the service said about the refusal, in its
-	// own words, empty when it said nothing. Relayed, never parsed.
-	UpgradeMessage string
-	// AuthorizeURL and AuthorizationMessage carry, for an
-	// AuthorizationRequired outcome, where the user completes the
-	// authorization and what the service said about it. Either may be
-	// empty; the caller has wording of its own for both.
-	AuthorizeURL         string
-	AuthorizationMessage string
+	Disposition Disposition
+	Batches     int
+	Records     int
+	// Standing is the one reason this flush stopped, zero when nothing
+	// stopped it. It carries its own explanation and remedy, so a caller
+	// never reads the handshake file across processes to word them, and
+	// never derives from a version number or a URL what the standing
+	// already states. A flush reports the standing that stopped it; a
+	// diagnosis reports every standing held, because more than one can
+	// be.
+	Standing Standing
 	// SetAside lists the rejections this flush itself wrote for rawcalls
 	// that no longer read back as rawcalls. They were never sent; they
 	// stop blocking the uploads behind them, and status and doctor keep
@@ -174,21 +169,18 @@ type Uploader struct {
 
 	// Both gates suppress automatic flushes only; a forced flush walks
 	// straight past them. They reset on any acknowledged upload and are
-	// deliberately not persisted: a fresh process (post-upgrade, or just
-	// restarted) gets to find out for itself.
-	upgradeRequired bool
-	// minClientVersion is what the service last demanded alongside the
-	// upgrade gate, and upgradeMessage what it said about the demand;
-	// both ride out with the gate's outcome.
-	minClientVersion string
-	upgradeMessage   string
-	// authorization is a gate of its own rather than a second meaning
-	// for upgradeRequired: an old build whose account is also
-	// unauthorized holds both conditions at once, and sharing one
-	// carrier would let status and doctor name only one of them — which
-	// is the whole of what this gate buys the user.
-	authorization AuthorizationNotice
-	notBefore     time.Time
+	// deliberately not read back from disk: a fresh process
+	// (post-upgrade, or just restarted) gets to find out for itself. The
+	// pause a 429 or a timeout leaves is read back — see loadBackoff for
+	// why the two are treated differently.
+	//
+	// authorizationGate is a gate of its own rather than a second meaning
+	// for upgradeGate: an old build whose account is also unauthorized
+	// holds both conditions at once, and sharing one carrier would let
+	// status and doctor name only one of them — which is the whole of
+	// what this gate buys the user.
+	upgradeGate       Standing
+	authorizationGate Standing
 	// timeouts counts consecutive timed-out upload attempts. Each one
 	// widens the next attempt's budget and lengthens the pause before
 	// it, so the batch at the head of the queue is never retried forever
@@ -245,8 +237,7 @@ func (u *Uploader) Flush(force bool) (Result, error) {
 	}
 	res, err := u.flush(force, time.Time{})
 	if err != nil {
-		res.Outcome, res.MinClientVersion, res.UpgradeMessage = "", "", ""
-		res.AuthorizeURL, res.AuthorizationMessage = "", ""
+		res.Outcome, res.Standing = "", Standing{}
 		u.reportDisposition(&res)
 	}
 	return res, err
@@ -273,27 +264,29 @@ func (u *Uploader) reportDisposition(res *Result) {
 		// Nothing on disk changed, so the only thing left to report is a
 		// pause the attempt left behind — which is exactly what the next
 		// automatic flush will refuse to start on.
-		if u.deps.Now().Before(u.notBefore) {
-			res.Outcome = Deferred
-		}
+		u.reportBackoff(res)
 	}
 }
 
-// reportUpgradeGate and reportAuthorizationGate are the one reading of
-// each gate: what it is called and what the service said when it was
-// raised. The flush that raises a gate and the flush that is stopped by
-// one report through the same pair, so the user is never told two
-// different things about one refusal.
+// reportUpgradeGate, reportAuthorizationGate, and reportBackoff are the
+// one reading of each condition: what it is called and what the service
+// said when it was raised. The flush that raises a condition and the
+// flush that is stopped by one report through the same trio, so the
+// user is never told two different things about one refusal.
 func (u *Uploader) reportUpgradeGate(res *Result) {
-	res.Outcome = UpgradeRequired
-	res.MinClientVersion = u.minClientVersion
-	res.UpgradeMessage = u.upgradeMessage
+	res.Outcome, res.Standing = UpgradeRequired, u.upgradeGate
 }
 
 func (u *Uploader) reportAuthorizationGate(res *Result) {
-	res.Outcome = AuthorizationRequired
-	res.AuthorizeURL = u.authorization.URL
-	res.AuthorizationMessage = u.authorization.Message
+	res.Outcome, res.Standing = AuthorizationRequired, u.authorizationGate
+}
+
+func (u *Uploader) reportBackoff(res *Result) bool {
+	s, ok := loadBackoff(u.deps.Dir, u.deps.Now())
+	if ok {
+		res.Outcome, res.Standing = Deferred, s
+	}
+	return ok
 }
 
 // Close runs the uploader's last flush — unforced, the same threshold
@@ -331,11 +324,11 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 		return res, fmt.Errorf("upload: reading device token: %w", err)
 	}
 	if token == "" {
-		res.Outcome = Paused
+		res.Outcome, res.Standing = Paused, Standing{Reason: SignedOut}
 		return res, nil
 	}
 	if !force {
-		if u.upgradeRequired {
+		if u.upgradeGate.Held() {
 			u.reportUpgradeGate(&res)
 			return res, nil
 		}
@@ -343,12 +336,11 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 		// the service refuses cannot upload however the account stands, so
 		// telling the user to go authorize would send them to finish
 		// something that changes nothing until they also upgrade.
-		if u.authorization.Required {
+		if u.authorizationGate.Held() {
 			u.reportAuthorizationGate(&res)
 			return res, nil
 		}
-		if u.deps.Now().Before(u.notBefore) {
-			res.Outcome = Deferred
+		if u.reportBackoff(&res) {
 			return res, nil
 		}
 	}
@@ -533,10 +525,7 @@ func (u *Uploader) send(token string, l lease, rawcalls []spool.Rawcall, res *Re
 		return err
 	}
 	res.Disposition = Ack
-	u.upgradeRequired = false
-	u.minClientVersion, u.upgradeMessage = "", ""
-	u.authorization = AuthorizationNotice{}
-	u.notBefore = time.Time{}
+	u.upgradeGate, u.authorizationGate = Standing{}, Standing{}
 	u.timeouts = 0
 
 	if err := l.settle(u.deps.Spool, b.RequestIDs); err != nil {
@@ -649,14 +638,12 @@ func (u *Uploader) settleFailure(l lease, rawcalls []spool.Rawcall, err error) (
 		// an automatic flush tries again.
 		u.timeouts++
 		pause := timeoutBackoff(u.timeouts)
-		u.notBefore = u.deps.Now().Add(pause)
+		u.noteBackoff(TimedOut, u.deps.Now().Add(pause))
 		return RetrySameID, fmt.Errorf("upload: batch %s: %w; the next attempt waits %s and allows more time", id, err, pause)
 	case errors.As(err, &upgrade):
 		// The data is fine; this client is too old. Automatic flushes
 		// stop so the batch is not re-uploaded pointlessly every minute.
-		u.upgradeRequired = true
-		u.minClientVersion = upgrade.MinClientVersion
-		u.upgradeMessage = upgrade.Message
+		u.upgradeGate = versionStanding(true, upgrade.MinClientVersion, upgrade.Message, u.deps.Version)
 		u.noteUpgradeRequired(upgrade.MinClientVersion, upgrade.Message)
 		return PauseUploads, fmt.Errorf("upload: batch %s: %w", id, err)
 	case errors.As(err, &unauthorized):
@@ -664,10 +651,10 @@ func (u *Uploader) settleFailure(l lease, rawcalls []spool.Rawcall, err error) (
 		// completed its data authorization. Automatic flushes stop so the
 		// batch is not re-offered pointlessly every minute, and nothing is
 		// quarantined — the user fixes this on the web, not here.
-		u.authorization = AuthorizationNotice{
-			Required: true,
-			URL:      unauthorized.AuthorizeURL,
-			Message:  unauthorized.Message,
+		u.authorizationGate = Standing{
+			Reason:       AuthorizationGate,
+			AuthorizeURL: unauthorized.AuthorizeURL,
+			Message:      unauthorized.Message,
 		}
 		u.noteAuthorizationRequired(unauthorized.AuthorizeURL, unauthorized.Message)
 		return PauseUploadsAuthorize, fmt.Errorf("upload: batch %s: %w", id, err)
@@ -681,7 +668,7 @@ func (u *Uploader) settleFailure(l lease, rawcalls []spool.Rawcall, err error) (
 			pause = defaultRateLimitPause
 			err = fmt.Errorf("%w; automatic flushes wait %s", err, pause)
 		}
-		u.notBefore = u.deps.Now().Add(pause)
+		u.noteBackoff(RateLimited, u.deps.Now().Add(pause))
 		return RetrySameID, fmt.Errorf("upload: batch %s: %w", id, err)
 	case errors.As(err, &rejected):
 		// The service says this batch can never be accepted. Move its

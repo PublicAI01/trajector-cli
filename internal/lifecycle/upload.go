@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
@@ -38,29 +39,25 @@ func (m *Machine) Upload(force bool, io IO) error {
 	case upload.BelowThreshold:
 		fmt.Fprintln(io.Out, "Below the upload thresholds; use --force to upload anyway.")
 	case upload.Paused:
-		fmt.Fprintln(io.Out, "Not signed in; run `trajector login` first. Captured data is kept.")
+		explainStanding(io, reply.Standing, reply.Standing.Remedy())
 	case upload.UpgradeRequired:
-		fmt.Fprintf(io.Out, "Uploads are paused: the service requires trajector %s or newer (this is %s).\n", reply.MinClientVersion, m.deps.Version)
-		if reply.UpgradeMessage != "" {
-			fmt.Fprintf(io.Out, serviceSays+"\n", reply.UpgradeMessage)
-		}
 		// The kept-data line stands alone: a user reading a pause needs
 		// to know nothing was lost before they read what to do about it.
-		fmt.Fprintln(io.Out, "Captured data is kept.")
-		fmt.Fprintln(io.Out, upgradeHint+retry(force, " Or retry with --force."))
+		explainStanding(io, reply.Standing,
+			offer(reply.Standing.Remedy(), retry(force, " Or retry with --force.")),
+			"Captured data is kept.")
 	case upload.AuthorizationRequired:
-		fmt.Fprintln(io.Out, authorizationPaused)
-		if reply.AuthorizationMessage != "" {
-			fmt.Fprintf(io.Out, serviceSays+"\n", reply.AuthorizationMessage)
-		}
-		fmt.Fprintln(io.Out, "Captured data is kept.")
 		// --force is offered here where the upgrade pause offers an
 		// install, because it is the recovery: the user fixes this in a
 		// browser, nothing on this machine changes, and without --force
 		// they would wait out a flush cycle for uploads that could go now.
-		fmt.Fprintln(io.Out, authorizeHint(reply.AuthorizeURL)+retry(force, " Then retry with --force."))
+		explainStanding(io, reply.Standing,
+			offer(reply.Standing.Remedy(), retry(force, " Then retry with --force.")),
+			"Captured data is kept.")
 	case upload.Deferred:
-		fmt.Fprintln(io.Out, "The service asked to slow down; uploads resume automatically."+retry(force, " Use --force to try now."))
+		// The remedy is itself the --force offer, so a run that already
+		// used it is told the pause and nothing else.
+		explainStanding(io, reply.Standing, retry(force, reply.Standing.Remedy()))
 	case upload.Rejected:
 		return errors.New(reply.Error)
 	default:
@@ -70,6 +67,30 @@ func (m *Machine) Upload(force bool, io IO) error {
 		fmt.Fprintf(io.Out, "Flush finished: %s\n", reply.Outcome)
 	}
 	return nil
+}
+
+// explainStanding reports one pause the way `upload` reports it: what
+// is true, the service's own words if it supplied any, whatever this
+// command adds about the data it still holds, and last the remedy. The
+// first three sentences come from the standing itself, so the three
+// surfaces that report a pause cannot word one differently.
+func explainStanding(io IO, s upload.Standing, remedy string, reassurance ...string) {
+	fmt.Fprintln(io.Out, s.Explain())
+	if s.Message != "" {
+		fmt.Fprintf(io.Out, serviceSays+"\n", s.Message)
+	}
+	for _, line := range reassurance {
+		fmt.Fprintln(io.Out, line)
+	}
+	if remedy != "" {
+		fmt.Fprintln(io.Out, remedy)
+	}
+}
+
+// offer appends this command's own follow-up to a standing's remedy,
+// and stands in for the remedy when the standing carries none.
+func offer(remedy, follow string) string {
+	return strings.TrimSpace(remedy + follow)
 }
 
 // setAsideUnreadable counts the rawcalls a flush set aside as
@@ -91,9 +112,9 @@ func setAsideUnreadable(rejections []upload.Rejection) int {
 // ask a forced attempt to slow down. Repeating the offer there sends the
 // user back to the switch they just held down, which cannot move either
 // pause — only the service can.
-func retry(force bool, offer string) string {
+func retry(force bool, sentence string) string {
 	if force {
 		return ""
 	}
-	return offer
+	return sentence
 }

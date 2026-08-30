@@ -424,3 +424,84 @@ func TestARejectedBatchCannotWriteItsOwnLineIntoDoctorsVerdicts(t *testing.T) {
 		}
 	}
 }
+
+// A pause the service asked for is on disk, so it survives the process
+// that was told about it: a fresh `status` names when it ends, and a
+// proxy started inside the wait does not put back the load the service
+// asked this client to shed.
+func TestAPauseOnDiskIsVisibleAndHonouredByLaterProcesses(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	until := time.Now().UTC().Add(30 * time.Minute).Truncate(time.Second)
+	e.Sandbox().SeedUploadPause(proxytest.RateLimited, until)
+	seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
+
+	status := e.InProject("status")
+	if status.Exit != 0 {
+		t.Fatalf("status exit = %d (stderr: %q)", status.Exit, status.Stderr)
+	}
+	for _, want := range []string{"Uploads are paused until " + until.Format(time.RFC3339), "asked to slow down"} {
+		if !strings.Contains(status.Stdout, want) {
+			t.Errorf("status = %q, want it to contain %q", status.Stdout, want)
+		}
+	}
+
+	p := e.StartProxy()
+	defer p.Stop()
+	got := e.Run("upload")
+	if got.Exit != 0 {
+		t.Fatalf("upload exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stdout, "asked to slow down") {
+		t.Errorf("stdout = %q, want the inherited pause explained", got.Stdout)
+	}
+	if n := batchUploads(e.Service()); n != 0 {
+		t.Errorf("the service saw %d upload attempts, want the pause honoured across the restart", n)
+	}
+}
+
+// The two pauses are told apart in the command's own copy: one is the
+// service's request, the other this machine's own attempt running long,
+// and they send the user to look at different things.
+func TestUploadTellsTheServicesRequestApartFromItsOwnTimedOutAttempt(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	e.Sandbox().SeedUploadPause(proxytest.TimedOut, time.Now().UTC().Add(30*time.Minute))
+	seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
+	p := e.StartProxy()
+	defer p.Stop()
+
+	got := e.Run("upload")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stdout, "the last attempt ran out of time") {
+		t.Errorf("stdout = %q, want the timed-out attempt named", got.Stdout)
+	}
+	if strings.Contains(got.Stdout, "asked to slow down") {
+		t.Errorf("stdout = %q, want this machine's own pause not blamed on the service", got.Stdout)
+	}
+}
+
+// A device with no pairing token has nothing to upload with, and the
+// command says so in the same shape as every other pause: what is true,
+// then what ends it.
+func TestUploadOnASignedOutDeviceSaysWhatToRun(t *testing.T) {
+	e := clitest.New(t)
+	seedRawcall(e, "req-1", time.Now().UTC().Add(-25*time.Hour))
+	p := e.StartProxy()
+	defer p.Stop()
+
+	got := e.Run("upload", "--force")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	for _, want := range []string{"Uploads are paused: this device is signed out.", "`trajector login`"} {
+		if !strings.Contains(got.Stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", got.Stdout, want)
+		}
+	}
+	if n := len(e.Sandbox().Rawcalls()); n != 1 {
+		t.Errorf("spool holds %d rawcalls, want the record kept", n)
+	}
+}

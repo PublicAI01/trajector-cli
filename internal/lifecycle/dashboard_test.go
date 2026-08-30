@@ -519,3 +519,43 @@ func writeUploadFile(t *testing.T, e *env, name string, contents map[string]any)
 		t.Fatal(err)
 	}
 }
+
+// A pause with an expiry is the one standing whose answer is "wait": a
+// user who cannot see when the wait ends has no way to tell a pause
+// from a fault.
+func TestStatusNamesWhenAPausedUploadResumes(t *testing.T) {
+	until := time.Date(2026, 8, 2, 14, 32, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, want string
+		reason     proxytest.Reason
+	}{
+		{name: "the service asked", reason: proxytest.RateLimited, want: "the service asked to slow down"},
+		{name: "the attempt ran long", reason: proxytest.TimedOut, want: "the last attempt ran out of time"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.sandbox.SeedUploadPause(tc.reason, until)
+			out := e.statusOutput()
+
+			if !strings.Contains(out, "Uploads are paused until "+until.Format(time.RFC3339)) {
+				t.Errorf("status = %q, want the time the pause ends", out)
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("status = %q, want %q", out, tc.want)
+			}
+		})
+	}
+}
+
+// An empty spool beside a full quarantine reads as a healthy idle
+// device unless something says otherwise: nothing is waiting to upload
+// because everything left is set aside.
+func TestStatusSaysWhenTheOnlyRecordsLeftAreQuarantined(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-1"}, map[string][]byte{"req-1": []byte("{}")})
+	out := e.statusOutput()
+
+	if !strings.Contains(out, "every rawcall left on this machine is quarantined") {
+		t.Errorf("status = %q, want the quarantine-only standing", out)
+	}
+}

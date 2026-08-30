@@ -115,42 +115,24 @@ func (m *Machine) Status(dir string, io IO) error {
 		fmt.Fprintln(io.Out, "  Run `trajector doctor` to inspect them, then requeue or discard them.")
 	}
 
-	// A minimum this build already meets is not news: it arrives on every
-	// acknowledgement, and reporting it would leave a compliant machine
-	// permanently told to upgrade. See standing.
-	version := standing(d.Handshake.MinClientVersion, m.deps.Version)
-	// The service's own words about a refusal are cleared the moment it
-	// acknowledges an upload, so their presence is a live refusal and is
-	// reported whatever the comparison says.
-	if version != versionSatisfied || d.Handshake.Notice != "" || d.UpgradeMessage != "" || d.Authorization.Required {
+	// Every reason uploads are held back is printed here, in the order
+	// the uploader itself meets them, each from its own two sentences.
+	// The service's own words come between them: they may say why, or by
+	// when, and a user who reads only one more line should read the
+	// reason rather than the remedy.
+	for _, s := range d.Standings {
+		fmt.Fprintf(io.Out, "  %s\n", s.Explain())
+		if s.Message != "" {
+			fmt.Fprintf(io.Out, "  "+serviceSays+"\n", s.Message)
+		}
+		if remedy := s.Remedy(); remedy != "" {
+			fmt.Fprintf(io.Out, "  %s\n", remedy)
+		}
+	}
+
+	if d.Handshake.Notice != "" {
 		fmt.Fprintln(io.Out, "\nService")
-		if version != versionSatisfied {
-			fmt.Fprintf(io.Out, "  The service requires client version %s or newer; this build is %s.\n",
-				d.Handshake.MinClientVersion, m.deps.Version)
-		}
-		// The service's own words come before the instruction: they may
-		// say why, or by when, and a user who reads only the first line
-		// should read the reason rather than the remedy.
-		if d.UpgradeMessage != "" {
-			fmt.Fprintf(io.Out, "  "+serviceSays+"\n", d.UpgradeMessage)
-		}
-		// Only a build known to be behind is told to upgrade. On an
-		// unorderable pair the requirement is stated and the remedy is
-		// not: upgrade has nothing to install for a dev build, and would
-		// send the user somewhere that tells them so.
-		if version == versionBehind || d.UpgradeMessage != "" {
-			fmt.Fprintf(io.Out, "  %s\n", upgradeHint)
-		}
-		if d.Authorization.Required {
-			fmt.Fprintln(io.Out, "  "+authorizationPaused)
-			if d.Authorization.Message != "" {
-				fmt.Fprintf(io.Out, "  "+serviceSays+"\n", d.Authorization.Message)
-			}
-			fmt.Fprintf(io.Out, "  %s\n", authorizeHint(d.Authorization.URL))
-		}
-		if d.Handshake.Notice != "" {
-			fmt.Fprintf(io.Out, "  Notice from the service: %s\n", d.Handshake.Notice)
-		}
+		fmt.Fprintf(io.Out, "  Notice from the service: %s\n", d.Handshake.Notice)
 	}
 	return nil
 }

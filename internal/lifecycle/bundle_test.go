@@ -112,9 +112,13 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 		`"usage_bytes"`,
 		`"413 Request Entity Too Large"`,
 		`"min_client_version": "9.9.9"`,
-		// Support needs the service's own words to tell "this client is
-		// behind" apart from "the service wants something else".
-		`"upgrade_message": "Upload format 0.1.x is retired on 2026-09-01."`,
+		// Support reads why uploads were held back as the client itself
+		// judged it, with the service's own words beside the judgement:
+		// "this client is behind" and "the service wants something else"
+		// are different reports and must not have to be told apart by
+		// re-deriving anything from the handshake.
+		`"reason": "version_gate"`,
+		`"message": "Upload format 0.1.x is retired on 2026-09-01."`,
 	} {
 		if !strings.Contains(diagnosis, want) {
 			t.Errorf("diagnosis.json = %s\nwant it to contain %q", diagnosis, want)

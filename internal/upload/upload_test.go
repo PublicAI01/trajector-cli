@@ -51,6 +51,16 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	f.spool = sp
+	f.uploader = f.newUploader(t)
+	return f
+}
+
+// newUploader builds another uploader over the same files, which is
+// what a restarted proxy amounts to: nothing carries over but what is
+// on disk.
+func (f *fixture) newUploader(t *testing.T) *upload.Uploader {
+	t.Helper()
+	sp := f.spool
 	u, err := upload.New(upload.Deps{
 		Spool:       sp,
 		Service:     platform.New(f.server.URL(), "test"),
@@ -68,8 +78,19 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.uploader = u
-	return f
+	return u
+}
+
+// standing is the reason the uploader's own files give for holding
+// uploads back, zero when they give none of that kind. Package tests
+// drive the uploader's documented disk contract directly.
+func (f *fixture) standing(reason upload.Reason) upload.Standing {
+	for _, s := range upload.LoadStandings(f.dir, "1.0.0", f.now) {
+		if s.Reason == reason {
+			return s
+		}
+	}
+	return upload.Standing{}
 }
 
 // tearStoredRawcall truncates a stored rawcall's file to its front
@@ -612,11 +633,11 @@ func TestAClassifiedFailureCarriesItsOutcomeAlongsideTheError(t *testing.T) {
 			if res.Outcome != tc.want {
 				t.Errorf("outcome = %q, want %q", res.Outcome, tc.want)
 			}
-			if tc.want == upload.UpgradeRequired && res.MinClientVersion != "9.9.9" {
-				t.Errorf("min client version = %q, want it carried with the outcome", res.MinClientVersion)
+			if tc.want == upload.UpgradeRequired && res.Standing.MinClientVersion != "9.9.9" {
+				t.Errorf("min client version = %q, want it carried with the outcome", res.Standing.MinClientVersion)
 			}
-			if tc.want == upload.AuthorizationRequired && res.AuthorizeURL != "https://dashboard.example.com/authorization" {
-				t.Errorf("authorize URL = %q, want it carried with the outcome", res.AuthorizeURL)
+			if tc.want == upload.AuthorizationRequired && res.Standing.AuthorizeURL != "https://dashboard.example.com/authorization" {
+				t.Errorf("authorize URL = %q, want it carried with the outcome", res.Standing.AuthorizeURL)
 			}
 		})
 	}
@@ -709,7 +730,7 @@ func TestAnAuthorizationGatePausesAutomaticFlushesWithoutTouchingData(t *testing
 	if res2, err := f.uploader.Flush(false); err != nil || res2.Outcome != upload.Empty {
 		t.Fatalf("flush after a success = %+v, %v; the gate must have lifted", res2, err)
 	}
-	if upload.LoadAuthorizationNotice(f.dir).Required {
+	if f.standing(upload.AuthorizationGate).Held() {
 		t.Error("the persisted refusal outlived the acknowledgement that answered it")
 	}
 }
@@ -723,9 +744,9 @@ func TestAnAuthorizationRefusalIsRememberedAcrossProcesses(t *testing.T) {
 	if _, err := f.uploader.Flush(true); err == nil {
 		t.Fatal("451 did not surface")
 	}
-	got := upload.LoadAuthorizationNotice(f.dir)
-	if !got.Required || got.URL != "https://dashboard.example.com/authorization" || got.Message != said {
-		t.Fatalf("persisted notice = %+v", got)
+	got := f.standing(upload.AuthorizationGate)
+	if !got.Held() || got.AuthorizeURL != "https://dashboard.example.com/authorization" || got.Message != said {
+		t.Fatalf("persisted standing = %+v", got)
 	}
 }
 
@@ -741,7 +762,7 @@ func TestAnAuthorizationRefusalWithNoDetailIsStillRemembered(t *testing.T) {
 	if _, err := f.uploader.Flush(true); err == nil {
 		t.Fatal("451 did not surface")
 	}
-	if got := upload.LoadAuthorizationNotice(f.dir); !got.Required {
+	if got := f.standing(upload.AuthorizationGate); !got.Held() {
 		t.Fatalf("persisted notice = %+v, want the refusal recorded", got)
 	}
 }
@@ -761,10 +782,10 @@ func TestTheTwoRefusalsDoNotEraseEachOther(t *testing.T) {
 	if _, err := f.uploader.Flush(true); err == nil {
 		t.Fatal("426 did not surface")
 	}
-	if got := upload.LoadUpgradeMessage(f.dir); got != "please upgrade" {
+	if got := f.standing(upload.VersionGate).Message; got != "please upgrade" {
 		t.Errorf("persisted upgrade message = %q", got)
 	}
-	if got := upload.LoadAuthorizationNotice(f.dir); !got.Required {
+	if got := f.standing(upload.AuthorizationGate); !got.Held() {
 		t.Errorf("the authorization refusal = %+v, want it still recorded", got)
 	}
 	if got := upload.LoadHandshake(f.dir).MinClientVersion; got != "9.9.9" {
@@ -786,10 +807,10 @@ func TestAVersionRefusalRelaysWhatTheServiceSaid(t *testing.T) {
 	if err == nil {
 		t.Fatal("426 did not surface")
 	}
-	if res.UpgradeMessage != said {
-		t.Errorf("upgrade message on the refusal = %q, want %q", res.UpgradeMessage, said)
+	if res.Standing.Message != said {
+		t.Errorf("upgrade message on the refusal = %q, want %q", res.Standing.Message, said)
 	}
-	if got := upload.LoadUpgradeMessage(f.dir); got != said {
+	if got := f.standing(upload.VersionGate).Message; got != said {
 		t.Errorf("persisted upgrade message = %q, want %q", got, said)
 	}
 
@@ -799,8 +820,8 @@ func TestAVersionRefusalRelaysWhatTheServiceSaid(t *testing.T) {
 	if err != nil || res.Outcome != upload.UpgradeRequired {
 		t.Fatalf("gated flush = %+v, %v", res, err)
 	}
-	if res.UpgradeMessage != said {
-		t.Errorf("gated flush message = %q, want the service's words repeated", res.UpgradeMessage)
+	if res.Standing.Message != said {
+		t.Errorf("gated flush message = %q, want the service's words repeated", res.Standing.Message)
 	}
 
 	// An acknowledged upload is the service accepting this version, so
@@ -809,10 +830,10 @@ func TestAVersionRefusalRelaysWhatTheServiceSaid(t *testing.T) {
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("forced flush past the gate = %+v, %v", res, err)
 	}
-	if res.UpgradeMessage != "" {
-		t.Errorf("message after a success = %q, want none", res.UpgradeMessage)
+	if res.Standing.Message != "" {
+		t.Errorf("message after a success = %q, want none", res.Standing.Message)
 	}
-	if got := upload.LoadUpgradeMessage(f.dir); got != "" {
+	if got := f.standing(upload.VersionGate).Message; got != "" {
 		t.Errorf("persisted message after a success = %q, want none", got)
 	}
 }
@@ -823,11 +844,11 @@ func TestAVersionRefusalWithoutWordsPersistsNone(t *testing.T) {
 	f.storeRawcall(t, "req-1", f.now)
 
 	res, _ := f.uploader.Flush(true)
-	if res.MinClientVersion != "9.9.9" {
+	if res.Standing.MinClientVersion != "9.9.9" {
 		t.Fatalf("refusal = %+v, want the required version", res)
 	}
-	if res.UpgradeMessage != "" || upload.LoadUpgradeMessage(f.dir) != "" {
-		t.Errorf("a silent refusal produced words: %q / %q", res.UpgradeMessage, upload.LoadUpgradeMessage(f.dir))
+	if res.Standing.Message != "" || f.standing(upload.VersionGate).Message != "" {
+		t.Errorf("a silent refusal produced words: %q / %q", res.Standing.Message, f.standing(upload.VersionGate).Message)
 	}
 }
 
@@ -841,7 +862,7 @@ func TestAServiceMessageOnDiskCannotDrawOnTheTerminal(t *testing.T) {
 	f.storeRawcall(t, "req-1", f.now)
 
 	res, _ := f.uploader.Flush(true)
-	for _, got := range []string{res.UpgradeMessage, upload.LoadUpgradeMessage(f.dir)} {
+	for _, got := range []string{res.Standing.Message, f.standing(upload.VersionGate).Message} {
 		if strings.ContainsAny(got, "\r\n\x1b") {
 			t.Errorf("relayed message = %q, want the terminal control runes gone", got)
 		}
@@ -853,7 +874,7 @@ func TestAServiceMessageOnDiskCannotDrawOnTheTerminal(t *testing.T) {
 
 func TestUpgradeMessageIsAbsentBeforeAnyRefusal(t *testing.T) {
 	f := newFixture(t)
-	if got := upload.LoadUpgradeMessage(f.dir); got != "" {
+	if got := f.standing(upload.VersionGate).Message; got != "" {
 		t.Errorf("upgrade message with no handshake on disk = %q, want none", got)
 	}
 }

@@ -153,7 +153,7 @@ func TestUploadExplainsARequiredUpgradeFromTheFirstEncounter(t *testing.T) {
 	if err := m.Upload(true, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(e.stdout.String(), "requires trajector 9.9.9 or newer") {
+	if !strings.Contains(e.stdout.String(), "requires client version 9.9.9 or newer") {
 		t.Errorf("stdout = %q", e.stdout)
 	}
 	if !strings.Contains(e.stdout.String(), "Captured data is kept.") {
@@ -168,7 +168,7 @@ func TestUploadExplainsARequiredUpgradeFromTheFirstEncounter(t *testing.T) {
 	if err := m.Upload(false, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(e.stdout.String(), "requires trajector 9.9.9 or newer") {
+	if !strings.Contains(e.stdout.String(), "requires client version 9.9.9 or newer") {
 		t.Errorf("stdout = %q", e.stdout)
 	}
 	if !strings.Contains(e.stdout.String(), "Captured data is kept.") {
@@ -239,7 +239,7 @@ func TestUploadDoesNotOfferForceToARunThatAlreadyUsedIt(t *testing.T) {
 		{
 			name:  "upgrade required",
 			reply: fakeplatform.Refuses426("9.9.9", ""),
-			pause: "requires trajector 9.9.9 or newer",
+			pause: "requires client version 9.9.9 or newer",
 			offer: "--force",
 		},
 		{
@@ -307,7 +307,7 @@ func TestUploadRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := e.stdout.String()
-	for _, want := range []string{"requires trajector 9.9.9 or newer", "The service says:", "retired on 2026-09-01", "Captured data is kept."} {
+	for _, want := range []string{"requires client version 9.9.9 or newer", "The service says:", "retired on 2026-09-01", "Captured data is kept."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout = %q, want it to contain %q", out, want)
 		}

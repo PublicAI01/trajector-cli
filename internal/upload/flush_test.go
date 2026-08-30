@@ -62,13 +62,13 @@ func TestFlushHandlerCarriesTheOutcomeWithTheError(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
 		t.Fatal(err)
 	}
-	if reply.Outcome != upload.UpgradeRequired || reply.MinClientVersion != "9.9.9" {
+	if reply.Outcome != upload.UpgradeRequired || reply.Standing.MinClientVersion != "9.9.9" {
 		t.Errorf("reply = %+v, want the classified outcome with the required version", reply)
 	}
 	if reply.Error == "" {
 		t.Errorf("reply = %+v, want the error kept as detail", reply)
 	}
-	if reply.UpgradeMessage != "" {
+	if reply.Standing.Message != "" {
 		t.Errorf("reply = %+v, want no words when the service sent none", reply)
 	}
 }
@@ -93,7 +93,7 @@ func TestFlushHandlerCarriesWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
 		t.Fatal(err)
 	}
-	if reply.UpgradeMessage != said {
+	if reply.Standing.Message != said {
 		t.Errorf("reply = %+v, want the service's words relayed", reply)
 	}
 }

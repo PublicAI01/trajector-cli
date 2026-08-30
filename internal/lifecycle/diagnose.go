@@ -53,18 +53,13 @@ type Diagnosis struct {
 	// empty quarantine.
 	RejectedErr error
 	Handshake   platform.Handshake
-	// UpgradeMessage is what the service said when it last refused this
-	// client's version, empty once it has acknowledged an upload again.
-	// It rides beside the handshake rather than in it because it never
-	// came with an acknowledgement.
-	UpgradeMessage string
-	// Authorization is the service's last refusal of this account for
-	// want of a completed data authorization, zero once it has
-	// acknowledged an upload again. It is kept apart from UpgradeMessage
-	// because both refusals can stand at once, and a surface that could
-	// only name one of them would send the user to fix half the problem.
-	Authorization upload.AuthorizationNotice
-	TokenStore    TokenStoreState
+	// Standings is every reason uploads are held back right now, each
+	// carrying its own explanation and remedy. It is a list because more
+	// than one can hold at a time — an old build whose account is also
+	// unauthorized — and a surface that could name only one of them would
+	// send the user to fix half the problem. Empty means uploads flow.
+	Standings  []upload.Standing
+	TokenStore TokenStoreState
 	// Selfcheck is the live proxy's own answer for this project's
 	// token. It is non-nil only when the project is enabled, our proxy
 	// holds the port, and the proxy answered.
@@ -111,8 +106,14 @@ func (m *Machine) Diagnose(dir string) (Diagnosis, error) {
 	d.Uploads = upload.LoadState(m.deps.Layout.UploadDir())
 	d.Rejected, d.RejectedErr = upload.ListRejected(m.deps.Layout.RejectedDir())
 	d.Handshake = m.handshake()
-	d.UpgradeMessage = upload.LoadUpgradeMessage(m.deps.Layout.UploadDir())
-	d.Authorization = upload.LoadAuthorizationNotice(m.deps.Layout.UploadDir())
+	d.Standings = upload.LoadStandings(m.deps.Layout.UploadDir(), m.deps.Version, m.deps.Now())
+	// The quarantine-only standing is derived here and nowhere else:
+	// this is the one place that knows both halves of it — that the
+	// spool has nothing left to send, and that batches are waiting in
+	// quarantine. The sentence it prints still belongs to the standing.
+	if d.Spool.OpenErr == nil && d.Spool.Usage == 0 && len(d.Rejected) > 0 {
+		d.Standings = append(d.Standings, upload.Standing{Reason: upload.QuarantineOnly})
+	}
 
 	_, paired, err := m.deps.Tokens.DeviceToken()
 	d.TokenStore = TokenStoreState{Paired: paired, Err: err}

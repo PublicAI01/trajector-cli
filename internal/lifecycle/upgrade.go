@@ -4,60 +4,7 @@ import (
 	"fmt"
 
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
-	"github.com/PublicAI01/trajector-cli/internal/semver"
 )
-
-// upgradeHint is the sentence every surface that has found this build
-// behind prints. One spelling, so a user who reads it in three places
-// is being told to do one thing.
-const upgradeHint = "Run `trajector upgrade` to install the newest release."
-
-// versionStanding is where this build sits against the minimum client
-// version the service last announced.
-type versionStanding int
-
-const (
-	// versionSatisfied: the service named a minimum and this build is at
-	// or above it — or it named none at all.
-	versionSatisfied versionStanding = iota
-	// versionBehind: this build is older than the service's minimum.
-	versionBehind
-	// versionUnknown: no order exists between the two, so neither of the
-	// above can be claimed.
-	versionUnknown
-)
-
-// standing orders this build against the service's stated minimum.
-//
-// The service sends min_client_version on every acknowledgement, not
-// only when it matters, because it assumes the client works out whether
-// it matters. Nothing did: status and doctor relayed the minimum
-// verbatim, so one successful upload left a satisfied build being told
-// to upgrade for good. That is not a harmful instruction — running
-// upgrade would report there is nothing to install — but it costs the
-// sentence its meaning. When the service really does refuse this build,
-// status prints the same two lines it has been printing all along, and
-// a user who learned to skip them skips them exactly then.
-//
-// So the judgement lives here. An unorderable pair — a dev build, or a
-// minimum that is not a semantic version — is versionUnknown rather
-// than versionBehind: not knowing is not the same as being behind, and
-// a refusal announces itself on its own path (the 426 on upload) where
-// the service's word settles it without any comparison.
-func standing(minVersion, version string) versionStanding {
-	if minVersion == "" {
-		return versionSatisfied
-	}
-	order, ok := semver.Compare(version, minVersion)
-	switch {
-	case !ok:
-		return versionUnknown
-	case order < 0:
-		return versionBehind
-	default:
-		return versionSatisfied
-	}
-}
 
 // managerHandback is how to move an installation its package manager
 // owns: the manager's name as the user knows it, and the command that

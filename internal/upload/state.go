@@ -58,44 +58,46 @@ type State struct {
 	LastRejected  *Rejection `json:"last_rejected,omitempty"`
 }
 
-// storedHandshake is the last service handshake with when it arrived.
+// storedHandshake is the last service handshake with when it arrived,
+// and beside it every "do not upload" instruction this device has been
+// given that has not been answered yet — so the file explains the
+// uploader's behaviour on its own, to a process that never made the
+// upload and to a reader of a diagnostic archive.
+//
+// Persistence rule, one rule for all of them: the most recent word
+// wins, and an acknowledgement is a word. Every field below arrives on
+// a refusal rather than on an acknowledgement, and none of them may
+// survive one — applyHandshake writes a fresh record whose refusal
+// fields are all zero, which is that clearing. That covers the pause a
+// 429 or a timed-out attempt left as well: a batch the service has just
+// taken is newer evidence than its earlier request to wait, and holding
+// uploads back on the older word would keep back exactly what the
+// service has demonstrated it will accept.
 type storedHandshake struct {
 	platform.Handshake
 	// UpgradeMessage is what the service said when it last refused this
 	// client's version. It sits beside the handshake rather than inside
-	// it because it arrives on a 426, not on an acknowledgement — and
-	// because it must not survive one: an acknowledged upload is the
-	// service accepting this version, which makes the refusal it
-	// explained no longer true. applyHandshake writes a fresh record
-	// with this field zero, which is that clearing.
+	// it because it arrives on a 426, not on an acknowledgement.
 	UpgradeMessage string `json:"upgrade_message,omitempty"`
 	// AuthorizeURL and AuthorizationMessage are what the service last
 	// said when it refused this account for want of a completed data
-	// authorization. They sit beside the handshake for the same reason
-	// UpgradeMessage does — they arrive on a 451, not on an
-	// acknowledgement, and must not survive one — and they are kept apart
-	// from it because both refusals can stand at the same time.
+	// authorization. They are kept apart from the version refusal because
+	// both refusals can stand at the same time.
 	//
 	// AuthorizationRequired is stored on its own because the service may
 	// supply neither the URL nor the message: without it, a refusal that
 	// said nothing would read back as no refusal at all.
-	AuthorizationRequired bool      `json:"authorization_required,omitempty"`
-	AuthorizeURL          string    `json:"authorize_url,omitempty"`
-	AuthorizationMessage  string    `json:"authorization_message,omitempty"`
-	ReceivedAt            time.Time `json:"received_at,omitzero"`
-}
-
-// AuthorizationNotice is what the service last said when it refused this
-// account's uploads for want of a completed data authorization. A zero
-// value means it never refused, or has since acknowledged an upload.
-type AuthorizationNotice struct {
-	// Required is the fact itself. The other two fields are detail the
-	// service may or may not have supplied, so neither can stand in for
-	// it: a refusal that named no URL and no message is still a refusal,
-	// and surfaces must still report it.
-	Required bool
-	URL      string
-	Message  string
+	AuthorizationRequired bool   `json:"authorization_required,omitempty"`
+	AuthorizeURL          string `json:"authorize_url,omitempty"`
+	AuthorizationMessage  string `json:"authorization_message,omitempty"`
+	// NotBefore is when automatic uploads may attempt again, and
+	// BackoffReason which of the two pauses set it. Kept on disk rather
+	// than in the flusher's memory alone so that a surface in another
+	// process can say how long the wait has left, and so that a proxy
+	// restarted inside the wait honours what is left of it.
+	NotBefore     time.Time `json:"not_before,omitzero"`
+	BackoffReason Reason    `json:"backoff_reason,omitempty"`
+	ReceivedAt    time.Time `json:"received_at,omitzero"`
 }
 
 // LoadState reads the uploader's state; a missing or unreadable file is
@@ -116,33 +118,67 @@ func LoadHandshake(dir string) platform.Handshake {
 	return h.Handshake.Safe()
 }
 
-// LoadUpgradeMessage reads what the service said when it last refused
-// this client's version, for status and doctor to relay from a process
-// that never made the upload itself. Empty when the service never
-// refused, said nothing, or has since acknowledged an upload.
-func LoadUpgradeMessage(dir string) string {
+// LoadStandings reads every reason this device has on disk for not
+// uploading, in the order the uploader itself would meet them, for
+// status and doctor to report from a process that never made the upload
+// itself. A pause that has elapsed by now is not a standing.
+//
+// All of them are returned, never just the first: both refusal gates
+// can stand at the same time — an old build whose account is also
+// unauthorized — and a surface that could name only one of them would
+// send the user to fix half of what is wrong.
+//
+// The service's free text is cleaned again on the way out: this file
+// may have been written by a build that predates the cleaning, or
+// edited by hand.
+func LoadStandings(dir, version string, now time.Time) []Standing {
 	var h storedHandshake
 	readJSON(filepath.Join(dir, handshakeName), &h)
-	return platform.SafeServiceText(h.UpgradeMessage)
+
+	var standings []Standing
+	if s := versionStanding(false,
+		platform.SafeServiceText(h.MinClientVersion),
+		platform.SafeServiceText(h.UpgradeMessage),
+		version,
+	); s.Held() {
+		standings = append(standings, s)
+	}
+	if h.AuthorizationRequired {
+		standings = append(standings, Standing{
+			Reason:       AuthorizationGate,
+			AuthorizeURL: platform.SafeServiceURL(h.AuthorizeURL),
+			Message:      platform.SafeServiceText(h.AuthorizationMessage),
+		})
+	}
+	if s, ok := h.backoff(now); ok {
+		standings = append(standings, s)
+	}
+	return standings
 }
 
-// LoadAuthorizationNotice reads what the service said when it last
-// refused this account for want of a completed data authorization, for
-// status and doctor to relay from a process that never made the upload
-// itself.
-func LoadAuthorizationNotice(dir string) AuthorizationNotice {
+// backoff reports the recorded pause while it still has time to run. An
+// unknown reason is carried through rather than dropped: a newer build
+// may name a pause this one cannot explain, and the wait itself is
+// still the fact that matters.
+func (h storedHandshake) backoff(now time.Time) (Standing, bool) {
+	if h.BackoffReason == Flowing || !now.Before(h.NotBefore) {
+		return Standing{}, false
+	}
+	return Standing{Reason: h.BackoffReason, NotBefore: h.NotBefore}, true
+}
+
+// loadBackoff reads the pause the uploader is holding to. The flusher
+// reads it off disk rather than out of its own memory so that a proxy
+// restarted inside the wait honours what is left of it: a restart is
+// routine here — idle exit, version handover, reboot — and a pause the
+// next process ignores puts back exactly the load the service asked to
+// shed. The two refusal gates are not read back this way on purpose: a
+// 426 is answered by replacing this binary and a 451 off this machine
+// entirely, so a fresh process must be allowed to find out for itself.
+func loadBackoff(dir string, now time.Time) (Standing, bool) {
 	var h storedHandshake
 	readJSON(filepath.Join(dir, handshakeName), &h)
-	if !h.AuthorizationRequired {
-		return AuthorizationNotice{}
-	}
-	// Cleaned again on the way out: this file may have been written by a
-	// build that predates the cleaning, or edited by hand.
-	return AuthorizationNotice{
-		Required: true,
-		URL:      platform.SafeServiceURL(h.AuthorizeURL),
-		Message:  platform.SafeServiceText(h.AuthorizationMessage),
-	}
+	return h.backoff(now)
 }
 
 func saveHandshake(dir string, h storedHandshake) error {
@@ -282,6 +318,18 @@ func (u *Uploader) noteAuthorizationRequired(authorizeURL, message string) {
 		h.AuthorizeURL = authorizeURL
 		h.AuthorizationMessage = message
 	}, "the data authorization refusal")
+}
+
+// noteBackoff keeps the pause a rate limit or a timed-out attempt just
+// imposed, and which of the two imposed it, where every surface reads
+// what stops uploads. Best-effort, like the rest of this bookkeeping: a
+// pause that cannot be written is a pause nobody takes, which costs the
+// service another attempt but never costs the user a rawcall.
+func (u *Uploader) noteBackoff(reason Reason, notBefore time.Time) {
+	u.noteRefusal(func(h *storedHandshake) {
+		h.BackoffReason = reason
+		h.NotBefore = notBefore
+	}, "the upload pause")
 }
 
 // noteRefusal records one kind of refusal into the stored handshake

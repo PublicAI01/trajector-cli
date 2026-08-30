@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
@@ -53,12 +54,12 @@ func (s *Sandbox) SeedUpgradeRefusal(minClientVersion, message string) {
 		Handshake:      Handshake{MinClientVersion: minClientVersion},
 		UpgradeMessage: message,
 	})
-	dir := s.layout.UploadDir()
-	if got, want := upload.LoadHandshake(dir).MinClientVersion, platform.SafeServiceText(minClientVersion); got != want {
+	if got, want := upload.LoadHandshake(s.layout.UploadDir()).MinClientVersion, platform.SafeServiceText(minClientVersion); got != want {
 		s.t.Fatalf("the uploader reads the seeded minimum version back as %q, want %q", got, want)
 	}
-	if got, want := upload.LoadUpgradeMessage(dir), platform.SafeServiceText(message); got != want {
-		s.t.Fatalf("the uploader reads the seeded refusal wording back as %q, want %q", got, want)
+	got := s.standing(upload.VersionGate, seedTime)
+	if want := platform.SafeServiceText(message); got.Message != want {
+		s.t.Fatalf("the uploader reads the seeded refusal wording back as %q, want %q", got.Message, want)
 	}
 }
 
@@ -82,15 +83,62 @@ func (s *Sandbox) SeedAuthorizationRefusal(authorizeURL, message string) {
 		AuthorizeURL:          authorizeURL,
 		AuthorizationMessage:  message,
 	})
-	got := upload.LoadAuthorizationNotice(s.layout.UploadDir())
-	want := upload.AuthorizationNotice{
-		Required: true,
-		URL:      platform.SafeServiceURL(authorizeURL),
-		Message:  platform.SafeServiceText(message),
+	got := s.standing(upload.AuthorizationGate, seedTime)
+	if wantURL, wantMessage := platform.SafeServiceURL(authorizeURL), platform.SafeServiceText(message); got.AuthorizeURL != wantURL || got.Message != wantMessage {
+		s.t.Fatalf("the uploader reads the seeded refusal back as %q / %q, want %q / %q",
+			got.AuthorizeURL, got.Message, wantURL, wantMessage)
 	}
-	if got != want {
-		s.t.Fatalf("the uploader reads the seeded refusal back as %+v, want %+v", got, want)
+}
+
+// Reason is why the uploader is holding uploads back, in the uploader's
+// own type, so a CLI-layer test names one without importing it.
+type Reason = upload.Reason
+
+const (
+	RateLimited = upload.RateLimited
+	TimedOut    = upload.TimedOut
+)
+
+// SeedUploadPause persists the last "do not upload before" instruction
+// this device was given — the service asking it to slow down, or its
+// own last attempt running out of time — as the flush that met one
+// would have left it. Like the two refusals it leaves the rest of the
+// file alone: a device can be waiting out a pause and refused at the
+// same time.
+func (s *Sandbox) SeedUploadPause(reason Reason, notBefore time.Time) {
+	s.t.Helper()
+	s.overlayHandshake(uploadPause{Reason: reason, NotBefore: notBefore})
+	got := s.standing(reason, notBefore.Add(-time.Second))
+	if !got.NotBefore.Equal(notBefore) {
+		s.t.Fatalf("the uploader reads the seeded pause back as ending %s, want %s", got.NotBefore, notBefore)
 	}
+}
+
+// uploadPause is what the file records about a pause with an expiry:
+// when uploads may attempt again, and which of the two conditions asked
+// for the wait.
+type uploadPause struct {
+	Reason    Reason    `json:"backoff_reason"`
+	NotBefore time.Time `json:"not_before"`
+}
+
+// standing reads back the one standing a seeder just wrote, through the
+// uploader's own reader. A seeded reason the uploader does not report
+// means the spelling here has drifted from the uploader's, and the test
+// fails at the seed rather than somewhere later.
+func (s *Sandbox) standing(reason Reason, now time.Time) upload.Standing {
+	s.t.Helper()
+	// The build version is left empty on purpose: no version this
+	// sandbox could claim orders against the one a test seeds, so the
+	// version gate reports the requirement it was given either way.
+	held := upload.LoadStandings(s.layout.UploadDir(), "", now)
+	for _, standing := range held {
+		if standing.Reason == reason {
+			return standing
+		}
+	}
+	s.t.Fatalf("the uploader reports no %s standing after seeding one (it reports %v)", reason, held)
+	return upload.Standing{}
 }
 
 // ForgetHandshake removes everything the service has said to this

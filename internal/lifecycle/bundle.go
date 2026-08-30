@@ -124,16 +124,13 @@ type diagnosisWire struct {
 	Rejected    []rejectedWire `json:"rejected"`
 	RejectedErr string         `json:"rejected_err,omitempty"`
 	Handshake   any            `json:"handshake"`
-	// UpgradeMessage is the service's words about the version refusal,
-	// omitted when there was none. Support reads it to tell "the client
-	// is behind" apart from "the service is asking for something else".
-	UpgradeMessage string `json:"upgrade_message,omitempty"`
-	// Authorization is the service's refusal of this account's uploads
-	// for want of a completed data authorization, omitted when there was
-	// none. Support reads it to tell a paused uploader apart from a
-	// broken one: both look like "nothing is uploading".
-	Authorization *authorizationWire `json:"authorization,omitempty"`
-	TokenStore    tokenStoreWire     `json:"token_store"`
+	// Standings is every reason uploads were held back when the bundle
+	// was written, omitted when they were flowing. Support reads it to
+	// tell a paused uploader apart from a broken one — both look like
+	// "nothing is uploading" — and to tell which of the pauses it was
+	// without reconstructing the judgement from a version number.
+	Standings  []upload.Standing `json:"standings,omitempty"`
+	TokenStore tokenStoreWire    `json:"token_store"`
 	// Selfcheck is the live proxy's answer for the current project,
 	// present only when a proxy of ours answered one.
 	Selfcheck any `json:"selfcheck,omitempty"`
@@ -181,11 +178,6 @@ type tokenStoreWire struct {
 	Err    string `json:"err,omitempty"`
 }
 
-type authorizationWire struct {
-	URL     string `json:"authorize_url,omitempty"`
-	Message string `json:"message,omitempty"`
-}
-
 // renderDiagnosis serializes a Diagnosis for the bundle.
 func renderDiagnosis(d Diagnosis) []byte {
 	rejected := make([]rejectedWire, 0, len(d.Rejected))
@@ -222,25 +214,14 @@ func renderDiagnosis(d Diagnosis) []byte {
 			WritableErr: errString(d.Spool.WritableErr),
 			Days:        days,
 		},
-		Uploads:        d.Uploads,
-		Rejected:       rejected,
-		RejectedErr:    errString(d.RejectedErr),
-		Handshake:      d.Handshake,
-		UpgradeMessage: d.UpgradeMessage,
-		Authorization:  authorizationValue(d),
-		TokenStore:     tokenStoreWire{Paired: d.TokenStore.Paired, Err: errString(d.TokenStore.Err)},
-		Selfcheck:      selfcheckValue(d),
+		Uploads:     d.Uploads,
+		Rejected:    rejected,
+		RejectedErr: errString(d.RejectedErr),
+		Handshake:   d.Handshake,
+		Standings:   d.Standings,
+		TokenStore:  tokenStoreWire{Paired: d.TokenStore.Paired, Err: errString(d.TokenStore.Err)},
+		Selfcheck:   selfcheckValue(d),
 	})
-}
-
-// authorizationValue keeps the field out of the JSON when the service
-// never refused: an object with two empty strings would read as a
-// refusal that said nothing, which is a different fact.
-func authorizationValue(d Diagnosis) *authorizationWire {
-	if !d.Authorization.Required {
-		return nil
-	}
-	return &authorizationWire{URL: d.Authorization.URL, Message: d.Authorization.Message}
 }
 
 // selfcheckValue keeps a nil *Selfcheck out of the JSON instead of

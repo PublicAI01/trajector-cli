@@ -132,8 +132,8 @@ func assertContractRow(t *testing.T, f *fixture, c conformance.Case, res upload.
 	// The address is the whole of what the authorize row adds over the
 	// pause above it: without it the user is told to go somewhere unnamed.
 	if c.Meta.Expect == upload.PauseUploadsAuthorize {
-		if url, ok := c.Response.Body["authorize_url"].(string); ok && url != "" && res.AuthorizeURL != url {
-			t.Errorf("authorize URL = %q, want %q", res.AuthorizeURL, url)
+		if url, ok := c.Response.Body["authorize_url"].(string); ok && url != "" && res.Standing.AuthorizeURL != url {
+			t.Errorf("authorize URL = %q, want %q", res.Standing.AuthorizeURL, url)
 		}
 	}
 }

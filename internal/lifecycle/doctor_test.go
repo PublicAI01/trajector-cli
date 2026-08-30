@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -453,7 +455,7 @@ func TestDoctorRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	if problems != 0 {
 		t.Fatalf("problems = %d, want a version refusal relayed without an exit code, output:\n%s", problems, out)
 	}
-	for _, want := range []string{"the service says:", "retired on 2026-09-01", "trajector upgrade"} {
+	for _, want := range []string{"The service says:", "retired on 2026-09-01", "trajector upgrade"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor = %q, want it to contain %q", out, want)
 		}
@@ -547,4 +549,91 @@ func TestDoctorWarnsWhenTheSpoolIsFull(t *testing.T) {
 	if !strings.Contains(out, "full") {
 		t.Errorf("doctor = %q, want the full spool called out", out)
 	}
+}
+
+// The one shape doctor uses for every reason uploads are held back: the
+// standing's own sentence as the finding, then whatever the service
+// said, then the standing's own remedy. A user who has learned to read
+// one of the three gates can read the other two.
+func TestDoctorExplainsEveryUploadGateInTheSameShape(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Version = "0.1.0"
+	until := e.deps.Now().Add(45 * time.Minute)
+	e.sandbox.SeedUpgradeRefusal("9.9.9", "Upload format 0.1.x is retired on 2026-09-01.")
+	e.sandbox.SeedAuthorizationRefusal("https://dashboard.example.com/authorization", "Your data authorization is not complete.")
+	e.sandbox.SeedUploadPause(proxytest.RateLimited, until)
+
+	problems, out := e.doctor()
+	if problems != 0 {
+		t.Fatalf("problems = %d, want three pauses reported without failing doctor, output:\n%s", problems, out)
+	}
+	for _, gate := range []struct{ name, finding, remedy string }{
+		{
+			name:    "426",
+			finding: "the service requires client version 9.9.9 or newer; this build is 0.1.0",
+			remedy:  "Run `trajector upgrade` to install the newest release.",
+		},
+		{
+			name:    "451",
+			finding: "uploads are paused: this account's data authorization is not complete",
+			remedy:  "Complete your data authorization at https://dashboard.example.com/authorization — then uploads resume.",
+		},
+		{
+			name:    "429",
+			finding: "uploads are paused until " + until.Format(time.RFC3339) + ": the service asked to slow down",
+			remedy:  "Uploads resume automatically; `trajector upload --force` offers them now.",
+		},
+	} {
+		t.Run(gate.name, func(t *testing.T) {
+			details, ok := detailsUnder(out, "  note: "+gate.finding)
+			if !ok {
+				t.Fatalf("doctor = %q, want the finding %q", out, gate.finding)
+			}
+			if !slices.Contains(details, "      "+gate.remedy) {
+				t.Errorf("details under %q = %q, want the remedy %q", gate.finding, details, gate.remedy)
+			}
+		})
+	}
+}
+
+// Both refusals can stand at once, and doctor names both: sending the
+// user to upgrade while their account is also unauthorized would have
+// them fix half the problem and find uploads still stopped.
+func TestDoctorNamesBothRefusalsWhenBothStand(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Version = "0.1.0"
+	e.sandbox.SeedUpgradeRefusal("9.9.9", "")
+	e.sandbox.SeedAuthorizationRefusal("https://dashboard.example.com/authorization", "")
+
+	_, out := e.doctor()
+	for _, want := range []string{
+		"requires client version 9.9.9",
+		"data authorization is not complete",
+		"trajector upgrade",
+		"https://dashboard.example.com/authorization",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor = %q, want it to contain %q", out, want)
+		}
+	}
+}
+
+// detailsUnder is the follow-up lines doctor printed under one finding,
+// which is where every remedy lands.
+func detailsUnder(report, finding string) ([]string, bool) {
+	lines := strings.Split(report, "\n")
+	for i, line := range lines {
+		if line != finding {
+			continue
+		}
+		var details []string
+		for _, next := range lines[i+1:] {
+			if !strings.HasPrefix(next, "      ") {
+				break
+			}
+			details = append(details, next)
+		}
+		return details, true
+	}
+	return nil, false
 }

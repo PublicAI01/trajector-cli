@@ -124,8 +124,8 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	m.doctorDiscoveryHint(r, d.TokenStore)
 	doctorSpool(r, d.Spool, m.deps.Layout.SpoolDir())
 	doctorRejected(r, d.Rejected, d.RejectedErr, m.deps.Layout.RejectedDir())
-	doctorService(r, d.Handshake, d.UpgradeMessage, m.deps.Version)
-	doctorAuthorization(r, d.Authorization)
+	doctorStandings(r, d.Standings)
+	doctorService(r, d.Handshake)
 	doctorEnvironmentNote(r)
 	m.doctorSelfcheck(r, d)
 
@@ -362,46 +362,42 @@ func doctorRejected(r *doctorReport, rejected []upload.RejectedBatch, listErr er
 	}
 }
 
-// doctorService relays what the service last said, minus what this
-// build has already answered. A minimum client version this build meets
-// is left unsaid — see standing for why relaying it verbatim was worse
-// than saying nothing. Nothing here is a problem: being behind the
-// service is not a broken machine, and none of these lines move the
-// exit code.
-func doctorService(r *doctorReport, h platform.Handshake, upgradeMessage, version string) {
-	v := standing(h.MinClientVersion, version)
-	if v != versionSatisfied {
-		r.note("the service requires client version %s or newer; this build is %s", h.MinClientVersion, version)
-	}
-	if upgradeMessage != "" {
-		r.note("the service says: %s", upgradeMessage)
-	}
-	if v == versionBehind || upgradeMessage != "" {
-		r.detail("%s", upgradeHint)
-	}
-	if h.Notice != "" {
-		r.note("notice from the service: %s", h.Notice)
+// doctorStandings explains every reason uploads are held back, each in
+// the same shape: the standing's own sentence, then the service's words
+// if it supplied any, then the standing's own remedy. Reading three
+// gates that stopped uploads for three different reasons therefore
+// takes learning one shape, and none of the wording is doctor's to
+// choose.
+//
+// None of them is a problem. Being behind the service's minimum, or
+// waiting out a pause, or holding an account whose data authorization
+// is unfinished, is not a broken machine: nothing doctor can do would
+// change any of it, and counting them would fail `trajector doctor` on
+// a healthy install over states the user resolves elsewhere.
+func doctorStandings(r *doctorReport, standings []upload.Standing) {
+	for _, s := range standings {
+		r.note("%s", doctorClause(s.Explain()))
+		if s.Message != "" {
+			r.detail(serviceSays, s.Message)
+		}
+		if remedy := s.Remedy(); remedy != "" {
+			r.detail("%s", remedy)
+		}
+		if s.Reason == upload.AuthorizationGate {
+			// The one gate a user is likeliest to read as data loss: the
+			// service refused the account, not the batch.
+			r.detail("Captured data is kept; nothing was quarantined.")
+		}
 	}
 }
 
-// doctorAuthorization relays the service's refusal of this account's
-// uploads for want of a completed data authorization.
-//
-// It is a note, not a problem, for the same reason being behind the
-// service's minimum version is: nothing on this machine is broken, and
-// nothing doctor can do would change it. Making it move the exit code
-// would fail `trajector doctor` on a healthy install over a state the
-// user resolves in a browser.
-func doctorAuthorization(r *doctorReport, a upload.AuthorizationNotice) {
-	if !a.Required {
-		return
+// doctorService relays what the service last said about anything other
+// than uploading, which is the notice and nothing else — every reason
+// it gave for not uploading is a standing.
+func doctorService(r *doctorReport, h platform.Handshake) {
+	if h.Notice != "" {
+		r.note("notice from the service: %s", h.Notice)
 	}
-	r.note("%s", doctorClause(authorizationPaused))
-	if a.Message != "" {
-		r.detail(serviceSays, a.Message)
-	}
-	r.detail("%s", authorizeHint(a.URL))
-	r.detail("Captured data is kept; nothing was quarantined.")
 }
 
 // doctorSelfcheck closes an enabled project's diagnosis by asking the

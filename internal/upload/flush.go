@@ -29,21 +29,12 @@ type FlushReply struct {
 	// longer read back as rawcalls, so the caller can say so — with the
 	// cause — instead of the records going quiet.
 	SetAside []Rejection `json:"set_aside,omitempty"`
-	// MinClientVersion is set when the service gates this client
-	// version, so the caller can name the required version without
-	// reading the handshake file across processes.
-	MinClientVersion string `json:"min_client_version,omitempty"`
-	// UpgradeMessage carries the service's own words about the refusal,
-	// for the same reason: the caller relays them without reaching
-	// across processes for the handshake file.
-	UpgradeMessage string `json:"upgrade_message,omitempty"`
-	// AuthorizeURL and AuthorizationMessage carry, for an
-	// AuthorizationRequired outcome, where the user completes the
-	// authorization and what the service said about it — again so the
-	// caller relays them without reaching for the handshake file.
-	AuthorizeURL         string `json:"authorize_url,omitempty"`
-	AuthorizationMessage string `json:"authorization_message,omitempty"`
-	Error                string `json:"error,omitempty"`
+	// Standing is the one reason this flush stopped, carrying both
+	// sentences the caller prints about it. It rides on the wire so the
+	// caller words a pause without reaching across processes for the
+	// uploader's own files.
+	Standing Standing `json:"standing,omitzero"`
+	Error    string   `json:"error,omitempty"`
 }
 
 // Handler serves the flush endpoint, for the composition root to mount
@@ -58,16 +49,12 @@ func (u *Uploader) Handler(serviceName string) http.Handler {
 		}
 		result, err := u.Flush(r.URL.Query().Get("force") == "1")
 		reply := FlushReply{
-			Service:          serviceName,
-			Outcome:          result.Outcome,
-			Batches:          result.Batches,
-			Records:          result.Records,
-			SetAside:         result.SetAside,
-			MinClientVersion: result.MinClientVersion,
-			UpgradeMessage:   result.UpgradeMessage,
-
-			AuthorizeURL:         result.AuthorizeURL,
-			AuthorizationMessage: result.AuthorizationMessage,
+			Service:  serviceName,
+			Outcome:  result.Outcome,
+			Batches:  result.Batches,
+			Records:  result.Records,
+			SetAside: result.SetAside,
+			Standing: result.Standing,
 		}
 		if err != nil {
 			reply.Error = err.Error()
