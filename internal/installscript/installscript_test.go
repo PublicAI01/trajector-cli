@@ -8,6 +8,12 @@
 // real sh runs the real file, fetching real archives over HTTP and
 // verifying real checksums, and the tests assert on what a user would
 // see and on what ends up on disk.
+//
+// Choosing which release to install is written twice — once in the
+// script, which cannot call trajector to do it, and once in the client
+// the binary upgrades itself with. Both are put the same questions
+// here, against the same release source, so a policy that changes on
+// one side alone fails rather than drifts.
 package installscript
 
 import (
@@ -21,11 +27,8 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
+	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 )
-
-// checksumsAsset is what the release pipeline calls the file listing
-// every archive's hash, and what the script insists on finding.
-const checksumsAsset = "trajector_checksums.txt"
 
 // hostArchive is the asset the script picks on the machine running the
 // test. Which platform is exercised is the host's, not an argument:
@@ -153,7 +156,7 @@ func TestTheScriptInstallsTheNewestReleaseAndSaysSo(t *testing.T) {
 	// Only this platform's archive and the checksum file are worth
 	// fetching; a script that pulled the other five would still pass
 	// every other assertion here.
-	want := []string{hostArchive("0.2.0"), checksumsAsset}
+	want := []string{hostArchive("0.2.0"), fakereleases.ChecksumsAsset}
 	if got := releases.Downloads(); !equal(got, want) {
 		t.Errorf("downloaded %v, want %v", got, want)
 	}
@@ -190,6 +193,106 @@ func TestTheHighestVersionWinsOverTheMostRecentlyPublished(t *testing.T) {
 	}
 	if got := installed(t, dir); string(got) != "two" {
 		t.Errorf("installed binary is %q, want the 0.2.0 build", got)
+	}
+}
+
+// installer is one of the two ways a machine moves to a published
+// release: the shell script a new user pipes into sh, and the client
+// the installed binary upgrades itself with. They cannot share code —
+// the script runs where no trajector exists yet — so the release
+// source is where they are held to the same answer.
+type installer struct {
+	name string
+	// picked is the version this installer settles on, given a release
+	// source to choose from.
+	picked func(t *testing.T, releases *fakereleases.Server) string
+}
+
+var installers = []installer{
+	{"the install script", pickedByScript},
+	{"the upgrade client", pickedByClient},
+}
+
+func pickedByScript(t *testing.T, releases *fakereleases.Server) string {
+	t.Helper()
+	dir := t.TempDir()
+	out, code := launch(t, releases, map[string]string{"TRAJECTOR_INSTALL_DIR": dir})
+	if code != 0 {
+		t.Fatalf("install.sh exited %d, want 0:\n%s", code, out)
+	}
+	return reportedVersion(t, out)
+}
+
+func pickedByClient(t *testing.T, releases *fakereleases.Server) string {
+	t.Helper()
+	// The client replaces the binary it is pointed at, so it is given
+	// one: a file standing in for an installation older than anything
+	// these tests publish.
+	execPath := filepath.Join(t.TempDir(), "trajector")
+	if err := os.WriteFile(execPath, []byte("an older build"), 0o755); err != nil {
+		t.Fatalf("planting the installed binary: %v", err)
+	}
+	out, err := selfupdate.Upgrade(execPath, "0.0.1", releases.IndexURL())
+	if err != nil {
+		t.Fatalf("the upgrade client installed nothing: %v", err)
+	}
+	if out.Kind != selfupdate.Upgraded {
+		t.Fatalf("the upgrade client left %s installed rather than moving to a release", out.From)
+	}
+	return out.To
+}
+
+// reportedVersion is the version install.sh says it put on the
+// machine, read back out of what a user sees rather than out of the
+// binary, so an installer that installs one build and announces
+// another is caught too.
+func reportedVersion(t *testing.T, out string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		rest, ok := strings.CutPrefix(line, "Installed trajector ")
+		if !ok {
+			continue
+		}
+		if version, _, ok := strings.Cut(rest, " in "); ok {
+			return version
+		}
+	}
+	t.Fatalf("install.sh reported no installed version:\n%s", out)
+	return ""
+}
+
+func TestADraftIsPassedOverEvenWhenItNamesTheHighestVersion(t *testing.T) {
+	for _, inst := range installers {
+		t.Run(inst.name, func(t *testing.T) {
+			releases := fakereleases.New(t)
+			releases.Publish(t, "0.2.0", []byte("two"))
+			// Prepared and tagged but never published: its archives
+			// cannot be downloaded, so an installer that picks it
+			// hands the user a failed install instead of an upgrade.
+			releases.PublishDraft(t, "0.9.0", []byte("unpublished"))
+
+			if got := inst.picked(t, releases); got != "0.2.0" {
+				t.Errorf("installed %s, want 0.2.0", got)
+			}
+		})
+	}
+}
+
+func TestACandidatePublishedAfterItsFinishedVersionDoesNotWin(t *testing.T) {
+	for _, inst := range installers {
+		t.Run(inst.name, func(t *testing.T) {
+			releases := fakereleases.New(t)
+			releases.Publish(t, "0.3.0", []byte("three"))
+			// Cut after the version it was a candidate for, which
+			// happens whenever a candidate is tagged late. It heads
+			// the index, and precedence still puts it below the
+			// finished version it precedes.
+			releases.Publish(t, "0.3.0-rc1", []byte("three-rc"))
+
+			if got := inst.picked(t, releases); got != "0.3.0" {
+				t.Errorf("installed %s, want 0.3.0", got)
+			}
+		})
 	}
 }
 
@@ -287,7 +390,7 @@ func TestAVerificationFailureLeavesTheBinaryAlreadyInstalledAlone(t *testing.T) 
 
 func TestAReleaseWithNoChecksumFileInstallsNothing(t *testing.T) {
 	releases := fakereleases.New(t)
-	releases.PublishWithout(t, "0.2.0", []byte("two"), checksumsAsset)
+	releases.PublishWithout(t, "0.2.0", []byte("two"), fakereleases.ChecksumsAsset)
 	dir := t.TempDir()
 
 	out, code := launch(t, releases, map[string]string{"TRAJECTOR_INSTALL_DIR": dir})

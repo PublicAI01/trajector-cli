@@ -102,39 +102,94 @@ fetch_to_file() {
 # pre-releases, and every 0.x release is published as one.
 #
 # The index is ordered by publication, which is not version order: a
-# patch to an older line, published after a newer minor, is listed
-# first and would otherwise be handed to every new install. So the tags
-# are compared as numbers, the way `trajector upgrade` compares them.
-# A tag that is not three numbers behind an optional "v" is skipped;
-# between tags with the same three numbers the one published most
-# recently wins, which puts a finished release ahead of its own
-# candidates.
+# patch to an older line, or a release candidate cut after the version
+# it was a candidate for, is listed first and would otherwise be handed
+# to every new install. So tags are ordered by semantic-version
+# precedence — the same order `trajector upgrade` applies, and the two
+# must not drift apart. A tag that is not three numbers behind an
+# optional "v" is skipped, and so is a draft: its assets are not
+# downloadable, so choosing one installs nothing.
+#
+# The draft flag is read positionally: the index states a release's tag
+# before its draft flag, so a "draft" marker belongs to the tag most
+# recently seen. Between tags of equal precedence the one published
+# most recently wins.
 newest_tag() {
 	fetch "$API_BASE/repos/$REPO/releases" |
 		tr ',' '\n' |
-		sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+		sed -n \
+			-e 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/tag \1/p' \
+			-e 's/.*"draft"[[:space:]]*:[[:space:]]*true.*/draft/p' |
 		awk '
-			{
-				version = $0
-				sub(/^v/, "", version)
-				sub(/[-+].*$/, "", version)
-				if (version !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) next
-				split(version, n, ".")
-				major = n[1] + 0
-				minor = n[2] + 0
-				patch = n[3] + 0
-				if (!found ||
-				    major > best_major ||
-				    (major == best_major && minor > best_minor) ||
-				    (major == best_major && minor == best_minor && patch > best_patch)) {
-					found = 1
-					best_major = major
-					best_minor = minor
-					best_patch = patch
-					best_tag = $0
-				}
+			# compare_identifier orders one dot-separated pre-release
+			# identifier against another: numeric ones numerically and
+			# below any alphanumeric one, the rest as text.
+			function compare_identifier(a, b,   a_num, b_num) {
+				a_num = (a ~ /^[0-9]+$/)
+				b_num = (b ~ /^[0-9]+$/)
+				if (a_num && b_num) return (a + 0) - (b + 0)
+				if (a_num) return -1
+				if (b_num) return 1
+				if (a == b) return 0
+				return (a < b) ? -1 : 1
 			}
-			END { if (found) print best_tag }
+
+			# compare_prerelease orders two pre-release suffixes.
+			# Having none outranks having any, so a finished version
+			# stands above every candidate for it however late a
+			# candidate was published.
+			function compare_prerelease(a, b,   x, y, n, m, i, order) {
+				if (a == b) return 0
+				if (a == "") return 1
+				if (b == "") return -1
+				n = split(a, x, ".")
+				m = split(b, y, ".")
+				for (i = 1; i <= n && i <= m; i++) {
+					order = compare_identifier(x[i], y[i])
+					if (order != 0) return order
+				}
+				return n - m
+			}
+
+			function outranks_best(major, minor, patch, pre) {
+				if (major != best_major) return major > best_major
+				if (minor != best_minor) return minor > best_minor
+				if (patch != best_patch) return patch > best_patch
+				return compare_prerelease(pre, best_pre) > 0
+			}
+
+			# consider judges the entry whose lines have been read.
+			function consider(   tag, version, pre, cut, n) {
+				tag = pending
+				pending = ""
+				if (tag == "" || pending_draft) return
+				version = tag
+				sub(/^v/, "", version)
+				sub(/\+.*$/, "", version)
+				pre = ""
+				cut = index(version, "-")
+				if (cut > 0) {
+					pre = substr(version, cut + 1)
+					version = substr(version, 1, cut - 1)
+				}
+				if (version !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) return
+				split(version, n, ".")
+				if (found && !outranks_best(n[1] + 0, n[2] + 0, n[3] + 0, pre)) return
+				found = 1
+				best_major = n[1] + 0
+				best_minor = n[2] + 0
+				best_patch = n[3] + 0
+				best_pre = pre
+				best_tag = tag
+			}
+
+			/^draft$/ { pending_draft = 1; next }
+			/^tag / {
+				consider()
+				pending = substr($0, 5)
+				pending_draft = 0
+			}
+			END { consider(); if (found) print best_tag }
 		'
 }
 
