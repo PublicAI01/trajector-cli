@@ -187,7 +187,7 @@ func TestStatusAnswersAboutAnUnprovenHolderWithoutPayingTheStartupGrace(t *testi
 
 	p := proxylife.For(e.layout(), e.deps.Version, "unused", e.deps.ProxyAddr)
 	start = time.Now()
-	p.SettledHealth()
+	p.Settled()
 	settled := time.Since(start)
 
 	if reported*2 >= settled {

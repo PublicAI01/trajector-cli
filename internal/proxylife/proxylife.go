@@ -124,6 +124,44 @@ func (h Holder) String() string {
 	}
 }
 
+// Verdict is one reading of the proxy port: who holds it, what a
+// holder proven ours says about itself, and why an unproven one could
+// not be trusted. It carries no credential, so a surface may render or
+// serialize it whole. Whether this build may take the port over is not
+// a field to re-derive but the two predicates below.
+type Verdict struct {
+	// Addr is the address this verdict is about.
+	Addr string
+	// Holder is the proven answer to who holds the port.
+	Holder Holder
+	// Health is the holder's self-report, zero unless Holder is
+	// HolderOurs.
+	Health Health
+	// Reason explains a HolderForeign verdict: which way the holder's
+	// proof failed — no proof offered, unverifiable for want of a
+	// matching admin token, silent, or unintelligible. It is what
+	// separates an authentication problem from a genuine stranger, so
+	// surfaces render it instead of reaching a verdict of their own. It
+	// is non-nil for every HolderForeign verdict and nil otherwise.
+	Reason error
+}
+
+// Replaceable reports that a proxy of ours holds the port and this
+// build may take it over: only a strictly older release is replaced,
+// which is the one spelling of that decision — see ReuseReason for the
+// sentence surfaces print and supersedes for the ordering rule.
+func (v Verdict) Replaceable(ourVersion string) bool {
+	return v.Holder == HolderOurs && supersedes(ourVersion, v.Health.Version)
+}
+
+// Serving reports that a proxy of ours holds the port and this build
+// leaves it alone: an equal, newer, or unordered version keeps
+// serving. Ensure is a no-op against such a holder, and a proxy just
+// started is up once this is true of it.
+func (v Verdict) Serving(ourVersion string) bool {
+	return v.Holder == HolderOurs && !v.Replaceable(ourVersion)
+}
+
 // Selfcheck is what the proxy reports about one project token.
 type Selfcheck = apiproxy.Selfcheck
 
@@ -150,24 +188,23 @@ func (p *Proxy) Addr() string { return p.addr }
 // BaseURL is the base URL injected into a project enabled with token.
 func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/" + token }
 
-// Ensure makes sure a healthy proxy is listening: already-healthy is a
-// no-op, a strictly older release is asked to drain and replaced, and
-// nothing listening is started. A holder whose version is equal, newer,
-// or out of order with this build's — see Supersedes — is reused as it
-// stands, and a differing-version reuse is noted in the proxy log.
-// Concurrent callers converge because the port bind is the
-// single-instance lock and losers defer to the winner.
+// Ensure makes sure a healthy proxy is listening: a holder this build
+// leaves serving is a no-op, a replaceable one is asked to drain and
+// taken over, and nothing listening is started. A differing-version
+// reuse is noted in the proxy log. Concurrent callers converge because
+// the port bind is the single-instance lock and losers defer to the
+// winner.
 func (p *Proxy) Ensure() error {
-	switch h, holder, why := p.SettledHealth(); holder {
-	case HolderForeign:
-		return why
-	case HolderOurs:
-		if !Supersedes(p.version, h.Version) {
-			if h.Version != p.version {
-				p.noteReuse(h.Version)
-			}
-			return nil
+	v := p.Settled()
+	switch {
+	case v.Holder == HolderForeign:
+		return v.Reason
+	case v.Serving(p.version):
+		if v.Health.Version != p.version {
+			p.noteReuse(v.Health.Version)
 		}
+		return nil
+	case v.Replaceable(p.version):
 		// A strictly older release holds the port. Left alone it could
 		// live until its next idle exit, so ask it to drain and take
 		// over. A drain that already failed names what stands in the
@@ -188,25 +225,24 @@ func (p *Proxy) Ensure() error {
 	return p.waitHealthy()
 }
 
-// Health reports who holds the proxy port and, when it is ours, the
-// proxy's self-report. Health is zero unless the holder is HolderOurs.
-// A HolderForeign verdict always carries a non-nil reason naming which
-// way the proof failed — no proof offered, unverifiable for want of a
-// matching admin token, silent, or unintelligible — so a surface can
-// tell a stranger from an authentication problem.
-func (p *Proxy) Health() (Health, Holder, error) {
+// Observe reads the port as it stands and pays no startup grace: it is
+// what report-only surfaces call, so a diagnosis answers at once. A
+// holder that only proves itself a moment from now is reported as it
+// is right now; callers about to act on the verdict want Settled
+// instead, and the method name is the whole difference.
+func (p *Proxy) Observe() Verdict {
 	token, holder, why := p.verify()
 	if holder != HolderOurs {
-		return Health{}, holder, why
+		return Verdict{Addr: p.addr, Holder: holder, Reason: why}
 	}
 	var h Health
 	if err := p.get(apiproxy.HealthzPath, token, &h, "a health request"); err != nil {
-		return Health{}, HolderForeign, err
+		return Verdict{Addr: p.addr, Holder: HolderForeign, Reason: err}
 	}
 	if h.Service != apiproxy.ServiceName {
-		return Health{}, HolderForeign, fmt.Errorf("proxy at %s calls itself %q", p.addr, h.Service)
+		return Verdict{Addr: p.addr, Holder: HolderForeign, Reason: fmt.Errorf("proxy at %s calls itself %q", p.addr, h.Service)}
 	}
-	return h, HolderOurs, nil
+	return Verdict{Addr: p.addr, Holder: HolderOurs, Health: h}
 }
 
 // verify establishes who holds the port before anything is trusted or
@@ -271,10 +307,10 @@ func (p *Proxy) verify() (string, Holder, error) {
 	return "", HolderForeign, fmt.Errorf("%w at %s: its challenge answer matches none of the admin tokens published for this address", ErrProxyUnverified, p.addr)
 }
 
-// settledVerify is verify with the startup window SettledHealth
-// explains allowed for: the management calls that act on the holder go
-// through it, so a sibling that has bound the port but not published
-// yet is waited out instead of being blamed for the port.
+// settledVerify is verify with the startup window Settled explains
+// allowed for: the management calls that act on the holder go through
+// it, so a sibling that has bound the port but not published yet is
+// waited out instead of being blamed for the port.
 func (p *Proxy) settledVerify() (string, Holder, error) {
 	return settle(p.verify)
 }
@@ -293,19 +329,22 @@ func settle[T any](verdict func() (T, Holder, error)) (T, Holder, error) {
 	}
 }
 
-// SettledHealth is Health with the startup window allowed for. A proxy
-// between binding its port and publishing its admin token is
-// indistinguishable from a stranger holding the port, and a sibling
-// that won the bind a moment ago is by far the likelier of the two:
-// concurrent starts converge only because losers defer to the winner,
-// which a loser reporting ErrPortOccupied does not do. The grace is
-// paid only by callers about to act on the verdict — Ensure, a serve
-// process that just lost the bind, the wait for a freshly started
-// proxy, and the drain and flush requests aimed at the holder;
-// report-only surfaces read Health directly, so a diagnosis answers
-// about the port as it stands.
-func (p *Proxy) SettledHealth() (Health, Holder, error) {
-	return settle(p.Health)
+// Settled is Observe with the startup window allowed for, and the name
+// says what it costs: up to foreignSettle of waiting. A proxy between
+// binding its port and publishing its admin token is indistinguishable
+// from a stranger holding the port, and a sibling that won the bind a
+// moment ago is by far the likelier of the two: concurrent starts
+// converge only because losers defer to the winner, which a loser
+// reporting ErrPortOccupied does not do. Only callers about to act on
+// the verdict pay it — Ensure, a serve process that just lost the
+// bind, the wait for a freshly started proxy, and the drain and flush
+// requests aimed at the holder. Report-only surfaces call Observe.
+func (p *Proxy) Settled() Verdict {
+	v, _, _ := settle(func() (Verdict, Holder, error) {
+		v := p.Observe()
+		return v, v.Holder, v.Reason
+	})
+	return v
 }
 
 // Selfcheck asks the proxy what it would do with token, over the exact
@@ -459,14 +498,14 @@ func (p *Proxy) waitHealthy() error {
 		// The bind may have been won by a sibling rather than this
 		// call's own spawn; any holder Ensure would reuse counts as
 		// healthy, or a loser would wait out a winner it defers to.
-		h, holder, why := p.SettledHealth()
-		if holder == HolderOurs && !Supersedes(p.version, h.Version) {
+		v := p.Settled()
+		if v.Serving(p.version) {
 			return nil
 		}
 		if time.Now().After(deadline) {
 			lastProbe := ""
-			if why != nil {
-				lastProbe = fmt.Sprintf(" (last probe: %v)", why)
+			if v.Reason != nil {
+				lastProbe = fmt.Sprintf(" (last probe: %v)", v.Reason)
 			}
 			return fmt.Errorf("proxy did not become healthy at %s within %s%s (log: %s)", p.addr, startTimeout, lastProbe, p.layout.ProxyLog())
 		}

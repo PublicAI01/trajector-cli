@@ -9,20 +9,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
-// ProxyState is who holds the proxy port and, when it is ours, the
-// proxy's self-report.
-type ProxyState struct {
-	Addr   string
-	Holder proxylife.Holder
-	// Health is meaningful only when Holder is HolderOurs.
-	Health proxylife.Health
-	// Reason explains a HolderForeign verdict: which way the holder's
-	// proof failed. It is what separates an authentication problem from
-	// a genuine stranger, so surfaces render it instead of re-deriving
-	// a verdict of their own.
-	Reason error
-}
-
 // SpoolState is the capture spool as one readable value.
 type SpoolState struct {
 	// OpenErr, when non-nil, means the spool could not be opened or its
@@ -55,8 +41,10 @@ type TokenStoreState struct {
 // status renders it, doctor renders and repairs from it, and the
 // bundle serializes it — three surfaces, one set of facts.
 type Diagnosis struct {
-	Project  ProjectStatus
-	Proxy    ProxyState
+	Project ProjectStatus
+	// Proxy is who holds the proxy port, read without the startup grace
+	// only callers about to act on it pay.
+	Proxy    proxylife.Verdict
 	Spool    SpoolState
 	Uploads  upload.State
 	Rejected []upload.RejectedBatch
@@ -94,13 +82,11 @@ func (m *Machine) Diagnose(dir string) (Diagnosis, error) {
 	}
 	d.Project = st
 
-	// The verdict is read bare, without proxylife.SettledHealth's
-	// startup grace: only callers that act on the verdict pay to wait
-	// out a sibling's startup. A diagnosis reports the port as it
-	// stands and must answer at once.
-	h, holder, why := m.proxy.Health()
-	d.Proxy = ProxyState{Addr: m.proxy.Addr(), Holder: holder, Health: h, Reason: why}
-	if st.Enabled && holder == proxylife.HolderOurs {
+	// Observe, never Settled: only callers that act on the verdict pay
+	// to wait out a sibling's startup. A diagnosis reports the port as
+	// it stands and must answer at once.
+	d.Proxy = m.proxy.Observe()
+	if st.Enabled && d.Proxy.Holder == proxylife.HolderOurs {
 		if reply, err := m.proxy.Selfcheck(st.Token); err == nil {
 			d.Selfcheck = &reply
 		}

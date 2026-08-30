@@ -146,12 +146,12 @@ func (m *Machine) ServeProxy(ctx context.Context, idle time.Duration, stdout, st
 		// the bind failed for its own reason (permissions, a broken
 		// network stack) and that error is the report, not an occupancy
 		// verdict.
-		switch h, holder, why := m.proxy.SettledHealth(); holder {
+		switch v := m.proxy.Settled(); v.Holder {
 		case proxylife.HolderOurs:
-			fmt.Fprintf(stdout, "proxy already running at %s (version %s)\n", m.proxy.Addr(), h.Version)
+			fmt.Fprintf(stdout, "proxy already running at %s (version %s)\n", m.proxy.Addr(), v.Health.Version)
 			return nil
 		case proxylife.HolderForeign:
-			return why
+			return v.Reason
 		default:
 			return fmt.Errorf("binding %s: %w", m.proxy.Addr(), err)
 		}

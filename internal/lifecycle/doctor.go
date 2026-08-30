@@ -165,28 +165,26 @@ func doctorPause(r *doctorReport, st ProjectStatus) {
 // the one finding doctor must shout about and can never repair:
 // injected projects would send credentials to it. The verdict's reason
 // decides the advice — only a proven stranger earns the stop-the-process
-// remedy; an authentication failure may be the user's own proxy. Among
-// our own proxies only a strictly older release is replaced; any other
-// version keeps serving, or two coexisting builds would drain each
-// other on every run.
+// remedy; an authentication failure may be the user's own proxy. Which
+// of our own proxies doctor replaces and which it leaves alone is the
+// verdict's own answer, never a version comparison made here.
 func (m *Machine) doctorProxy(r *doctorReport, d Diagnosis) {
-	switch d.Proxy.Holder {
-	case proxylife.HolderOurs:
-		h := d.Proxy.Health
-		up := time.Duration(h.UptimeSeconds) * time.Second
-		switch {
-		case proxylife.Supersedes(m.deps.Version, h.Version):
-			if err := m.proxy.Ensure(); err != nil {
-				r.problem("a trajector proxy version %s holds %s and could not be replaced: %v", h.Version, d.Proxy.Addr, err)
-				return
-			}
-			r.fixed("replaced the version %s proxy at %s with this build (%s)", h.Version, d.Proxy.Addr, m.deps.Version)
-		case h.Version != m.deps.Version:
-			r.ok("proxy running at %s (version %s, up %s); %s", d.Proxy.Addr, h.Version, up, proxylife.ReuseReason)
-		default:
-			r.ok("proxy running at %s (version %s, up %s)", d.Proxy.Addr, h.Version, up)
+	h := d.Proxy.Health
+	up := time.Duration(h.UptimeSeconds) * time.Second
+	switch {
+	case d.Proxy.Replaceable(m.deps.Version):
+		if err := m.proxy.Ensure(); err != nil {
+			r.problem("a trajector proxy version %s holds %s and could not be replaced: %v", h.Version, d.Proxy.Addr, err)
+			return
 		}
-	case proxylife.HolderForeign:
+		r.fixed("replaced the version %s proxy at %s with this build (%s)", h.Version, d.Proxy.Addr, m.deps.Version)
+	case d.Proxy.Serving(m.deps.Version):
+		if h.Version != m.deps.Version {
+			r.ok("proxy running at %s (version %s, up %s); %s", d.Proxy.Addr, h.Version, up, proxylife.ReuseReason)
+			return
+		}
+		r.ok("proxy running at %s (version %s, up %s)", d.Proxy.Addr, h.Version, up)
+	case d.Proxy.Holder == proxylife.HolderForeign:
 		r.problem("%v", d.Proxy.Reason)
 		if remedy := ProxyRemedy(d.Proxy.Reason); remedy != "" {
 			r.detail("%s", remedy)
