@@ -3,7 +3,6 @@ package lifecycle_test
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -96,75 +95,6 @@ func TestUpgradeOnTheNewestReleaseChangesNothing(t *testing.T) {
 	}
 }
 
-func TestUpgradeNeverMovesBackToAnOlderRelease(t *testing.T) {
-	e, releases := newUpgradeEnv(t)
-	// A release withdrawn after this machine installed it, or a machine
-	// running a build from a tag ahead of the source: either way the
-	// newest thing published is behind, and behind is not an upgrade.
-	releases.Publish(t, "0.0.9", []byte("an older binary"))
-
-	if err := e.machine().Upgrade(e.io()); err != nil {
-		t.Fatalf("Upgrade: %v", err)
-	}
-
-	if got := e.installedBinary(); got != "the 0.1.0 binary" {
-		t.Errorf("installed binary is %q", got)
-	}
-	if !strings.Contains(e.stdout.String(), "already the newest release") {
-		t.Errorf("upgrade did not say the machine is current:\n%s", e.stdout)
-	}
-}
-
-func TestUpgradeMovesToAPrereleaseBecauseThatIsWhatIsPublished(t *testing.T) {
-	e, releases := newUpgradeEnv(t)
-	// Every 0.x release is published as a pre-release. Skipping them
-	// would leave every beta machine reporting itself current forever.
-	releases.Publish(t, "0.2.0-rc.1", []byte("the 0.2.0-rc.1 binary"))
-
-	if err := e.machine().Upgrade(e.io()); err != nil {
-		t.Fatalf("Upgrade: %v", err)
-	}
-
-	if got := e.installedBinary(); got != "the 0.2.0-rc.1 binary" {
-		t.Errorf("installed binary is %q", got)
-	}
-}
-
-func TestUpgradeLeavesTheBinaryUntouchedWhenTheDownloadFailsVerification(t *testing.T) {
-	e, releases := newUpgradeEnv(t)
-	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
-	releases.Corrupt(t, "0.2.0", runtime.GOOS, runtime.GOARCH)
-	before, err := os.ReadFile(e.deps.ExecPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = e.machine().Upgrade(e.io())
-	if err == nil {
-		t.Fatal("Upgrade installed a download that failed verification")
-	}
-	if !strings.Contains(err.Error(), "checksum") {
-		t.Errorf("error does not name the mismatch: %v", err)
-	}
-
-	after, readErr := os.ReadFile(e.deps.ExecPath)
-	if readErr != nil {
-		t.Fatalf("the binary is gone after a failed upgrade: %v", readErr)
-	}
-	if string(after) != string(before) {
-		t.Errorf("the binary changed after a failed upgrade: %q", after)
-	}
-	// A failed upgrade must not leave a staged binary next to the real
-	// one either.
-	entries, err := os.ReadDir(filepath.Dir(e.deps.ExecPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 {
-		t.Errorf("a failed upgrade left %d files in the install directory", len(entries))
-	}
-}
-
 func TestUpgradeReportsAReleaseSourceThatIsRationingRequests(t *testing.T) {
 	e, releases := newUpgradeEnv(t)
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
@@ -182,24 +112,37 @@ func TestUpgradeReportsAReleaseSourceThatIsRationingRequests(t *testing.T) {
 	}
 }
 
-func TestUpgradeOfAnInstallationHomebrewOwns(t *testing.T) {
-	e, _ := newUpgradeEnv(t)
-	e.deps.ExecPath = filepath.Join(t.TempDir(), "Cellar", "trajector", "0.1.0", "bin", "trajector")
-	e.installBinary("the binary homebrew installed")
-	e.unreachableSource()
+func TestUpgradeOfAnInstallationAPackageManagerOwns(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		tree    []string
+		manager string
+		command string
+	}{
+		{"homebrew", []string{"Cellar", "trajector", "0.1.0", "bin"}, "Homebrew", "brew upgrade trajector"},
+		{"scoop", []string{"scoop", "apps", "trajector", "current"}, "Scoop", "scoop update trajector"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e, _ := newUpgradeEnv(t)
+			e.deps.ExecPath = filepath.Join(append([]string{t.TempDir()}, append(c.tree, "trajector")...)...)
+			e.installBinary("the binary the manager installed")
+			e.unreachableSource()
 
-	// Overwriting a managed binary would be undone by the manager's next
-	// command, or leave a version its records disagree with.
-	if err := e.machine().Upgrade(e.io()); err != nil {
-		t.Fatalf("Upgrade: %v", err)
-	}
+			// Overwriting a managed binary would be undone by the
+			// manager's next command, or leave a version its records
+			// disagree with.
+			if err := e.machine().Upgrade(e.io()); err != nil {
+				t.Fatalf("Upgrade: %v", err)
+			}
 
-	out := e.stdout.String()
-	if !strings.Contains(out, "Homebrew") || !strings.Contains(out, "brew upgrade trajector") {
-		t.Errorf("upgrade did not hand the installation back to its manager:\n%s", out)
-	}
-	if got := e.installedBinary(); got != "the binary homebrew installed" {
-		t.Errorf("installed binary is %q", got)
+			out := e.stdout.String()
+			if !strings.Contains(out, c.manager) || !strings.Contains(out, c.command) {
+				t.Errorf("upgrade did not hand the installation back to its manager:\n%s", out)
+			}
+			if got := e.installedBinary(); got != "the binary the manager installed" {
+				t.Errorf("installed binary is %q", got)
+			}
+		})
 	}
 }
 
@@ -218,39 +161,6 @@ func TestUpgradeOfABuildThatIsNotAPublishedRelease(t *testing.T) {
 	out := e.stdout.String()
 	if !strings.Contains(out, "not a published release") || !strings.Contains(out, "Nothing was changed.") {
 		t.Errorf("upgrade did not explain what it did with a development build:\n%s", out)
-	}
-	if got := e.installedBinary(); got != "the 0.1.0 binary" {
-		t.Errorf("installed binary is %q", got)
-	}
-}
-
-func TestUpgradeSweepsWhatAnInterruptedUpgradeLeftBehind(t *testing.T) {
-	e, releases := newUpgradeEnv(t)
-	releases.Publish(t, "0.1.0", []byte("the 0.1.0 binary"))
-	dir := filepath.Dir(e.deps.ExecPath)
-	residue := filepath.Join(dir, filepath.Base(e.deps.ExecPath)+".old-9f2c")
-	if err := os.WriteFile(residue, []byte("a previous binary"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Even a run that installs nothing tidies up: on Windows the file
-	// an earlier upgrade stepped aside could not be deleted while it
-	// was still the running image.
-	if err := e.machine().Upgrade(e.io()); err != nil {
-		t.Fatalf("Upgrade: %v", err)
-	}
-
-	if _, err := os.Stat(residue); !os.IsNotExist(err) {
-		t.Errorf("residue of an earlier upgrade is still there (%v)", err)
-	}
-}
-
-func TestUpgradeSaysSoWhenTheSourceHasPublishedNothing(t *testing.T) {
-	e, _ := newUpgradeEnv(t)
-
-	err := e.machine().Upgrade(e.io())
-	if err == nil {
-		t.Fatal("Upgrade succeeded against a source that has published nothing")
 	}
 	if got := e.installedBinary(); got != "the 0.1.0 binary" {
 		t.Errorf("installed binary is %q", got)

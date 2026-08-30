@@ -20,13 +20,13 @@ const (
 // runnable as: everyone may run it, only its owner may rewrite it.
 const executablePerm = 0o755
 
-// Install puts binary at execPath, which is normally the running
+// install puts binary at execPath, which is normally the running
 // program's own path. The new content is staged as a sibling of
 // execPath — same directory, so the move into place is a rename within
 // one filesystem — and only then swapped in. Every failure leaves the
 // previous binary in place and runnable: a machine that cannot be
 // upgraded must still be a machine that works.
-func Install(execPath string, binary []byte) error {
+func install(execPath string, binary []byte) error {
 	// Whatever occupies execPath must be a file before anything is
 	// staged over it. What a rename does when a directory stands there
 	// is not the same everywhere — POSIX refuses it, Windows can move
@@ -71,6 +71,10 @@ func Install(execPath string, binary []byte) error {
 // be deleted while it was still the running process. Anything still
 // held open is left for the next sweep. This is housekeeping, not a
 // diagnosis: it reports nothing and fails at nothing.
+//
+// Upgrade sweeps before it does anything else. It is a second entry
+// point because doctor tidies the same residue on a run that installs
+// nothing — the user never had to know an upgrade was interrupted.
 func SweepResidue(execPath string) {
 	dir := filepath.Dir(execPath)
 	entries, err := os.ReadDir(dir)

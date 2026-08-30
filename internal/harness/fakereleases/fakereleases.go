@@ -23,9 +23,11 @@ import (
 	"testing"
 )
 
-// checksumsAsset is what the release pipeline calls the file listing
-// every archive's hash.
-const checksumsAsset = "trajector_checksums.txt"
+// ChecksumsAsset is what the release pipeline calls the file listing
+// every archive's hash. Every test that names that file names it from
+// here, so a rename of the published asset is one edit and every
+// installer test that would break on it breaks together.
+const ChecksumsAsset = "trajector_checksums.txt"
 
 // platforms is every platform the release pipeline builds for. A fake
 // release carries all of them, so asset selection is exercised against
@@ -116,7 +118,7 @@ func (s *Server) publish(t *testing.T, tag, version string, build func(goos stri
 		sum := sha256.Sum256(archive)
 		fmt.Fprintf(&sums, "%s  %s\n", hex.EncodeToString(sum[:]), name)
 	}
-	rel.assets[checksumsAsset] = []byte(sums.String())
+	rel.assets[ChecksumsAsset] = []byte(sums.String())
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
