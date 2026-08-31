@@ -83,6 +83,28 @@ func (m *Machine) offerOptionalSettings(io IO, st report.ProjectStatus) {
 	}
 }
 
+// optionalSettingStatuses classifies every optional setting for the
+// diagnosis status renders. A decision store that cannot be read reads
+// as no decisions, exactly as when enable asks: every true then
+// classifies as the user's own.
+func (m *Machine) optionalSettingStatuses(st report.ProjectStatus) []report.OptionalSettingStatus {
+	decisions, err := m.consent.SettingDecisions(st.Hash)
+	if err != nil {
+		decisions = nil
+	}
+	statuses := make([]report.OptionalSettingStatus, 0, len(claudesettings.OptionalSettings))
+	for _, s := range claudesettings.OptionalSettings {
+		d, recorded := decisions[s.Key]
+		classified := claudesettings.ClassifySetting(st.Root, m.deps.Home, s.Key, recorded && wroteSetting(d))
+		statuses = append(statuses, report.OptionalSettingStatus{
+			Key:      s.Key,
+			State:    classified.State,
+			Declined: recorded && d.Answer == consent.AnswerDeclined,
+		})
+	}
+	return statuses
+}
+
 // applySettingAnswer records one answered question and carries an
 // acceptance out. Record before write: a write without its record could
 // never be undone — disable consults only the record — while a record

@@ -52,6 +52,80 @@ func TestStatusShowsTheStateOfADeviceThatJustEnabledAProject(t *testing.T) {
 	}
 }
 
+// What the optional-settings line says is settled at the renderer;
+// this is that the diagnosis hands it the state enable left behind.
+func TestStatusCarriesTheOptionalSettingAnswerEnableRecorded(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		seed   func(t *testing.T, e *env)
+		stdin  string
+		want   string
+		reject string
+	}{
+		{
+			name:  "accepted and written by trajector",
+			stdin: "yes\ny\n",
+			want:  "Optional settings: " + optionalKey + " on (set by trajector).",
+		},
+		{
+			name:   "declined once",
+			stdin:  "yes\nn\n",
+			want:   "Optional settings: 1 declined. Run `trajector enable` to review.",
+			reject: "costs you nothing",
+		},
+		{
+			name: "on as the user's own choice",
+			seed: func(t *testing.T, e *env) {
+				writeUserSettings(t, e, `{"showThinkingSummaries": true}`)
+			},
+			stdin:  "yes\n",
+			want:   "Optional settings: " + optionalKey + " on.",
+			reject: "set by trajector",
+		},
+		{
+			// stdin ends before the question, so nothing was answered,
+			// nothing recorded: status still recommends.
+			name:  "left off with no answer recorded",
+			stdin: "yes\n",
+			want: "One optional setting is off: " + optionalKey + ". Turning it on costs " +
+				"you nothing and makes your records more complete. Run `trajector enable` " +
+				"to see what it changes.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.startProxy()
+			if tc.seed != nil {
+				tc.seed(t, e)
+			}
+			e.stdin = tc.stdin
+			if err := e.machine().Enable(e.project, e.io()); err != nil {
+				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
+			}
+			e.stdout.Reset()
+			out := e.statusOutput()
+
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("status = %q, want it to contain %q", out, tc.want)
+			}
+			if tc.reject != "" && strings.Contains(out, tc.reject) {
+				t.Errorf("status = %q, want no %q", out, tc.reject)
+			}
+		})
+	}
+}
+
+func TestStatusShowsNoOptionalSettingLineForAProjectNotEnabled(t *testing.T) {
+	e := newEnv(t)
+	out := e.statusOutput()
+
+	for _, unwanted := range []string{"Optional settings", "optional setting", optionalKey} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("status = %q, want no %q for a project that is not enabled", out, unwanted)
+		}
+	}
+}
+
 func TestStatusReportsAHealthzCopyingPortHolder(t *testing.T) {
 	e := newEnv(t)
 	im := e.occupyPortWithHealthzCopy()

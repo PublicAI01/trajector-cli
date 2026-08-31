@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/capture"
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 )
@@ -42,6 +43,9 @@ func Dashboard(w io.Writer, d Diagnosis) {
 		}
 		if st.UpstreamMoved.Happened() {
 			fmt.Fprintf(w, "  The upstream moved from %s at %s (base-URL configuration change).\n", st.UpstreamMoved.From, st.UpstreamMoved.At)
+		}
+		for _, line := range optionalSettingLines(d.OptionalSettings) {
+			fmt.Fprintf(w, "  %s\n", line)
 		}
 	case !st.Enabled && !st.Injected():
 		fmt.Fprintln(w, "  Not enabled. Run `trajector enable` to contribute from this project.")
@@ -130,4 +134,35 @@ func Dashboard(w io.Writer, d Diagnosis) {
 		fmt.Fprintln(w, "\nService")
 		fmt.Fprintf(w, "  Notice from the service: %s\n", d.Handshake.Notice)
 	}
+}
+
+// optionalSettingLines closes the Project section with the optional
+// settings. A setting that is on is stated as on; a declined one keeps
+// its single factual line and is never argued with again; only a
+// setting that is off and was never declined gets the recommendation.
+func optionalSettingLines(settings []OptionalSettingStatus) []string {
+	var lines []string
+	declined := 0
+	var off []string
+	for _, s := range settings {
+		switch {
+		case s.State == claudesettings.OnByUs:
+			lines = append(lines, fmt.Sprintf("Optional settings: %s on (set by trajector).", s.Key))
+		case s.State == claudesettings.OnByUser:
+			lines = append(lines, fmt.Sprintf("Optional settings: %s on.", s.Key))
+		case s.Declined:
+			declined++
+		default:
+			off = append(off, s.Key)
+		}
+	}
+	if declined > 0 {
+		lines = append(lines, fmt.Sprintf("Optional settings: %d declined. Run `trajector enable` to review.", declined))
+	}
+	for _, key := range off {
+		lines = append(lines, fmt.Sprintf("One optional setting is off: %s. "+
+			"Turning it on costs you nothing and makes your records more complete. "+
+			"Run `trajector enable` to see what it changes.", key))
+	}
+	return lines
 }

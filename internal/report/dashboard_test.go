@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -187,6 +188,74 @@ func TestStatusPrintsEveryStandingWithTheServicesWordsBetween(t *testing.T) {
 	if explain, says := strings.Index(out, d.Standings[0].Explain()), strings.Index(out, "The service says:"); explain > says {
 		t.Errorf("status = %q, want the standing's own sentence before the service's words", out)
 	}
+}
+
+// The Project section of a contributing project ends with the optional
+// settings. Three of the lines are finalized wording; the fourth — a
+// true of the user's own — is the same statement without the
+// set-by-trajector mark.
+func TestStatusEndsTheProjectSectionWithTheOptionalSetting(t *testing.T) {
+	const key = claudesettings.KeyShowThinkingSummaries
+	recommendation := "One optional setting is off: " + key + ". " +
+		"Turning it on costs you nothing and makes your records more complete. " +
+		"Run `trajector enable` to see what it changes."
+	for _, tc := range []struct {
+		name    string
+		setting report.OptionalSettingStatus
+		want    string
+		reject  []string
+	}{
+		{
+			name:    "off and never decided",
+			setting: report.OptionalSettingStatus{Key: key, State: claudesettings.Unset},
+			want:    recommendation,
+			reject:  []string{"declined", "set by trajector"},
+		},
+		{
+			name:    "explicitly off but never declined here",
+			setting: report.OptionalSettingStatus{Key: key, State: claudesettings.OffByUser},
+			want:    recommendation,
+			reject:  []string{"declined", "set by trajector"},
+		},
+		{
+			name:    "declined",
+			setting: report.OptionalSettingStatus{Key: key, State: claudesettings.Unset, Declined: true},
+			want:    "Optional settings: 1 declined. Run `trajector enable` to review.",
+			reject:  []string{"costs you nothing", "set by trajector"},
+		},
+		{
+			name:    "on because trajector wrote it",
+			setting: report.OptionalSettingStatus{Key: key, State: claudesettings.OnByUs},
+			want:    "Optional settings: " + key + " on (set by trajector).",
+			reject:  []string{"costs you nothing", "declined"},
+		},
+		{
+			name:    "on as the user's own choice",
+			setting: report.OptionalSettingStatus{Key: key, State: claudesettings.OnByUser},
+			want:    "Optional settings: " + key + " on.",
+			reject:  []string{"costs you nothing", "declined", "set by trajector"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := device()
+			d.Project = contributing()
+			d.OptionalSettings = []report.OptionalSettingStatus{tc.setting}
+			out := dashboard(d)
+
+			wants(t, "status", out, tc.want)
+			rejects(t, "status", out, tc.reject...)
+		})
+	}
+}
+
+func TestStatusShowsNoOptionalSettingLineOutsideAContributingProject(t *testing.T) {
+	d := device()
+	d.OptionalSettings = []report.OptionalSettingStatus{
+		{Key: claudesettings.KeyShowThinkingSummaries, State: claudesettings.Unset},
+	}
+	out := dashboard(d)
+
+	rejects(t, "status", out, "optional setting", "Optional settings", claudesettings.KeyShowThinkingSummaries)
 }
 
 // contributing is a project in the fully healthy enabled state.
