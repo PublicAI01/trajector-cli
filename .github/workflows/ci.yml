@@ -2,14 +2,18 @@ name: CI
 
 on:
   push:
-    # Every branch, not only main: a branch push is the whole
-    # verification loop here — Windows only runs in CI, so fixes for it
-    # must be provable before they reach main, without needing a pull
-    # request as the trigger. The branch filter keeps tag pushes out;
-    # those already run these checks through the release workflow's
-    # call below.
-    branches: ["**"]
+    # main only: a push there is the record that the landed state was
+    # green, and the branch filter keeps tag pushes out — those run
+    # these checks through the release workflow's call below. Branches
+    # used to trigger on push too, but a branch with an open pull
+    # request then ran everything twice and the concurrency group
+    # cancelled one twin, leaving a failed run on every pull-request
+    # push. Branch verification without a pull request — a Windows fix
+    # proved before it reaches main, say — asks for it explicitly:
+    #   gh workflow run ci.yml --ref <branch>
+    branches: [main]
   pull_request:
+  workflow_dispatch:
   # Callable so the release workflow gates on these exact checks rather
   # than a second copy of them that can drift.
   workflow_call:
