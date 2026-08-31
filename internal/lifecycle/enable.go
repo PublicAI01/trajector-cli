@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -40,6 +41,11 @@ func hookCommand(execPath, subcommand string) string {
 // half-enabled project routing traffic at a dead port must be
 // impossible.
 func (m *Machine) enableProject(projectDir string, io IO) error {
+	// Every prompt in one enable must read through one buffered reader: a
+	// second bufio over the same stream would find the bytes the first
+	// one buffered ahead already gone. bufio.NewReader hands this same
+	// reader back when the prompts wrap it again.
+	io.In = bufio.NewReader(io.In)
 	st, err := m.Project(projectDir)
 	if err != nil {
 		return err
@@ -174,6 +180,7 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 	if err := m.consent.SetProjectState(st.Hash, st.Root, consent.StateGranted, now); err != nil {
 		return fmt.Errorf("recording project consent: %w", err)
 	}
+	m.offerOptionalSettings(io, st)
 	if err := claudesettings.InjectProject(settingsPath, m.proxy.BaseURL(token), hookCommand(m.deps.ExecPath, "ensure-proxy")); err != nil {
 		return fmt.Errorf("injecting %s: %w", settingsPath, err)
 	}
