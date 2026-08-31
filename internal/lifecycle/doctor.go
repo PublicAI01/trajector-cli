@@ -127,6 +127,13 @@ func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) e
 		if unrestored != "" {
 			f.Problem("%s", unrestoredBaseURLWarning(settingsPath, unrestored))
 		}
+		undone, failures := m.restoreRecordedSettings(st.Root, st.Hash)
+		for _, key := range undone {
+			f.Detail("%s", settingRestoredLine(key))
+		}
+		for _, err := range failures {
+			f.Problem("%v", err)
+		}
 		return nil
 	}
 

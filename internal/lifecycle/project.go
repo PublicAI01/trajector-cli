@@ -138,12 +138,20 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 	if err != nil {
 		return err
 	}
-	seen := map[string]bool{}
+	// The hash rides with each root so the recorded setting decisions —
+	// keyed by hash — can be honored for every project the table held,
+	// including ones whose directory is gone.
+	hashes := map[string]string{}
 	var projects []string
 	for _, g := range grants {
-		if g.RootPath != "" && !seen[g.RootPath] {
-			seen[g.RootPath] = true
+		if g.RootPath == "" {
+			continue
+		}
+		if _, ok := hashes[g.RootPath]; !ok {
 			projects = append(projects, g.RootPath)
+		}
+		if _, ok := hashes[g.RootPath]; !ok || !g.Revoked {
+			hashes[g.RootPath] = g.ProjectIDHash
 		}
 	}
 	sort.Strings(projects)
@@ -153,15 +161,17 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 		restored, unrestored, err := m.removeInjection(root)
 		if err != nil {
 			fmt.Fprintf(io.Err, "trajector: warning: could not clean %s: %v\n", path, err)
-			continue
+		} else {
+			removed++
+			if restored != "" {
+				fmt.Fprintf(io.Out, "Restored your own base URL in %s: %s\n", path, restored)
+			}
+			if unrestored != "" {
+				fmt.Fprintf(io.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(path, unrestored))
+			}
 		}
-		removed++
-		if restored != "" {
-			fmt.Fprintf(io.Out, "Restored your own base URL in %s: %s\n", path, restored)
-		}
-		if unrestored != "" {
-			fmt.Fprintf(io.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(path, unrestored))
-		}
+		undone, failures := m.restoreRecordedSettings(root, hashes[root])
+		reportRestoredSettings(io, undone, failures)
 	}
 	fmt.Fprintf(io.Out, "Removed injection from %d project(s).\n", removed)
 	for _, root := range projects {
