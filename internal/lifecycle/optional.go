@@ -1,7 +1,6 @@
 package lifecycle
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"strings"
@@ -42,13 +41,14 @@ func (m *Machine) offerOptionalSettings(io IO, st report.ProjectStatus) {
 			printWrapped(io.Out, statementIndent, fmt.Sprintf(
 				"%s is on for this project; trajector set it when you enabled. `trajector disable` puts it back.", s.Key))
 			fmt.Fprintln(io.Out)
-			off, answered := askSetting(io, "Turn it off? [y/N] ", false)
-			if !answered {
+			off, err := askYesNo(io, "Turn it off? [y/N] ", false)
+			if err != nil {
 				printNeedsInteractive(io)
 				return
 			}
 			if off {
-				m.turnOffOurSetting(io, st, s)
+				undone, failures := m.restoreRecordedSettings(st.Root, st.Hash, []claudesettings.OptionalSetting{s})
+				reportRestoredSettings(io, "  ", undone, failures)
 			}
 		case claudesettings.OffByUser:
 			printWrapped(io.Out, statementIndent, fmt.Sprintf("You have %s set to false in your %s.", s.Key, status.Source))
@@ -60,8 +60,8 @@ func (m *Machine) offerOptionalSettings(io IO, st report.ProjectStatus) {
 			fmt.Fprintln(io.Out)
 			printDisclosures(io.Out, s.Disclosures)
 			fmt.Fprintln(io.Out)
-			yes, answered := askSetting(io, "Turn it on for this project? [y/N] ", false)
-			if !answered {
+			yes, err := askYesNo(io, "Turn it on for this project? [y/N] ", false)
+			if err != nil {
 				printNeedsInteractive(io)
 				return
 			}
@@ -73,8 +73,8 @@ func (m *Machine) offerOptionalSettings(io IO, st report.ProjectStatus) {
 			fmt.Fprintln(io.Out)
 			printWrapped(io.Out, statementIndent, s.Fact)
 			fmt.Fprintln(io.Out)
-			yes, answered := askSetting(io, "Turn it on? [Y/n] ", true)
-			if !answered {
+			yes, err := askYesNo(io, "Turn it on? [Y/n] ", true)
+			if err != nil {
 				printNeedsInteractive(io)
 				return
 			}
@@ -149,19 +149,6 @@ func (m *Machine) applySettingAnswer(io IO, st report.ProjectStatus, s claudeset
 	}
 }
 
-// turnOffOurSetting is the enable-side undo: an OnByUs setting the user
-// just asked to turn off goes back through the same restore path
-// disable uses.
-func (m *Machine) turnOffOurSetting(io IO, st report.ProjectStatus, s claudesettings.OptionalSetting) {
-	undone, failures := m.restoreRecordedSettingKey(st.Root, st.Hash, s)
-	for _, key := range undone {
-		fmt.Fprintf(io.Out, "  %s\n", settingRestoredLine(key))
-	}
-	for _, err := range failures {
-		fmt.Fprintf(io.Err, "trajector: WARNING: %v\n", err)
-	}
-}
-
 // wroteSetting reports whether a recorded decision marks a write of
 // trajector's own: accepted, with a prior the write changed. An
 // acceptance that found the value already in place wrote nothing, so it
@@ -175,15 +162,21 @@ func wroteSetting(d consent.SettingDecision) bool {
 // restoreRecordedSettings undoes what a project's recorded setting
 // decisions say trajector wrote, for every surface that removes what
 // enable put in place: disable, uninstall, and doctor's stale-injection
-// repair all call it next to removeInjection. Declined answers are left
-// standing — one refusal keeps ending the ask across disable/enable
-// cycles. A record is cleared only once its restore succeeded: the
-// record is the only undo there is, so a failed restore must keep it.
-func (m *Machine) restoreRecordedSettings(root, hash string) (undone []string, failures []error) {
-	for _, s := range claudesettings.OptionalSettings {
-		u, f := m.restoreRecordedSettingKey(root, hash, s)
-		undone = append(undone, u...)
-		failures = append(failures, f...)
+// repair walk the whole table next to removeInjection, and enable's own
+// turn-off passes just the one setting the user answered about.
+// Declined answers are left standing — one refusal keeps ending the ask
+// across disable/enable cycles. A record is cleared only once its
+// restore succeeded: the record is the only undo there is, so a failed
+// restore must keep it.
+func (m *Machine) restoreRecordedSettings(root, hash string, settings []claudesettings.OptionalSetting) (undone []string, failures []error) {
+	for _, s := range settings {
+		restored, err := m.restoreRecordedSettingKey(root, hash, s)
+		if restored {
+			undone = append(undone, s.Key)
+		}
+		if err != nil {
+			failures = append(failures, err)
+		}
 	}
 	return undone, failures
 }
@@ -192,14 +185,14 @@ func (m *Machine) restoreRecordedSettings(root, hash string) (undone []string, f
 // setting: only a prior of absent or false marks a write to take back,
 // and the write comes back out only while the file still holds it — a
 // later hand edit is the user's most recent decision and wins.
-func (m *Machine) restoreRecordedSettingKey(root, hash string, s claudesettings.OptionalSetting) (undone []string, failures []error) {
+func (m *Machine) restoreRecordedSettingKey(root, hash string, s claudesettings.OptionalSetting) (restored bool, err error) {
 	decisions, err := m.consent.SettingDecisions(hash)
 	if err != nil {
-		return nil, []error{fmt.Errorf("reading the recorded setting decisions: %w", err)}
+		return false, fmt.Errorf("reading the recorded setting decisions: %w", err)
 	}
 	d, ok := decisions[s.Key]
 	if !ok || d.Answer != consent.AnswerAccepted {
-		return nil, nil
+		return false, nil
 	}
 	path := claudesettings.ProjectLocalPath(root)
 	acted := false
@@ -208,18 +201,15 @@ func (m *Machine) restoreRecordedSettingKey(root, hash string, s claudesettings.
 			acted = true
 		}
 		if err := claudesettings.RestoreTopLevelBool(path, s.Key, s.Target, false, d.Prior == consent.PriorFalse); err != nil {
-			return nil, []error{fmt.Errorf(
+			return false, fmt.Errorf(
 				"could not set %s back to what it was before trajector wrote it: %v (the record was kept so a rerun can retry)",
-				s.Key, err)}
+				s.Key, err)
 		}
 	}
 	if err := m.consent.ClearSettingDecision(hash, s.Key); err != nil {
-		return nil, []error{fmt.Errorf("could not clear the recorded decision for %s: %v (a rerun can retry)", s.Key, err)}
+		return false, fmt.Errorf("could not clear the recorded decision for %s: %v (a rerun can retry)", s.Key, err)
 	}
-	if acted {
-		undone = append(undone, s.Key)
-	}
-	return undone, nil
+	return acted, nil
 }
 
 // settingRestoredLine is the one sentence every surface prints when it
@@ -229,11 +219,12 @@ func settingRestoredLine(key string) string {
 	return fmt.Sprintf("Set %s back to what it was before trajector wrote it.", key)
 }
 
-// reportRestoredSettings prints one removal's setting restores the way
-// disable and uninstall report the rest of their work.
-func reportRestoredSettings(io IO, undone []string, failures []error) {
+// reportRestoredSettings prints setting restores and their failures the
+// same way on every surface; the indent is the only thing the surfaces
+// disagree on.
+func reportRestoredSettings(io IO, indent string, undone []string, failures []error) {
 	for _, key := range undone {
-		fmt.Fprintln(io.Out, settingRestoredLine(key))
+		fmt.Fprintf(io.Out, "%s%s\n", indent, settingRestoredLine(key))
 	}
 	for _, err := range failures {
 		fmt.Fprintf(io.Err, "trajector: WARNING: %v\n", err)
@@ -248,24 +239,6 @@ func reportRestoredSettings(io IO, undone []string, failures []error) {
 func printNeedsInteractive(io IO) {
 	fmt.Fprintln(io.Out, "Optional settings were not changed: they need an interactive session.")
 	fmt.Fprintln(io.Out, "Run `trajector enable` from a terminal to review them.")
-}
-
-// askSetting puts one optional-setting question. Empty input takes the
-// stated default; otherwise only an explicit yes answers true, as in
-// askYesNo. answered is false when the read yields nothing at all.
-func askSetting(io IO, prompt string, def bool) (yes, answered bool) {
-	fmt.Fprint(io.Out, prompt)
-	line, err := bufio.NewReader(io.In).ReadString('\n')
-	if err != nil && line == "" {
-		return false, false
-	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "":
-		return def, true
-	case "yes", "y":
-		return true, true
-	}
-	return false, true
 }
 
 // Rendering re-wraps the finalized disclosure wording; it never rewrites

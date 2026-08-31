@@ -30,7 +30,7 @@ func (m *Machine) DiscardRejected(batchID string, all, confirmed bool, io IO) er
 		}
 	}
 	if !confirmed {
-		yes, _ := askYesNo(io, discardPrompt(ids))
+		yes, _ := askYesNo(io, discardPrompt(ids), false)
 		if !yes {
 			fmt.Fprintln(io.Out, "Nothing was discarded.")
 			return nil

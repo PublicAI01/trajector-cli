@@ -232,7 +232,7 @@ func (m *Machine) confirmAgreement(io IO) error {
 	}
 	fmt.Fprintln(io.Out, consent.AgreementText)
 	fmt.Fprintln(io.Out)
-	yes, err := askYesNo(io, "Do you accept the data agreement? [yes/no]: ")
+	yes, err := askYesNo(io, "Do you accept the data agreement? [yes/no]: ", false)
 	if err != nil {
 		return fmt.Errorf("reading agreement answer: %w", err)
 	}

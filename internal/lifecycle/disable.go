@@ -45,8 +45,8 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 		// A recorded setting write can outlive the rest of a withdrawal the
 		// same way spooled rawcalls can — an earlier disable that failed to
 		// restore kept the record — so the rerun reaches for it here too.
-		undone, failures := m.restoreRecordedSettings(st.Root, st.Hash)
-		reportRestoredSettings(io, undone, failures)
+		undone, failures := m.restoreRecordedSettings(st.Root, st.Hash, claudesettings.OptionalSettings)
+		reportRestoredSettings(io, "", undone, failures)
 		if err := m.purgeProjectRecords(st.Hash, &w); err != nil {
 			return w, fmt.Errorf("deleting local unuploaded data: %w", err)
 		}
@@ -71,8 +71,8 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 	if unrestored != "" {
 		fmt.Fprintf(io.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(settingsPath, unrestored))
 	}
-	undoneSettings, settingFailures := m.restoreRecordedSettings(st.Root, st.Hash)
-	reportRestoredSettings(io, undoneSettings, settingFailures)
+	undoneSettings, settingFailures := m.restoreRecordedSettings(st.Root, st.Hash, claudesettings.OptionalSettings)
+	reportRestoredSettings(io, "", undoneSettings, settingFailures)
 
 	now := m.now()
 	if err := m.routes.Revoke(st.Root, now); err != nil {
