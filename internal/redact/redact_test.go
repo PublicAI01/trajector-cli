@@ -389,6 +389,86 @@ func TestJSONLBytes_PreservesThinkingSignature(t *testing.T) {
 	}
 }
 
+// Credentials that no entropy check flags: each is named by a layer that
+// recognizes its format. They are what a protected field must still mask.
+var formatRecognizedCredentials = map[string]string{
+	"supabase personal access token": "sbp_a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+	"credentialed postgres URI":      "postgres://svc:s3cr3t-p4ss@db.internal:5432/app",
+	"semicolon connection string":    "Server=db.internal;User Id=svc;Password=s3cr3t;Encrypt=true",
+	"credential assignment":          "DB_PASSWORD=s3cr3tp4ss",
+}
+
+func TestJSONLBytes_ProtectedFieldStillMasksFormatRecognizedCredentials(t *testing.T) {
+	t.Parallel()
+	// A field protected from the entropy layer is not protected from the
+	// layers that name a credential by its own format. Until 2026-08-31 the
+	// protection was all-or-nothing, so a credential under any key ending in
+	// "id" — aws_access_key_id, connection_id, an *_ids array — went out in
+	// the clear past all seven layers.
+	for _, key := range []string{"connection_id", "aws_access_key_id", "file_path", "cwd"} {
+		for name, secret := range formatRecognizedCredentials {
+			t.Run(key+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				doc, err := json.Marshal(map[string]string{key: secret})
+				if err != nil {
+					t.Fatal(err)
+				}
+				rb, err := redact.JSONLBytes(doc)
+				if err != nil {
+					t.Fatalf("JSONLBytes: %v", err)
+				}
+				if strings.Contains(string(rb.Bytes()), secret) {
+					t.Errorf("credential under protected key %q left unmasked: %s", key, rb.Bytes())
+				}
+			})
+		}
+	}
+}
+
+func TestJSONLBytes_ProtectedArrayStillMasksFormatRecognizedCredentials(t *testing.T) {
+	t.Parallel()
+	// The array a protected key owns inherits its policy, so it has to
+	// inherit the masking half of it too.
+	const secret = "sbp_a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+	got := redactedString(t, `{"project_ids":["`+secret+`"]}`)
+	if strings.Contains(got, secret) {
+		t.Errorf("credential in a protected ids array left unmasked: %s", got)
+	}
+}
+
+func TestJSONLBytes_ProtectedFieldKeepsObservedIdentities(t *testing.T) {
+	t.Parallel()
+	// The other half of the same policy, and the guard on the split above:
+	// these fields carry high-entropy observed facts, and if a layer 2-6
+	// rule ever starts matching an id or a signature the record is
+	// corrupted with no way to recover it by reassembling later.
+	observed := map[string]string{
+		"id":          "msg_01XFDUDYJgAACzvnptvVoYEL",
+		"tool_use_id": "toolu_01A09q90qw90lq917835lq9",
+		"request_id":  "req_011CTgvBLJZfCFvnptvVoYEL",
+		"user_id":     "user_63a1f2b8c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f_account__session_9f8e7d6c-5b4a-4321-8765-0f1e2d3c4b5a",
+		"thinkingSignature": "EqQBCkYIBBgCIkAvBOsRhkAaRUmY7bIbHF9CqUp2oXnLmVePqvSwEuVGwTk3vjZ8xN1y" +
+			"LpMcRdKfAhBnGiJlQwXsTvUuYoPaKdMbEgyq8vNcXbAdLmPqRfIaDNhYtGeWuVsKpLnCcSIwWmXjTgQvBnHrLcFdKpAy",
+	}
+	doc, err := json.Marshal(observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb, err := redact.JSONLBytes(doc)
+	if err != nil {
+		t.Fatalf("JSONLBytes: %v", err)
+	}
+	var out map[string]string
+	if err := json.Unmarshal(rb.Bytes(), &out); err != nil {
+		t.Fatalf("redacted output is not valid JSON: %v", err)
+	}
+	for key, want := range observed {
+		if out[key] != want {
+			t.Errorf("observed value of %q was rewritten:\n  got  %q\n  want %q", key, out[key], want)
+		}
+	}
+}
+
 func TestPatternDetection(t *testing.T) {
 	// These secrets have entropy ~3.9, below the 4.5 threshold, so
 	// entropy-only detection misses them. Betterleaks pattern matching

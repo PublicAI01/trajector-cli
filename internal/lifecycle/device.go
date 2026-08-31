@@ -10,8 +10,16 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
-// pairingTimeout bounds how long Login waits for browser approval.
-const pairingTimeout = 15 * time.Minute
+// defaultPairingWindow bounds how long Login waits for browser approval
+// when Deps names no window of its own.
+const defaultPairingWindow = 15 * time.Minute
+
+func (m *Machine) pairingWindow() time.Duration {
+	if m.deps.PairingWindow > 0 {
+		return m.deps.PairingWindow
+	}
+	return defaultPairingWindow
+}
 
 // Login pairs this device, or completes the signed-in state when it is
 // already paired. Either way it ends in the same place: token stored,
@@ -36,7 +44,16 @@ func (m *Machine) Pair(io IO) error {
 	}
 	fmt.Fprintln(io.Out, "Waiting for approval...")
 
-	deadline := m.deps.Now().Add(pairingTimeout)
+	// Measured on the wall clock, never against deps.Now: that clock is
+	// pinned to a fixed instant by the test harness and by TRAJECTOR_NOW,
+	// and a pinned clock is never After a deadline derived from itself —
+	// so this loop polled the service forever and the command never
+	// returned. `trajector enable` pairs first on an unpaired device, so
+	// the hang was reachable from a session hook's environment, which a
+	// repository's committed settings can write. Elapsed time and record
+	// timestamps are different questions; Uploader.Close draws the same
+	// line for the same reason. 2026-08-31.
+	deadline := time.Now().Add(m.pairingWindow())
 	var lastPollErr error
 	for {
 		result, err := m.service.PollPairing(pairing.PairingID)
@@ -62,7 +79,7 @@ func (m *Machine) Pair(io IO) error {
 		default:
 			lastPollErr = nil
 		}
-		if m.deps.Now().After(deadline) {
+		if time.Now().After(deadline) {
 			if lastPollErr != nil {
 				return fmt.Errorf("timed out waiting for approval (the last check failed: %v); run `trajector login` again", lastPollErr)
 			}

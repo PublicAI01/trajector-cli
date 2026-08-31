@@ -161,7 +161,12 @@ type taggedRegion struct {
 type jsonReplacement struct {
 	key      string
 	original string
-	redacted string
+	// redacted is the value with every layer applied; deterministic is
+	// the value with the entropy layer suppressed, for a field whose
+	// observed value must survive that layer. Either may equal original,
+	// meaning that policy leaves the value alone.
+	redacted      string
+	deterministic string
 }
 
 type connectionStringRule struct {
@@ -191,13 +196,44 @@ func redactString(s string) string {
 	return applyRegions(s, detectAllLayers(s))
 }
 
+// redactDeterministic masks only what layers 2-6 recognize: a credential
+// named by its own format, never one merely judged to look random.
+//
+// It exists for the protected fields of jsonFieldPolicy. The entropy
+// layer is the only layer those fields ever needed protection from — a
+// message id or a thinking signature is high-entropy by nature — and
+// suppressing the rest along with it meant a credential parked under any
+// key ending in "id" went out past all seven layers. The split is clean
+// against real values: observed ids trigger no layer 2-6 rule at all.
+// PII stays out because a protected field keeping its PII is a standing
+// decision of its own (TestPII_JSONLSkippedFieldWithEmail). 2026-08-31.
+func redactDeterministic(s string) string {
+	return applyRegions(s, detectLayers(s, false))
+}
+
 // detectAllLayers runs the seven always-on/opt-in regex-based redaction
 // layers and returns their tagged regions.
-func detectAllLayers(s string) []taggedRegion {
+func detectAllLayers(s string) []taggedRegion { return detectLayers(s, true) }
+
+// entropyCandidates yields the spans layer 1 would judge, and none at all
+// when this is not a full scan — the one layer a protected field opts out
+// of. See redactDeterministic.
+func entropyCandidates(s string, full bool) [][]int {
+	if !full {
+		return nil
+	}
+	return secretPattern.FindAllStringIndex(s, -1)
+}
+
+// detectLayers runs the redaction layers over s. full selects whether the
+// two layers that judge by something other than credential format take
+// part: the entropy layer (1) and the PII layer (7).
+func detectLayers(s string, full bool) []taggedRegion {
 	var regions []taggedRegion
 
-	// 1. Entropy-based detection (secrets — always on).
-	for _, loc := range secretPattern.FindAllStringIndex(s, -1) {
+	// 1. Entropy-based detection (secrets — full scans only; see
+	// jsonFieldPolicy for the fields that opt out of this layer).
+	for _, loc := range entropyCandidates(s, full) {
 		start, end := loc[0], loc[1]
 
 		// Don't consume characters that are part of JSON/string escape sequences.
@@ -256,8 +292,12 @@ func detectAllLayers(s string) []taggedRegion {
 	// 6. Bounded credential key/value detection (secrets — always on).
 	regions = append(regions, detectCredentialValues(s)...)
 
-	// 7. PII detection (opt-in — only runs when configured).
-	regions = append(regions, detectPII(getPIIPatterns(), s)...)
+	// 7. PII detection (opt-in — only runs when configured, and only on a
+	// full scan: a protected field keeping its PII is a standing decision
+	// of its own, see redactDeterministic).
+	if full {
+		regions = append(regions, detectPII(getPIIPatterns(), s)...)
+	}
 
 	return regions
 }
@@ -598,59 +638,60 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 	// keyed replacements apply only to the value of that exact key; unkeyed
 	// ones apply to any string token, which is what the previous ReplaceAll
 	// did and what array elements (collected with an empty key) rely on.
-	keyed := make(map[string]map[string]string)
-	unkeyed := make(map[string]string, len(repls))
+	keyed := make(map[string]map[string]encodedReplacement)
+	unkeyed := make(map[string]encodedReplacement, len(repls))
 	for _, r := range repls {
-		replJSON, err := jsonEncodeString(r.redacted)
+		enc, err := encodeReplacement(r)
 		if err != nil {
 			return "", err
 		}
 		if r.key == "" {
-			unkeyed[r.original] = replJSON
+			unkeyed[r.original] = enc
 			continue
 		}
 		byValue := keyed[r.key]
 		if byValue == nil {
-			byValue = make(map[string]string)
+			byValue = make(map[string]encodedReplacement)
 			keyed[r.key] = byValue
 		}
-		byValue[r.original] = replJSON
+		byValue[r.original] = enc
 	}
 
 	// The enclosing containers. The top of the stack tells a value token which
 	// key owns it; a token directly inside an array has no owning key, which is
 	// how array elements stay restricted to the unkeyed replacements.
 	//
-	// The skip policy is enforced here, on the applying side, so that it holds
+	// The field policy is enforced here, on the applying side, so that it holds
 	// for every replacement regardless of where it was collected: a protected
 	// field keeps its observed value even when an unkeyed (array-element)
-	// replacement collides with it. keySkipped marks the value owned by the
-	// current key; skipped marks a container living anywhere inside a
-	// protected field's subtree.
+	// replacement collides with it. keyPolicy is the policy of the value owned
+	// by the current key; container is the policy a container living anywhere
+	// inside a protected field's subtree inherits.
 	type frame struct {
-		isObject   bool
-		skipped    bool
-		keySkipped bool
-		key        string
+		isObject  bool
+		container fieldPolicy
+		keyPolicy fieldPolicy
+		key       string
 	}
 	var stack []frame
-	enteringSkipped := func() bool {
+	valuePolicy := func() fieldPolicy {
 		if len(stack) == 0 {
-			return false
+			return policyScan
 		}
 		top := stack[len(stack)-1]
-		return top.skipped || top.keySkipped
+		return stricter(top.container, top.keyPolicy)
 	}
-	// A protected key skips its scalar value and an array it owns (an ids
+	// A protected key covers its scalar value and an array it owns (an ids
 	// array keeps its elements). An object value, though, re-enters normal
 	// evaluation: its fields carry their own names, so each is judged on its
-	// own key rather than blanket-skipped by an ancestor id/signature/path
-	// key. Only a genuine container-wide skip reaches into a nested object.
-	enteringSkippedObject := func() bool {
+	// own key rather than inheriting an ancestor id/signature/path key's
+	// policy. Only a genuine container-wide policy reaches into a nested
+	// object.
+	enteringObjectPolicy := func() fieldPolicy {
 		if len(stack) == 0 {
-			return false
+			return policyScan
 		}
-		return stack[len(stack)-1].skipped
+		return stack[len(stack)-1].container
 	}
 
 	var b strings.Builder
@@ -658,10 +699,10 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 	for i < len(s) {
 		switch s[i] {
 		case '{':
-			stack = append(stack, frame{isObject: true, skipped: enteringSkippedObject()})
+			stack = append(stack, frame{isObject: true, container: enteringObjectPolicy()})
 			i++
 		case '[':
-			stack = append(stack, frame{skipped: enteringSkipped()})
+			stack = append(stack, frame{container: valuePolicy()})
 			i++
 		case '}', ']':
 			if len(stack) > 0 {
@@ -686,17 +727,18 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 			inObject := len(stack) > 0 && stack[len(stack)-1].isObject
 			if isKey && inObject && decoded {
 				stack[len(stack)-1].key = value
-				stack[len(stack)-1].keySkipped = shouldSkipJSONLField(value)
+				stack[len(stack)-1].keyPolicy = jsonFieldPolicy(value)
 			}
-			// Keys are structure, never rewritten; values in skipped
-			// territory keep their observed bytes.
-			if decoded && !isKey && !enteringSkipped() {
+			// Keys are structure, never rewritten; values in protected
+			// territory keep as much of their observed bytes as their
+			// policy says.
+			if policy := valuePolicy(); decoded && !isKey && policy != policyVerbatim {
 				replJSON, found := "", false
 				if inObject {
-					replJSON, found = keyed[stack[len(stack)-1].key][value]
+					replJSON, found = keyed[stack[len(stack)-1].key][value].forPolicy(policy)
 				}
 				if !found {
-					replJSON, found = unkeyed[value]
+					replJSON, found = unkeyed[value].forPolicy(policy)
 				}
 				if found {
 					if written == 0 {
@@ -717,6 +759,40 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 	}
 	b.WriteString(s[written:])
 	return b.String(), nil
+}
+
+// encodedReplacement is one collected replacement as the applying side
+// needs it: the JSON encoding of each reading, empty when that reading
+// leaves the value alone. Absent rather than equal-to-the-original, so
+// the lookup itself answers found/not-found.
+type encodedReplacement struct {
+	full          string
+	deterministic string
+}
+
+// forPolicy picks the reading a field under policy gets. policyVerbatim
+// never reaches here: applyJSONReplacements looks nothing up under it.
+func (e encodedReplacement) forPolicy(policy fieldPolicy) (string, bool) {
+	if policy == policyDeterministic {
+		return e.deterministic, e.deterministic != ""
+	}
+	return e.full, e.full != ""
+}
+
+func encodeReplacement(r jsonReplacement) (encodedReplacement, error) {
+	var enc encodedReplacement
+	var err error
+	if r.redacted != r.original {
+		if enc.full, err = jsonEncodeString(r.redacted); err != nil {
+			return encodedReplacement{}, err
+		}
+	}
+	if r.deterministic != r.original {
+		if enc.deterministic, err = jsonEncodeString(r.deterministic); err != nil {
+			return encodedReplacement{}, err
+		}
+	}
+	return enc, nil
 }
 
 // jsonStringEnd returns the index just past the closing quote of the JSON
@@ -800,20 +876,30 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 			}
 		case string:
 			redacted := redactString(val)
+			// Both readings are collected because the applying side, not
+			// this one, knows which a given occurrence gets: the same value
+			// can sit in a protected field and an ordinary one at once.
+			deterministic := redactDeterministic(val)
 			// The key itself says this value is a password, so the whole
 			// value goes — never just the parts the pattern layers caught.
 			// Until 2026-08-14 this ran only when redactString had changed
 			// nothing, which inverted the guarantee: a password holding one
 			// recognizable token kept the rest of itself in the clear,
-			// while one nothing recognized was masked entirely.
+			// while one nothing recognized was masked entirely. It is a
+			// key-name verdict, not an entropy one, so it holds under both.
 			if isCredentialJSONSecretKey(key, credentialContext) && hasNonPlaceholderPasswordValue(val) {
-				redacted = redactedPlaceholder
+				redacted, deterministic = redactedPlaceholder, redactedPlaceholder
 			}
-			if redacted != val {
+			if redacted != val || deterministic != val {
 				seenKey := key + "\x00" + val
 				if !seen[seenKey] {
 					seen[seenKey] = true
-					repls = append(repls, jsonReplacement{key: key, original: val, redacted: redacted})
+					repls = append(repls, jsonReplacement{
+						key:           key,
+						original:      val,
+						redacted:      redacted,
+						deterministic: deterministic,
+					})
 				}
 			}
 		}
@@ -822,35 +908,70 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 	return repls
 }
 
-// shouldSkipJSONLField returns true if the value (subtree included) owned by
-// a JSON key must never be rewritten. Protects signature fields (any key
-// ending in "signature"), ID fields (ending in "id"/"ids"), and common
-// path/directory fields. Enforced by applyJSONReplacements.
-func shouldSkipJSONLField(key string) bool {
+// fieldPolicy says how much of the detection stack the value (subtree
+// included) owned by a JSON key is subject to. Enforced by
+// applyJSONReplacements.
+type fieldPolicy int
+
+const (
+	// policyScan applies every layer; the default for any key not named
+	// below. policyDeterministic suppresses the entropy layer and keeps
+	// the rest, so an observed value survives looking random while a
+	// credential named by its own format is still masked. policyVerbatim
+	// rewrites nothing at all.
+	policyScan fieldPolicy = iota
+	policyDeterministic
+	policyVerbatim
+)
+
+// stricter returns the more protective of two policies, for a value that
+// inherits one from its container and one from its own key.
+func stricter(a, b fieldPolicy) fieldPolicy {
+	if b > a {
+		return b
+	}
+	return a
+}
+
+// jsonFieldPolicy classifies a JSON key.
+//
+// Protection here means protection from the entropy layer, which is the
+// whole of what these keys ever needed: their values are high-entropy by
+// nature, so layer 1 would mask them and corrupt an observed fact. Until
+// 2026-08-31 it was all-or-nothing and suppressed the format layers too,
+// which turned a naming coincidence into a hole: "id" is a suffix an
+// enormous number of keys carry, and a credential under one of them —
+// aws_access_key_id, a connection string under connection_id, a token in
+// an *_ids array — went out in the clear past all seven layers.
+//
+// Signatures stay verbatim rather than dropping to deterministic: they
+// are long enough that a format rule could collide with one by chance,
+// and no signature is a credential worth masking, so relaxing them would
+// buy nothing against a real if small risk.
+func jsonFieldPolicy(key string) fieldPolicy {
 	lower := strings.ToLower(key)
 
-	// Skip signature fields: cryptographic attestations, not secrets. Covers
-	// "signature" (Claude Code) and provider variants like "thinkingSignature".
-	// Their values are high-entropy base64, so the entropy scanner would
-	// otherwise redact them — corrupting extended-thinking signatures, which
-	// must be preserved verbatim.
+	// Signature fields: cryptographic attestations, not secrets. Covers
+	// "signature" (Claude Code) and provider variants like
+	// "thinkingSignature". Corrupting one cannot be recovered from by
+	// reassembling the record later, so nothing rewrites them.
 	if strings.HasSuffix(lower, "signature") {
-		return true
+		return policyVerbatim
 	}
 
-	// Skip ID fields
+	// ID fields: message, tool-use, request, and session identities.
 	if strings.HasSuffix(lower, "id") || strings.HasSuffix(lower, "ids") {
-		return true
+		return policyDeterministic
 	}
 
-	// Skip common path and directory fields from agent transcripts.
-	// These appear frequently in tool calls and are structural, not secrets.
+	// Common path and directory fields from agent transcripts. These
+	// appear frequently in tool calls and are structural, not secrets.
 	switch lower {
 	case "filepath", "file_path", "cwd", "root", "directory", "dir", "path":
-		return true
+		return policyDeterministic
 	}
 
-	return false
+	return policyScan
 }
 
 // shouldSkipJSONLObject reports whether the object carries a binary

@@ -50,7 +50,16 @@ type Deps struct {
 	// settings live.
 	Home   string
 	Getenv func(string) string
-	Now    func() time.Time
+	// Now is the record-keeping clock: it answers "what timestamp goes on
+	// this record", which is why m.now() is the only thing that reads it.
+	// It is pinned to a fixed instant by the test harness and by
+	// TRAJECTOR_NOW, so nothing may ask it how much time has passed.
+	Now func() time.Time
+	// PairingWindow bounds how long Pair waits for browser approval, on
+	// the wall clock. Zero selects defaultPairingWindow. It is stated as a
+	// duration rather than measured against Now for exactly the reason
+	// above.
+	PairingWindow time.Duration
 }
 
 // IO is where one operation talks to the user.

@@ -66,11 +66,10 @@ func TestLoginRidesOutATransientPairingCheckFailure(t *testing.T) {
 func TestLoginKeepsPollingThroughAnOutageUntilTheWindowCloses(t *testing.T) {
 	e := newUnpairedEnv(t)
 	e.service.PairingOutage("pair-1")
-	now := e.deps.Now()
-	e.deps.Now = func() time.Time {
-		now = now.Add(time.Minute)
-		return now
-	}
+	// The window is shortened rather than the clock advanced: it is wall
+	// clock time now, precisely so that a pinned deps.Now cannot stop the
+	// window from closing.
+	e.deps.PairingWindow = 50 * time.Millisecond
 
 	err := e.machine().Login(e.io())
 	if err == nil || !strings.Contains(err.Error(), "timed out waiting for approval") {
@@ -90,6 +89,32 @@ func TestLoginKeepsPollingThroughAnOutageUntilTheWindowCloses(t *testing.T) {
 	}
 	if e.machine().Paired() {
 		t.Error("device paired despite a service outage")
+	}
+}
+
+func TestLoginTerminatesUnderAPinnedClock(t *testing.T) {
+	// The harness pins deps.Now to a fixed instant, which is what the
+	// TRAJECTOR_NOW override produces in production — and a repository's
+	// committed settings reach that environment through the injected
+	// session hooks. While the approval window was measured against
+	// deps.Now, a pinned clock was never past a deadline derived from
+	// itself, so login polled the service forever and never returned.
+	e := newUnpairedEnv(t)
+	e.service.PairingOutage("pair-1")
+	e.deps.PairingWindow = 50 * time.Millisecond
+	pinned := e.deps.Now()
+	e.deps.Now = func() time.Time { return pinned }
+
+	done := make(chan error, 1)
+	go func() { done <- e.machine().Login(e.io()) }()
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "timed out waiting for approval") {
+			t.Fatalf("login = %v, want the approval window reported closed", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("login never returned under a pinned clock: the approval window is being measured against deps.Now")
 	}
 }
 
