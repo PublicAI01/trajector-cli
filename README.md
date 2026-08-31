@@ -10,7 +10,8 @@ Contributed data is sold to third-party buyers and contributors are
 compensated — that fact is public by design; what stays confidential is buyer
 identity and commercial terms, not the sale itself.
 
-**Status: early development. Not yet functional.**
+**Status: beta.** Functional end to end; interfaces and the data agreement
+may still change before 1.0.
 
 ## How it works
 
