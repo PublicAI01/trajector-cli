@@ -132,7 +132,7 @@ func leftoverIgnoreRules(root string) []string {
 // decided (deleteData false) is asked here, before anything changes.
 func (m *Machine) Uninstall(deleteData bool, io IO) error {
 	if !deleteData {
-		deleteData, _ = askYesNo(io, "Delete local data (captured rawcalls, configuration, device token)? [y/N]: ")
+		deleteData, _ = askYesNo(io, "Delete local data (captured rawcalls, configuration, device token)? [y/N]: ", false)
 	}
 	grants, err := m.routes.All()
 	if err != nil {
@@ -170,8 +170,8 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 				fmt.Fprintf(io.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(path, unrestored))
 			}
 		}
-		undone, failures := m.restoreRecordedSettings(root, hashes[root])
-		reportRestoredSettings(io, undone, failures)
+		undone, failures := m.restoreRecordedSettings(root, hashes[root], claudesettings.OptionalSettings)
+		reportRestoredSettings(io, "", undone, failures)
 	}
 	fmt.Fprintf(io.Out, "Removed injection from %d project(s).\n", removed)
 	for _, root := range projects {

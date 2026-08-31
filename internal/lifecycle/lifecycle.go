@@ -60,15 +60,20 @@ type IO struct {
 	Err io.Writer
 }
 
-// askYesNo puts one yes/no question to the user. Only an explicit yes
-// answers true; a read that yields nothing at all is the error.
-func askYesNo(io IO, prompt string) (bool, error) {
+// askYesNo puts one yes/no question to the user. Empty input takes
+// def; otherwise only an explicit yes answers true. The error is a
+// read that yields nothing at all — a script, a pipeline, a closed
+// stdin — which is the one condition under which no question of any
+// kind can be answered.
+func askYesNo(io IO, prompt string, def bool) (bool, error) {
 	fmt.Fprint(io.Out, prompt)
 	line, err := bufio.NewReader(io.In).ReadString('\n')
 	if err != nil && line == "" {
 		return false, err
 	}
 	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "":
+		return def, nil
 	case "yes", "y":
 		return true, nil
 	}
