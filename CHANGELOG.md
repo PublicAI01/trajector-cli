@@ -6,6 +6,49 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-31
+
+### Added
+
+- `trajector enable` asks about one optional Claude Code setting,
+  `showThinkingSummaries`. Claude Code stopped generating these
+  summaries by default in v2.1.89; turning the setting on shows you the
+  model's reasoning again, and makes contributed records carry it
+  instead of an empty field — which is why we ask. The question states,
+  on screen before you answer: which key changes and to what, what it
+  does for you, what it does for us, that it costs you nothing
+  (reasoning is generated and billed either way), that it reaches this
+  project only, how to undo it, and that declining changes nothing
+  else. Accepting has trajector write the project's own
+  `settings.local.json` and record what was there before; a value you
+  set yourself is stated, left alone, and never recorded; a value you
+  explicitly turned off elsewhere flips the suggested answer to no and
+  names the settings layer it came from. Without an interactive session
+  — a script, a pipeline — nothing is asked and nothing is written.
+- `trajector disable` and `trajector uninstall` put an accepted setting
+  back exactly as it was before trajector wrote it — the key deleted if
+  it was absent, an explicit `false` restored — unless you edited it
+  since: your later edit always wins. Declining ends the asking; the
+  choice stays visible in `trajector status`, and rerunning `enable` is
+  how you change your mind.
+- `trajector status` closes the project section with the setting's
+  state: a recommendation while it is off and never declined, one
+  factual line once declined, and "on" marked as trajector's write or
+  as your own. `doctor` says nothing about it — an optional setting
+  left off is not a fault.
+- `PRIVACY.md` publishes the rule all of this follows: what a setting
+  must satisfy before trajector may ask for it, how trajector may ask
+  (never blocking, one refusal ends it), what must be disclosed every
+  time, and the conditions under which `enable` may write a setting at
+  all.
+
+### Changed
+
+- The data agreement gains a clause covering these settings writes and
+  their exact undo, and its version is bumped. Recording pauses for
+  existing users until the new terms are reconfirmed with
+  `trajector enable`; forwarding is untouched.
+
 ## [0.2.0] - 2026-08-30
 
 ### Added
@@ -177,7 +220,8 @@ Hardened ahead of the tag:
 - State files are replaced and read atomically on every platform,
   Windows rename collisions included.
 
-[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/PublicAI01/trajector-cli/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/PublicAI01/trajector-cli/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/PublicAI01/trajector-cli/releases/tag/v0.1.0
