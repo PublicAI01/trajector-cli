@@ -3,7 +3,7 @@ package consent
 // AgreementVersion identifies the agreement text below. Bumping it
 // makes every earlier acceptance stale: capture pauses until the user
 // reconfirms, so recorded consent always matches the current terms.
-const AgreementVersion = "2026-08-07"
+const AgreementVersion = "2026-08-31"
 
 // AgreementText is shown in full before the explicit yes/no prompt.
 // It states the actual client behavior and must be kept truthful to
@@ -33,7 +33,13 @@ machine.
    non-official base URL, its records are marked as third-party
    origin. Reward terms are the same regardless of origin.
 
-5. Revocation. Disabling a project stops collection immediately,
+5. Optional client settings. During enable, trajector may offer an
+   optional Claude Code setting. If you accept, trajector writes that
+   setting to the project's local Claude Code configuration, records
+   what was there before, and restores it exactly when you disable
+   the project or uninstall. If you decline, nothing else changes.
+
+6. Revocation. Disabling a project stops collection immediately,
    revokes its token, and deletes its local unuploaded data. You may
    additionally request deletion of uploaded data that has not yet
    been delivered. Data already delivered and rewarded is covered by

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
@@ -43,6 +44,9 @@ type projectRecord struct {
 	RootPath  string       `json:"root_path"`
 	State     ProjectState `json:"state"`
 	UpdatedAt string       `json:"updated_at"`
+	// Settings is absent in store files written before optional
+	// settings existed; both readers treat absence as "no decisions".
+	Settings map[string]SettingDecision `json:"settings,omitempty"`
 }
 
 // Store reads and writes the consent file. Every method loads the
@@ -88,13 +92,16 @@ func (s *Store) ProjectState(projectIDHash string) (ProjectState, bool, error) {
 	return rec.State, ok, nil
 }
 
-// SetProjectState records a project's decision.
+// SetProjectState records a project's decision. Setting decisions are
+// kept: a declined answer must survive disable/enable cycles so one
+// refusal keeps ending the ask.
 func (s *Store) SetProjectState(projectIDHash, rootPath string, state ProjectState, at string) error {
 	return s.update(func(f *storeFile) {
 		f.Projects[projectIDHash] = projectRecord{
 			RootPath:  rootPath,
 			State:     state,
 			UpdatedAt: at,
+			Settings:  f.Projects[projectIDHash].Settings,
 		}
 	})
 }
@@ -140,7 +147,7 @@ func (s *Store) RestoreProject(snap ProjectSnapshot) error {
 		if !ok && snap.rec == nil {
 			return nil
 		}
-		if ok && snap.rec != nil && rec == *snap.rec {
+		if ok && snap.rec != nil && reflect.DeepEqual(rec, *snap.rec) {
 			return nil
 		}
 	}

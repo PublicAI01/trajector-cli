@@ -6,6 +6,7 @@ package claudesettings
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -346,6 +347,11 @@ func parseSettings(path string, data []byte) (map[string]any, error) {
 	return root, nil
 }
 
+// errUnchanged, returned by a mutate callback, aborts an edit without
+// writing: the file the user formatted stays byte-for-byte as it is
+// instead of being re-marshalled.
+var errUnchanged = errors.New("claudesettings: no change")
+
 // edit is a read-modify-write of a file whose other writers are the
 // user and concurrent trajector processes; a plain last-write-wins
 // replacement would discard whatever a concurrent writer merged in, so
@@ -360,7 +366,7 @@ func edit(path string, mutate func(map[string]any) error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return fsatomic.Update(path, mode, func(old []byte) ([]byte, error) {
+	err := fsatomic.Update(path, mode, func(old []byte) ([]byte, error) {
 		root, err := parseSettings(path, old)
 		if err != nil {
 			return nil, err
@@ -374,4 +380,8 @@ func edit(path string, mutate func(map[string]any) error) error {
 		}
 		return append(data, '\n'), nil
 	})
+	if errors.Is(err, errUnchanged) {
+		return nil
+	}
+	return err
 }
