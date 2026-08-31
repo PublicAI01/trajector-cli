@@ -20,6 +20,9 @@ func (m *Machine) Diagnose(dir string) (report.Diagnosis, error) {
 		return d, err
 	}
 	d.Project = st
+	if st.Enabled {
+		d.OptionalSettings = m.optionalSettingStatuses(st)
+	}
 
 	// Observe, never Settled: only callers that act on the verdict pay
 	// to wait out a sibling's startup. A diagnosis reports the port as

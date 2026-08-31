@@ -6,6 +6,17 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
+// OptionalSettingStatus is one optional Claude Code setting as status
+// presents it: its key, its classified state, and whether the user
+// declined it. Declined rides beside the state because a declined
+// setting is still off — the two together decide whether status
+// recommends or merely records.
+type OptionalSettingStatus struct {
+	Key      string
+	State    claudesettings.SettingState
+	Declined bool
+}
+
 // ProjectStatus is everything the machine knows about one project's
 // consent, resolved in one read. It is the machine's read half: the
 // write methods change this state, a doctor surface prints it, and

@@ -54,6 +54,11 @@ type Diagnosis struct {
 	// surface leads with and the version gates are judged against.
 	Version string
 	Project ProjectStatus
+	// OptionalSettings is each optional Claude Code setting's state for
+	// the current project, resolved only while it contributes. status
+	// renders it and doctor never does: an optional setting left off is
+	// not a fault.
+	OptionalSettings []OptionalSettingStatus
 	// Proxy is who holds the proxy port, read without the startup grace
 	// only callers about to act on it pay.
 	Proxy    proxylife.Verdict

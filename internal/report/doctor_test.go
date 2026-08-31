@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
@@ -33,6 +34,25 @@ func TestDoctorReportsAnUnreadableTokenStore(t *testing.T) {
 		t.Error("doctor found no problem with an unreadable token store")
 	}
 	wants(t, "doctor", out, "token store could not be read", "Pairing state is unknown")
+}
+
+// An optional setting left off is not a fault, so doctor never
+// mentions one, whatever state it is in.
+func TestDoctorSaysNothingAboutOptionalSettings(t *testing.T) {
+	for _, state := range []claudesettings.SettingState{
+		claudesettings.Unset, claudesettings.OnByUs, claudesettings.OnByUser, claudesettings.OffByUser,
+	} {
+		for _, declined := range []bool{false, true} {
+			d := device()
+			d.Project = contributing()
+			d.OptionalSettings = []report.OptionalSettingStatus{
+				{Key: claudesettings.KeyShowThinkingSummaries, State: state, Declined: declined},
+			}
+			_, out := doctorText(d)
+
+			rejects(t, "doctor", out, "optional", "Optional", claudesettings.KeyShowThinkingSummaries)
+		}
+	}
 }
 
 func TestDoctorListsRejectedBatches(t *testing.T) {
