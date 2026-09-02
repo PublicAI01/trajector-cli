@@ -667,6 +667,12 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 	// replacement collides with it. keyPolicy is the policy of the value owned
 	// by the current key; container is the policy a container living anywhere
 	// inside a protected field's subtree inherits.
+	//
+	// The two are kept apart all the way down, including across an array: an
+	// array owned by a protected key inherits that key's policy for its own
+	// elements (keyPolicy) but never as a container policy, or the protection
+	// would reach into objects nested inside it. See the note on
+	// enteringObjectPolicy. 2026-09-02.
 	type frame struct {
 		isObject  bool
 		container fieldPolicy
@@ -687,6 +693,18 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 	// own key rather than inheriting an ancestor id/signature/path key's
 	// policy. Only a genuine container-wide policy reaches into a nested
 	// object.
+	//
+	// "Wherever it sits" is the whole of that rule, and an array used to
+	// break it: the array frame folded the owning key's policy into its
+	// container policy, which does reach into nested objects. So an object
+	// inside an array owned by a protected key inherited that key's policy
+	// after all — under a *signature key (policyVerbatim) every field of
+	// every such object went out past all seven layers, and under an
+	// *id/*ids/path key past the entropy and PII layers, while the same
+	// object written as the key's direct value was masked normally. The
+	// shape is not exotic: a recorded request body carries tool schemas and
+	// tool_use inputs whose keys third-party tools choose, so
+	// {"record_ids":[{...}]} is ordinary traffic. 2026-09-02.
 	enteringObjectPolicy := func() fieldPolicy {
 		if len(stack) == 0 {
 			return policyScan
@@ -702,7 +720,11 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 			stack = append(stack, frame{isObject: true, container: enteringObjectPolicy()})
 			i++
 		case '[':
-			stack = append(stack, frame{container: valuePolicy()})
+			// Both halves of the owner's policy travel into the array, and
+			// stay apart: container is what anything below inherits, keyPolicy
+			// covers this array's own elements. A nested array therefore keeps
+			// the element protection, and a nested object does not.
+			stack = append(stack, frame{container: enteringObjectPolicy(), keyPolicy: valuePolicy()})
 			i++
 		case '}', ']':
 			if len(stack) > 0 {

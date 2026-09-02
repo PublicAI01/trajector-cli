@@ -360,6 +360,45 @@ func TestJSONLBytes_ArrayUnderSkippedKeyPreserved(t *testing.T) {
 	}
 }
 
+func TestJSONLBytes_NestedArrayUnderProtectedKeyKeepsItsElements(t *testing.T) {
+	t.Parallel()
+	// The element protection reaches through nested arrays: they are still the
+	// protected key's own value, not an object carrying field names of its own.
+	got := redactedString(t, `{"session_ids":[["`+highEntropySecret+`"]]}`)
+	if !strings.Contains(got, `[["`+highEntropySecret+`"]]`) {
+		t.Errorf("element of a nested array under a protected key was rewritten: %s", got)
+	}
+}
+
+func TestJSONLBytes_ObjectInsideProtectedArrayIsJudgedOnItsOwnKeys(t *testing.T) {
+	t.Parallel()
+	// A protected key covers its scalar value and the elements of an array it
+	// owns — but an object is judged on its own field names wherever it sits,
+	// as the key's direct value or inside that array. Until 2026-09-02 the
+	// array frame folded the owning key's policy into the container policy,
+	// which does reach into nested objects: every field of every object in an
+	// array owned by a *signature key went out past all seven layers, and one
+	// owned by an *id/*ids/path key past the entropy layer that is the only
+	// thing masking a credential of no recognizable format.
+	//
+	// The direct-value document is asserted beside each nested one because it
+	// is the behaviour the nested one has to match: the two must not disagree
+	// about the same object.
+	for _, key := range []string{"signature", "thinkingSignature", "record_ids", "trace_id", "file_path", "cwd"} {
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			nested := redactedString(t, `{"`+key+`":[{"pw":"`+highEntropySecret+`"}]}`)
+			if strings.Contains(nested, highEntropySecret) {
+				t.Errorf("secret in an object inside an array owned by %q was left unmasked: %s", key, nested)
+			}
+			direct := redactedString(t, `{"`+key+`":{"pw":"`+highEntropySecret+`"}}`)
+			if strings.Contains(direct, highEntropySecret) {
+				t.Errorf("secret in an object owned by %q was left unmasked: %s", key, direct)
+			}
+		})
+	}
+}
+
 func TestJSONLBytes_ObjectKeyNeverReplaced(t *testing.T) {
 	t.Parallel()
 	// An object key spelled exactly like a replaced value must never be
