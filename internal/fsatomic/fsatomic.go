@@ -211,6 +211,18 @@ func sweepOrphans(path string) {
 	}
 }
 
+// StaleTempName reports whether name is a WriteFile temp — created
+// beside its target and renamed over it — old enough that no live
+// writer can still own it. sweepOrphans covers the paths this package
+// rewrites under a lock; this predicate is for callers that write many
+// unlocked, individually named files into one directory and so have no
+// single base name to sweep. They supply the rest of the judgment: a
+// name matching this may still be one a reader would open, because a
+// caller's own naming scheme can contain the marker by coincidence.
+func StaleTempName(name string, mod time.Time) bool {
+	return strings.Contains(name, tempMarker) && time.Since(mod) > lockStale
+}
+
 // lock takes an exclusive lock via create-exclusive of a lock file,
 // which every platform this runs on supports over local filesystems.
 // The file carries a random owner mark: a lock ejected as stale may

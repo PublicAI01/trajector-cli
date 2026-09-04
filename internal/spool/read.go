@@ -153,7 +153,13 @@ func (s *Spool) DeleteProject(projectIDHash string) (int, error) {
 func (s *Spool) deleteMatching(match func(f rawcallFile, indexed map[string]indexLine) (bool, error)) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.refreshLocked()
+	// A withdrawal must not leave a crash-stranded rawcall behind, and no
+	// reader below can see one. Sweeping here rather than only at Open is
+	// what makes "deleted every unuploaded rawcall for this project" true
+	// in a process that has been up since before the crash. rederive, not
+	// refresh: the sweep just changed the directory under the signature.
+	s.sweepStaleTempsLocked()
+	s.rederiveLocked()
 
 	deleted := 0
 	days, err := s.days()

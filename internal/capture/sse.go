@@ -287,6 +287,21 @@ func parseEvents(raw []byte) ([]event, error) {
 			}
 			data = append(data, chunk...)
 			fieldsSeen, dataSeen = true, true
+		case strings.Contains(line, ":"):
+			// A field this parser does not model. `id:` and `retry:` are
+			// standard SSE and cost nothing to skip; so is any field the
+			// upstream adds later, none of which we reassemble from.
+			//
+			// Until 2026-09-04 this was an error, which is the wrong
+			// direction here. Failing the parse degrades the whole exchange
+			// to raw stream text, and a degraded record is a single JSON
+			// string, so the entropy layer then masks the thinking
+			// signatures and ids this record exists to keep verbatim. One
+			// spec-legal line upstream could start emitting at any time
+			// would have cost observed truth on every stream. Skipping a
+			// field we never read costs nothing. A line carrying no colon
+			// at all stays an error: that is framing damage, not an
+			// unmodelled field.
 		default:
 			return nil, fmt.Errorf("capture: unrecognized stream line %q", line)
 		}

@@ -83,12 +83,65 @@ func Open(dir string, quota int64) (*Spool, error) {
 	if quota == 0 {
 		quota = DefaultQuota
 	}
-	sig := dirSignature(dir)
+	s := &Spool{dir: dir, quota: quota}
+	// Before the first usage figure is taken, so the walk does not adopt
+	// bytes that are about to be reclaimed. Opening is also the moment
+	// after a crash, which is the only thing that strands these.
+	s.sweepStaleTempsLocked()
+	s.sig = dirSignature(dir)
 	usage, err := walkUsage(dir)
 	if err != nil {
 		return nil, err
 	}
-	return &Spool{dir: dir, quota: quota, usage: usage, sig: sig}, nil
+	s.usage = usage
+	return s, nil
+}
+
+// sweepStaleTempsLocked removes rawcall temps stranded by a writer that
+// died between WriteFile's create and its rename — an OOM kill, a power
+// loss, a pulled plug. Such a file holds a full unredacted rawcall.
+//
+// Until 2026-09-04 nothing ever removed one. fsatomic.Update's own sweep
+// reaches only the paths this package rewrites under a lock, which means
+// index.jsonl and never a rawcall; and every reader here filters on a
+// ".json" extension that "<id>.json.tmp-NNN" does not have, since
+// filepath.Ext returns ".tmp-NNN". walkUsage filters nothing, so the
+// bytes were charged all the same. That split cost twice over: the
+// strand was invisible to DeleteProject, leaving a withdrawn project's
+// rawcall on disk after the user was told it was deleted, and it was
+// charged against the quota forever, eventually refusing all recording
+// while Summary reported bytes with no records to explain them.
+//
+// Only aged temps are taken, so a live writer's transient — which
+// exists for milliseconds — is never in reach. And only names no reader
+// would open: storableRequestID permits dots, so an id may legitimately
+// contain ".tmp-", but such a record still ends in ".json". The filter
+// here is exactly the inverse of rawcallFiles', which is the point —
+// what readers cannot see is what nothing else will ever reclaim.
+//
+// Callers hold s.mu, or hold the spool before it is published.
+func (s *Spool) sweepStaleTempsLocked() {
+	days, err := s.days()
+	if err != nil {
+		return
+	}
+	for _, dayDir := range days {
+		entries, err := os.ReadDir(dayDir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || name == indexName || filepath.Ext(name) == ".json" {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil || !fsatomic.StaleTempName(name, info.ModTime()) {
+				continue
+			}
+			os.Remove(filepath.Join(dayDir, name))
+		}
+	}
 }
 
 // walkUsage derives total spool size from disk, the authority the

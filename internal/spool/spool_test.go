@@ -264,6 +264,112 @@ func TestCreateReportsConfigurationAndFailures(t *testing.T) {
 	}
 }
 
+// strandedTemp plants what WriteFile leaves behind when the process dies
+// between creating its temp and renaming it into place, backdated past
+// the stale bound so a sweep is allowed to take it. The name is exactly
+// what os.CreateTemp(dir, "<id>.json.tmp-*") produces.
+func strandedTemp(t *testing.T, dir, id string, size int) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, id+".json.tmp-1234567")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", size)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestStrandedRawcallTempIsReclaimed pins both halves of the split that
+// let a crash-stranded temp live forever: readers filter on a ".json"
+// extension that "<id>.json.tmp-N" does not have, while walkUsage
+// filters nothing and charged the bytes anyway. So the file was both
+// uncharitably permanent in the quota and invisible to deletion.
+func TestStrandedRawcallTempIsReclaimed(t *testing.T) {
+	dir := t.TempDir()
+	day := filepath.Join(dir, "20260801")
+	path := strandedTemp(t, day, "msg_stranded", 4096)
+
+	s, err := spool.Open(dir, 0)
+	if err != nil {
+		t.Fatalf("Open = %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("a stranded rawcall temp survived Open")
+	}
+	if s.Usage() != 0 {
+		t.Errorf("Usage = %d, want 0: stranded bytes are still charged", s.Usage())
+	}
+}
+
+// TestDeleteProjectReclaimsStrandedTemps pins the consent half: after a
+// withdrawal the user is told every unuploaded rawcall for the project
+// is gone, so none may be left on disk — including one no reader can
+// see. The spool here is opened before the strand appears, standing in
+// for a process that has been up since before the crash.
+func TestDeleteProjectReclaimsStrandedTemps(t *testing.T) {
+	dir := t.TempDir()
+	s, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Write(storedRawcall(t, "msg_01", "sess", "projecthash", noon)); err != nil {
+		t.Fatal(err)
+	}
+	path := strandedTemp(t, filepath.Join(dir, "20260801"), "msg_stranded", 2048)
+
+	if _, err := s.DeleteProject("projecthash"); err != nil {
+		t.Fatalf("DeleteProject = %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("an unredacted rawcall survived a consent withdrawal")
+	}
+	if s.Usage() != 0 {
+		t.Errorf("Usage = %d, want 0 after deleting everything", s.Usage())
+	}
+}
+
+// TestSweepSparesLiveAndLookalikeFiles guards the two ways the sweep
+// could take something it must not: a temp young enough to still belong
+// to a live writer, and a real record whose id contains ".tmp-", which
+// storableRequestID permits because it allows dots.
+func TestSweepSparesLiveAndLookalikeFiles(t *testing.T) {
+	dir := t.TempDir()
+	day := filepath.Join(dir, "20260801")
+	if err := os.MkdirAll(day, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fresh := filepath.Join(day, "msg_live.json.tmp-99")
+	if err := os.WriteFile(fresh, []byte("in flight"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Write(parsedRawcall(t, "msg.tmp-7", noon.Format(time.RFC3339Nano))); err != nil {
+		t.Fatal(err)
+	}
+	lookalike := filepath.Join(day, "msg.tmp-7.json")
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(lookalike, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DeleteWhere(func(string) bool { return false }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("a live writer's temp was swept: %v", err)
+	}
+	if _, err := os.Stat(lookalike); err != nil {
+		t.Errorf("a record whose id contains .tmp- was swept: %v", err)
+	}
+}
+
 func TestOpenCreatesNothingAndReadsBackAnUnwrittenSpool(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "rawcalls")
 	s, err := spool.Open(dir, 0)

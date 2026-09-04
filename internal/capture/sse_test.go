@@ -140,6 +140,33 @@ func TestAssembleKeepsLargeNumbersAsSourceLiterals(t *testing.T) {
 	}
 }
 
+// TestAssembleSkipsUnmodelledSSEFields pins that a spec-legal field this
+// parser does not model does not cost the whole exchange. `id:` and
+// `retry:` are standard SSE; treating them as unrecognized degraded the
+// record to raw stream text, and a degraded record is a single JSON
+// string, so the signature below — observed truth that must survive
+// verbatim — would be masked by the entropy layer instead.
+func TestAssembleSkipsUnmodelledSSEFields(t *testing.T) {
+	stream := "event: message_start\nid: 1\ndata: " +
+		`{"type":"message_start","message":{"id":"msg_040","type":"message","role":"assistant","model":"claude-fable-5","content":[],"usage":{"input_tokens":3,"output_tokens":1}}}` + "\n\n" +
+		"retry: 3000\n\n" +
+		ev("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`) +
+		ev("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Hmm"}}`) +
+		ev("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EqQBCgkIkl=="}}`) +
+		ev("content_block_stop", `{"type":"content_block_stop","index":0}`) +
+		ev("message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}`) +
+		ev("message_stop", `{"type":"message_stop"}`)
+
+	got, err := capture.Assemble([]byte(stream))
+	if err != nil {
+		t.Fatalf("Assemble degraded on a spec-legal SSE field: %v", err)
+	}
+	want := `{"id":"msg_040","type":"message","role":"assistant","model":"claude-fable-5","content":[{"type":"thinking","thinking":"Hmm","signature":"EqQBCgkIkl=="}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":7}}`
+	if !reflect.DeepEqual(decode(t, got), decode(t, []byte(want))) {
+		t.Errorf("Assemble = %s, want %s", got, want)
+	}
+}
+
 func TestAssembleRefusesToGuess(t *testing.T) {
 	start := ev("message_start", `{"type":"message_start","message":{"id":"msg_030","type":"message","role":"assistant","model":"claude-fable-5","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}`)
 	tests := []struct {

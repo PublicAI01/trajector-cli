@@ -29,7 +29,25 @@ var secretPattern = regexp.MustCompile(`[A-Za-z0-9+_=-]{10,}`)
 // credentialedURIPattern matches URLs that embed userinfo with a password, such
 // as postgres://user:pass@host/db or redis://:pass@host/0. These often have
 // moderate entropy and are not reliably covered by vendor-specific scanners.
+//
+// The userinfo classes exclude `/` on purpose: without that, the path of an
+// ordinary URL that happens to contain `@` (https://host:443/@scope/pkg) reads
+// as user:password@host and the whole URL is masked as a credential. The cost
+// is credentialedDBURIPattern's gap — see there.
 var credentialedURIPattern = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]{1,31}://[^\s/?#@"'` + "`" + `<>:]*:[^\s/?#@"'` + "`" + `<>]+@[^\s"'` + "`" + `<>]+`)
+
+// credentialedDBURIPattern covers what credentialedURIPattern's `/`-free
+// password class cannot: a password containing `/`, `?` or `#`. Generated
+// passwords are routinely base64, so `/` in a DATABASE_URL is common, and
+// until 2026-09-04 `postgres://svc:kQ8vTn2/Xw9pLm4Za@db/appdb` survived every
+// layer in the clear — layer 4 could not cross the `/`, and layer 5's gate
+// only recognized a literal `password=` in the query string.
+//
+// Relaxing the class is safe only against a closed scheme list. Those schemes
+// do not carry `@` in a path the way http(s) does, so the ambiguity that
+// forces credentialedURIPattern to stop at `/` does not arise here. The
+// password still stops at `@`, which terminates userinfo.
+var credentialedDBURIPattern = regexp.MustCompile(`(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis(?:s)?|amqps?|ldaps?|clickhouse|cassandra|kafka)://[^\s/?#@"'` + "`" + `<>:]*:[^\s@"'` + "`" + `<>]+@[^\s"'` + "`" + `<>]+`)
 
 // dbPasswordKeyShape matches a DB-prefixed credential key (vendor prefix +
 // optional `_word`/`-word` segments + `password`/`passwd`/`pwd`). Used to
@@ -54,7 +72,15 @@ var (
 	passwordAssignmentRegex = regexp.MustCompile(`(?i)(?:^|[?&;\s])(?:password|pwd)=("[^"]*"|'[^']*'|[^&;\s"']+)`)
 	// credentialJSONKeyRegex operates on output of normalizeCredentialJSONKey
 	// (already lowercased, `-`/` `/`.` → `_`), so the `(?i)` flag is unnecessary.
-	credentialJSONKeyRegex  = regexp.MustCompile(`^` + dbPasswordKeyShape + `$`)
+	//
+	// The optional `<segments>_` prefix is the structured-key spelling of
+	// credentialValuePattern's `(?:^|[^A-Za-z0-9])` boundary: both mean "the
+	// vendor token starts at the beginning or just after a separator". Until
+	// 2026-09-04 this side was anchored bare `^`, so one shared shape gave two
+	// different answers — APP_DB_PASSWORD=x in a text blob was masked, while
+	// {"APP_DB_PASSWORD":"x"} in a tool result was uploaded in the clear. A key
+	// with no separator (mydbpassword) still fails, as on the text side.
+	credentialJSONKeyRegex  = regexp.MustCompile(`^(?:[a-z0-9_]*_)?` + dbPasswordKeyShape + `$`)
 	genericPasswordKeyRegex = regexp.MustCompile(`(?i)^(?:password|passwd|pwd)$`)
 )
 
@@ -283,6 +309,9 @@ func detectLayers(s string, full bool) []taggedRegion {
 
 	// 4. Credentialed URIs (secrets — always on).
 	for _, loc := range credentialedURIPattern.FindAllStringIndex(s, -1) {
+		regions = append(regions, taggedRegion{region: region{loc[0], loc[1]}})
+	}
+	for _, loc := range credentialedDBURIPattern.FindAllStringIndex(s, -1) {
 		regions = append(regions, taggedRegion{region: region{loc[0], loc[1]}})
 	}
 
@@ -874,7 +903,7 @@ func isSingleJSONValue(dec *json.Decoder) bool {
 // policy lives in applyJSONReplacements, the one place that decides what
 // gets rewritten.
 func collectJSONLReplacements(v any) []jsonReplacement {
-	seen := make(map[string]bool)
+	seen := make(map[string]int)
 	var repls []jsonReplacement
 	var walk func(key string, credentialContext bool, v any)
 	walk = func(key string, credentialContext bool, v any) {
@@ -909,13 +938,32 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 			// recognizable token kept the rest of itself in the clear,
 			// while one nothing recognized was masked entirely. It is a
 			// key-name verdict, not an entropy one, so it holds under both.
-			if isCredentialJSONSecretKey(key, credentialContext) && hasNonPlaceholderPasswordValue(val) {
+			credentialKey := isCredentialJSONSecretKey(key, credentialContext) && hasNonPlaceholderPasswordValue(val)
+			if credentialKey {
 				redacted, deterministic = redactedPlaceholder, redactedPlaceholder
 			}
 			if redacted != val || deterministic != val {
 				seenKey := key + "\x00" + val
-				if !seen[seenKey] {
-					seen[seenKey] = true
+				if idx, ok := seen[seenKey]; ok {
+					// The same key and value can sit in a credential-shaped
+					// object ({"password":…,"host":…,"user":…}) and an ordinary
+					// one at once, and the credentialContext half of the verdict
+					// above belongs to the enclosing object, not to the pair. Go
+					// randomizes map iteration, so before 2026-09-04 whichever
+					// occurrence walk reached first won and the other was
+					// dropped here — the same document redacted to "REDACTED" on
+					// one run and "REDACTED/tail" on the next.
+					//
+					// applyJSONReplacements is keyed by (key, original) and can
+					// hold exactly one verdict for the pair, so the dedup cannot
+					// be made finer; it has to be made decidable. The credential
+					// reading wins, whichever occurrence arrived first.
+					if credentialKey {
+						repls[idx].redacted = redactedPlaceholder
+						repls[idx].deterministic = redactedPlaceholder
+					}
+				} else {
+					seen[seenKey] = len(repls)
 					repls = append(repls, jsonReplacement{
 						key:           key,
 						original:      val,

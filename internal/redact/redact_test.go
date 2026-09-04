@@ -1739,6 +1739,95 @@ func TestJSONLBytes_CredentialKeyMasksWholeValue(t *testing.T) {
 	}
 }
 
+// TestCredentialedDBURIPasswordWithSlash pins the `/`-in-password case.
+// credentialedURIPattern's userinfo classes exclude `/` so that an
+// ordinary URL with `@` in its path does not read as credentials, and
+// layer 5's gate only recognized a literal `password=` in the query
+// string. Between them, a generated base64 password containing `/` —
+// the common shape for a DATABASE_URL — left the machine in the clear.
+func TestCredentialedDBURIPasswordWithSlash(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{
+		"DATABASE_URL=postgres://svc:kQ8vTn2/Xw9pLm4Za@db.internal:5432/appdb",
+		"postgresql://svc:kQ8vTn2/Xw9pLm4Za@db.internal:5432/appdb",
+		"redis://:aB3/dEfGh1JkL@cache.internal:6379/0",
+		"mongodb+srv://svc:pw/with/slashes@cluster.example.net/db",
+		"amqp://svc:kQ8vTn2/Xw9pLm4Za@rabbit.internal:5672/vhost",
+	} {
+		got := redactedField(t, in)
+		if strings.Contains(got, "kQ8vTn2") || strings.Contains(got, "Xw9pLm4Za") ||
+			strings.Contains(got, "dEfGh1JkL") || strings.Contains(got, "with/slashes") {
+			t.Errorf("credentialed DB URI password survived: %q -> %q", in, got)
+		}
+	}
+}
+
+// TestCredentialedURIDoesNotMaskAtInPath guards the reason the userinfo
+// classes exclude `/` in the first place: relaxing it for http(s) would
+// read a path containing `@` as user:password@host. The relaxed class
+// is scoped to a closed list of non-http schemes, so these must survive.
+func TestCredentialedURIDoesNotMaskAtInPath(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{
+		"https://registry.npmjs.org:443/@scope/pkg",
+		"http://example.com:8080/a@b",
+	} {
+		if got := redactedField(t, in); got != in {
+			t.Errorf("ordinary URL was masked: %q -> %q", in, got)
+		}
+	}
+}
+
+// TestJSONLBytes_PrefixedCredentialKeyIsMasked pins that the structured
+// and text spellings of one key agree. credentialValuePattern accepts a
+// vendor token starting after a separator (APP_DB_PASSWORD=x is masked),
+// but credentialJSONKeyRegex was anchored bare `^`, so the same key as a
+// JSON field — the shape MCP tool results and parsed compose files take —
+// was uploaded in the clear.
+func TestJSONLBytes_PrefixedCredentialKeyIsMasked(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{
+		"APP_DB_PASSWORD", "PROD_MYSQL_PWD", "SERVICE_PG_PASSWORD", "APP_REDIS_PASSWORD",
+	} {
+		const value = "hunter2-prod"
+		got := redactedString(t, `{"env":{"`+key+`":"`+value+`"}}`)
+		if strings.Contains(got, value) {
+			t.Errorf("structured %s survived: %s", key, got)
+		}
+		// The text spelling must keep agreeing — it is the reference.
+		if text := redactedField(t, key+"="+value); strings.Contains(text, value) {
+			t.Errorf("text %s survived: %s", key, text)
+		}
+	}
+	// A key with no separator before the vendor token is still not a
+	// credential key, matching the text side's boundary exactly.
+	if got := redactedString(t, `{"mydbpassword":"plainish"}`); !strings.Contains(got, "plainish") {
+		t.Errorf("mydbpassword should not read as a credential key: %s", got)
+	}
+}
+
+// TestJSONLBytes_CredentialKeyVerdictIsDeterministic pins that the same
+// document redacts the same way every run. The credential verdict partly
+// depends on the enclosing object (host+user siblings), but the dedup key
+// was only (key, value) and Go randomizes map iteration, so whichever
+// occurrence walk reached first decided both — masking the whole value on
+// some runs and leaving "REDACTED/tail" on others.
+func TestJSONLBytes_CredentialKeyVerdictIsDeterministic(t *testing.T) {
+	t.Parallel()
+	const value = "aB3dEfGh1JkLmN0pQrStUvWxYz2/tail"
+	const doc = `{"svc":{"password":"` + value + `"},` +
+		`"db":{"password":"` + value + `","host":"db.example.com","user":"svc"}}`
+	want := redactedString(t, doc)
+	for i := 0; i < 200; i++ {
+		if got := redactedString(t, doc); got != want {
+			t.Fatalf("run %d differs:\n got %s\nwant %s", i, got, want)
+		}
+	}
+	if strings.Contains(want, "tail") {
+		t.Errorf("credential value kept a tail in the clear: %s", want)
+	}
+}
+
 // TestDatabaseURLPasswordWithPercent pins that a query-string password
 // is found in the raw text. url.Query drops any pair whose value holds
 // an invalid percent escape, which made the whole URL read as
