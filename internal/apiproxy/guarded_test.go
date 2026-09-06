@@ -327,6 +327,53 @@ func TestPausedTrafficKeepsTheProxyAlive(t *testing.T) {
 	}
 }
 
+// unreadableTable is a routing table that does not parse. The proxy
+// keeps forwarding at the default upstream — a table it cannot read must
+// not cost the user their traffic — but no token resolves against it.
+const unreadableTable = `{"projects": {`
+
+// TestUnresolvedTrafficKeepsTheProxyAlive is the other half of
+// TestPausedTrafficKeepsTheProxyAlive. That one pinned that the idle
+// clock must not be tied to the *recording* decision; this one pins that
+// it must not be tied to the *routing* decision either.
+//
+// Until 2026-09-06 only a resolving token touched the clock, so a
+// routing table that could not be read — unparseable JSON, a bad mode, a
+// missing file under a standing injection — left it at the process start
+// while every request still forwarded. The proxy then drained itself one
+// idle timeout after boot however much traffic was flowing, and the next
+// request of a live session met a closed port. Traffic here keeps
+// flowing for several timeouts; if the proxy exits under it, a request
+// fails and this test says so.
+func TestUnresolvedTrafficKeepsTheProxyAlive(t *testing.T) {
+	const idle = 300 * time.Millisecond
+	e := proxytest.New(t, proxytest.WithIdleTimeout(idle))
+	e.WriteTable(unreadableTable)
+
+	started := time.Now()
+	for i := 0; time.Since(started) < 3*idle; i++ {
+		e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_alive"}`)})
+		req, err := http.NewRequest(http.MethodPost, e.BaseURL()+"/t/tok1/v1/messages", strings.NewReader(`{"m":1}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := e.Do(req)
+		if err != nil {
+			t.Fatalf("request %d failed %s into continuous forwarding: %v; the proxy stopped serving while it was still carrying traffic an unreadable routing table could not name",
+				i, time.Since(started).Round(time.Millisecond), err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("request %d status = %d, want the exchange forwarded untouched", i, resp.StatusCode)
+		}
+		time.Sleep(idle / 5)
+	}
+	if stored := e.Rawcalls(); len(stored) != 0 {
+		t.Errorf("spool holds %d rawcalls, want none for a token no table resolves", len(stored))
+	}
+}
+
 func TestSelfcheckCarriesThePauseReason(t *testing.T) {
 	e := proxytest.New(t)
 	e.WriteTable(pausedTable(e.Upstream.URL(), routing.PauseSignedOut))

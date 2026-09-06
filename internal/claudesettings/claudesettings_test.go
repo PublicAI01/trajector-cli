@@ -115,6 +115,52 @@ func TestInjectProjectPreservesUserContent(t *testing.T) {
 	}
 }
 
+// TestInjectProjectNarrowsAnExistingFileToOwnerOnly pins the mechanism
+// the owner-only rule exists for, in the case that actually happens.
+// Claude Code creates .claude/settings.local.json itself, so under a
+// default umask the file injection lands in already exists at 0644 —
+// and until 2026-09-06 edit preserved that mode unconditionally, so the
+// injected base URL put this project's consent token into a file every
+// account on the machine could read. The proxy binds loopback, which
+// every account can reach, so that token is a capability: whoever reads
+// it can have traffic of their own recorded into this project and
+// uploaded under this device.
+func TestInjectProjectNarrowsAnExistingFileToOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Chmod there toggles the read-only attribute and nothing else;
+		// the profile directory's ACL protects the token instead.
+		t.Skip("no owner-only bit to assert on Windows")
+	}
+	root := t.TempDir()
+	path := ProjectLocalPath(root)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"permissions": {"allow": ["Bash(npm test)"]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perm := info.Mode().Perm()
+	if perm&0o077 != 0 {
+		t.Errorf("mode after injecting into an existing 0644 file = %v, want owner-only (the injected base URL embeds the consent token)", perm)
+	}
+	if perm&0o600 != 0o600 {
+		t.Errorf("mode = %v, want the owner still able to read and write it", perm)
+	}
+	// Narrowing the mode must not cost the user the content.
+	if settings := readJSON(t, path); settings["permissions"] == nil {
+		t.Error("permissions block lost")
+	}
+}
+
 func TestInjectProjectIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 	path := ProjectLocalPath(root)

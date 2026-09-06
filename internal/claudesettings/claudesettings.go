@@ -89,9 +89,10 @@ func TokenFromBaseURL(value string) (string, bool) {
 }
 
 // InjectProject merges the proxy base URL and the two ensure-proxy
-// hooks into the settings file at path.
+// hooks into the settings file at path. It is the one write that leaves
+// a consent token in the file, so it goes through editSecret.
 func InjectProject(path, baseURL, hookCommand string) error {
-	return edit(path, func(root map[string]any) error {
+	return editSecret(path, func(root map[string]any) error {
 		env, err := childObject(root, "env")
 		if err != nil {
 			return err
@@ -357,11 +358,40 @@ var errUnchanged = errors.New("claudesettings: no change")
 // replacement would discard whatever a concurrent writer merged in, so
 // the whole cycle runs under fsatomic.Update's cross-process lock.
 func edit(path string, mutate func(map[string]any) error) error {
+	return editFile(path, false, mutate)
+}
+
+// editSecret is edit for a write that leaves this project's consent
+// token in the file: the mode is additionally narrowed to owner-only.
+//
+// "New files are owner-only because the injected URL embeds a consent
+// token" was the whole of that rule until 2026-09-06, and it protected
+// the rarer case. Claude Code creates .claude/settings.local.json itself
+// — it is where the permissions a user approves are stored — so under a
+// default umask the file injection lands in already exists at 0644, and
+// preserving the user's mode preserved that. The token is a capability,
+// not a label: the proxy binds loopback, which every account on the
+// machine can reach, so anyone who can read the token can have traffic
+// of their own recorded into this project and uploaded under this
+// device. Narrowing is confined to the writes that put the token there,
+// because widening it back once RemoveProject has taken the token out
+// would be this tool deciding the mode of a file that is the user's.
+func editSecret(path string, mutate func(map[string]any) error) error {
+	return editFile(path, true, mutate)
+}
+
+func editFile(path string, secret bool, mutate func(map[string]any) error) error {
 	// Keep the user's chosen permissions on an existing file; new files
 	// are owner-only because the injected URL embeds a consent token.
 	mode := fs.FileMode(0o600)
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
+	}
+	if secret {
+		// Only group and other are cleared. The owner's own bits are
+		// whatever they were, so a file the user made read-only for
+		// themselves stays that way.
+		mode &^= 0o077
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

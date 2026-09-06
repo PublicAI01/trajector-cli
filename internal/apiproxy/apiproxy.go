@@ -175,11 +175,12 @@ type Config struct {
 	// token. Such traffic is forwarded untouched and never recorded.
 	DefaultUpstream string
 	Spool           *spool.Spool
-	// IdleTimeout is how long traffic carrying a resolving consent token
-	// may be silent before the proxy exits on its own. Whether such
-	// traffic is recorded never enters it: a paused device forwards and
-	// records nothing, and it must not be counted as silence. Zero
-	// selects a default.
+	// IdleTimeout is how long the proxy may forward nothing at all
+	// before it exits on its own. Nothing about the recording decision
+	// enters it — not whether an exchange is recorded, not whether its
+	// token resolves, not whether the routing table could be read: every
+	// exchange this proxy forwards is it being in use, and silence is
+	// the absence of exchanges. Zero selects a default.
 	IdleTimeout time.Duration
 	// DrainTimeout bounds how long shutdown waits for in-flight
 	// requests. Zero selects a default.
@@ -238,9 +239,14 @@ type Server struct {
 
 	stats stats
 
-	mu             sync.Mutex
-	lastAuthorized time.Time
-	inflight       int
+	mu sync.Mutex
+	// lastForwarded is when this proxy last carried an exchange. It is
+	// named for what it measures rather than for any property of the
+	// traffic: every spelling that qualified it — recorded, authorized —
+	// let a recording-side condition decide when forwarding stops. See
+	// touchForwarded.
+	lastForwarded time.Time
+	inflight      int
 
 	// records carries finished captures to the one goroutine allowed to
 	// touch the disk, so no request goroutine ever waits on a write.
@@ -294,7 +300,7 @@ func New(cfg Config) (*Server, error) {
 		records:    make(chan func(context.Context), recordQueueDepth),
 		drainCh:    make(chan struct{}),
 	}
-	s.lastAuthorized = s.start
+	s.lastForwarded = s.start
 	s.recordsDone.Add(1)
 	go s.runRecordQueue()
 	forward := s.newForwarder()
@@ -459,7 +465,7 @@ func hostLimited(next http.Handler, bound string) http.Handler {
 func (s *Server) idle() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.inflight == 0 && time.Since(s.lastAuthorized) >= s.cfg.IdleTimeout
+	return s.inflight == 0 && time.Since(s.lastForwarded) >= s.cfg.IdleTimeout
 }
 
 func (s *Server) trackInflight(serve func()) {
@@ -474,13 +480,14 @@ func (s *Server) trackInflight(serve func()) {
 	serve()
 }
 
-// touchAuthorized marks that the proxy is still carrying traffic a
-// consent token named. Every exchange whose token resolves counts,
-// recorded or not: see the note in decide for why tying this to the
-// recording decision made a paused proxy exit under load.
-func (s *Server) touchAuthorized() {
+// touchForwarded marks that the proxy is still carrying traffic. Every
+// forwarded exchange counts — recorded or not, token resolving or not,
+// routing table readable or not: see the note in decide for the two
+// separate ways a qualified version of this made a busy proxy drain
+// itself out from under a live session.
+func (s *Server) touchForwarded() {
 	s.mu.Lock()
-	s.lastAuthorized = time.Now()
+	s.lastForwarded = time.Now()
 	s.mu.Unlock()
 }
 

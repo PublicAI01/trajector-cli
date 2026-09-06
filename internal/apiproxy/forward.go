@@ -110,6 +110,31 @@ func (s *Server) refuseUnroutable(w http.ResponseWriter, d *decision) {
 }
 
 func (s *Server) decide(r *http.Request) *decision {
+	// The idle clock is touched here, before anything is asked about this
+	// exchange, because the question it answers — is this proxy still
+	// carrying someone's traffic — is answered by arriving here at all.
+	// Only forwarded exchanges reach decide; the reserved endpoints and
+	// the token-prefixed selfcheck are served above it and never count.
+	//
+	// Nothing about the recording decision may narrow this, and the
+	// narrowing has now been wrong twice. Until 2026-08-16 the clock was
+	// touched only under Records(), so a device-wide pause (signed out,
+	// or the consent_reconfirm every device gets when the agreement
+	// changes) and a revoked-but-still-injected project each forwarded
+	// every request, recorded none, and left the clock at the process
+	// start. Moving it to Resolves() fixed those two and left the third:
+	// a routing table that cannot be read — unparseable JSON, a bad mode,
+	// a missing file under a standing injection — resolves no token at
+	// all, so the clock froze again while every request still forwarded
+	// at the default upstream. Either way the proxy drained itself one
+	// idle timeout after boot however much traffic was flowing, the next
+	// request of a live session met a closed port, and because the
+	// session hooks only run between turns a long agentic turn simply
+	// broke. Forwarding is sacred; nothing on the recording side may
+	// decide when it stops — including the recording side failing to
+	// answer. 2026-09-06.
+	s.touchForwarded()
+
 	d := &decision{restPath: r.URL.Path}
 	upstream := s.cfg.DefaultUpstream
 	var route routing.Route
@@ -122,21 +147,6 @@ func (s *Server) decide(r *http.Request) *decision {
 		recordToken = token
 		found, verdict := s.cfg.Table.Lookup(token)
 		if verdict.Resolves() {
-			// The idle clock asks whether this proxy is still carrying
-			// someone's traffic, which every resolving token answers — not
-			// whether it is recording it. Touching it only under Records()
-			// tied the lifetime of the forwarding path to the recording
-			// decision: a device-wide pause (signed out, or the
-			// consent_reconfirm every device gets when the agreement
-			// changes) and a revoked-but-still-injected project both
-			// forward every request and record none, so the clock never
-			// moved off the process start and the proxy drained itself one
-			// idle timeout after boot however much traffic was flowing.
-			// The next request of a live session then met a closed port,
-			// and the session hooks only run between turns, so a long
-			// agentic turn simply broke. Forwarding is sacred; nothing on
-			// the recording side may decide when it stops. 2026-08-16.
-			s.touchAuthorized()
 			route = found
 			upstream = found.Upstream
 			resolved = true
