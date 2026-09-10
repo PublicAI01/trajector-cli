@@ -393,6 +393,26 @@ func (p *Proxy) Stop() error {
 	return nil
 }
 
+// StopGone is Stop for a caller that needs the proxy actually gone
+// rather than merely told to go. Stop returns on the accepted drain,
+// which the holder writes before it begins shutting down: it then
+// spends its exit budget flushing the uploader — a network upload — and
+// closing its listeners, all after Stop's caller has moved on. Uninstall
+// moved on to deleting the data directories, and the exiting proxy's own
+// writes create what they need, so the deletion the user was told about
+// could be undone by the process it had just stopped. 2026-09-10.
+//
+// Waiting out the port covers everything the holder does while it still
+// serves, but not the record queue it drains after the listener closes:
+// a bounded remainder of spool writes, milliseconds against the seconds
+// a flush can take.
+func (p *Proxy) StopGone() error {
+	if err := p.Stop(); err != nil {
+		return err
+	}
+	return p.waitPortFree(drainTimeout)
+}
+
 // authorize attaches the admin token the holder proved it knows.
 // Every caller runs behind a successful verify: the raw token must
 // never probe a holder that has not proven it already knows it.

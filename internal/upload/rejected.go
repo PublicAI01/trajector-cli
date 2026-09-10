@@ -132,6 +132,8 @@ func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, rawcalls []s
 // data and withdrawal must reach them too. Batch directories left empty
 // of records are removed with their reason files.
 func PurgeRejected(rejectedDir, projectIDHash string) (int, error) {
+	// Before the walk, whose ".json" filter cannot see a strand.
+	sweepStaleTemps(rejectedDir)
 	batches, err := os.ReadDir(rejectedDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
@@ -179,6 +181,52 @@ func PurgeRejected(rejectedDir, projectIDHash string) (int, error) {
 	return deleted, nil
 }
 
+// sweepStaleTemps removes rawcall temps stranded in the rejected store
+// by a writer that died between fsatomic.WriteFile's create and its
+// rename — an OOM kill, a power loss, a pulled plug. Such a file holds
+// a full unredacted rawcall.
+//
+// It is the same split the spool closed on 2026-09-04, one directory
+// over: every reader here selects on a ".json" extension that
+// "<id>.json.tmp-NNN" does not have, since filepath.Ext returns
+// ".tmp-NNN". So a strand was invisible to PurgeRejected — a withdrawn
+// project's rawcall staying on disk after the user was told it was
+// deleted — and nothing else reclaims one: fsatomic.Update's sweep
+// reaches only paths it rewrites under a lock, and the spool's walks
+// only the spool's day directories.
+//
+// Only aged temps are taken, so a live quarantine's transient is never
+// in reach, and only names no reader would open: an id may itself
+// contain ".tmp-", but such a record still ends in ".json", as
+// reason.json does. 2026-09-10.
+func sweepStaleTemps(rejectedDir string) {
+	batches, err := os.ReadDir(rejectedDir)
+	if err != nil {
+		return
+	}
+	for _, b := range batches {
+		if !b.IsDir() {
+			continue
+		}
+		dir := filepath.Join(rejectedDir, b.Name())
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || filepath.Ext(name) == ".json" {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil || !fsatomic.StaleTempName(name, info.ModTime()) {
+				continue
+			}
+			os.Remove(filepath.Join(dir, name))
+		}
+	}
+}
+
 // RejectedBatch is one quarantined batch as the rejected store holds
 // it: the directory name, how many rawcalls actually sit there, and the
 // recorded reason (zero when reason.json is missing or unreadable —
@@ -193,6 +241,8 @@ type RejectedBatch struct {
 // for the surfaces that must warn while any are waiting and for
 // requeueing them.
 func ListRejected(rejectedDir string) ([]RejectedBatch, error) {
+	// A strand no reader can open must not outlive the surfaces either.
+	sweepStaleTemps(rejectedDir)
 	batches, err := os.ReadDir(rejectedDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		// Windows also reports a plain file sitting where the directory

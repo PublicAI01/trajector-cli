@@ -3,6 +3,7 @@ package claudesettings
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -720,6 +721,39 @@ func TestEnsureGitIgnoredRefusesASymlinkedGitignore(t *testing.T) {
 	}
 	if action != IgnoreSymlinked {
 		t.Errorf("action = %q, want symlinked", action)
+	}
+	after, err := os.ReadFile(target)
+	if err != nil || !bytes.Equal(after, before) {
+		t.Errorf("link target = %q, %v, want it untouched", after, err)
+	}
+}
+
+// TestInjectProjectRefusesASymlinkedSettingsFile pins the judgment
+// EnsureGitIgnored already makes for .gitignore. A rename installs over
+// the link rather than over what it points at, so a settings.json the
+// user keeps as a link into a dotfiles repository silently became a
+// detached regular file the managed copy never saw.
+func TestInjectProjectRefusesASymlinkedSettingsFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs privilege on windows")
+	}
+	target := filepath.Join(t.TempDir(), "settings.json")
+	before := []byte(`{"env":{"MY_OWN":"1"}}`)
+	if err := os.WriteFile(target, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	err := InjectProject(link, "http://127.0.0.1:1/t/tok", "trajector ensure-proxy")
+	if !errors.Is(err, ErrSymlinked) {
+		t.Fatalf("InjectProject = %v, want ErrSymlinked", err)
+	}
+	info, err := os.Lstat(link)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("lstat = %v, %v: the link was replaced by a regular file", info, err)
 	}
 	after, err := os.ReadFile(target)
 	if err != nil || !bytes.Equal(after, before) {

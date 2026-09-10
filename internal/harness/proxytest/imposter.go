@@ -17,14 +17,16 @@ import (
 // before its token publication. It records what it receives, so a test
 // can assert that no credential ever reached it.
 type Imposter struct {
-	addr string
+	addr     string
+	listener net.Listener
 
-	mu       sync.Mutex
-	proof    string
-	token    string
-	unproven int
-	seen     []imposterRequest
-	carried  map[net.Conn]bool
+	mu         sync.Mutex
+	proof      string
+	token      string
+	unproven   int
+	afterDrain func()
+	seen       []imposterRequest
+	carried    map[net.Conn]bool
 }
 
 type imposterRequest struct {
@@ -47,6 +49,7 @@ func StartImposter(t *testing.T, health Health) *Imposter {
 		t.Fatal(err)
 	}
 	im := &Imposter{addr: l.Addr().String(), carried: map[net.Conn]bool{}}
+	im.listener = l
 	srv := &http.Server{ConnState: im.noteConn, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		im.mu.Lock()
 		im.seen = append(im.seen, imposterRequest{method: r.Method, path: r.URL.Path, header: r.Header.Clone()})
@@ -64,6 +67,15 @@ func StartImposter(t *testing.T, health Health) *Imposter {
 		}
 		if r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusAccepted)
+			im.mu.Lock()
+			after := im.afterDrain
+			im.mu.Unlock()
+			if after != nil && r.URL.Path == apiproxy.DrainPath {
+				// In its own goroutine: a real proxy answers the drain and
+				// only then begins shutting down, so the answer must not
+				// wait on whatever the exit does.
+				go after()
+			}
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -97,6 +109,19 @@ func (im *Imposter) ProveAfter(n int, token string) {
 	im.unproven = n
 	im.token = token
 }
+
+// AfterDrain runs f once the imposter has answered a drain request, as
+// a real proxy does its exit work after accepting one and only then
+// releases the port.
+func (im *Imposter) AfterDrain(f func()) {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	im.afterDrain = f
+}
+
+// ReleasePort stops the imposter listening, the observable end of a
+// proxy's life for anything waiting on the address.
+func (im *Imposter) ReleasePort() { im.listener.Close() }
 
 // noteConn records a connection the moment it carries a request, so a
 // bare liveness dial — which carries none — is not counted as one.

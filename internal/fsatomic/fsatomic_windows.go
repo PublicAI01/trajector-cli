@@ -68,6 +68,11 @@ func renameReplace(oldpath, newpath string) error {
 	return os.Rename(oldpath, newpath)
 }
 
+// flushDir is the no-op half of the post-rename flush on Windows: a
+// directory there has no handle to sync, and NTFS journals the name
+// change the rename made rather than leaving it for a later flush.
+func flushDir(string) error { return nil }
+
 func renamePosix(oldpath, newpath string) error {
 	wrap := func(err error) error {
 		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: err}

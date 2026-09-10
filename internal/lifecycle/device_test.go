@@ -461,6 +461,43 @@ func TestUninstallDeletesEverythingWhenAsked(t *testing.T) {
 	}
 }
 
+// TestUninstallDeletesDataOnlyOnceTheProxyIsGone pins that the deletion
+// waits for the proxy to actually be gone. A proxy answers the drain
+// before it starts shutting down, then spends its exit budget writing —
+// and its writes create the directories they need. Deleting on the
+// accepted drain raced the process it had just stopped, and left
+// unredacted rawcalls on disk under a "deleted" report.
+func TestUninstallDeletesDataOnlyOnceTheProxyIsGone(t *testing.T) {
+	e := newEnv(t)
+	im := e.occupyPortAsThisDevicesProxy()
+	late := filepath.Join(e.layout().SpoolDir(), "20260802", "req-late.json")
+	exited := make(chan struct{})
+	im.AfterDrain(func() {
+		// The exiting proxy's last writes, then the port: the order a
+		// serving process ends its life in.
+		defer close(exited)
+		time.Sleep(300 * time.Millisecond)
+		if err := os.MkdirAll(filepath.Dir(late), 0o700); err == nil {
+			os.WriteFile(late, []byte(`{"request":"unredacted"}`), 0o600)
+		}
+		im.ReleasePort()
+	})
+
+	if err := e.machine().Uninstall(true, e.io()); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	// An uninstall that waited has already seen this; one that did not
+	// is being given every chance before the state is judged.
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stand-in proxy never finished exiting")
+	}
+	if _, err := os.Stat(late); !os.IsNotExist(err) {
+		t.Error("a rawcall the exiting proxy wrote outlived the uninstall that reported the data deleted")
+	}
+}
+
 // Until 2026-08-15 logout cleared the device token before pausing
 // recording. A pause that then failed left the device signed out and
 // still recording every enabled project, and nothing could put it

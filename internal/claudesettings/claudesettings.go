@@ -353,6 +353,25 @@ func parseSettings(path string, data []byte) (map[string]any, error) {
 // instead of being re-marshalled.
 var errUnchanged = errors.New("claudesettings: no change")
 
+// ErrSymlinked reports a settings file that is a symbolic link, which
+// this package refuses to edit.
+var ErrSymlinked = errors.New("settings file is a symbolic link")
+
+// RefuseSymlink stops a write that would replace a symbolic link.
+// Every write here ends in a rename, and a rename installs over the
+// link itself, not over what it points at: a file the user keeps as a
+// link into a dotfiles repository silently became a detached regular
+// file the managed copy never saw. Refusing is the judgment this
+// package already makes for a symlinked .gitignore, for the same
+// reason — a link is a path someone else chose. 2026-09-10.
+func RefuseSymlink(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s (nothing was written; point it at a real file or remove the link)", ErrSymlinked, path)
+}
+
 // edit is a read-modify-write of a file whose other writers are the
 // user and concurrent trajector processes; a plain last-write-wins
 // replacement would discard whatever a concurrent writer merged in, so
@@ -381,6 +400,9 @@ func editSecret(path string, mutate func(map[string]any) error) error {
 }
 
 func editFile(path string, secret bool, mutate func(map[string]any) error) error {
+	if err := RefuseSymlink(path); err != nil {
+		return err
+	}
 	// Keep the user's chosen permissions on an existing file; new files
 	// are owner-only because the injected URL embeds a consent token.
 	mode := fs.FileMode(0o600)

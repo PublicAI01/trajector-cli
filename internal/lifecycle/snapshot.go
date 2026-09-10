@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
@@ -29,6 +30,12 @@ type snapshots []fileSnapshot
 func takeSnapshots(paths ...string) (snapshots, error) {
 	var s snapshots
 	for _, path := range paths {
+		// restore renames through fsatomic, which would replace a
+		// symbolic link rather than what it points at. Refusing stops
+		// the enable before it changes anything.
+		if err := claudesettings.RefuseSymlink(path); err != nil {
+			return nil, err
+		}
 		snap := fileSnapshot{path: path}
 		data, err := fsatomic.ReadFile(path)
 		switch {

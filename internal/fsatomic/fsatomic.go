@@ -60,6 +60,7 @@ func WriteFile(path string, data []byte, perm fs.FileMode) error {
 	for {
 		err := renameReplace(tmp, path)
 		if err == nil {
+			syncDir(filepath.Dir(path))
 			return nil
 		}
 		if !replaceCollision(err) || time.Now().After(deadline) {
@@ -75,6 +76,18 @@ func WriteFile(path string, data []byte, perm fs.FileMode) error {
 // the flush happens and that a failed one aborts the write; production
 // always uses (*os.File).Sync.
 var syncFile = (*os.File).Sync
+
+// syncDir flushes the directory entry a rename installed. Flushing the
+// temp file only makes its blocks durable; the rename that names them
+// is a directory change, and until the directory is flushed a crash can
+// take it back — for a path being created, leaving nothing at all.
+// upload's pending lease is exactly that shape, and a lease lost after
+// its batch went over the wire is re-sent under a fresh batch id and
+// ingested twice. Best effort by design: it runs after the rename, so
+// failing the write on it would tell a caller nothing changed when
+// everything did — the reading that turns this gap into a double write.
+// A variable so a test can observe the flush. 2026-09-10.
+var syncDir = flushDir
 
 // writeTemp creates path's uniquely named temp sibling holding data.
 // The temp is born owner-only and widened to perm only once its content

@@ -17,6 +17,48 @@ func swapSyncFile(t *testing.T, f func(*os.File) error) {
 	t.Cleanup(func() { syncFile = previous })
 }
 
+// swapSyncDir installs f as the directory flush this package performs
+// after a rename, for the duration of one test.
+func swapSyncDir(t *testing.T, f func(string) error) {
+	t.Helper()
+	previous := syncDir
+	syncDir = f
+	t.Cleanup(func() { syncDir = previous })
+}
+
+// TestWriteFileFlushesTheDirectoryAfterTheRename pins the other half of
+// the durability promise. The rename that names the flushed blocks is a
+// directory change, and a crash before the directory reaches stable
+// storage takes it back — for a path being created, the file is simply
+// gone. upload's pending lease is exactly that shape, and losing one
+// after its batch was sent re-sends the records under a fresh id.
+func TestWriteFileFlushesTheDirectoryAfterTheRename(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pending.json")
+
+	var flushed []string
+	var installed []bool
+	swapSyncDir(t, func(d string) error {
+		flushed = append(flushed, d)
+		_, err := os.Lstat(path)
+		installed = append(installed, err == nil)
+		return nil
+	})
+
+	if err := WriteFile(path, []byte(`{"batch":"b1"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if len(flushed) != 1 {
+		t.Fatalf("flushed %d director(ies), want 1: a rename nobody flushed can be taken back by a crash", len(flushed))
+	}
+	if flushed[0] != dir {
+		t.Errorf("flushed %q, want the target's directory %q", flushed[0], dir)
+	}
+	if !installed[0] {
+		t.Error("the directory was flushed before the rename installed the file, so the flush cannot cover it")
+	}
+}
+
 // TestWriteFileFlushesContentBeforeTheRename pins the durability half of
 // this package's promise. Renaming without flushing first only orders
 // the directory entry: a crash between the two leaves the entry pointing

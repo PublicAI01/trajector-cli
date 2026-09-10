@@ -38,9 +38,14 @@ func seedBatch(t *testing.T, rejectedDir, batchID string, records map[string][]b
 
 func rawcallBytes(t *testing.T, requestID string) []byte {
 	t.Helper()
+	return rawcallBytesFor(t, requestID, "hash-project")
+}
+
+func rawcallBytesFor(t *testing.T, requestID, projectIDHash string) []byte {
+	t.Helper()
 	env, err := envelope.Record(envelope.Observation{
 		Provider: "anthropic", Endpoint: "/v1/messages", HTTPStatus: 200,
-		ProjectIDHash: "hash-project", At: time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC),
+		ProjectIDHash: projectIDHash, At: time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC),
 		Request:     []byte(`{"model":"claude-fable-5"}`),
 		Response:    []byte(`{"id":"` + requestID + `"}`),
 		ContentType: "application/json", RequestComplete: true, ResponseComplete: true,
@@ -58,6 +63,47 @@ func spooledCount(t *testing.T, sp *spool.Spool) int {
 		t.Fatal(err)
 	}
 	return count
+}
+
+// TestPurgeRejectedReachesAStrandedTemp pins that consent withdrawal
+// reaches a rawcall a dying writer left mid-rename. Such a file holds
+// the full unredacted record, and every reader here filters on a
+// ".json" extension it does not have — so it stayed on disk after the
+// user was told the project's local data was deleted. The batch mixes
+// projects on purpose: that is when the directory outlives the purge.
+func TestPurgeRejectedReachesAStrandedTemp(t *testing.T) {
+	rejectedDir := t.TempDir()
+	seedBatch(t, rejectedDir, "b-poison", map[string][]byte{
+		"req-other": rawcallBytesFor(t, "req-other", "hash-other"),
+	})
+	dir := filepath.Join(rejectedDir, "b-poison")
+	strand := filepath.Join(dir, "req-1.json.tmp-4172")
+	if err := os.WriteFile(strand, rawcallBytesFor(t, "req-1", "hash-project"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	aged := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(strand, aged, aged); err != nil {
+		t.Fatal(err)
+	}
+	// A quarantine running right now owns this one; a sweep that took it
+	// would delete a record out from under its own writer.
+	live := filepath.Join(dir, "req-2.json.tmp-9931")
+	if err := os.WriteFile(live, rawcallBytesFor(t, "req-2", "hash-project"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := upload.PurgeRejected(rejectedDir, "hash-project"); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if _, err := os.Stat(strand); !os.IsNotExist(err) {
+		t.Error("a stranded unredacted rawcall survived the withdrawal that reported it deleted")
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Errorf("a temp young enough to still have a writer must be left alone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "req-other.json")); err != nil {
+		t.Errorf("another project's record must survive this purge: %v", err)
+	}
 }
 
 func TestRequeueMovesEveryRecordAndRemovesTheBatch(t *testing.T) {

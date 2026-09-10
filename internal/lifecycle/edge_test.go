@@ -214,6 +214,45 @@ func TestEnableLeavesASymlinkedGitIgnoreAloneAndWarns(t *testing.T) {
 	}
 }
 
+// The settings file is still snapshotted whole, taken and restored
+// through the link: an enable that refused to write through one still
+// replaced it on the way back out. Refusing before the snapshot keeps
+// both halves honest — nothing changed, so nothing is restored.
+func TestEnableLeavesASymlinkedSettingsFileAlone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks needs privilege on windows")
+	}
+	e := newEnv(t)
+	target := filepath.Join(e.deps.Home, "shared-settings.json")
+	before := []byte(`{"env":{"MY_OWN":"1"}}`)
+	if err := os.WriteFile(target, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := claudesettings.ProjectLocalPath(e.canonicalRoot())
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	e.startProxy()
+
+	if err := e.machine().Enable(e.project, e.io()); err == nil {
+		t.Fatal("enable wrote through a symlinked settings file")
+	}
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("lstat settings file: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Error("the symlinked settings file was replaced by a regular file")
+	}
+	after, err := os.ReadFile(target)
+	if err != nil || string(after) != string(before) {
+		t.Errorf("link target = %q, %v, want it untouched", after, err)
+	}
+}
+
 // A rolled-back enable used to restore .gitignore from a whole-file
 // snapshot, and the snapshot was taken through the link. Restoring it
 // wrote a regular file over the link — the write EnsureGitIgnored

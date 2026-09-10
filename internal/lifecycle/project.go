@@ -184,7 +184,10 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 	if err := claudesettings.RemoveUserHook(claudesettings.UserSettingsPath(m.deps.Home)); err != nil {
 		fmt.Fprintf(io.Err, "trajector: warning: could not remove the discovery hint: %v\n", err)
 	}
-	if err := m.proxy.Stop(); err != nil {
+	// Gone, not merely asked to go: everything deleted below is
+	// something an exiting proxy still writes, and its writes create the
+	// directories they need. See StopGone.
+	if err := m.proxy.StopGone(); err != nil {
 		fmt.Fprintf(io.Err, "trajector: warning: the proxy was not stopped: %v\n", err)
 	}
 

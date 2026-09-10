@@ -145,6 +145,19 @@ func (e *env) occupyPortStillPublishing() *proxytest.Imposter {
 	return im
 }
 
+// occupyPortAsThisDevicesProxy binds the proxy address with a holder
+// that proves the published admin token on every challenge, so the
+// machine treats it as its own proxy and will send it a drain.
+func (e *env) occupyPortAsThisDevicesProxy() *proxytest.Imposter {
+	e.t.Helper()
+	im := proxytest.StartImposter(e.t, proxytest.Health{Service: apiproxy.ServiceName, Version: e.deps.Version})
+	const token = "feedfacefeedfacefeedfacefeedface"
+	proxytest.PublishAdminToken(e.t, e.deps.Layout, im.Addr(), token)
+	im.ProveAfter(0, token)
+	e.deps.ProxyAddr = im.Addr()
+	return im
+}
+
 // obstruct replaces a directory the machine expects with a plain file,
 // so opening or listing it fails on every platform until the
 // obstruction is removed.
