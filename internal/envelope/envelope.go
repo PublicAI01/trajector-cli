@@ -95,7 +95,8 @@ type Observation struct {
 	Assembler Assembler
 
 	// UpstreamRequestID is the id the upstream reported for this
-	// exchange, used when the response body carries none.
+	// exchange. It is stored whenever it was observed, and it also
+	// names the record when the response body carries no id of its own.
 	UpstreamRequestID string
 
 	Hints FormatHints
@@ -129,13 +130,16 @@ type wire struct {
 // wireCapture describes how the rawcall was observed. All values are
 // copies of observed facts and are never rewritten downstream.
 type wireCapture struct {
-	HTTPStatus     int          `json:"http_status"`
-	ClientVersion  string       `json:"client_version"`
-	Timestamp      string       `json:"timestamp"`
-	ProjectIDHash  string       `json:"project_id_hash"`
-	UpstreamOrigin string       `json:"upstream_origin"`
-	SSEAssembly    wireAssembly `json:"sse_assembly"`
-	Garbled        bool         `json:"garbled"`
+	HTTPStatus    int    `json:"http_status"`
+	ClientVersion string `json:"client_version"`
+	Timestamp     string `json:"timestamp"`
+	ProjectIDHash string `json:"project_id_hash"`
+	// UpstreamRequestID is absent, never a placeholder, when the
+	// upstream reported no id.
+	UpstreamRequestID string       `json:"upstream_request_id,omitempty"`
+	UpstreamOrigin    string       `json:"upstream_origin"`
+	SSEAssembly       wireAssembly `json:"sse_assembly"`
+	Garbled           bool         `json:"garbled"`
 }
 
 // wireAssembly records which side reassembled the event stream and under
@@ -168,13 +172,14 @@ func Record(obs Observation) (Envelope, error) {
 		Endpoint:      obs.Endpoint,
 		RequestID:     obs.requestID(response, structured),
 		Capture: wireCapture{
-			HTTPStatus:     obs.HTTPStatus,
-			ClientVersion:  obs.ClientVersion,
-			Timestamp:      obs.At.UTC().Format(time.RFC3339Nano),
-			ProjectIDHash:  obs.ProjectIDHash,
-			UpstreamOrigin: Origin(obs.Upstream, obs.OfficialUpstream),
-			SSEAssembly:    assembly,
-			Garbled:        garbled || requestGarbled,
+			HTTPStatus:        obs.HTTPStatus,
+			ClientVersion:     obs.ClientVersion,
+			Timestamp:         obs.At.UTC().Format(time.RFC3339Nano),
+			ProjectIDHash:     obs.ProjectIDHash,
+			UpstreamRequestID: obs.UpstreamRequestID,
+			UpstreamOrigin:    Origin(obs.Upstream, obs.OfficialUpstream),
+			SSEAssembly:       assembly,
+			Garbled:           garbled || requestGarbled,
 		},
 		FormatHints: obs.Hints,
 		Request:     request,
@@ -262,6 +267,10 @@ func (e Envelope) Endpoint() string { return e.rec.Endpoint }
 
 // HTTPStatus is the status the upstream returned.
 func (e Envelope) HTTPStatus() int { return e.rec.Capture.HTTPStatus }
+
+// UpstreamRequestID is the id the upstream reported for the exchange,
+// or empty when it reported none.
+func (e Envelope) UpstreamRequestID() string { return e.rec.Capture.UpstreamRequestID }
 
 // UpstreamOrigin reports whether the provider's own API or a
 // user-configured third-party upstream served the exchange.

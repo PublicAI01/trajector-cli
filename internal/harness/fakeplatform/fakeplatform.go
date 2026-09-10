@@ -19,6 +19,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
@@ -262,4 +263,20 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(status)
 	w.Write(resp.Body)
+}
+
+// RecordIDsBySource reads the index part of a schema_version 2 upload
+// and groups its record ids by source, in stream order. It is for
+// asserting what a receiver could route on without decompressing the
+// records; it sends nothing and changes no stub.
+func RecordIDsBySource(batchPart []byte) (map[string][]string, error) {
+	ix, err := batch.ParseIndexV2(batchPart)
+	if err != nil {
+		return nil, fmt.Errorf("fakeplatform: %w", err)
+	}
+	groups := map[string][]string{}
+	for _, item := range ix.Records {
+		groups[item.Source] = append(groups[item.Source], item.RecordID)
+	}
+	return groups, nil
 }

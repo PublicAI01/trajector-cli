@@ -15,7 +15,10 @@
 package conformance
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,6 +52,13 @@ type Case struct {
 	// builds its own envelopes, so this is read to check the shape both
 	// sides agree on, not to send.
 	Envelope map[string]any
+	// EnvelopeBytes is the same envelope verbatim, for comparing a
+	// serialization against it rather than a decoding of it.
+	EnvelopeBytes []byte
+	// Records is the fixture's record stream, one record per element
+	// with its line ending removed. It is nil for a fixture that ships
+	// no stream.
+	Records [][]byte
 }
 
 // Meta is the fixture's own statement of what it covers.
@@ -131,6 +141,12 @@ func Load(dir string) ([]Case, error) {
 		if err := readJSON(filepath.Join(base, "batch.json"), &c.Envelope); err != nil {
 			return nil, err
 		}
+		if c.EnvelopeBytes, err = os.ReadFile(filepath.Join(base, "batch.json")); err != nil {
+			return nil, err
+		}
+		if c.Records, err = readRecords(filepath.Join(base, "records.jsonl")); err != nil {
+			return nil, err
+		}
 		cases = append(cases, c)
 	}
 	sort.Slice(cases, func(i, j int) bool { return cases[i].Name < cases[j].Name })
@@ -143,6 +159,27 @@ func readJSON(path string, into any) error {
 		return err
 	}
 	return json.Unmarshal(data, into)
+}
+
+// readRecords splits a record stream into records. A missing stream is
+// not an error; an empty line inside one is, because the stream format
+// has no such thing.
+func readRecords(path string) ([][]byte, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var records [][]byte
+	for _, line := range bytes.Split(bytes.TrimSuffix(data, []byte{'\n'}), []byte{'\n'}) {
+		if len(line) == 0 {
+			return nil, errors.New(path + ": empty line in record stream")
+		}
+		records = append(records, line)
+	}
+	return records, nil
 }
 
 func isDir(path string) bool {

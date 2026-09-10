@@ -1,0 +1,243 @@
+package upload_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/PublicAI01/trajector-cli/internal/batch"
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/harness/conformance"
+	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+)
+
+// The schema_version 2 fixtures carry more than an answer: they carry
+// the record stream and index both sides must agree on. What this
+// proves, per fixture: the index decodes into this client's type and
+// serializes back to the same fields in the same order; every transcript
+// record decodes into its type and serializes back byte for byte; every
+// record id can be recomputed from the record's identity; and the index
+// routes by source exactly as the stream is laid out. Rawcall records
+// are checked field by field against the index instead of byte for
+// byte: the rawcall envelope is still written at schema_version 1 here,
+// and the fixture spells an empty anthropic-beta list where this client
+// omits the field.
+func assertV2Fixture(t *testing.T, c conformance.Case) {
+	t.Helper()
+	ix, err := batch.ParseIndexV2(c.EnvelopeBytes)
+	if err != nil {
+		t.Fatalf("batch.json does not decode as a schema_version 2 index: %v", err)
+	}
+	got, err := ix.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want bytes.Buffer
+	if err := json.Compact(&want, c.EnvelopeBytes); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want.String() {
+		t.Errorf("index serialized differently from the fixture:\n got %s\nwant %s", got, want.String())
+	}
+	if len(ix.Records) != len(c.Records) {
+		t.Fatalf("index has %d items, stream has %d records", len(ix.Records), len(c.Records))
+	}
+
+	var offset int64
+	bySource := map[string][]string{}
+	for i, line := range c.Records {
+		item := ix.Records[i]
+		if item.Offset != offset || item.Size != int64(len(line)) {
+			t.Errorf("record %d: index says offset %d size %d, stream has offset %d size %d", i, item.Offset, item.Size, offset, len(line))
+		}
+		offset += int64(len(line))
+		bySource[item.Source] = append(bySource[item.Source], item.RecordID)
+
+		kind, err := envelope.KindOf(line)
+		if err != nil {
+			t.Fatalf("record %d: %v", i, err)
+		}
+		if kind.Source != item.Source {
+			t.Errorf("record %d: index says source %q, record says %q", i, item.Source, kind.Source)
+		}
+		switch kind {
+		case envelope.KindRawcall:
+			assertV2Rawcall(t, i, line, item)
+		case envelope.KindSegment:
+			assertV2Segment(t, i, line, item)
+		case envelope.KindMetaSnapshot:
+			assertV2MetaSnapshot(t, i, line, item)
+		default:
+			t.Errorf("record %d declares itself %+v, which this client cannot read", i, kind)
+		}
+	}
+
+	routed, err := fakeplatform.RecordIDsBySource(c.EnvelopeBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routed) != len(bySource) {
+		t.Errorf("routing groups = %v, want %v", routed, bySource)
+	}
+	for source, ids := range bySource {
+		if strings.Join(routed[source], ",") != strings.Join(ids, ",") {
+			t.Errorf("routing for %q = %v, want %v", source, routed[source], ids)
+		}
+	}
+	for i := 1; i < len(ix.Records); i++ {
+		if ix.Records[i-1].Source > ix.Records[i].Source {
+			t.Errorf("record %d: source %q follows %q; the stream groups sources", i, ix.Records[i].Source, ix.Records[i-1].Source)
+		}
+	}
+}
+
+func assertV2Rawcall(t *testing.T, i int, line []byte, item batch.IndexItemV2) {
+	t.Helper()
+	// The record envelope's version gate is unchanged in this round, so
+	// the fixture's record is read through the version it still writes.
+	asV1 := bytes.Replace(line, []byte(`"schema_version":"2"`), []byte(`"schema_version":"1"`), 1)
+	env, err := envelope.Parse(asV1)
+	if err != nil {
+		t.Errorf("record %d: %v", i, err)
+		return
+	}
+	if env.RequestID() != item.RecordID {
+		t.Errorf("record %d: record_id %q is not the request_id %q", i, item.RecordID, env.RequestID())
+	}
+	// The fixture spells timestamps with a fixed nine-digit fraction;
+	// this client trims trailing zeros. They name the same instant.
+	want := batch.RawcallItem(env)
+	want.Offset, want.Size = item.Offset, item.Size
+	want.Timestamp, item.Timestamp = "", sameInstantOrDiff(t, i, want.Timestamp, item.Timestamp)
+	if want != item {
+		t.Errorf("record %d: index item\n got %+v\nwant %+v", i, item, want)
+	}
+	var stored struct {
+		Capture map[string]json.RawMessage `json:"capture"`
+	}
+	if err := json.Unmarshal(line, &stored); err != nil {
+		t.Fatal(err)
+	}
+	raw, present := stored.Capture["upstream_request_id"]
+	if present != (env.UpstreamRequestID() != "") {
+		t.Errorf("record %d: upstream_request_id present=%v but read back as %q", i, present, env.UpstreamRequestID())
+	}
+	if present && string(raw) == `""` {
+		t.Errorf("record %d: upstream_request_id is an empty placeholder", i)
+	}
+	if strings.HasPrefix(env.RequestID(), "local-") && present {
+		t.Errorf("record %d: a locally named rawcall carries an upstream id %s", i, raw)
+	}
+}
+
+func assertV2Segment(t *testing.T, i int, line []byte, item batch.IndexItemV2) {
+	t.Helper()
+	seg, err := envelope.ParseSegment(line)
+	if err != nil {
+		t.Errorf("record %d: %v", i, err)
+		return
+	}
+	again, err := seg.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(again, line) {
+		t.Errorf("record %d: segment serialized differently from the fixture:\n got %s\nwant %s", i, again, line)
+	}
+	if want := envelope.SegmentRecordID(seg.SessionID, seg.File, seg.SegmentIndex); seg.RecordID != want || item.RecordID != want {
+		t.Errorf("record %d: record_id %q (index %q), recomputed %q", i, seg.RecordID, item.RecordID, want)
+	}
+	if want := batch.SegmentItem(seg); want.ProjectIDHash != item.ProjectIDHash || want.Timestamp != item.Timestamp || item.UpstreamOrigin != "" || item.Endpoint != "" {
+		t.Errorf("record %d: index item %+v does not match the segment's capture %+v", i, item, seg.Capture)
+	}
+	if !strings.HasSuffix(seg.Lines, "\n") {
+		t.Errorf("record %d: lines do not end in a newline", i)
+	}
+	for n, l := range strings.Split(strings.TrimSuffix(seg.Lines, "\n"), "\n") {
+		if l == "" {
+			t.Errorf("record %d: line %d is empty", i, n)
+			continue
+		}
+		for _, sig := range signaturesIn(t, l) {
+			if !bytes.Contains(again, []byte(`\"signature\":\"`+sig+`\"`)) {
+				t.Errorf("record %d: line %d: signature %q did not survive serialization", i, n, sig)
+			}
+		}
+	}
+}
+
+func assertV2MetaSnapshot(t *testing.T, i int, line []byte, item batch.IndexItemV2) {
+	t.Helper()
+	snap, err := envelope.ParseMetaSnapshot(line)
+	if err != nil {
+		t.Errorf("record %d: %v", i, err)
+		return
+	}
+	again, err := snap.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(again, line) {
+		t.Errorf("record %d: snapshot serialized differently from the fixture:\n got %s\nwant %s", i, again, line)
+	}
+	want, err := envelope.MetaSnapshotRecordID(snap.SessionID, snap.File, snap.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.RecordID != want || item.RecordID != want {
+		t.Errorf("record %d: record_id %q (index %q), recomputed %q", i, snap.RecordID, item.RecordID, want)
+	}
+	if w := batch.MetaSnapshotItem(snap); w.ProjectIDHash != item.ProjectIDHash || w.Timestamp != item.Timestamp || item.UpstreamOrigin != "" || item.Endpoint != "" {
+		t.Errorf("record %d: index item %+v does not match the snapshot's capture %+v", i, item, snap.Capture)
+	}
+}
+
+// sameInstantOrDiff returns "" when the two timestamps name the same
+// instant, so the caller's field comparison passes, and the differing
+// value otherwise.
+func sameInstantOrDiff(t *testing.T, i int, client, fixture string) string {
+	t.Helper()
+	a, errA := time.Parse(time.RFC3339Nano, client)
+	b, errB := time.Parse(time.RFC3339Nano, fixture)
+	if errA != nil || errB != nil {
+		t.Errorf("record %d: timestamps %q / %q: %v %v", i, client, fixture, errA, errB)
+		return fixture
+	}
+	if !a.Equal(b) {
+		return fixture
+	}
+	return ""
+}
+
+// signaturesIn lists the signatures of the content blocks in one
+// transcript line, in order. A line whose content is a plain string has
+// no blocks.
+func signaturesIn(t *testing.T, line string) []string {
+	t.Helper()
+	var v struct {
+		Message struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(line), &v); err != nil {
+		t.Fatalf("transcript line is not JSON: %v", err)
+	}
+	if !bytes.HasPrefix(bytes.TrimSpace(v.Message.Content), []byte("[")) {
+		return nil
+	}
+	var blocks []struct {
+		Signature string `json:"signature"`
+	}
+	if err := json.Unmarshal(v.Message.Content, &blocks); err != nil {
+		t.Fatalf("content blocks are not a list: %v", err)
+	}
+	var sigs []string
+	for _, block := range blocks {
+		if block.Signature != "" {
+			sigs = append(sigs, block.Signature)
+		}
+	}
+	return sigs
+}

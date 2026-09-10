@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 )
 
@@ -86,5 +88,37 @@ func TestRecordsRequests(t *testing.T) {
 	}
 	if got.Header.Get("Authorization") != "Bearer device-token-fake" {
 		t.Errorf("Authorization = %q, want recorded verbatim", got.Header.Get("Authorization"))
+	}
+}
+
+func TestRecordIDsBySourceGroupsTheIndexInStreamOrder(t *testing.T) {
+	ix := batch.NewIndexV2("b-1", time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC), "test", batch.Run{})
+	ix.Add(batch.IndexItemV2{RecordID: "msg_1", Source: "proxy"}, 10)
+	ix.Add(batch.IndexItemV2{RecordID: "seg_1", Source: "transcript"}, 10)
+	ix.Add(batch.IndexItemV2{RecordID: "msg_2", Source: "proxy"}, 10)
+	ix.Add(batch.IndexItemV2{RecordID: "meta_1", Source: "transcript"}, 10)
+	data, err := ix.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err := fakeplatform.RecordIDsBySource(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(groups["proxy"], ","); got != "msg_1,msg_2" {
+		t.Errorf("proxy = %q", got)
+	}
+	if got := strings.Join(groups["transcript"], ","); got != "seg_1,meta_1" {
+		t.Errorf("transcript = %q", got)
+	}
+	if len(groups) != 2 {
+		t.Errorf("groups = %v", groups)
+	}
+}
+
+func TestRecordIDsBySourceRefusesASchemaVersion1Index(t *testing.T) {
+	v1 := []byte(`{"schema_version":"1","batch_id":"b","records":[{"request_id":"msg_1","offset":0,"size":1}]}`)
+	if _, err := fakeplatform.RecordIDsBySource(v1); err == nil {
+		t.Error("a schema_version 1 index was grouped")
 	}
 }
