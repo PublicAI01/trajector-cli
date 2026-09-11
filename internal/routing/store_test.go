@@ -208,6 +208,97 @@ func TestPauseSuspendsEveryRouteAndMatchingResumeLifts(t *testing.T) {
 	}
 }
 
+func TestResolveAnswersWhatTheProxyWouldAnswer(t *testing.T) {
+	store, table := openStore(t)
+	grant(t, store, "tok-active", "/home/dev/a")
+	grant(t, store, "tok-revoked", "/home/dev/b")
+	if err := store.Revoke("/home/dev/b", "2026-08-01T01:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, pause := range []routing.PauseReason{"", "signed_out"} {
+		if pause == "" {
+			if err := store.Resume("signed_out"); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := store.Pause(pause); err != nil {
+			t.Fatal(err)
+		}
+		for _, token := range []string{"tok-active", "tok-revoked", "tok-unknown"} {
+			_, want := table.Lookup(token)
+			got, err := store.Resolve(token)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Errorf("Resolve(%q) under pause %q = %+v, want the table's %+v", token, pause, got, want)
+			}
+		}
+	}
+}
+
+func TestResumeOtherBuildLiftsOnlyWhatAnotherBuildPaused(t *testing.T) {
+	tests := []struct {
+		name        string
+		pausedBy    string
+		running     string
+		wantResumed bool
+		wantNamed   string
+	}{
+		{name: "another build", pausedBy: "0.0.9", running: "1.0.0", wantResumed: true, wantNamed: "version 0.0.9"},
+		{name: "no build recorded", pausedBy: "", running: "1.0.0", wantResumed: true, wantNamed: "an earlier build"},
+		{name: "the build that paused", pausedBy: "1.0.0", running: "1.0.0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, table := openStore(t)
+			grant(t, store, "tok", "/home/dev/p")
+			if err := store.PauseByBuild(routing.PauseRedactionDrift, tt.pausedBy); err != nil {
+				t.Fatal(err)
+			}
+
+			resumed, pausedBy, err := store.ResumeOtherBuild(routing.PauseRedactionDrift, tt.running)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resumed != tt.wantResumed || pausedBy != tt.wantNamed {
+				t.Errorf("ResumeOtherBuild = %v, %q; want %v, %q", resumed, pausedBy, tt.wantResumed, tt.wantNamed)
+			}
+			if _, verdict := table.Lookup("tok"); verdict.Records() != tt.wantResumed {
+				t.Errorf("verdict after the lift = %+v, want recording = %v", verdict, tt.wantResumed)
+			}
+		})
+	}
+}
+
+func TestResumeOtherBuildLeavesAPauseOfAnotherReasonStanding(t *testing.T) {
+	store, _ := openStore(t)
+	grant(t, store, "tok", "/home/dev/p")
+	if err := store.Pause(routing.PauseSignedOut); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed, _, err := store.ResumeOtherBuild(routing.PauseRedactionDrift, "1.0.0")
+	if err != nil || resumed {
+		t.Fatalf("ResumeOtherBuild = %v, %v; want nothing lifted", resumed, err)
+	}
+	if reason, _ := store.PausedReason(); reason != routing.PauseSignedOut {
+		t.Errorf("PausedReason = %q, want the signed-out pause left standing", reason)
+	}
+}
+
+func TestResumeOtherBuildWritesNoTableWhereThereIsNone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "routes-under-test.json")
+
+	resumed, _, err := routing.OpenStore(path).ResumeOtherBuild(routing.PauseRedactionDrift, "1.0.0")
+	if err != nil || resumed {
+		t.Fatalf("ResumeOtherBuild on a missing table = %v, %v; want nothing lifted", resumed, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("stat after the lift = %v, want no table written", err)
+	}
+}
+
 func TestPauseRequiresReason(t *testing.T) {
 	store, _ := openStore(t)
 	if err := store.Pause(""); err == nil {
@@ -438,7 +529,7 @@ func TestConcurrentEnableRollbacksLoseNoSurvivingGrant(t *testing.T) {
 	}
 }
 
-func TestPauseByBuildRecordsTheBuildAndResumeClearsIt(t *testing.T) {
+func TestPauseByBuildRecordsTheBuildThatPaused(t *testing.T) {
 	store, table := openStore(t)
 	grant(t, store, "tok-a", "/home/dev/a")
 	if err := store.PauseByBuild("redaction_drift", "0.4.0"); err != nil {
@@ -447,29 +538,24 @@ func TestPauseByBuildRecordsTheBuildAndResumeClearsIt(t *testing.T) {
 	if reason, _ := store.PausedReason(); reason != "redaction_drift" {
 		t.Errorf("PausedReason = %q, want redaction_drift", reason)
 	}
-	if by, err := store.PausedByBuild(); err != nil || by != "0.4.0" {
-		t.Errorf("PausedByBuild = %q, %v; want 0.4.0", by, err)
-	}
 	if _, verdict := table.Lookup("tok-a"); verdict.Decision != routing.ForwardOnlyPaused || verdict.PauseReason != "redaction_drift" {
 		t.Errorf("verdict during a pause by build = %+v, want ForwardOnlyPaused with the reason", verdict)
 	}
+	if resumed, _, err := store.ResumeOtherBuild("redaction_drift", "0.4.0"); err != nil || resumed {
+		t.Errorf("the build that paused lifted its own pause: %v, %v", resumed, err)
+	}
+
 	if err := store.Resume("signed_out"); err != nil {
 		t.Fatal(err)
 	}
-	if by, _ := store.PausedByBuild(); by != "0.4.0" {
-		t.Errorf("PausedByBuild after resuming another reason = %q, want the record kept", by)
+	if reason, _ := store.PausedReason(); reason != "redaction_drift" {
+		t.Errorf("PausedReason after resuming another reason = %q, want the pause kept", reason)
 	}
 	if err := store.Resume("redaction_drift"); err != nil {
 		t.Fatal(err)
 	}
-	if by, _ := store.PausedByBuild(); by != "" {
-		t.Errorf("PausedByBuild after resume = %q, want cleared", by)
-	}
-	if err := store.Pause("signed_out"); err != nil {
-		t.Fatal(err)
-	}
-	if by, _ := store.PausedByBuild(); by != "" {
-		t.Errorf("PausedByBuild after a plain pause = %q, want none recorded", by)
+	if _, verdict := table.Lookup("tok-a"); !verdict.Records() {
+		t.Errorf("verdict after the matching resume = %+v, want Record", verdict)
 	}
 	if err := store.PauseByBuild("", "0.4.0"); err == nil {
 		t.Error("a pause without a reason was accepted")

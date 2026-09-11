@@ -188,13 +188,19 @@ func (m *Machine) SpawnReader(projectDir string) error {
 //
 // A project that is not enabled, or whose injection was removed, is
 // nothing to read: no injection stands, so no session of Claude Code's
-// ran under one. What each record states about this client is the
-// shape the grant records, never a reading of the settings file, so a
-// hand-edited file cannot make two runs disagree about one project.
-// Otherwise the resident process is brought up on the way out: it is
-// the one flusher, and it drains whatever the spool holds — the
-// records just written, and any a previous run left behind because no
-// flusher was up to send them.
+// ran under one. Past that the resident process is brought up on the
+// way out, whatever the run itself does: it is the one flusher, and it
+// drains whatever the spool holds — the records just written, and any
+// a previous run left behind because no flusher was up to send them.
+//
+// A project the routing table does not clear is nothing to read
+// either: this asks the table the same question the proxy asks before
+// it records, so a device-wide pause stops both recording paths and
+// not only the one the proxy is on. It stops neither forwarding nor
+// the flusher, which is why it leaves the way out alone. What each
+// record states about this client is the shape the grant records,
+// never a reading of the settings file, so a hand-edited file cannot
+// make two runs disagree about one project.
 func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 	st, err := m.Project(projectDir)
 	if err != nil || !st.Enabled || !st.Injected {
@@ -202,6 +208,11 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 	}
 	injection := injectionValue(st.Shape)
 	defer func() { _ = m.EnsureProxy(projectDir, io) }()
+
+	verdict, err := m.routes.Resolve(st.Token)
+	if err != nil || !verdict.Records() {
+		return
+	}
 
 	sp, err := m.spool()
 	if err != nil {

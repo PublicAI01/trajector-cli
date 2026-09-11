@@ -215,13 +215,60 @@ func (s *Store) Pause(reason PauseReason) error {
 
 // PauseByBuild is Pause with the build that paused written down, for a
 // pause that a different build is expected to lift: what one build
-// cannot handle, a later one may, and the record is how doctor tells
-// the two apart.
+// cannot handle, a later one may. Every path that stops recording for
+// such a reason pauses through here, so the build is recorded the same
+// way whichever path noticed.
 func (s *Store) PauseByBuild(reason PauseReason, version string) error {
 	if reason == "" {
 		return fmt.Errorf("routing: pause requires a reason")
 	}
 	return s.update(func(f *tableFile) { f.PausedReason, f.PausedByVersion = reason, version })
+}
+
+// ResumeOtherBuild lifts a pause of the given reason once a build other
+// than the one that set it is running: the pause waits for a build that
+// covers what stopped recording, and the running build is that one
+// exactly when it is not the recorded one. The same build lifts
+// nothing — it would stop on the same records again. A pause that
+// recorded no build was set by a build that is not this one and is
+// lifted as well. pausedBy names the build of a lifted pause, for a
+// surface to state; it is empty when nothing was lifted. A table with
+// no such pause is left untouched, missing file included.
+func (s *Store) ResumeOtherBuild(reason PauseReason, running string) (resumed bool, pausedBy string, err error) {
+	f, err := readTableFile(s.path)
+	if err != nil {
+		return false, "", err
+	}
+	if !liftDue(f, reason, running) {
+		return false, "", nil
+	}
+	err = s.update(func(f *tableFile) {
+		if !liftDue(*f, reason, running) {
+			return
+		}
+		resumed, pausedBy = true, namedBuild(f.PausedByVersion)
+		f.PausedReason, f.PausedByVersion = "", ""
+	})
+	if err != nil {
+		return false, "", err
+	}
+	return resumed, pausedBy, nil
+}
+
+// liftDue reports that the standing pause is the given reason and that
+// the build running now is not the one that set it. It is the one
+// comparison of recorded build against running build there is.
+func liftDue(f tableFile, reason PauseReason, running string) bool {
+	return f.PausedReason == reason && f.PausedByVersion != running
+}
+
+// namedBuild states which build a pause records: the version it wrote
+// down, or what is known about a pause that wrote none.
+func namedBuild(version string) string {
+	if version == "" {
+		return "an earlier build"
+	}
+	return "version " + version
 }
 
 // Resume lifts a pause set for the given reason. A pause held for a
@@ -234,16 +281,6 @@ func (s *Store) Resume(reason PauseReason) error {
 	})
 }
 
-// PausedByBuild reports the build that set the active pause, empty
-// when no pause stands or the pause did not record one.
-func (s *Store) PausedByBuild() (string, error) {
-	f, err := readTableFile(s.path)
-	if err != nil {
-		return "", err
-	}
-	return f.PausedByVersion, nil
-}
-
 // PausedReason reports the active device-wide pause, empty when
 // recording is not paused.
 func (s *Store) PausedReason() (PauseReason, error) {
@@ -252,6 +289,21 @@ func (s *Store) PausedReason() (PauseReason, error) {
 		return "", err
 	}
 	return f.PausedReason, nil
+}
+
+// Resolve answers, for one token, the question the proxy asks of its
+// cached view of the table before it records anything: may this be
+// recorded, and when not, why. It reads the table as it stands, so a
+// command that records reaches the same verdict the proxy would, and a
+// device-wide pause is not something each recording path decides for
+// itself.
+func (s *Store) Resolve(token string) (Verdict, error) {
+	f, err := readTableFile(s.path)
+	if err != nil {
+		return Verdict{}, err
+	}
+	rec, known := f.Projects[token]
+	return verdictFor(known, rec.RevokedAt != "", f.PausedReason), nil
 }
 
 // Active returns the standing grant for rootPath.

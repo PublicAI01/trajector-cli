@@ -41,6 +41,50 @@ func TestEnableExplainsWhyRecordingIsPaused(t *testing.T) {
 	}
 }
 
+func TestReadSessionFilesStoresNothingWhileRecordingIsPaused(t *testing.T) {
+	tests := []struct {
+		name  string
+		pause func(e *env)
+	}{
+		{
+			name:  "the data agreement needs reconfirming",
+			pause: func(e *env) { e.sandbox.Pause(proxytest.PauseConsentReconfirm) },
+		},
+		{
+			name:  "session records took a shape this build cannot mask",
+			pause: func(e *env) { e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, "0.0.9") },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.aProxylessTarget()
+			e.enableProject()
+			e.injectWithoutBaseURL()
+			root := e.canonicalRoot()
+			main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
+			meta := e.putSessionFile("-work-sample/0f1e2d3c/subagents/agent-a1.meta.json", `{"agentId":"a1"}`)
+			e.registerFile(root, main, "")
+			e.registerFile(root, meta, "")
+			tt.pause(e)
+
+			e.machine().ReadSessionFiles(e.project, discardIO())
+
+			if got := e.storedRecords(); len(got) != 0 {
+				t.Errorf("records = %d, want nothing stored while recording is paused", len(got))
+			}
+			for _, f := range e.registeredFiles(root) {
+				if f.Offset != 0 || f.NextSegment != 0 {
+					t.Errorf("cursor of %s = %+v, want left where it was", f.Path, f)
+				}
+			}
+			if got := e.sandbox.PausedReason(); got == "" {
+				t.Error("a reading run lifted the pause, want it left to the command that lifts it")
+			}
+		})
+	}
+}
+
 func TestUninstallOnACleanMachineReportsNothingToRemove(t *testing.T) {
 	e := newEnv(t)
 	e.stdin = "\n"

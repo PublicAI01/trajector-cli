@@ -162,16 +162,28 @@ func (t *Table) Lookup(token string) (Route, Verdict) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.refreshLocked()
-	r, ok := t.routes[token]
+	r, known := t.routes[token]
+	v := verdictFor(known, t.revoked[token], t.pausedReason)
+	if !v.Resolves() {
+		return Route{}, v
+	}
+	return r, v
+}
+
+// verdictFor is the one decision of "may this be recorded", from what
+// the table holds for a token. Every path that records passes it, so a
+// device-wide pause suspends all of them at once and a new reason to
+// forward without recording is added in one place.
+func verdictFor(known, revoked bool, paused PauseReason) Verdict {
 	switch {
-	case !ok:
-		return Route{}, Verdict{Decision: Unknown}
-	case t.revoked[token]:
-		return r, Verdict{Decision: ForwardOnlyRevoked}
-	case t.pausedReason != "":
-		return r, Verdict{Decision: ForwardOnlyPaused, PauseReason: t.pausedReason}
+	case !known:
+		return Verdict{Decision: Unknown}
+	case revoked:
+		return Verdict{Decision: ForwardOnlyRevoked}
+	case paused != "":
+		return Verdict{Decision: ForwardOnlyPaused, PauseReason: paused}
 	default:
-		return r, Verdict{Decision: Record}
+		return Verdict{Decision: Record}
 	}
 }
 

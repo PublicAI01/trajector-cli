@@ -14,12 +14,6 @@ func (e *env) signals(root string) proxytest.Signals {
 	return e.sandbox.Signals(consent.ProjectIDHash(root))
 }
 
-// pausedBy is the build recorded with the standing pause.
-func (e *env) pausedBy() string {
-	e.t.Helper()
-	return e.sandbox.PausedByBuild()
-}
-
 func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
 	e := newEnv(t)
 	e.aProxylessTarget()
@@ -41,8 +35,8 @@ func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
 	if got := e.sandbox.PausedReason(); got != proxytest.PauseRedactionDrift {
 		t.Errorf("PausedReason = %q, want %q", got, proxytest.PauseRedactionDrift)
 	}
-	if got := e.pausedBy(); got != e.deps.Version {
-		t.Errorf("paused by build %q, want this build %q", got, e.deps.Version)
+	if e.sandbox.ResumeOtherBuild(proxytest.PauseRedactionDrift, e.deps.Version) {
+		t.Errorf("this build lifted the pause it set, want it attributed to build %q", e.deps.Version)
 	}
 	s := e.signals(root)
 	if strings.Join(s.UnanchoredPathFields, ",") != "$.someNewPath" {

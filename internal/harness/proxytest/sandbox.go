@@ -126,15 +126,17 @@ func (s *Sandbox) PauseByBuild(reason routing.PauseReason, version string) {
 	}
 }
 
-// PausedByBuild reports which build suspended recording, or empty when
-// the pause names no build.
-func (s *Sandbox) PausedByBuild() string {
+// ResumeOtherBuild lifts a standing pause of the given reason when the
+// named build is not the one that set it, as the doctor of that build
+// would, and reports whether it lifted anything. A build that lifts
+// nothing is the build the pause is attributed to.
+func (s *Sandbox) ResumeOtherBuild(reason routing.PauseReason, version string) bool {
 	s.t.Helper()
-	by, err := routing.OpenStore(s.layout.RoutingTable()).PausedByBuild()
+	resumed, _, err := routing.OpenStore(s.layout.RoutingTable()).ResumeOtherBuild(reason, version)
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	return by
+	return resumed
 }
 
 // Recording reports what the proxy would decide for a token, read the

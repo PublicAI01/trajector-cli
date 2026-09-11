@@ -28,7 +28,10 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	// user never had to know, so it is swept without a finding.
 	selfupdate.SweepResidue(m.deps.ExecPath)
 
-	resumed, pausedBy, err := m.resumeRedactionPauseAfterUpgrade()
+	// A pause that waits for a build other than the one that set it is
+	// lifted here: doctor is the command the user is told to run once
+	// the upgrade that brings such a build is installed.
+	resumed, pausedBy, err := m.routes.ResumeOtherBuild(routing.PauseRedactionDrift, m.deps.Version)
 	if err != nil {
 		return 0, err
 	}
@@ -41,7 +44,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	// are written in is the order the user reads them.
 	f := &report.Findings{}
 	if resumed {
-		f.Fixed("recording resumed after upgrade: it was paused by version %s, and this build is %s", pausedBy, m.deps.Version)
+		f.Fixed("recording resumed after upgrade: it was paused by %s, and this build is %s", pausedBy, m.deps.Version)
 		f.Detail("Session files are read again from where reading stopped.")
 	}
 	report.DoctorDevice(f, d)
@@ -63,32 +66,6 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 		fmt.Fprintf(io.Out, "%d problem(s) need attention.\n", f.Problems())
 	}
 	return f.Problems(), nil
-}
-
-// resumeRedactionPauseAfterUpgrade lifts the pause a build set when
-// session records took a shape its redaction did not cover, once a
-// different build is running: the pause exists to wait for a build
-// that covers the shape, and this is the first command that runs under
-// one. The same build lifts nothing — it would meet the same lines
-// again — and the pause stays reported as it is. A pause with no build
-// recorded was set by a build that is not this one, and is lifted the
-// same way. It returns what build the pause named.
-func (m *Machine) resumeRedactionPauseAfterUpgrade() (resumed bool, pausedBy string, err error) {
-	reason, err := m.routes.PausedReason()
-	if err != nil || reason != routing.PauseRedactionDrift {
-		return false, "", err
-	}
-	pausedBy, err = m.routes.PausedByBuild()
-	if err != nil || pausedBy == m.deps.Version {
-		return false, pausedBy, err
-	}
-	if err := m.routes.Resume(routing.PauseRedactionDrift); err != nil {
-		return false, pausedBy, err
-	}
-	if pausedBy == "" {
-		pausedBy = "an earlier build"
-	}
-	return true, pausedBy, nil
 }
 
 // doctorProxy checks who holds the proxy port. An unproven holder is
