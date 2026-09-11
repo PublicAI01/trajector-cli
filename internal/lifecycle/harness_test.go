@@ -73,6 +73,7 @@ func newEnv(t *testing.T) *env {
 		ExecPath:    home + "/bin/trajector",
 		Home:        home,
 		Getenv:      func(key string) string { return e.environ[key] },
+		ProxyAddr:   proxytest.IdleAddr(t),
 		Now:         func() time.Time { return time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC) },
 	}
 	// Most of what the machine does presumes a paired device; the tests

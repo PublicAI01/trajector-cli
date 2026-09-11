@@ -69,9 +69,11 @@ func New(t *testing.T) *Env {
 	// The file token backend keeps tests away from the developer's OS
 	// keyring. The CLI always talks to this test's own fake service: a
 	// call a test did not stub fails loudly and is recorded, instead of
-	// timing out against an unroutable address.
+	// timing out against an unroutable address. The proxy address is one
+	// nothing listens on, never the fixed production address, so a
+	// developer's own running proxy is never taken for this test's.
 	t.Setenv(tokenstore.BackendEnv, "file")
-	t.Setenv("TRAJECTOR_PROXY_ADDR", "")
+	t.Setenv(cli.ProxyAddrEnv, proxytest.IdleAddr(t))
 	e.SetPlatformURL(e.service.URL())
 	return e
 }

@@ -119,6 +119,22 @@ type Env struct {
 // address its own server now owns but nothing is serving — an EOF with
 // no relation to the test that sees it. Every request a test sends
 // itself goes through a client scoped this way.
+// IdleAddr is a loopback address nothing listens on for the rest of the
+// test. A test that does not start a proxy points the code under test
+// here instead of at the fixed production address, so a proxy the
+// developer has running for their own sessions is never mistaken for
+// the test's.
+func IdleAddr(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+	return addr
+}
+
 func Client(t *testing.T) *http.Client {
 	t.Helper()
 	client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
