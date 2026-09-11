@@ -56,8 +56,10 @@ func rawcallFiles(dayDir string) ([]rawcallFile, error) {
 	return files, nil
 }
 
-// days lists the day directories, oldest first. A spool that was never
-// written to has none.
+// days lists the rawcall day directories, oldest first. A spool that
+// was never written to has none. The record slot lives in a sibling of
+// the day directories and is skipped by name, so it is never read as a
+// day of rawcalls.
 func (s *Spool) days() ([]string, error) {
 	entries, err := os.ReadDir(s.dir)
 	if os.IsNotExist(err) {
@@ -68,7 +70,7 @@ func (s *Spool) days() ([]string, error) {
 	}
 	var days []string
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && e.Name() != recordsDirName {
 			days = append(days, filepath.Join(s.dir, e.Name()))
 		}
 	}
@@ -154,13 +156,20 @@ func (s *Spool) DeleteWhere(match func(requestID string) bool) (int, error) {
 	})
 }
 
-// DeleteProject removes every stored rawcall belonging to one project.
-// It exists for consent withdrawal, which must work even on records it
-// cannot read: the index attributes each record, a record the index
-// missed is attributed from its own bytes, and a record attributable to
-// no project at all is kept rather than guessed at.
+// DeleteProject removes every stored record belonging to one project,
+// in both slots, and reports how many went. It exists for consent
+// withdrawal, which must work even on records it cannot read: the
+// index attributes each record, a record the index missed is
+// attributed from its own bytes, and a record attributable to no
+// project at all is kept rather than guessed at.
 func (s *Spool) DeleteProject(projectIDHash string) (int, error) {
-	return s.deleteMatching(func(f rawcallFile, indexed map[string]indexLine) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sweepStaleTempsLocked()
+	s.rederiveLocked()
+	defer func() { s.sig = dirSignature(s.dir) }()
+
+	rawcalls, err := s.deleteRawcallsLocked(func(f rawcallFile, indexed map[string]indexLine) (bool, error) {
 		if line, ok := indexed[f.id]; ok && line.ProjectIDHash != "" {
 			return line.ProjectIDHash == projectIDHash, nil
 		}
@@ -171,6 +180,13 @@ func (s *Spool) DeleteProject(projectIDHash string) (int, error) {
 		hash, ok := envelope.ProjectIDHashOf(data)
 		return ok && hash == projectIDHash, nil
 	})
+	if err != nil {
+		return rawcalls, err
+	}
+	records, err := s.deleteRecordsLocked(func(r Record) bool {
+		return r.ProjectIDHash != "" && r.ProjectIDHash == projectIDHash
+	})
+	return rawcalls + records, err
 }
 
 func (s *Spool) deleteMatching(match func(f rawcallFile, indexed map[string]indexLine) (bool, error)) (int, error) {
@@ -183,7 +199,14 @@ func (s *Spool) deleteMatching(match func(f rawcallFile, indexed map[string]inde
 	// refresh: the sweep just changed the directory under the signature.
 	s.sweepStaleTempsLocked()
 	s.rederiveLocked()
+	deleted, err := s.deleteRawcallsLocked(match)
+	s.sig = dirSignature(s.dir)
+	return deleted, err
+}
 
+// deleteRawcallsLocked is the rawcall half of every deletion. Callers
+// hold s.mu and refresh the signature afterwards.
+func (s *Spool) deleteRawcallsLocked(match func(f rawcallFile, indexed map[string]indexLine) (bool, error)) (int, error) {
 	deleted := 0
 	days, err := s.days()
 	if err != nil {
@@ -220,7 +243,6 @@ func (s *Spool) deleteMatching(match func(f rawcallFile, indexed map[string]inde
 			}
 		}
 	}
-	s.sig = dirSignature(s.dir)
 	return deleted, nil
 }
 

@@ -1,13 +1,19 @@
-// Package spool stores captured rawcalls on disk until upload. The
-// layout is a documented product contract:
+// Package spool stores captured records on disk until upload. It has
+// two slots under one directory and one quota. The layout is a
+// documented product contract:
 //
-//	<dir>/<YYYYMMDD>/<request_id>.json   one serialized envelope
-//	<dir>/<YYYYMMDD>/index.jsonl         advisory sidecar index
+//	<dir>/<YYYYMMDD>/<request_id>.json           one serialized rawcall envelope
+//	<dir>/<YYYYMMDD>/index.jsonl                 advisory sidecar index of that day
+//	<dir>/records/<YYYYMMDD>/<record_id>.json    one serialized segment or snapshot
+//	<dir>/records/<YYYYMMDD>/index.jsonl         advisory sidecar index of that day
 //
-// Rawcall files are the source of truth; the index only accelerates
-// batching and can always be rebuilt by rescanning the day directory.
-// Directories are 0700 and files 0600: rawcalls hold unredacted data
-// and must stay private to the user until masked and uploaded.
+// The two slots never share a directory: rawcall readers skip the
+// records subdirectory by name, and record readers begin inside it. In
+// both slots the files are the source of truth; each index only
+// accelerates batching and deletion and can always be rebuilt by
+// rescanning its day directory. Directories are 0700 and files 0600:
+// stored records hold unredacted data and must stay private to the
+// user until masked and uploaded.
 package spool
 
 import (
@@ -18,6 +24,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -33,6 +40,12 @@ const DefaultQuota = 2 << 30
 // ErrQuotaExceeded reports a write refused because it would push the
 // spool past its quota. Callers must treat this as stop-recording, not
 // as a reason to delete anything.
+//
+// The two slots bear the refusal differently. A rawcall exists only in
+// the moment it crosses the proxy: refused, it is gone. A segment is
+// read from a file that stays on disk: refused, its reader leaves its
+// position where it was and the segment is merely late. The spool
+// refuses both all the same; what a caller does next is its own.
 var ErrQuotaExceeded = errors.New("spool: quota exceeded")
 
 // indexName is the per-day sidecar index file name.
@@ -119,13 +132,20 @@ func Open(dir string, quota int64) (*Spool, error) {
 // here is exactly the inverse of rawcallFiles', which is the point —
 // what readers cannot see is what nothing else will ever reclaim.
 //
+// Record files are written the same way and stranded the same way, so
+// both slots are swept.
+//
 // Callers hold s.mu, or hold the spool before it is published.
 func (s *Spool) sweepStaleTempsLocked() {
 	days, err := s.days()
 	if err != nil {
 		return
 	}
-	for _, dayDir := range days {
+	recordDays, err := s.recordDays()
+	if err != nil {
+		return
+	}
+	for _, dayDir := range append(days, recordDays...) {
 		entries, err := os.ReadDir(dayDir)
 		if err != nil {
 			continue
@@ -193,26 +213,36 @@ func walkUsage(dir string) (int64, error) {
 	return usage, nil
 }
 
-// dirSignature fingerprints the day directories by name and mtime. It
-// is deliberately cheap — one directory listing plus one stat per day —
-// so quota decisions can verify it without walking every record.
+// dirSignature fingerprints the day directories of both slots by name
+// and mtime. It is deliberately cheap — two directory listings plus one
+// stat per day — so quota decisions can verify it without walking every
+// record. The records directory itself is listed rather than stamped:
+// a write inside one of its days changes that day's mtime, not its own.
 func dirSignature(dir string) string {
+	var b []byte
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
 	}
-	var b []byte
+	b = appendDaySignatures(b, "", entries)
+	if recordEntries, err := os.ReadDir(filepath.Join(dir, recordsDirName)); err == nil {
+		b = appendDaySignatures(b, recordsDirName+"/", recordEntries)
+	}
+	return string(b)
+}
+
+func appendDaySignatures(b []byte, prefix string, entries []fs.DirEntry) []byte {
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || e.Name() == recordsDirName {
 			continue
 		}
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		b = fmt.Appendf(b, "%s/%d;", e.Name(), info.ModTime().UnixNano())
+		b = fmt.Appendf(b, "%s%s/%d;", prefix, e.Name(), info.ModTime().UnixNano())
 	}
-	return string(b)
+	return b
 }
 
 // refreshLocked re-derives usage when the signature says another handle
@@ -354,14 +384,22 @@ func (s *Spool) Writable() error {
 	return os.Remove(f.Name())
 }
 
-// rewriteIndexLocked drops removed request ids from a day index. A
-// malformed line is kept as-is: the index is advisory and rebuildable,
-// so losing it would be worse than carrying a stale line. The rewrite
-// is a read-modify-write reachable from the resident proxy and from
-// short-lived CLI processes at once, so it runs under fsatomic.Update
-// rather than the in-process mutex alone.
+// rewriteIndexLocked drops removed request ids from a rawcall day
+// index.
 func (s *Spool) rewriteIndexLocked(dayDir string, removed map[string]bool) error {
-	path := filepath.Join(dayDir, indexName)
+	return s.rewriteIndexFileLocked(filepath.Join(dayDir, indexName), func(line []byte) bool {
+		var rec indexLine
+		return json.Unmarshal(line, &rec) == nil && removed[rec.RequestID]
+	})
+}
+
+// rewriteIndexFileLocked drops the lines of a sidecar index that drop
+// accepts. A malformed line is kept as-is: the index is advisory and
+// rebuildable, so losing it would be worse than carrying a stale line.
+// The rewrite is a read-modify-write reachable from the resident proxy
+// and from short-lived CLI processes at once, so it runs under
+// fsatomic.Update rather than the in-process mutex alone.
+func (s *Spool) rewriteIndexFileLocked(path string, drop func(line []byte) bool) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
@@ -371,11 +409,7 @@ func (s *Spool) rewriteIndexLocked(dayDir string, removed map[string]bool) error
 	err := fsatomic.Update(path, 0o600, func(old []byte) ([]byte, error) {
 		var kept []byte
 		for _, line := range bytes.Split(old, []byte("\n")) {
-			if len(line) == 0 {
-				continue
-			}
-			var rec indexLine
-			if err := json.Unmarshal(line, &rec); err == nil && removed[rec.RequestID] {
+			if len(line) == 0 || drop(line) {
 				continue
 			}
 			kept = append(kept, line...)
@@ -391,30 +425,42 @@ func (s *Spool) rewriteIndexLocked(dayDir string, removed map[string]bool) error
 	return nil
 }
 
-// DaySummary reports one day directory of the spool: counts and sizes
-// only, never file names — request ids belong to the records, not to
-// diagnostics.
+// DaySummary reports one day of the spool: counts and sizes only, never
+// file names — ids belong to the records, not to diagnostics. Records
+// and Bytes describe the rawcall slot's day directory; Segments,
+// Snapshots and RecordBytes describe the same day in the record slot.
+// A day appears when either slot holds it.
 type DaySummary struct {
-	Day     string `json:"day"`
-	Records int    `json:"records"`
-	Bytes   int64  `json:"bytes"`
+	Day         string `json:"day"`
+	Records     int    `json:"records"`
+	Bytes       int64  `json:"bytes"`
+	Segments    int    `json:"segments"`
+	Snapshots   int    `json:"snapshots"`
+	RecordBytes int64  `json:"record_bytes"`
 }
 
-// Summary walks the day directories and reports each. It reads the
-// same tree Usage derives from, so the two can never disagree about
-// what is on disk.
+// Summary walks the day directories of both slots and reports each
+// day. It reads the same tree Usage derives from, so the two can never
+// disagree about what is on disk: the day sizes sum to Usage.
 func (s *Spool) Summary() ([]DaySummary, error) {
-	entries, err := os.ReadDir(s.dir)
-	if err != nil && !os.IsNotExist(err) {
+	byDay := map[string]*DaySummary{}
+	dayOf := func(dayDir string) *DaySummary {
+		name := filepath.Base(dayDir)
+		if d, ok := byDay[name]; ok {
+			return d
+		}
+		d := &DaySummary{Day: name}
+		byDay[name] = d
+		return d
+	}
+
+	days, err := s.days()
+	if err != nil {
 		return nil, err
 	}
-	days := []DaySummary{}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		d := DaySummary{Day: e.Name()}
-		files, err := os.ReadDir(filepath.Join(s.dir, e.Name()))
+	for _, dayDir := range days {
+		d := dayOf(dayDir)
+		files, err := os.ReadDir(dayDir)
 		if err != nil {
 			return nil, err
 		}
@@ -429,9 +475,65 @@ func (s *Spool) Summary() ([]DaySummary, error) {
 				d.Records++
 			}
 		}
-		days = append(days, d)
 	}
-	return days, nil
+
+	recordDays, err := s.recordDays()
+	if err != nil {
+		return nil, err
+	}
+	for _, dayDir := range recordDays {
+		d := dayOf(dayDir)
+		if err := summarizeRecordDay(dayDir, d); err != nil {
+			return nil, err
+		}
+	}
+
+	out := make([]DaySummary, 0, len(byDay))
+	for _, d := range byDay {
+		out = append(out, *d)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Day < out[j].Day })
+	return out, nil
+}
+
+// summarizeRecordDay counts a record day by kind. The index says which
+// kind each file is; a file the index missed is described from its own
+// bytes, and one that describes itself as nothing known is counted in
+// the bytes and in neither kind.
+func summarizeRecordDay(dayDir string, d *DaySummary) error {
+	entries, err := os.ReadDir(dayDir)
+	if err != nil {
+		return err
+	}
+	for _, f := range entries {
+		if f.IsDir() {
+			continue
+		}
+		if info, err := f.Info(); err == nil {
+			d.RecordBytes += info.Size()
+		}
+	}
+	indexed, err := readRecordIndex(dayDir)
+	if err != nil {
+		return err
+	}
+	files, err := recordFiles(dayDir)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		r, err := recordFromIndex(f, indexed, func() ([]byte, error) { return fsatomic.ReadFile(f.path) })
+		if err != nil {
+			return err
+		}
+		switch r.Kind {
+		case envelope.KindSegment.RecordKind:
+			d.Segments++
+		case envelope.KindMetaSnapshot.RecordKind:
+			d.Snapshots++
+		}
+	}
+	return nil
 }
 
 // Usage reports current spool size in bytes.
