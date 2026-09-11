@@ -44,6 +44,15 @@ func TestEnableInjectsRoutesAndSelfChecks(t *testing.T) {
 	if !st.HookInstalled {
 		t.Error("ensure-proxy hooks missing")
 	}
+	if !st.SessionEndInstalled {
+		t.Error("session-end hook missing")
+	}
+	if st.NoProxy {
+		t.Error("an enable that injected a base URL reports the shape without one")
+	}
+	if !st.Consistent() {
+		t.Error("status does not read as consistent after enable")
+	}
 	if st.AgreementVersion != consent.AgreementVersion {
 		t.Errorf("accepted agreement = %q", st.AgreementVersion)
 	}
@@ -266,7 +275,7 @@ func TestDisableRemovesInjectionRevokesAndDeletesProjectData(t *testing.T) {
 	if after.InjectedBaseURL != "" {
 		t.Error("base URL still injected")
 	}
-	if after.HookInstalled {
+	if after.HookInstalled || after.SessionEndInstalled {
 		t.Error("hooks still injected")
 	}
 	if after.Enabled {
@@ -640,4 +649,47 @@ func TestDisableInsideASessionNamesTheBaseURLItCouldNotPutBack(t *testing.T) {
 		t.Errorf("disable dropped the user's own base URL %q without naming it:\nstdout: %s\nstderr: %s",
 			relayInSettingsLocal, e.stdout, e.stderr)
 	}
+}
+
+func TestDisableRemovesTheInjectionWithoutBaseURL(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.GrantProject(proxytest.Grant{
+		Token:         "tok-no-proxy",
+		ProjectIDHash: e.status().Hash,
+		RootPath:      e.canonicalRoot(),
+		Upstream:      "https://api.anthropic.com",
+	})
+	e.injectWithoutBaseURL()
+	before := e.status()
+	if !before.Consistent() || !before.NoProxy || before.InjectedBaseURL != "" {
+		t.Fatalf("status before disable = %+v, want a consistent injection without a base URL", before)
+	}
+
+	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+
+	after := e.status()
+	if after.Injected() || after.HookInstalled || after.SessionEndInstalled || after.NoProxy {
+		t.Errorf("status after disable = %+v, want nothing of the injection left", after)
+	}
+	if after.Enabled {
+		t.Error("route still active")
+	}
+	if settings := readSettings(t, e.settingsPath()); len(settings) != 0 {
+		t.Errorf("settings after disable = %v, want the file empty", settings)
+	}
+}
+
+func readSettings(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("settings file is not valid JSON: %v\n%s", err, data)
+	}
+	return settings
 }

@@ -17,10 +17,12 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
-const (
-	testBaseURL = "http://127.0.0.1:41100/t/tok-abc123"
-	testHookCmd = `"/usr/local/bin/trajector" hook ensure-proxy`
-)
+const testBaseURL = "http://127.0.0.1:41100/t/tok-abc123"
+
+var testHooks = HookCommands{
+	EnsureProxy: `"/usr/local/bin/trajector" hook ensure-proxy`,
+	SessionEnd:  `"/usr/local/bin/trajector" hook session-end`,
+}
 
 func readJSON(t *testing.T, path string) map[string]any {
 	t.Helper()
@@ -35,10 +37,10 @@ func readJSON(t *testing.T, path string) map[string]any {
 	return root
 }
 
-func TestInjectProjectCreatesFileWithEnvAndBothHooks(t *testing.T) {
+func TestInjectProjectCreatesFileWithEnvAndAllThreeHooks(t *testing.T) {
 	root := t.TempDir()
 	path := ProjectLocalPath(root)
-	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
 		t.Fatal(err)
 	}
 
@@ -47,14 +49,20 @@ func TestInjectProjectCreatesFileWithEnvAndBothHooks(t *testing.T) {
 	if env[envBaseURL] != testBaseURL {
 		t.Errorf("env = %v", env)
 	}
-	hooks := settings["hooks"].(map[string]any)
-	for _, event := range []string{eventSessionStart, eventUserPromptSubmit} {
-		if !HasHook(path, EnsureProxyMarker) {
-			t.Fatalf("missing ensure-proxy hook for %s", event)
+	if got, want := hookCommandsByEvent(t, path), map[string][]string{
+		eventSessionStart:     {testHooks.EnsureProxy},
+		eventUserPromptSubmit: {testHooks.EnsureProxy},
+		eventSessionEnd:       {testHooks.SessionEnd},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hooks = %v, want %v", got, want)
+	}
+	for _, marker := range []string{EnsureProxyMarker, SessionEndMarker} {
+		if !HasHook(path, marker) {
+			t.Errorf("HasHook(%q) = false after injection", marker)
 		}
-		if _, ok := hooks[event]; !ok {
-			t.Errorf("missing hooks.%s", event)
-		}
+	}
+	if shape, ok := InjectionShape(path); !ok || shape != WithProxy {
+		t.Errorf("InjectionShape = %v, %v; want WithProxy", shape, ok)
 	}
 
 	// Windows has no owner-only bit to assert: Chmod there toggles the
@@ -94,7 +102,7 @@ func TestInjectProjectPreservesUserContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
 		t.Fatal(err)
 	}
 
@@ -141,7 +149,7 @@ func TestInjectProjectNarrowsAnExistingFileToOwnerOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
 		t.Fatal(err)
 	}
 
@@ -166,7 +174,7 @@ func TestInjectProjectIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 	path := ProjectLocalPath(root)
 	for i := 0; i < 3; i++ {
-		if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
+		if err := InjectProject(path, testBaseURL, testHooks); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -197,7 +205,7 @@ func TestRemoveProjectRestoresOriginalShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
 		t.Fatal(err)
 	}
 	if err := RemoveProject(path); err != nil {
@@ -212,7 +220,7 @@ func TestRemoveProjectRestoresOriginalShape(t *testing.T) {
 func TestRemoveProjectOnPureInjectionLeavesEmptyObject(t *testing.T) {
 	root := t.TempDir()
 	path := ProjectLocalPath(root)
-	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
 		t.Fatal(err)
 	}
 	if err := RemoveProject(path); err != nil {
@@ -257,7 +265,7 @@ func TestInjectRefusesMalformedSections(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"env": "not-an-object"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := InjectProject(path, testBaseURL, testHookCmd); err == nil {
+	if err := InjectProject(path, testBaseURL, testHooks); err == nil {
 		t.Error("injection over a malformed env block did not fail")
 	}
 }
@@ -381,7 +389,7 @@ func TestInjectedBaseURLAndTokenRoundTrip(t *testing.T) {
 	if _, ok := InjectedBaseURL(path); ok {
 		t.Error("injected URL reported before injection")
 	}
-	if err := InjectProject(path, testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
 		t.Fatal(err)
 	}
 	url, ok := InjectedBaseURL(path)
@@ -542,7 +550,7 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 
 func TestExternalBaseURLSkipsOwnInjection(t *testing.T) {
 	project, home := t.TempDir(), t.TempDir()
-	if err := InjectProject(ProjectLocalPath(project), testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(ProjectLocalPath(project), testBaseURL, testHooks); err != nil {
 		t.Fatal(err)
 	}
 	getenv := func(key string) string {
@@ -570,7 +578,7 @@ func TestOurOwnInjectionInTheEnvironmentHidesTheAnswerRatherThanBeingOne(t *test
 	// "nothing configured" is how a relay user's traffic ends up at the
 	// official endpoint carrying credentials that endpoint will reject.
 	project, home := t.TempDir(), t.TempDir()
-	if err := InjectProject(ProjectLocalPath(project), testBaseURL, testHookCmd); err != nil {
+	if err := InjectProject(ProjectLocalPath(project), testBaseURL, testHooks); err != nil {
 		t.Fatal(err)
 	}
 	inSession := func(key string) string {
@@ -747,7 +755,7 @@ func TestInjectProjectRefusesASymlinkedSettingsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := InjectProject(link, "http://127.0.0.1:1/t/tok", "trajector ensure-proxy")
+	err := InjectProject(link, "http://127.0.0.1:1/t/tok", HookCommands{EnsureProxy: "trajector hook ensure-proxy", SessionEnd: "trajector hook session-end"})
 	if !errors.Is(err, ErrSymlinked) {
 		t.Fatalf("InjectProject = %v, want ErrSymlinked", err)
 	}
@@ -786,7 +794,7 @@ func TestRemoveProjectClearsAnInjectionOnAnyLoopbackAddress(t *testing.T) {
 			if token, ok := TokenFromBaseURL(url); !ok || token != "tok-abc123" {
 				t.Fatalf("TokenFromBaseURL(%q) = %q, %v; an injection it cannot read is one it cannot remove", url, token, ok)
 			}
-			if err := InjectProject(path, url, testHookCmd); err != nil {
+			if err := InjectProject(path, url, testHooks); err != nil {
 				t.Fatal(err)
 			}
 			if err := RemoveProject(path); err != nil {
@@ -879,5 +887,336 @@ func TestEnsureGitIgnoredKeepsTheExistingFileMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %v, want the user's own 0600 kept", info.Mode().Perm())
+	}
+}
+
+// hookCommandsByEvent reads every hook command in the file, grouped by
+// the event it is installed under.
+func hookCommandsByEvent(t *testing.T, path string) map[string][]string {
+	t.Helper()
+	got := map[string][]string{}
+	root := readJSON(t, path)
+	eachHookEntry(root, func(event string, entry map[string]any) hookAction {
+		got[event] = append(got[event], entry["command"].(string))
+		return keepEntry
+	})
+	return got
+}
+
+func writeFile(t *testing.T, path string, content []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInjectProjectWithoutBaseURLInstallsMarkedHooksAndNoEnv(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	if err := InjectProject(path, "", testHooks); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := readJSON(t, path)
+	if _, ok := settings["env"]; ok {
+		t.Errorf("env block written without a base URL: %v", settings["env"])
+	}
+	marked := testHooks.EnsureProxy + " --no-proxy"
+	if got, want := hookCommandsByEvent(t, path), map[string][]string{
+		eventSessionStart:     {marked},
+		eventUserPromptSubmit: {marked},
+		eventSessionEnd:       {testHooks.SessionEnd},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hooks = %v, want %v", got, want)
+	}
+	for _, marker := range []string{EnsureProxyMarker, SessionEndMarker} {
+		if !HasHook(path, marker) {
+			t.Errorf("HasHook(%q) = false after injection", marker)
+		}
+	}
+	if shape, ok := InjectionShape(path); !ok || shape != WithoutProxy {
+		t.Errorf("InjectionShape = %v, %v; want WithoutProxy", shape, ok)
+	}
+	if _, ok := InjectedBaseURL(path); ok {
+		t.Error("InjectedBaseURL reports a base URL that was never injected")
+	}
+}
+
+func TestInjectProjectWithoutBaseURLIsIdempotent(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	for i := 0; i < 3; i++ {
+		if err := InjectProject(path, "", testHooks); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for event, cmds := range hookCommandsByEvent(t, path) {
+		if len(cmds) != 1 {
+			t.Errorf("hooks.%s after repeat injection = %v, want one", event, cmds)
+		}
+	}
+}
+
+func TestInjectProjectWithoutBaseURLLeavesAUsersOwnBaseURLAlone(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	writeFile(t, path, []byte(`{"env": {"ANTHROPIC_BASE_URL": "https://relay.example.com"}}`))
+	if err := InjectProject(path, "", testHooks); err != nil {
+		t.Fatal(err)
+	}
+	env := readJSON(t, path)["env"].(map[string]any)
+	if env[envBaseURL] != "https://relay.example.com" {
+		t.Errorf("env = %v, want the user's relay untouched", env)
+	}
+	if shape, ok := InjectionShape(path); !ok || shape != WithoutProxy {
+		t.Errorf("InjectionShape = %v, %v; want WithoutProxy", shape, ok)
+	}
+}
+
+// No token lands in the file in this shape, so the mode the user chose
+// is the mode that stays.
+func TestInjectProjectWithoutBaseURLKeepsTheFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no owner-only bit to assert on Windows")
+	}
+	path := ProjectLocalPath(t.TempDir())
+	writeFile(t, path, []byte(`{"permissions": {"allow": ["Bash(npm test)"]}}`))
+	if err := InjectProject(path, "", testHooks); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o644 {
+		t.Errorf("mode = %v, want the existing 0644 kept", perm)
+	}
+}
+
+func TestInjectProjectWithoutBaseURLRefusesOverAnInjectedBaseURL(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InjectProject(path, "", testHooks); !errors.Is(err, ErrBaseURLInjected) {
+		t.Fatalf("InjectProject without a base URL over an injected one = %v, want ErrBaseURLInjected", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(after, before) {
+		t.Errorf("refused injection changed the file:\n%s", after)
+	}
+}
+
+func TestInjectProjectWithBaseURLReplacesHooksSpelledWithoutOne(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	if err := InjectProject(path, "", testHooks); err != nil {
+		t.Fatal(err)
+	}
+	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := hookCommandsByEvent(t, path), map[string][]string{
+		eventSessionStart:     {testHooks.EnsureProxy},
+		eventUserPromptSubmit: {testHooks.EnsureProxy},
+		eventSessionEnd:       {testHooks.SessionEnd},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hooks = %v, want %v", got, want)
+	}
+	if shape, ok := InjectionShape(path); !ok || shape != WithProxy {
+		t.Errorf("InjectionShape = %v, %v; want WithProxy", shape, ok)
+	}
+}
+
+func TestInjectProjectReplacesAHookSpelledForAnOlderExecutablePath(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	older := HookCommands{
+		EnsureProxy: "/opt/old/trajector hook ensure-proxy",
+		SessionEnd:  "/opt/old/trajector hook session-end",
+	}
+	if err := InjectProject(path, testBaseURL, older); err != nil {
+		t.Fatal(err)
+	}
+	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := hookCommandsByEvent(t, path), map[string][]string{
+		eventSessionStart:     {testHooks.EnsureProxy},
+		eventUserPromptSubmit: {testHooks.EnsureProxy},
+		eventSessionEnd:       {testHooks.SessionEnd},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hooks = %v, want %v", got, want)
+	}
+}
+
+// A file injected before the session-end hook existed carries the base
+// URL and two hooks. Re-injecting it adds the third and changes nothing
+// else, which is what a repair of such a file amounts to.
+func TestInjectProjectCompletesAnInjectionMadeBeforeTheSessionEndHook(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	legacy := `{
+  "env": {
+    "ANTHROPIC_BASE_URL": "` + testBaseURL + `",
+    "MY_VAR": "keep-me"
+  },
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "echo user-hook"}]},
+      {"hooks": [{"type": "command", "command": ` + fmt.Sprintf("%q", testHooks.EnsureProxy) + `}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": ` + fmt.Sprintf("%q", testHooks.EnsureProxy) + `}]}
+    ]
+  }
+}
+`
+	writeFile(t, path, []byte(legacy))
+
+	if shape, ok := InjectionShape(path); !ok || shape != WithProxy {
+		t.Fatalf("InjectionShape of the older file = %v, %v; want WithProxy", shape, ok)
+	}
+	if !HasHook(path, EnsureProxyMarker) || HasHook(path, SessionEndMarker) {
+		t.Fatal("the older file should carry the ensure-proxy hooks and no session-end hook")
+	}
+
+	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
+		t.Fatal(err)
+	}
+	env := readJSON(t, path)["env"].(map[string]any)
+	if env[envBaseURL] != testBaseURL || env["MY_VAR"] != "keep-me" {
+		t.Errorf("env = %v, want the base URL and the user's variable unchanged", env)
+	}
+	if got, want := hookCommandsByEvent(t, path), map[string][]string{
+		eventSessionStart:     {"echo user-hook", testHooks.EnsureProxy},
+		eventUserPromptSubmit: {testHooks.EnsureProxy},
+		eventSessionEnd:       {testHooks.SessionEnd},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hooks = %v, want %v", got, want)
+	}
+}
+
+func TestInjectionShapeReadsEitherFormAndNothingElse(t *testing.T) {
+	ours := fmt.Sprintf("%q", testHooks.EnsureProxy)
+	marked := fmt.Sprintf("%q", testHooks.EnsureProxy+" --no-proxy")
+	tests := []struct {
+		name      string
+		content   string
+		wantShape Shape
+		wantOK    bool
+	}{
+		{name: "no file"},
+		{name: "user content only", content: `{"permissions": {"allow": ["Bash(npm test)"]}}`},
+		{
+			name:      "base URL alone",
+			content:   `{"env": {"ANTHROPIC_BASE_URL": "` + testBaseURL + `"}}`,
+			wantShape: WithProxy,
+			wantOK:    true,
+		},
+		{
+			name:      "base URL with hooks",
+			content:   `{"env": {"ANTHROPIC_BASE_URL": "` + testBaseURL + `"}, "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": ` + ours + `}]}]}}`,
+			wantShape: WithProxy,
+			wantOK:    true,
+		},
+		{
+			name:      "marked hooks without base URL",
+			content:   `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": ` + marked + `}]}]}}`,
+			wantShape: WithoutProxy,
+			wantOK:    true,
+		},
+		{
+			name:    "unmarked hooks without base URL",
+			content: `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": ` + ours + `}]}]}}`,
+		},
+		{
+			name:    "user's own hook carrying the same flag word",
+			content: `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "my-tool --no-proxy"}]}]}}`,
+		},
+		{
+			name:    "user's own relay as base URL",
+			content: `{"env": {"ANTHROPIC_BASE_URL": "https://relay.example.com"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := ProjectLocalPath(t.TempDir())
+			if tt.content != "" {
+				writeFile(t, path, []byte(tt.content))
+			}
+			shape, ok := InjectionShape(path)
+			if ok != tt.wantOK || shape != tt.wantShape {
+				t.Errorf("InjectionShape = %v, %v; want %v, %v", shape, ok, tt.wantShape, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestHasHookTellsTheProjectMarkersApart(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	writeFile(t, path, []byte(`{"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": `+fmt.Sprintf("%q", testHooks.SessionEnd)+`}]}]}}`))
+	if HasHook(path, EnsureProxyMarker) {
+		t.Error("HasHook(EnsureProxyMarker) = true for a file carrying only the session-end hook")
+	}
+	if !HasHook(path, SessionEndMarker) {
+		t.Error("HasHook(SessionEndMarker) = false for a file carrying it")
+	}
+}
+
+func TestRemoveProjectRestoresTheOriginalBytesInEitherShape(t *testing.T) {
+	original := map[string]any{
+		"permissions": map[string]any{"allow": []any{"Bash(npm test)"}},
+		"env":         map[string]any{"MY_VAR": "keep-me"},
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "echo user-hook"}}},
+			},
+			"SessionEnd": []any{
+				map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "echo bye"}}},
+			},
+		},
+	}
+	before, err := json.MarshalIndent(original, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before = append(before, '\n')
+
+	for name, baseURL := range map[string]string{
+		"with base URL":    testBaseURL,
+		"without base URL": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := ProjectLocalPath(t.TempDir())
+			writeFile(t, path, before)
+			if err := InjectProject(path, baseURL, testHooks); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := InjectionShape(path); !ok {
+				t.Fatal("no injection reported after injecting")
+			}
+			if err := RemoveProject(path); err != nil {
+				t.Fatal(err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(after, before) {
+				t.Errorf("settings after inject+remove:\n%s\nwant the original bytes:\n%s", after, before)
+			}
+			if _, ok := InjectionShape(path); ok {
+				t.Error("an injection is still reported after removal")
+			}
+			for _, marker := range []string{EnsureProxyMarker, SessionEndMarker} {
+				if HasHook(path, marker) {
+					t.Errorf("HasHook(%q) = true after removal", marker)
+				}
+			}
+		})
 	}
 }

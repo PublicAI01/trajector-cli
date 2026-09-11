@@ -180,6 +180,106 @@ func TestDoctorRepairsMissingHooks(t *testing.T) {
 	}
 }
 
+func TestDoctorCompletesAnInjectionMadeBeforeTheSessionEndHook(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	e.dropSessionEndHook()
+	before := e.status()
+	if !before.MissingSessionEnd() || before.Consistent() {
+		t.Fatalf("status = %+v, want the missing session-end hook reported", before)
+	}
+
+	e.stdout.Reset()
+	problems, out := e.doctor()
+	if problems != 0 {
+		t.Fatalf("problems = %d, want the injection completed, output:\n%s", problems, out)
+	}
+	if !strings.Contains(out, "restored") {
+		t.Errorf("doctor = %q, want the repair reported", out)
+	}
+	after := e.status()
+	if after.MissingSessionEnd() || !after.SessionEndInstalled || !after.Consistent() {
+		t.Errorf("status after doctor = %+v, want all three hooks in place", after)
+	}
+	if after.InjectedBaseURL != before.InjectedBaseURL {
+		t.Errorf("base URL after doctor = %q, want %q kept", after.InjectedBaseURL, before.InjectedBaseURL)
+	}
+}
+
+func TestDoctorRepairsTheInjectionWithoutBaseURLInItsOwnShape(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.GrantProject(proxytest.Grant{
+		Token:         "tok-no-proxy",
+		ProjectIDHash: e.status().Hash,
+		RootPath:      e.canonicalRoot(),
+		Upstream:      "https://api.anthropic.com",
+	})
+	e.injectWithoutBaseURL()
+	e.dropSessionEndHook()
+	if st := e.status(); !st.MissingSessionEnd() || !st.NoProxy {
+		t.Fatalf("status = %+v, want the missing session-end hook reported on the shape without a base URL", st)
+	}
+
+	e.stdout.Reset()
+	_, out := e.doctor()
+	if !strings.Contains(out, "restored") {
+		t.Errorf("doctor = %q, want the repair reported", out)
+	}
+	after := e.status()
+	if !after.NoProxy || !after.SessionEndInstalled || !after.Consistent() {
+		t.Errorf("status after doctor = %+v, want the same shape completed", after)
+	}
+	if after.InjectedBaseURL != "" {
+		t.Errorf("doctor injected a base URL %q into a project enabled without one", after.InjectedBaseURL)
+	}
+}
+
+func TestDoctorLeavesAConsistentInjectionWithoutBaseURLAlone(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.GrantProject(proxytest.Grant{
+		Token:         "tok-no-proxy",
+		ProjectIDHash: e.status().Hash,
+		RootPath:      e.canonicalRoot(),
+		Upstream:      "https://api.anthropic.com",
+	})
+	e.injectWithoutBaseURL()
+	before, err := os.ReadFile(e.settingsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, out := e.doctor()
+	if strings.Contains(out, "rewrote the injection") {
+		t.Errorf("doctor = %q, want no rewrite of a complete injection", out)
+	}
+	if !strings.Contains(out, "injection and routing agree") {
+		t.Errorf("doctor = %q, want the injection reported as agreeing with the routing table", out)
+	}
+	after, err := os.ReadFile(e.settingsPath())
+	if err != nil || string(after) != string(before) {
+		t.Errorf("settings changed by doctor:\n%s", after)
+	}
+}
+
+func TestDoctorRemovesAStaleInjectionWithoutBaseURL(t *testing.T) {
+	e := newEnv(t)
+	e.injectWithoutBaseURL()
+
+	problems, out := e.doctor()
+	if problems != 0 {
+		t.Fatalf("problems = %d, want the stale injection removed, output:\n%s", problems, out)
+	}
+	if !strings.Contains(out, "removed a stale injection") {
+		t.Errorf("doctor = %q, want the removal reported", out)
+	}
+	if _, ok := claudesettings.InjectionShape(e.settingsPath()); ok {
+		t.Error("stale injection still present after doctor")
+	}
+}
+
 func TestDoctorReportsAnOrphanedGrant(t *testing.T) {
 	e := newEnv(t)
 	e.sandbox.GrantProject(proxytest.Grant{

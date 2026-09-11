@@ -39,13 +39,18 @@ type ProjectStatus struct {
 	GrantHash     string
 
 	// InjectedBaseURL is the base URL trajector injected into the
-	// project's settings, empty when nothing is injected;
+	// project's settings, empty when no base URL is injected;
 	// InjectedToken is the consent token that URL carries.
 	InjectedBaseURL string
 	InjectedToken   string
+	// NoProxy reports the injection shape that carries no base URL:
+	// the session hooks stand, marked as such, and the project's
+	// traffic is not routed through the proxy.
+	NoProxy bool
 	// HookInstalled reports the ensure-proxy hooks in the project
-	// settings.
-	HookInstalled bool
+	// settings; SessionEndInstalled the session-end hook.
+	HookInstalled       bool
+	SessionEndInstalled bool
 
 	// AgreementVersion is the accepted data agreement version, empty
 	// when none was ever accepted.
@@ -58,16 +63,27 @@ type ProjectStatus struct {
 	PauseReason routing.PauseReason
 }
 
-// Injected reports whether trajector's base URL is currently injected
-// into the project's settings.
-func (s ProjectStatus) Injected() bool { return s.InjectedBaseURL != "" }
+// Injected reports whether an injection of trajector's, in either
+// shape, currently stands in the project's settings.
+func (s ProjectStatus) Injected() bool { return s.InjectedBaseURL != "" || s.NoProxy }
 
 // Consistent reports the fully healthy enabled state: a standing grant
-// whose token is exactly what the settings inject, with the session
-// hooks in place. status presents it as contributing; doctor treats
-// anything else as something to reconcile or report.
+// with all three session hooks in place and, unless the injection is
+// the shape without a base URL, a token exactly what the settings
+// inject. status presents it as contributing; doctor treats anything
+// else as something to reconcile or report.
 func (s ProjectStatus) Consistent() bool {
-	return s.Enabled && s.InjectedToken == s.Token && s.HookInstalled
+	if !s.Enabled || !s.HookInstalled || !s.SessionEndInstalled {
+		return false
+	}
+	return s.NoProxy || s.InjectedToken == s.Token
+}
+
+// MissingSessionEnd reports an injection that predates the session-end
+// hook: the rest of it stands, that hook does not. doctor completes
+// such an injection in place.
+func (s ProjectStatus) MissingSessionEnd() bool {
+	return s.Injected() && s.HookInstalled && !s.SessionEndInstalled
 }
 
 // IdentityDisagreement reports that the routing table and the consent

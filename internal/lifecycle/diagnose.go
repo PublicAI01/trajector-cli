@@ -101,6 +101,9 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 		st.InjectedToken, _ = claudesettings.TokenFromBaseURL(url)
 	}
 	st.HookInstalled = claudesettings.HasHook(settings, claudesettings.EnsureProxyMarker)
+	st.SessionEndInstalled = claudesettings.HasHook(settings, claudesettings.SessionEndMarker)
+	shape, _ := claudesettings.InjectionShape(settings)
+	st.NoProxy = shape == claudesettings.WithoutProxy
 
 	if st.AgreementVersion, _, err = m.consent.AcceptedVersion(); err != nil {
 		return st, err

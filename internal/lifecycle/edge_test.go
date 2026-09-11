@@ -26,8 +26,10 @@ func TestInjectedHookQuotesBinaryPathsWithSpaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(settings), `\"/Users/dev/My Tools/trajector\" hook ensure-proxy`) {
-		t.Errorf("injected hook does not quote the spaced path:\n%s", settings)
+	for _, hook := range []string{"ensure-proxy", "session-end"} {
+		if !strings.Contains(string(settings), `\"/Users/dev/My Tools/trajector\" hook `+hook) {
+			t.Errorf("injected %s hook does not quote the spaced path:\n%s", hook, settings)
+		}
 	}
 }
 
@@ -427,7 +429,7 @@ func TestDisableHandlesInjectionWithoutRoute(t *testing.T) {
 	if err := claudesettings.InjectProject(
 		e.settingsPath(),
 		"http://127.0.0.1:41100/t/tok-orphan",
-		e.deps.ExecPath+" hook ensure-proxy",
+		e.projectHooks(),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -437,6 +439,24 @@ func TestDisableHandlesInjectionWithoutRoute(t *testing.T) {
 	}
 	if _, ok := claudesettings.InjectedBaseURL(e.settingsPath()); ok {
 		t.Error("orphaned injection not removed")
+	}
+}
+
+func TestDisableRemovesAnInjectionWithoutBaseURLAndWithoutRoute(t *testing.T) {
+	e := newEnv(t)
+	e.injectWithoutBaseURL()
+	if st := e.status(); !st.Injected() || !st.NoProxy {
+		t.Fatalf("status = %+v, want the injection without a base URL reported", st)
+	}
+
+	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, ok := claudesettings.InjectionShape(e.settingsPath()); ok {
+		t.Error("orphaned injection not removed")
+	}
+	if !strings.Contains(e.stdout.String(), "Removed injection") {
+		t.Errorf("disable = %q, want the removal reported", e.stdout)
 	}
 }
 

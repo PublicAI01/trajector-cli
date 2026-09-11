@@ -33,12 +33,21 @@ func hookCommand(execPath, subcommand string) string {
 	return execPath + " hook " + subcommand
 }
 
+// projectHooks renders the commands a project injection installs, so
+// enable and doctor spell them once.
+func projectHooks(execPath string) claudesettings.HookCommands {
+	return claudesettings.HookCommands{
+		EnsureProxy: hookCommand(execPath, "ensure-proxy"),
+		SessionEnd:  hookCommand(execPath, "session-end"),
+	}
+}
+
 // enableProject drives the enable state machine to completion or rolls
 // back. It is idempotent and transactional: it either reaches the fully
 // injected, self-checked state or restores every file it touched. The
 // invariant it protects: a project with an injected base URL always has
-// its token in the routing table and both session hooks present — a
-// half-enabled project routing traffic at a dead port must be
+// its token in the routing table and all three session hooks present —
+// a half-enabled project routing traffic at a dead port must be
 // impossible.
 func (m *Machine) enableProject(projectDir string, io IO) error {
 	// Every prompt in one enable must read through one buffered reader: a
@@ -181,7 +190,7 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		return fmt.Errorf("recording project consent: %w", err)
 	}
 	m.offerOptionalSettings(io, st)
-	if err := claudesettings.InjectProject(settingsPath, m.proxy.BaseURL(token), hookCommand(m.deps.ExecPath, "ensure-proxy")); err != nil {
+	if err := claudesettings.InjectProject(settingsPath, m.proxy.BaseURL(token), projectHooks(m.deps.ExecPath)); err != nil {
 		return fmt.Errorf("injecting %s: %w", settingsPath, err)
 	}
 	fmt.Fprintf(io.Out, "Injected %s (base URL and session hooks)\n", settingsPath)

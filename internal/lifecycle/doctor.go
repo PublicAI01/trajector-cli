@@ -143,7 +143,14 @@ func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) e
 		return nil
 	}
 	if !st.Consistent() {
-		if err := claudesettings.InjectProject(settingsPath, m.proxy.BaseURL(st.Token), hookCommand(m.deps.ExecPath, "ensure-proxy")); err != nil {
+		// The file is rewritten in the shape it already has: the shape
+		// was the user's choice at enable time, and the settings file is
+		// where that choice is recorded.
+		baseURL := m.proxy.BaseURL(st.Token)
+		if st.NoProxy {
+			baseURL = ""
+		}
+		if err := claudesettings.InjectProject(settingsPath, baseURL, projectHooks(m.deps.ExecPath)); err != nil {
 			return fmt.Errorf("repairing the injection in %s: %w", settingsPath, err)
 		}
 		f.Fixed("rewrote the injection in %s (token and session hooks restored)", settingsPath)

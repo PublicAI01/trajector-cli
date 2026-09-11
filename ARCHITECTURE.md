@@ -49,8 +49,9 @@ reported, never fought — enable refuses to inject, and session hooks warn.
 ## Nothing runs permanently
 
 There is no daemon. Session hooks injected by enable run
-`trajector hook ensure-proxy` at session start and prompt submit; any CLI
-touchpoint does the same. If a healthy proxy is listening, that is a
+`trajector hook ensure-proxy` at session start and prompt submit and
+`trajector hook session-end` at session end; any CLI touchpoint does the
+same as the first. If a healthy proxy is listening, that is a
 no-op; only a proxy announcing a strictly older release is asked to
 drain in-flight requests and hand the port over — an equal or newer
 proxy is reused, and so is one whose version cannot be ordered against
@@ -144,8 +145,11 @@ WSL boundary; doctor points this out.
 - Observed truth is never rewritten.
 - Credential headers are never written to disk.
 - Unredacted data never leaves the machine.
-- An injected base URL implies an active token and both session hooks;
-  enable rolls back to exactly the prior bytes on any failure.
+- An injected base URL implies an active token and all three session
+  hooks; enable rolls back to exactly the prior bytes on any failure.
+  An injection can also carry no base URL: the three hooks still stand,
+  marked `--no-proxy`, and the project's traffic is not routed through
+  the proxy.
 - Acknowledgement is the only deletion trigger; a batch id is never reused
   for different content after an ack.
 - The proxy binds loopback only and forwards only to configured upstreams.

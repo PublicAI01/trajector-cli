@@ -187,6 +187,49 @@ func (e *env) settingsPath() string {
 	return claudesettings.ProjectLocalPath(e.canonicalRoot())
 }
 
+// projectHooks spells the hook commands enable would inject for this
+// device's executable.
+func (e *env) projectHooks() claudesettings.HookCommands {
+	return claudesettings.HookCommands{
+		EnsureProxy: e.deps.ExecPath + " hook ensure-proxy",
+		SessionEnd:  e.deps.ExecPath + " hook session-end",
+	}
+}
+
+// injectWithoutBaseURL writes the injection shape that carries no base
+// URL, as an enable that asks for it would.
+func (e *env) injectWithoutBaseURL() {
+	e.t.Helper()
+	if err := claudesettings.InjectProject(e.settingsPath(), "", e.projectHooks()); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// dropSessionEndHook rewrites the settings file as an injection made
+// before the session-end hook existed would have left it.
+func (e *env) dropSessionEndHook() {
+	e.t.Helper()
+	data, err := os.ReadFile(e.settingsPath())
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		e.t.Fatal(err)
+	}
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok || hooks["SessionEnd"] == nil {
+		e.t.Fatalf("no session-end hook to drop in %s", data)
+	}
+	delete(hooks, "SessionEnd")
+	if data, err = json.Marshal(settings); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(e.settingsPath(), data, 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
 // status is the machine's own answer about the project, the read half
 // every assertion goes through instead of re-deriving state from the
 // underlying stores.

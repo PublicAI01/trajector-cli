@@ -26,14 +26,54 @@ const envBaseURL = "ANTHROPIC_BASE_URL"
 const (
 	eventSessionStart     = "SessionStart"
 	eventUserPromptSubmit = "UserPromptSubmit"
+	eventSessionEnd       = "SessionEnd"
 )
 
 // Marker substrings identifying trajector-injected hook commands, so
 // removal never touches a hook the user wrote themselves.
 const (
 	EnsureProxyMarker = "hook ensure-proxy"
+	SessionEndMarker  = "hook session-end"
 	DiscoveryMarker   = "hook discovery"
 )
+
+// NoProxyMarker is the argument the ensure-proxy hook command carries
+// when the injection routes nothing through the proxy. It is spelled
+// like the enable flag that asks for that form, so the settings file
+// states the user's choice in the user's own words, and it rides on
+// the hook command so it is installed, recognized, and removed by the
+// same walk as the hook itself.
+const NoProxyMarker = "--no-proxy"
+
+// projectMarkers are the markers of every hook a project injection
+// installs; removal and re-injection treat a hook carrying any of them
+// as trajector's own.
+var projectMarkers = []string{EnsureProxyMarker, SessionEndMarker}
+
+// HookCommands are the shell commands a project injection installs:
+// EnsureProxy under SessionStart and UserPromptSubmit, SessionEnd under
+// SessionEnd.
+type HookCommands struct {
+	EnsureProxy string
+	SessionEnd  string
+}
+
+// Shape is the form of a project injection.
+type Shape int
+
+const (
+	// WithProxy routes the project's traffic through the proxy: the
+	// base URL is injected beside the hooks.
+	WithProxy Shape = iota + 1
+	// WithoutProxy installs the hooks alone, each ensure-proxy command
+	// marked NoProxyMarker; the project's traffic goes wherever it
+	// went before.
+	WithoutProxy
+)
+
+// ErrBaseURLInjected reports an attempt to inject without a base URL
+// into a file that still carries an injected one.
+var ErrBaseURLInjected = errors.New("claudesettings: an injected base URL stands in the settings file")
 
 // ProjectLocalRel is the injected settings file's path relative to the
 // project root, in slash form for gitignore entries and user-facing
@@ -88,28 +128,118 @@ func TokenFromBaseURL(value string) (string, bool) {
 	return m[2], true
 }
 
-// InjectProject merges the proxy base URL and the two ensure-proxy
-// hooks into the settings file at path. It is the one write that leaves
-// a consent token in the file, so it goes through editSecret.
-func InjectProject(path, baseURL, hookCommand string) error {
-	return editSecret(path, func(root map[string]any) error {
-		env, err := childObject(root, "env")
-		if err != nil {
-			return err
+// InjectProject merges a project injection into the settings file at
+// path: the three session hooks, and the proxy base URL when baseURL
+// is not empty. An empty baseURL installs the WithoutProxy shape.
+// After it returns the file carries exactly the shape asked for: a
+// trajector hook spelled for the other shape, or for an older
+// executable path, is replaced rather than kept beside the new one.
+//
+// The base URL of a file that already carries one is never dropped
+// here: that key is where the user's own configuration lives, and
+// removal is the one operation that knows what to put back. A file
+// still carrying an injected base URL therefore refuses the
+// WithoutProxy shape with ErrBaseURLInjected; remove first.
+//
+// Writing the base URL is the one write that leaves a consent token in
+// the file, so that form goes through editSecret; the other leaves the
+// file's mode alone.
+func InjectProject(path string, baseURL string, hooks HookCommands) error {
+	ensureProxy := hooks.EnsureProxy
+	if baseURL == "" {
+		ensureProxy += " " + NoProxyMarker
+	}
+	wanted := map[string]string{
+		eventSessionStart:     ensureProxy,
+		eventUserPromptSubmit: ensureProxy,
+		eventSessionEnd:       hooks.SessionEnd,
+	}
+	mutate := func(root map[string]any) error {
+		if baseURL != "" {
+			env, err := childObject(root, "env")
+			if err != nil {
+				return err
+			}
+			env[envBaseURL] = baseURL
+		} else if value, _ := envValue(root, envBaseURL); isProxyBaseURL(value) {
+			return fmt.Errorf("%w: %s", ErrBaseURLInjected, path)
 		}
-		env[envBaseURL] = baseURL
-		if err := addHook(root, eventSessionStart, hookCommand); err != nil {
-			return err
+		eachHookEntry(root, func(event string, entry map[string]any) hookAction {
+			cmd, _ := entry["command"].(string)
+			if !isProjectHook(cmd) || cmd == wanted[event] {
+				return keepEntry
+			}
+			return dropEntry
+		})
+		for _, event := range []string{eventSessionStart, eventUserPromptSubmit, eventSessionEnd} {
+			if err := addHook(root, event, wanted[event]); err != nil {
+				return err
+			}
 		}
-		return addHook(root, eventUserPromptSubmit, hookCommand)
-	})
+		return nil
+	}
+	if baseURL == "" {
+		return edit(path, mutate)
+	}
+	return editSecret(path, mutate)
+}
+
+// isProjectHook reports whether a hook command is one a project
+// injection installs, in either shape.
+func isProjectHook(cmd string) bool {
+	for _, marker := range projectMarkers {
+		if strings.Contains(cmd, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // RemoveProject deletes the injected base URL and every trajector
-// ensure-proxy hook from the settings file at path. A missing file is
-// already-removed.
+// session hook, in either shape, from the settings file at path. A
+// missing file is already-removed.
 func RemoveProject(path string) error {
-	return removeInjection(path, true, EnsureProxyMarker)
+	return removeInjection(path, true, projectMarkers...)
+}
+
+// InjectionShape reports which shape of injection stands in the
+// settings file at path, and false when nothing of trajector's does.
+// An injected base URL decides WithProxy on its own, hooks or no
+// hooks: it is the part that routes traffic, so it is the part a
+// repair must reason from. Without one, an ensure-proxy hook marked
+// NoProxyMarker decides WithoutProxy. Unmarked hooks with no base URL
+// are not a shape: whichever form put them there has lost the part
+// that distinguished it.
+func InjectionShape(path string) (Shape, bool) {
+	root, err := readSettings(path)
+	if err != nil {
+		return 0, false
+	}
+	if value, _ := envValue(root, envBaseURL); isProxyBaseURL(value) {
+		return WithProxy, true
+	}
+	marked := false
+	eachHookEntry(root, func(_ string, entry map[string]any) hookAction {
+		if cmd, _ := entry["command"].(string); strings.Contains(cmd, EnsureProxyMarker) && hasArgument(cmd, NoProxyMarker) {
+			marked = true
+		}
+		return keepEntry
+	})
+	if marked {
+		return WithoutProxy, true
+	}
+	return 0, false
+}
+
+// hasArgument reports whether a shell command carries arg as one of
+// its whitespace-separated words.
+func hasArgument(cmd, arg string) bool {
+	for _, word := range strings.Fields(cmd) {
+		if word == arg {
+			return true
+		}
+	}
+	return false
 }
 
 // SetBaseURL writes value as this settings file's own base URL. It
@@ -182,7 +312,7 @@ func HasHook(path, marker string) bool {
 	return found
 }
 
-func removeInjection(path string, dropEnv bool, marker string) error {
+func removeInjection(path string, dropEnv bool, markers ...string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
 	}
@@ -191,8 +321,11 @@ func removeInjection(path string, dropEnv bool, marker string) error {
 			dropInjectedEnv(root)
 		}
 		eachHookEntry(root, func(_ string, entry map[string]any) hookAction {
-			if cmd, _ := entry["command"].(string); strings.Contains(cmd, marker) {
-				return dropEntry
+			cmd, _ := entry["command"].(string)
+			for _, marker := range markers {
+				if strings.Contains(cmd, marker) {
+					return dropEntry
+				}
 			}
 			return keepEntry
 		})
