@@ -6,6 +6,7 @@ require (
 	github.com/betterleaks/betterleaks v1.5.0
 	github.com/klauspost/compress v1.18.6
 	github.com/zalando/go-keyring v0.2.8
+	golang.org/x/text v0.37.0
 )
 
 require (
@@ -58,7 +59,6 @@ require (
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
