@@ -60,6 +60,13 @@ drain each other. Nothing listening starts a supervisor that restarts a
 crashed proxy with backoff. Idle for 30 minutes, the proxy exits on its
 own.
 
+Each hook also registers the session's own files and starts a one-shot
+process to read them: it appends what the files gained since last time
+to the spool and exits. It is not a daemon and watches nothing — each
+run reads from where the last left off, so a run killed before it
+advances a cursor simply reads the same bytes again, and the spool
+absorbs the repeat by record id.
+
 ## Capture
 
 Only `POST /v1/messages` with a 2xx response is eligible. SSE responses are
@@ -79,9 +86,12 @@ and never evicts.
 
 ## Redaction, batching, upload
 
-The uploader lives inside the proxy process — the machine's only resident
-part, and its only flusher. On thresholds (10 MiB or 24 hours, adjustable by
-the service handshake), records are redacted (secret masking that preserves
+The uploader lives inside the resident process, which a session hook
+brings up under either injection shape — the one that routes the
+project's traffic through the proxy and the one that routes none. Where
+it routes none it forwards nothing; it is only where read records land
+and the one process that flushes them. On thresholds (10 MiB or 24
+hours, adjustable by the service handshake), records are redacted (secret masking that preserves
 JSON structure, ordering, tool-call pairing, and signatures), packed with
 same-session records adjacent for compression, zstd-compressed, and uploaded
 with a client-generated idempotency key.
@@ -153,3 +163,7 @@ WSL boundary; doctor points this out.
 - Acknowledgement is the only deletion trigger; a batch id is never reused
   for different content after an ack.
 - The proxy binds loopback only and forwards only to configured upstreams.
+- At any moment one host runs exactly one flusher; binding port 41100 is
+  the mutual exclusion, and any process that wants to flush must hold it
+  first. A host is one operating-system environment, not one piece of
+  hardware: WSL2 and Windows are two.

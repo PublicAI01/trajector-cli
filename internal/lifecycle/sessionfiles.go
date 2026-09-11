@@ -2,13 +2,18 @@ package lifecycle
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 // HookInput is what Claude Code writes on a hook's stdin: which session
@@ -82,13 +87,33 @@ func (m *Machine) RegisterSessionFile(cwd string, hook HookInput) (registered bo
 	if !st.Enabled || claudesettings.WindowsSideClaude(st.Root, "") {
 		return false, nil
 	}
+	subpath := projectSubpath(st.Root, hook.Cwd)
 	registry := follow.Open(m.deps.Layout.FollowDir())
 	for _, p := range append([]string{path}, follow.Siblings(path)...) {
-		if err := registry.Register(st.Hash, p); err != nil {
+		if err := registry.RegisterUnder(st.Hash, p, subpath); err != nil {
 			return false, err
 		}
 	}
 	return true, nil
+}
+
+// projectSubpath reports where a session ran relative to the project
+// root, with forward slashes, and "" when it ran at the root itself.
+// A session directory outside the root, or a working directory that
+// cannot be resolved, has no position and yields "".
+func projectSubpath(root, cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	canonical, err := consent.CanonicalRoot(cwd)
+	if err != nil {
+		return ""
+	}
+	rel, err := filepath.Rel(root, canonical)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return filepath.ToSlash(rel)
 }
 
 // under reports whether path lies strictly inside dir, by name alone.
@@ -114,6 +139,117 @@ func (m *Machine) SpawnReader(projectDir string) error {
 	return err
 }
 
+// ReadSessionFiles reads the files registered for a project once, on
+// behalf of the session that just ran, and exits. It is the body of the
+// detached process a session hook starts: for each registered file it
+// consumes what the file gained since its cursor, lands the records in
+// the spool, and advances the cursor only once every record is stored.
+// It never blocks a session — the hook released it — and it says
+// nothing: its streams are the null device, and a failure to read one
+// file is left behind so the next file, and the next run, still make
+// progress.
+//
+// A project that is not enabled, or whose injection was removed, is
+// nothing to read: the injection shape is what the record must state
+// about this client, so without one there is no record to write.
+// Whenever there is a shape, the resident process is brought up on the
+// way out: it is the one flusher, and it drains whatever the spool
+// holds — the records just written, and any a previous run left behind
+// because no flusher was up to send them.
 func (m *Machine) ReadSessionFiles(projectDir string, io IO) error {
+	st, err := m.Project(projectDir)
+	if err != nil || !st.Enabled {
+		return nil
+	}
+	injection, ok := injectionValue(claudesettings.InjectionShape(st.SettingsPath()))
+	if !ok {
+		return nil
+	}
+	defer func() { _ = m.EnsureProxy(projectDir, io) }()
+
+	registry := follow.Open(m.deps.Layout.FollowDir())
+	files, err := registry.Files(st.Hash)
+	if err != nil {
+		return nil
+	}
+	sp, err := m.spool()
+	if err != nil {
+		return nil
+	}
+	now := m.deps.Now().UTC().Format(time.RFC3339Nano)
+
+	for _, f := range files {
+		capture := envelope.TranscriptCapture{
+			ClientVersion:  m.deps.Version,
+			Timestamp:      now,
+			ProjectIDHash:  st.Hash,
+			ProjectSubpath: f.Subpath,
+			Injection:      injection,
+		}
+		res, err := follow.Read(f, capture, follow.ReadOptions{Root: st.Root})
+		if err != nil {
+			// A file that could not be read this time — a metadata file
+			// caught mid-write, say — keeps its cursor and is tried again
+			// next run. Reading the rest of the project goes on.
+			continue
+		}
+		full, err := storeRecords(sp, res)
+		if full {
+			// The spool is full: it dropped nothing, and neither does the
+			// reader. The cursor stays where it was, so this file and
+			// every one after it is read again once space returns; no
+			// record is repeated, because storing is idempotent by id.
+			return nil
+		}
+		if err != nil {
+			continue
+		}
+		if res.Reaction == follow.Vanished || res.Stopped {
+			_ = registry.Remove(st.Hash, f.Path)
+			continue
+		}
+		_ = registry.Update(st.Hash, res.File)
+	}
 	return nil
+}
+
+// storeRecords writes a read result's segments and snapshots to the
+// spool. full reports that the spool refused a record for want of room,
+// the one outcome that must stop the whole run rather than advance a
+// cursor past records that were never stored.
+func storeRecords(sp *spool.Spool, res follow.ReadResult) (full bool, err error) {
+	for _, seg := range res.Segments {
+		if err := sp.WriteSegment(seg); err != nil {
+			if errors.Is(err, spool.ErrQuotaExceeded) {
+				return true, nil
+			}
+			return false, err
+		}
+	}
+	for _, snap := range res.Snapshots {
+		if err := sp.WriteMetaSnapshot(snap); err != nil {
+			if errors.Is(err, spool.ErrQuotaExceeded) {
+				return true, nil
+			}
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+// injectionValue names, for a record, what this client did with the
+// project's traffic: forwarded it, or only read the files it left. An
+// injection that is neither shape is not set up to record, and the
+// second return is false.
+func injectionValue(shape claudesettings.Shape, present bool) (string, bool) {
+	if !present {
+		return "", false
+	}
+	switch shape {
+	case claudesettings.WithProxy:
+		return envelope.InjectionProxy, true
+	case claudesettings.WithoutProxy:
+		return envelope.InjectionTailOnly, true
+	}
+	return "", false
 }

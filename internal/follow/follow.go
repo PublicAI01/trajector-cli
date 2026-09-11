@@ -61,6 +61,11 @@ type File struct {
 	// NextSegment only grows. It survives a Rewrite of the file, so it
 	// is stored rather than derived: nothing on disk can give it back.
 	NextSegment int `json:"next_segment"`
+	// Subpath is where the session ran relative to the project root,
+	// with forward slashes. It is absent, never empty, for a session
+	// that ran at the root and for a file the backfill walk found,
+	// which carries no such position.
+	Subpath string `json:"subpath,omitempty"`
 	// MessageIDs are the message ids already consumed from this file.
 	// It is a set; the array order carries no meaning. An agent
 	// metadata file has no messages: there it holds the record id of
@@ -73,11 +78,19 @@ type registry struct {
 	Files   []File `json:"files"`
 }
 
-// Register adds path to projectIDHash's registry with a zero cursor.
-// Registering a path that is already registered changes nothing. The path must
-// be absolute: it is the entry's identity across processes with
-// different working directories.
+// Register adds path to projectIDHash's registry with a zero cursor and
+// no session position. Register is RegisterUnder with an empty subpath.
 func (r *Registry) Register(projectIDHash, path string) error {
+	return r.RegisterUnder(projectIDHash, path, "")
+}
+
+// RegisterUnder adds path to projectIDHash's registry with a zero
+// cursor, recording where the session ran relative to the project root.
+// Registering a path that is already registered changes nothing, its
+// subpath included: the first registration of a session's file is the
+// one that knows where it ran. The path must be absolute: it is the
+// entry's identity across processes with different working directories.
+func (r *Registry) RegisterUnder(projectIDHash, path, subpath string) error {
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("follow: path %q is not absolute", path)
 	}
@@ -93,7 +106,7 @@ func (r *Registry) Register(projectIDHash, path string) error {
 			return nil, err
 		}
 		if _, ok := find(reg.Files, path); !ok {
-			reg.Files = append(reg.Files, File{Path: path})
+			reg.Files = append(reg.Files, File{Path: path, Subpath: subpath})
 		}
 		return encode(reg)
 	})
@@ -154,6 +167,32 @@ func (r *Registry) Unregister(projectIDHash string) error {
 		return nil
 	}
 	return err
+}
+
+// Remove drops one file's entry from projectIDHash's registry, leaving
+// the project's other entries in place. A path that is not registered,
+// or a project with no registry, is already in the wanted state. It is
+// how a caller retires a file whose cursor can no longer advance: one
+// that vanished, or one whose session left the consented directory.
+func (r *Registry) Remove(projectIDHash, path string) error {
+	if err := checkProjectIDHash(projectIDHash); err != nil {
+		return err
+	}
+	if _, err := os.Stat(r.dir); os.IsNotExist(err) {
+		return nil
+	}
+	return fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
+		reg, err := parse(old)
+		if err != nil {
+			return nil, err
+		}
+		i, ok := find(reg.Files, path)
+		if !ok {
+			return encode(reg)
+		}
+		reg.Files = append(reg.Files[:i], reg.Files[i+1:]...)
+		return encode(reg)
+	})
 }
 
 // Projects lists the project id hashes that have a registry, sorted.

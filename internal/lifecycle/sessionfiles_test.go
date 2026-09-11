@@ -9,12 +9,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/cli"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/spool"
+	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -306,5 +311,393 @@ func TestReadHookInput(t *testing.T) {
 				t.Errorf("got %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+// discardIO is the IO a detached reader runs with: nothing it prints is
+// read, so a test hands it the same silence production does.
+func discardIO() lifecycle.IO { return lifecycle.IO{Out: io.Discard, Err: io.Discard} }
+
+// putSessionFile writes content at rel under the session files root and
+// returns its path.
+func (e *env) putSessionFile(rel, content string) string {
+	e.t.Helper()
+	path := filepath.Join(e.sessionFilesRoot(), filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+	return path
+}
+
+// registerFile registers path for root's project with a session
+// subpath, standing in for what a hook records.
+func (e *env) registerFile(root, path, subpath string) {
+	e.t.Helper()
+	if err := follow.Open(e.layout().FollowDir()).RegisterUnder(consent.ProjectIDHash(root), path, subpath); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// registeredFiles returns root's registered entries, cursors included.
+func (e *env) registeredFiles(root string) []follow.File {
+	e.t.Helper()
+	files, err := follow.Open(e.layout().FollowDir()).Files(consent.ProjectIDHash(root))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return files
+}
+
+// storedRecords lists the segments and snapshots in this device's spool.
+func (e *env) storedRecords() []spool.Record {
+	e.t.Helper()
+	sp, err := spool.Open(e.layout().SpoolDir(), 0)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var recs []spool.Record
+	if err := sp.EachRecord(func(r spool.Record) error {
+		recs = append(recs, r)
+		return nil
+	}); err != nil {
+		e.t.Fatal(err)
+	}
+	return recs
+}
+
+// injectWithProxy writes the injection shape that routes the project's
+// traffic through the proxy, as an ordinary enable would.
+func (e *env) injectWithProxy() {
+	e.t.Helper()
+	if err := claudesettings.InjectProject(e.settingsPath(), "http://127.0.0.1:41100/t/tok-proj", e.projectHooks()); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// aProxylessTarget points ensure at a free port with no binary behind
+// it, so a reader's ensure-on-exit probes, fails to spawn, and stays
+// silent — the tests that only care about the spool never start a real
+// resident process.
+func (e *env) aProxylessTarget() {
+	e.t.Helper()
+	e.deps.ProxyAddr = freeAddr(e.t)
+}
+
+func TestReadSessionFiles_StoresSegmentsAndAdvancesTheCursor(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
+	e.registerFile(root, main, "")
+
+	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
+		t.Fatal(err)
+	}
+
+	recs := e.storedRecords()
+	if len(recs) != 1 || recs[0].Kind != "segment" {
+		t.Fatalf("records = %+v, want exactly one segment", recs)
+	}
+	files := e.registeredFiles(root)
+	if len(files) != 1 || files[0].Offset == 0 || files[0].NextSegment != 1 {
+		t.Fatalf("cursor = %+v, want advanced past the segment", files)
+	}
+
+	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.storedRecords(); len(got) != 1 {
+		t.Fatalf("records after a second run over unchanged files = %d, want still 1", len(got))
+	}
+}
+
+func TestReadSessionFiles_FullSpoolLeavesTheCursorAlone(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	// A quota of one byte refuses every record while dropping nothing.
+	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
+	root := e.canonicalRoot()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
+	e.registerFile(root, main, "")
+
+	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.storedRecords(); len(got) != 0 {
+		t.Fatalf("records = %d, want none stored under a full spool", len(got))
+	}
+	if f := e.registeredFiles(root)[0]; f.Offset != 0 || f.NextSegment != 0 {
+		t.Fatalf("cursor = %+v, want left where it was", f)
+	}
+
+	// Space returns; the same bytes are read once, not repeated or lost.
+	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1 << 20})
+	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.storedRecords(); len(got) != 1 {
+		t.Fatalf("records after space returns = %d, want the one delayed segment", len(got))
+	}
+}
+
+func TestReadSessionFiles_RemovesVanishedAndStoppedEntries(t *testing.T) {
+	root := "" // filled per case from the enabled project
+	tests := []struct {
+		name    string
+		prepare func(e *env) string // returns the registered path
+	}{
+		{
+			name: "a file that vanished",
+			prepare: func(e *env) string {
+				return filepath.Join(e.sessionFilesRoot(), "-work-sample", "gone.jsonl")
+			},
+		},
+		{
+			name: "a session that left the consented directory",
+			prepare: func(e *env) string {
+				return e.putSessionFile("-work-sample/moved.jsonl", `{"type":"relocated","relocatedCwd":"/elsewhere/entirely"}`+"\n")
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.aProxylessTarget()
+			e.enableProject()
+			e.injectWithoutBaseURL()
+			root = e.canonicalRoot()
+			path := tt.prepare(e)
+			e.registerFile(root, path, "")
+
+			if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
+				t.Fatal(err)
+			}
+			if got := e.registeredFiles(root); len(got) != 0 {
+				t.Errorf("registry = %+v, want the retired entry removed", got)
+			}
+		})
+	}
+}
+
+func TestReadSessionFiles_KeepsReadingPastAFileThatFails(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	// A metadata file caught mid-write is not JSON yet: reading it fails.
+	bad := e.putSessionFile("-work-sample/0f1e2d3c/subagents/agent-a1.meta.json", `{"broken`)
+	good := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
+	e.registerFile(root, bad, "")
+	e.registerFile(root, good, "")
+
+	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
+		t.Fatal(err)
+	}
+	recs := e.storedRecords()
+	if len(recs) != 1 || recs[0].Kind != "segment" {
+		t.Fatalf("records = %+v, want the good file's segment despite the failing one", recs)
+	}
+	// The failing file keeps its entry: its cursor never advanced.
+	var kept bool
+	for _, f := range e.registeredFiles(root) {
+		if f.Path == bad {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Error("the failing file's entry was dropped, want it kept for the next run")
+	}
+}
+
+func TestReadSessionFiles_FillsCaptureFromTheProjectShape(t *testing.T) {
+	tests := []struct {
+		name          string
+		inject        func(e *env)
+		wantInjection string
+	}{
+		{name: "proxy shape", inject: (*env).injectWithProxy, wantInjection: "proxy"},
+		{name: "no-proxy shape", inject: (*env).injectWithoutBaseURL, wantInjection: "tail_only"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.aProxylessTarget()
+			e.enableProject()
+			tt.inject(e)
+			root := e.canonicalRoot()
+			main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
+			e.registerFile(root, main, "service/api")
+
+			if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
+				t.Fatal(err)
+			}
+			recs := e.storedRecords()
+			if len(recs) != 1 {
+				t.Fatalf("records = %+v, want one segment", recs)
+			}
+			seg, err := envelope.ParseSegment(recs[0].Raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if seg.Capture.Injection != tt.wantInjection {
+				t.Errorf("injection = %q, want %q", seg.Capture.Injection, tt.wantInjection)
+			}
+			if seg.Capture.ProjectSubpath != "service/api" {
+				t.Errorf("project subpath = %q, want the one registration recorded", seg.Capture.ProjectSubpath)
+			}
+			if seg.Capture.ProjectIDHash != consent.ProjectIDHash(root) {
+				t.Errorf("project id hash = %q, want the enabled project's", seg.Capture.ProjectIDHash)
+			}
+		})
+	}
+}
+
+func TestReadSessionFiles_UnenabledProjectDoesNothing(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	// No grant, no injection: nothing to read and nothing to record.
+	root := e.canonicalRoot()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
+	e.registerFile(root, main, "")
+
+	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.storedRecords(); len(got) != 0 {
+		t.Errorf("records = %d, want nothing for a project that is not enabled", len(got))
+	}
+}
+
+func TestReadSessionFiles_KilledReaderIsIdempotentOnRerun(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
+	e.registerFile(root, main, "")
+
+	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.storedRecords(); len(got) != 1 {
+		t.Fatalf("records after the first run = %d, want 1", len(got))
+	}
+
+	// A reader killed after storing the segment but before it advanced
+	// the cursor leaves the entry as it was: rewind it to that state.
+	reg := follow.Open(e.layout().FollowDir())
+	f := e.registeredFiles(root)[0]
+	f.Offset, f.Size, f.Inode, f.NextSegment, f.MessageIDs = 0, 0, 0, 0, nil
+	if err := reg.Update(consent.ProjectIDHash(root), f); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.storedRecords(); len(got) != 1 {
+		t.Fatalf("records after the rerun = %d, want the segment stored once, not twice", len(got))
+	}
+}
+
+// isolateForSpawn re-homes the device onto one directory a spawned
+// process can resolve for itself, so a proxy this test starts writes the
+// same stores the machine reads. It returns that layout and arranges for
+// whatever proxy comes up to be drained with the test.
+func (e *env) isolateForSpawn() userdirs.Layout {
+	e.t.Helper()
+	dir := e.t.TempDir()
+	e.t.Setenv("HOME", e.deps.Home)
+	e.t.Setenv("XDG_CONFIG_HOME", dir)
+	e.t.Setenv("XDG_DATA_HOME", dir)
+	e.t.Setenv("XDG_STATE_HOME", dir)
+	layout := proxytest.SandboxLayout(e.t, dir)
+	e.deps.Layout = layout
+	e.sandbox = proxytest.Open(e.t, layout)
+	e.tokens = tokenstore.Files(layout.SecretsDir())
+	e.seedDeviceToken()
+	e.deps.ExecPath = procbin.Self(e.t, "cli")
+	e.deps.ProxyAddr = freeAddr(e.t)
+	e.t.Setenv(cli.ProxyAddrEnv, e.deps.ProxyAddr)
+	// A spawned proxy resolves its upload endpoint from the user config
+	// file; point it at this test's fake service.
+	if err := os.MkdirAll(filepath.Dir(layout.ConfigFile()), 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.ConfigFile(), []byte(`{"platform_url":"`+e.service.URL()+`"}`), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+	addr := e.deps.ProxyAddr
+	e.t.Cleanup(func() {
+		_ = proxylife.For(layout, e.deps.Version, e.deps.ExecPath, addr).StopGone()
+	})
+	return layout
+}
+
+func TestReadSessionFiles_BringsUpTheResidentProcess(t *testing.T) {
+	tests := []struct {
+		name   string
+		inject func(e *env)
+	}{
+		{name: "proxy shape", inject: (*env).injectWithProxy},
+		{name: "no-proxy shape", inject: (*env).injectWithoutBaseURL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			layout := e.isolateForSpawn()
+			e.enableProject()
+			tt.inject(e)
+			root := e.canonicalRoot()
+			main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
+			e.registerFile(root, main, "")
+
+			if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
+				t.Fatal(err)
+			}
+
+			waitHealthy(t, e, e.deps.ProxyAddr)
+			v := proxylife.For(layout, e.deps.Version, e.deps.ExecPath, e.deps.ProxyAddr).Observe()
+			if v.Holder != proxylife.HolderOurs {
+				t.Fatalf("resident process holder = %v, want a healthy proxy of ours", v.Holder)
+			}
+		})
+	}
+}
+
+func TestHook_EndToEnd_RegisterReadStore(t *testing.T) {
+	e := newEnv(t)
+	e.isolateForSpawn()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
+
+	registered, err := e.machine().RegisterSessionFile(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
+	if err != nil || !registered {
+		t.Fatalf("register = %v, %v", registered, err)
+	}
+	if err := e.machine().SpawnReader(e.project); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		recs := e.storedRecords()
+		if len(recs) == 1 && recs[0].Kind == "segment" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the spawned reader never stored the segment; records = %+v", recs)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
