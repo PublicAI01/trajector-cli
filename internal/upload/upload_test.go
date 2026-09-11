@@ -33,6 +33,9 @@ type fixture struct {
 	// withdrawn stands in for the consent store: project hashes the user
 	// has since disabled.
 	withdrawn map[string]bool
+	// unmaskable counts the times the uploader reported a record it
+	// could not mask.
+	unmaskable int
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -72,8 +75,9 @@ func (f *fixture) newUploader(t *testing.T) *upload.Uploader {
 		Run: func() batch.Run {
 			return batch.Run{RecordedToday: 5, SpoolUsageBytes: sp.Usage(), SpoolQuotaBytes: sp.Quota()}
 		},
-		Logf: func(format string, args ...any) { fmt.Fprintf(&f.logs, format+"\n", args...) },
-		Now:  func() time.Time { return f.now },
+		Logf:               func(format string, args ...any) { fmt.Fprintf(&f.logs, format+"\n", args...) },
+		Now:                func() time.Time { return f.now },
+		OnUnmaskableRecord: func() { f.unmaskable++ },
 	})
 	if err != nil {
 		t.Fatal(err)

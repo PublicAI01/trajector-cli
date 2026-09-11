@@ -1,0 +1,3 @@
+{"type":"assistant","cwd":"/srv/work/project-alpha","sessionId":"sid-a","uuid":"a-1","timestamp":"2026-09-01T10:00:01.000Z","apiBlockIndex":0,"message":{"id":"msg_1","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"one"}]}}
+{"type":"assistant","cwd":"/srv/work/project-alpha","sessionId":"sid-a","uuid":"a-2","timestamp":"2026-09-01T10:00:02.000Z","apiBlockIndex":0,"message":{"type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"two"}]}}
+{"type":"assistant","cwd":"/srv/work/project-alpha","sessionId":"sid-a","uuid":"a-3","timestamp":"2026-09-01T10:00:03.000Z","apiBlockIndex":0,"message":{"id":"msg_3","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"three"}]}}

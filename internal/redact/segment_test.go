@@ -395,6 +395,16 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 			line: `{"paths":["/srv/a","/srv/b"],"rows":[{"dir":"/srv/c"}]}`,
 			want: nil,
 		},
+		{
+			name: "a slash command kept as the last prompt is text, not a location",
+			line: `{"type":"last-prompt","lastPrompt":"/clear","sessionId":"` + fixtureSessionID + `"}`,
+			want: nil,
+		},
+		{
+			name: "lastPrompt on any other line is reported",
+			line: `{"type":"user","lastPrompt":"/clear"}`,
+			want: []string{"$.lastPrompt"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

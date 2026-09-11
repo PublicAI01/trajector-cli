@@ -79,6 +79,15 @@ var anchoredPaths = []pathField{
 // structured copy alone would hide nothing.
 var acknowledgedPaths = []pathField{
 	{path: keyPath{"attachment", "snapshot", "workingDirectory"}},
+	// lastPrompt is the text the user typed last, which Claude Code
+	// keeps for resuming. A slash command or a bare path typed as a
+	// prompt has the shape of a path, but the value is what was typed,
+	// not where the session ran, and the same text stands in the user
+	// line it came from.
+	{
+		path:  keyPath{"lastPrompt"},
+		guard: &valueGuard{path: keyPath{"type"}, want: "last-prompt"},
+	},
 }
 
 // RedactSegment masks one segment for upload: the anchored project
@@ -208,10 +217,11 @@ func AbsolutePathFields(line []byte) ([]string, error) {
 		return nil, errors.New("redact: line is not valid JSON")
 	}
 	s := string(line)
-	guardsHeld := make([]bool, len(anchoredPaths))
+	listed := append(append([]pathField{}, anchoredPaths...), acknowledgedPaths...)
+	guardsHeld := make([]bool, len(listed))
 	var candidates []keyPath
 	walkStringValues(s, func(path []string, start, end int, value string) {
-		for i, a := range anchoredPaths {
+		for i, a := range listed {
 			if a.guard != nil && a.guard.path.equal(path) && value == a.guard.want {
 				guardsHeld[i] = true
 			}
@@ -223,13 +233,8 @@ func AbsolutePathFields(line []byte) ([]string, error) {
 	var found []string
 	for _, c := range candidates {
 		known := false
-		for i, a := range anchoredPaths {
+		for i, a := range listed {
 			if a.path.equal(c) && (a.guard == nil || guardsHeld[i]) {
-				known = true
-			}
-		}
-		for _, a := range acknowledgedPaths {
-			if a.path.equal(c) {
 				known = true
 			}
 		}

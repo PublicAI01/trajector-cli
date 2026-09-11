@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -90,6 +91,8 @@ type sessionFilesWire struct {
 	Truncated   bool      `json:"truncated"`
 	Ambiguous   int       `json:"ambiguous"`
 	Unreadable  int       `json:"unreadable"`
+	// Signals is counts and field names, the registry's own form.
+	Signals follow.Signals `json:"signals,omitzero"`
 }
 
 type proxyWire struct {
@@ -175,6 +178,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 				Truncated:   d.SessionFiles.Gaps.Truncated,
 				Ambiguous:   len(d.SessionFiles.Gaps.Ambiguous),
 				Unreadable:  len(d.SessionFiles.Gaps.Unreadable),
+				Signals:     d.SessionFiles.Signals,
 			},
 		},
 		Proxy: proxy,

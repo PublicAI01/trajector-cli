@@ -190,7 +190,18 @@ func (s *Store) Pause(reason PauseReason) error {
 	if reason == "" {
 		return fmt.Errorf("routing: pause requires a reason")
 	}
-	return s.update(func(f *tableFile) { f.PausedReason = reason })
+	return s.update(func(f *tableFile) { f.PausedReason, f.PausedByVersion = reason, "" })
+}
+
+// PauseByBuild is Pause with the build that paused written down, for a
+// pause that a different build is expected to lift: what one build
+// cannot handle, a later one may, and the record is how doctor tells
+// the two apart.
+func (s *Store) PauseByBuild(reason PauseReason, version string) error {
+	if reason == "" {
+		return fmt.Errorf("routing: pause requires a reason")
+	}
+	return s.update(func(f *tableFile) { f.PausedReason, f.PausedByVersion = reason, version })
 }
 
 // Resume lifts a pause set for the given reason. A pause held for a
@@ -198,9 +209,19 @@ func (s *Store) Pause(reason PauseReason) error {
 func (s *Store) Resume(reason PauseReason) error {
 	return s.update(func(f *tableFile) {
 		if f.PausedReason == reason {
-			f.PausedReason = ""
+			f.PausedReason, f.PausedByVersion = "", ""
 		}
 	})
+}
+
+// PausedByBuild reports the build that set the active pause, empty
+// when no pause stands or the pause did not record one.
+func (s *Store) PausedByBuild() (string, error) {
+	f, err := readTableFile(s.path)
+	if err != nil {
+		return "", err
+	}
+	return f.PausedByVersion, nil
 }
 
 // PausedReason reports the active device-wide pause, empty when

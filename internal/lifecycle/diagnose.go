@@ -146,7 +146,11 @@ func (m *Machine) sessionFilesState(projectIDHash string) report.SessionFilesSta
 	if err != nil {
 		return report.SessionFilesState{Err: err}
 	}
-	state := report.SessionFilesState{Gaps: gaps}
+	signals, err := registry.Signals(projectIDHash)
+	if err != nil {
+		return report.SessionFilesState{Err: err}
+	}
+	state := report.SessionFilesState{Gaps: gaps, Signals: signals}
 	for _, f := range files {
 		if f.MainSession() {
 			state.Sessions++

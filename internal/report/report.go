@@ -70,6 +70,10 @@ type SessionFilesState struct {
 	// Gaps is what the search for earlier files left uncovered, as
 	// recorded with the registry when the search ran.
 	Gaps follow.Gaps
+	// Signals is what reading the files noticed about their shape, as
+	// the registry accumulated it: counts and field names, never a
+	// value.
+	Signals follow.Signals
 }
 
 // full reports a spool that refuses writes because usage reached the

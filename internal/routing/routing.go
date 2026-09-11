@@ -101,8 +101,11 @@ type tableFile struct {
 	// once while forwarding continues unchanged. It backs device-wide
 	// stops (signed out, consent needs reconfirmation) that must not
 	// destroy per-project grants.
-	PausedReason PauseReason              `json:"paused_reason,omitempty"`
-	Projects     map[string]projectRecord `json:"projects"`
+	PausedReason PauseReason `json:"paused_reason,omitempty"`
+	// PausedByVersion names the build that set PausedReason, when the
+	// pause is one that a different build is expected to lift.
+	PausedByVersion string                   `json:"paused_by_version,omitempty"`
+	Projects        map[string]projectRecord `json:"projects"`
 }
 
 type projectRecord struct {

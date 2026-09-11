@@ -616,3 +616,41 @@ func TestRequeue_KeepsARecordOfAnUnknownKindQuarantined(t *testing.T) {
 		t.Errorf("record slot = %v, want nothing of an unknown kind stored", ids)
 	}
 }
+
+func TestFlush_UnmaskableRecordTriggersTheCallback(t *testing.T) {
+	cases := []struct {
+		name  string
+		plant func(t *testing.T, f *fixture)
+		want  int
+	}{
+		{"a segment whose last line is cut cannot be masked", func(t *testing.T, f *fixture) {
+			f.storeSegment(t, sessionX, "", 1, f.now, `{"type":"user"}`)
+		}, 1},
+		{"two such segments in one flush report once", func(t *testing.T, f *fixture) {
+			f.storeSegment(t, sessionX, "", 1, f.now, `{"type":"user"}`)
+			f.storeSegment(t, sessionY, "", 0, f.now, `{"type":"user"}`)
+		}, 1},
+		{"bytes that are not a record are unreadable, not unmaskable", func(t *testing.T, f *fixture) {
+			f.storeUnreadableRecord(t, "rec-torn", []byte(`{"schema_version":"2","source":"transcript","record_kind":"segment","record_id":"rec-torn"`))
+		}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+			f.storeSegment(t, sessionX, "", 0, f.now, "{}\n")
+			tc.plant(t, f)
+
+			res, err := f.uploader.Flush(true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(res.SetAside) != 1 {
+				t.Fatalf("result = %+v, want one set-aside", res)
+			}
+			if f.unmaskable != tc.want {
+				t.Errorf("unmaskable reported %d time(s), want %d", f.unmaskable, tc.want)
+			}
+		})
+	}
+}

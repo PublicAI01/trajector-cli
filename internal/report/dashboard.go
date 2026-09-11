@@ -11,6 +11,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 // Dashboard prints the device dashboard: pairing, the current project's
@@ -174,7 +175,42 @@ func projectLines(d Diagnosis) []string {
 	if !st.SessionEndInstalled {
 		lines = append(lines, sessionEndMissingLine(st.SettingsPath()))
 	}
-	return append(lines, sessionFileLines(d.SessionFiles)...)
+	lines = append(lines, sessionFileLines(d.SessionFiles)...)
+	return append(lines, signalLines(d)...)
+}
+
+// signalLines states what reading the project's session files noticed
+// about their shape, as facts about the lines: while recording is
+// paused for a shape this build's redaction does not cover, which
+// fields that were; always, how many lines lacked what a record is
+// later read by. Each line is a count or a field name, never a value
+// from a session file, and none names a next step: the pause carries
+// its own, and the counts have none a user could take.
+func signalLines(d Diagnosis) []string {
+	s := d.SessionFiles.Signals
+	var lines []string
+	if d.Project.PauseReason == routing.PauseRedactionDrift {
+		if len(s.UnanchoredPathFields) > 0 {
+			lines = append(lines, fmt.Sprintf("Fields in this project's session files holding a path that this build's redaction does not cover: %s.",
+				strings.Join(s.UnanchoredPathFields, ", ")))
+		}
+		if s.IncompleteSegments > 0 {
+			lines = append(lines, fmt.Sprintf("%d read(s) of this project's session files ended in a line without a newline.", s.IncompleteSegments))
+		}
+	}
+	if s.AssistantLinesWithoutMessageID > 0 {
+		lines = append(lines, fmt.Sprintf("%d of %d assistant lines in this project's session files carried no message id.",
+			s.AssistantLinesWithoutMessageID, s.AssistantLines))
+	}
+	if s.MessagesWithBlockIndexGap > 0 {
+		lines = append(lines, fmt.Sprintf("%d message(s) in this project's session files had block indexes that repeat or skip a number.",
+			s.MessagesWithBlockIndexGap))
+	}
+	if s.AgentLinesWithoutParent > 0 {
+		lines = append(lines, fmt.Sprintf("%d of %d agent lines in this project's session files named nothing they were started by.",
+			s.AgentLinesWithoutParent, s.AgentLines))
+	}
+	return lines
 }
 
 // hookJudgementLines states the static reading of whether the hooks

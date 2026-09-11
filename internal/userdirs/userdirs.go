@@ -23,6 +23,7 @@ const (
 	rejectedDirName  = "rawcalls-rejected"
 	secretsDirName   = "secrets"
 	proxyLogName     = "proxy.log"
+	readerLogName    = "reader.log"
 	adminTokenName   = "admin_token"
 	uploadDirName    = "upload"
 	followDirName    = "follow"
@@ -102,6 +103,10 @@ func (l Layout) SecretsDir() string { return filepath.Join(l.config, secretsDirN
 
 // ProxyLog is where a supervised proxy's output is appended.
 func (l Layout) ProxyLog() string { return filepath.Join(l.state, proxyLogName) }
+
+// ReaderLog is where the session file reader appends what it noticed
+// about the shape of the lines it read, one JSON object per line.
+func (l Layout) ReaderLog() string { return filepath.Join(l.state, readerLogName) }
 
 // AdminTokenFile is where one serving proxy instance publishes the
 // token that authorizes its reserved endpoints. Readable only by the

@@ -1,0 +1,3 @@
+{"parentUuid":null,"isSidechain":true,"agentId":"a1b2c3","cwd":"/srv/work/project-alpha","sessionId":"sid-a","type":"user","message":{"role":"user","content":"find the widget"},"uuid":"g-1","timestamp":"2026-09-01T10:00:05.000Z"}
+{"type":"fork-context-ref","isSidechain":true,"parentSessionId":"sid-0","parentLastUuid":"u-9","sessionId":"sid-a","uuid":"g-2","timestamp":"2026-09-01T10:00:06.000Z"}
+{"parentUuid":"g-1","isSidechain":true,"cwd":"/srv/work/project-alpha","sessionId":"sid-a","type":"assistant","apiBlockIndex":0,"message":{"id":"msg_9","role":"assistant","content":[{"type":"text","text":"found it"}]},"uuid":"g-3","timestamp":"2026-09-01T10:00:07.000Z"}

@@ -144,6 +144,16 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 			}
 		},
 		Logf: logf,
+		// A record this build cannot mask must not leave the device,
+		// and neither may the ones behind it: recording pauses until a
+		// build that covers the shape is installed. The routing table
+		// is the one place a pause is written, and the proxy re-reads
+		// it on its next lookup.
+		OnUnmaskableRecord: func() {
+			if err := routing.OpenStore(layout.RoutingTable()).PauseByBuild(routing.PauseRedactionDrift, a.Version); err != nil {
+				logf("upload: warning: a record could not be masked and recording could not be paused: %v", err)
+			}
+		},
 	})
 	if err != nil {
 		return err

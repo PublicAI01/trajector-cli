@@ -20,6 +20,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
@@ -156,6 +157,12 @@ type Deps struct {
 	Logf func(format string, args ...any)
 	// Now supplies timestamps; nil means time.Now.
 	Now func() time.Time
+	// OnUnmaskableRecord is called, once per flush, when a record was
+	// set aside because this build could not mask it — not because its
+	// bytes were unreadable. Nil means nothing more than the set-aside
+	// happens. The uploader has no say over recording; the caller that
+	// does is told, and decides.
+	OnUnmaskableRecord func()
 }
 
 // Uploader drains the spool into batches. One Uploader serializes its
@@ -610,7 +617,22 @@ func (u *Uploader) setAside(batchID string, refused []batch.Refusal, res *Result
 	res.SetAside = append(res.SetAside, rej)
 	u.deps.Logf("upload: set aside %d unreadable record(s) under %s; they were never sent — run `trajector doctor` to inspect them",
 		len(refused), filepath.Join(u.deps.RejectedDir, batchID))
+	if u.deps.OnUnmaskableRecord != nil && unmaskable(refused) {
+		u.deps.OnUnmaskableRecord()
+	}
 	return nil
+}
+
+// unmaskable reports whether any refusal was a record this build could
+// not mask, as opposed to bytes that read back as no record at all. A
+// segment whose last line is cut is the one such case today.
+func unmaskable(refused []batch.Refusal) bool {
+	for _, r := range refused {
+		if errors.Is(r.Err, redact.ErrIncompleteLine) {
+			return true
+		}
+	}
+	return false
 }
 
 // settleFailure reads one failed upload as the contract reads it: every

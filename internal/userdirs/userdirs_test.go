@@ -351,3 +351,16 @@ func TestClaudeManagedSettingsDirIsFixedPerPlatform(t *testing.T) {
 		})
 	}
 }
+
+func TestReaderLogSitsBesideTheProxyLog(t *testing.T) {
+	l, err := userdirs.Resolve(env("linux", map[string]string{"HOME": "/home/u"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := slash(l.ReaderLog()); got != "/home/u/.local/state/trajector/reader.log" {
+		t.Errorf("ReaderLog() = %q", got)
+	}
+	if filepath.Dir(l.ReaderLog()) != filepath.Dir(l.ProxyLog()) {
+		t.Errorf("ReaderLog() = %q, want it in the directory of ProxyLog() %q", l.ReaderLog(), l.ProxyLog())
+	}
+}

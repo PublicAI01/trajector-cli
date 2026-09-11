@@ -4,16 +4,20 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // HookInput is what Claude Code writes on a hook's stdin: which session
@@ -194,6 +198,16 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) error {
 			// next run. Reading the rest of the project goes on.
 			continue
 		}
+		stop, err := m.inspectSegments(registry, st.Hash, res.Segments)
+		if err != nil {
+			continue
+		}
+		if stop {
+			// Nothing of this read is stored and the cursor stays: the
+			// same lines are met again by whichever build reads next,
+			// and only one that can mask them may store them.
+			return nil
+		}
 		full, err := storeRecords(sp, res)
 		if full {
 			// The spool is full: it dropped nothing, and neither does the
@@ -215,6 +229,90 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) error {
 		_ = registry.Update(st.Hash, res.File)
 	}
 	return nil
+}
+
+// inspectSegments holds each segment's lines against the shape this
+// build masks and reads by, before anything is stored, and keeps what
+// it noticed with the project's registry and in the reader log. Lines
+// this build cannot mask stop the run and pause recording device-wide
+// until a different build reads them; everything else is counted and
+// reading goes on. This is the one place a line's fields are read
+// before the spool, so it is where the shape is checked; the reader
+// itself interprets nothing.
+func (m *Machine) inspectSegments(registry *follow.Registry, projectIDHash string, segments []envelope.Segment) (stop bool, err error) {
+	for _, seg := range segments {
+		found, err := drift.Scan([]byte(seg.Lines))
+		if err != nil {
+			return false, err
+		}
+		if !found.Any() {
+			continue
+		}
+		_ = registry.AddSignals(projectIDHash, signalsOf(found))
+		m.appendReaderLog(projectIDHash, found)
+		if found.Stop() {
+			_ = m.routes.PauseByBuild(routing.PauseRedactionDrift, m.deps.Version)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// signalsOf is one scan's findings in the registry's accumulating
+// form.
+func signalsOf(r drift.Report) follow.Signals {
+	s := follow.Signals{
+		UnanchoredPathFields:           r.UnanchoredPathFields,
+		AssistantLines:                 r.AssistantLines,
+		AssistantLinesWithoutMessageID: r.AssistantLinesWithoutMessageID,
+		MessagesWithBlockIndexGap:      r.MessagesWithBlockIndexGap,
+		AgentLines:                     r.AgentLines,
+		AgentLinesWithoutParent:        r.AgentLinesWithoutParent,
+		NewLaunchSurfaces:              r.NewLaunchSurfaces,
+		NewAttachmentTypes:             r.NewAttachmentTypes,
+		NewSystemSubtypes:              r.NewSystemSubtypes,
+		NewTopLevelTypes:               r.NewTopLevelTypes,
+	}
+	if r.IncompleteLine {
+		s.IncompleteSegments = 1
+	}
+	return s
+}
+
+// readerLogLine is one entry of the reader log: when, for which
+// project, whether reading stopped, and what was found. It carries no
+// path and no session id.
+type readerLogLine struct {
+	At            string `json:"at"`
+	ProjectIDHash string `json:"project_id_hash"`
+	Stop          bool   `json:"stop,omitempty"`
+	follow.Signals
+}
+
+// appendReaderLog adds one line for a scan that found something. The
+// reader has no other voice: its streams are the null device, and the
+// registry keeps sums, not events. A log that cannot be written is
+// let go — the registry still has the finding.
+func (m *Machine) appendReaderLog(projectIDHash string, found drift.Report) {
+	path := m.deps.Layout.ReaderLog()
+	if err := userdirs.EnsureOwnerDir(filepath.Dir(path)); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	line, err := json.Marshal(readerLogLine{
+		At:            m.now(),
+		ProjectIDHash: projectIDHash,
+		Stop:          found.Stop(),
+		Signals:       signalsOf(found),
+	})
+	if err != nil {
+		return
+	}
+	_, _ = f.Write(append(line, '\n'))
 }
 
 // storeRecords writes a read result's segments and snapshots to the

@@ -1,0 +1,5 @@
+{"type":"user","entrypoint":"claude-holodeck","cwd":"/srv/work/project-alpha","sessionId":"sid-a","message":{"role":"user","content":"hi"},"uuid":"u-1","timestamp":"2026-09-01T10:00:00.000Z"}
+{"type":"attachment","attachment":{"type":"weather_report","content":"sunny"},"cwd":"/srv/work/project-alpha","sessionId":"sid-a","uuid":"t-1","timestamp":"2026-09-01T10:00:01.000Z"}
+{"type":"system","subtype":"coffee_break","content":"back soon","cwd":"/srv/work/project-alpha","sessionId":"sid-a","uuid":"s-1","timestamp":"2026-09-01T10:00:02.000Z"}
+{"type":"mood-ring","mood":"calm","sessionId":"sid-a"}
+{"type":"mood-ring","mood":"calm","sessionId":"sid-a"}

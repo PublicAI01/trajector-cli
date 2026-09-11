@@ -391,3 +391,96 @@ func TestTheBundleCarriesShapeAndSessionCountsWithoutIdsOrPaths(t *testing.T) {
 		t.Errorf("diagnosis.json = %s, want no null hook policy", got)
 	}
 }
+
+func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
+	alerts := follow.Signals{
+		AssistantLines:                 12,
+		AssistantLinesWithoutMessageID: 3,
+		MessagesWithBlockIndexGap:      2,
+		AgentLines:                     5,
+		AgentLinesWithoutParent:        1,
+	}
+	stopped := follow.Signals{
+		UnanchoredPathFields: []string{"$.attachment.snapshot.newDir", "$.someNewPath"},
+		IncompleteSegments:   1,
+		NewTopLevelTypes:     []string{"mood-ring"},
+		NewLaunchSurfaces:    []string{"claude-holodeck"},
+	}
+	for _, tc := range []struct {
+		name    string
+		signals follow.Signals
+		pause   routing.PauseReason
+		want    []string
+		reject  []string
+	}{
+		{
+			name:    "nothing noticed",
+			signals: follow.Signals{AssistantLines: 12, AgentLines: 5},
+			reject:  []string{"carried no message id", "block indexes", "started by", "redaction does not cover"},
+		},
+		{
+			name:    "lines lacking what a record is read by",
+			signals: alerts,
+			want: []string{
+				"3 of 12 assistant lines in this project's session files carried no message id.",
+				"2 message(s) in this project's session files had block indexes that repeat or skip a number.",
+				"1 of 5 agent lines in this project's session files named nothing they were started by.",
+			},
+			reject: []string{"trajector doctor` to", "redaction does not cover"},
+		},
+		{
+			name:    "fields named while recording is paused for them",
+			signals: stopped,
+			pause:   routing.PauseRedactionDrift,
+			want: []string{
+				"Fields in this project's session files holding a path that this build's redaction does not cover: $.attachment.snapshot.newDir, $.someNewPath.",
+				"1 read(s) of this project's session files ended in a line without a newline.",
+			},
+			reject: []string{"mood-ring", "claude-holodeck"},
+		},
+		{
+			name:    "fields not named once the pause is lifted",
+			signals: stopped,
+			reject:  []string{"$.someNewPath", "without a newline", "mood-ring"},
+		},
+		{
+			name:    "fields not named under the other pause",
+			signals: stopped,
+			pause:   routing.PauseConsentReconfirm,
+			reject:  []string{"$.someNewPath", "without a newline"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := enabledDevice()
+			d.Project.PauseReason = tc.pause
+			d.SessionFiles.Signals = tc.signals
+			out := dashboard(d)
+			wants(t, "status", out, tc.want...)
+			rejects(t, "status", out, tc.reject...)
+		})
+	}
+}
+
+func TestTheBundleCarriesWhatReadingNoticedWithoutValues(t *testing.T) {
+	d := enabledDevice()
+	d.SessionFiles.Signals = follow.Signals{
+		UnanchoredPathFields:           []string{"$.someNewPath"},
+		AssistantLines:                 4,
+		AssistantLinesWithoutMessageID: 1,
+		NewLaunchSurfaces:              []string{"claude-holodeck"},
+	}
+	got := string(report.DiagnosisJSON(d))
+	wants(t, "diagnosis.json", got,
+		`"unanchored_path_fields": [`,
+		`"$.someNewPath"`,
+		`"assistant_lines": 4`,
+		`"assistant_lines_without_message_id": 1`,
+		`"new_launch_surfaces": [`,
+	)
+	rejects(t, "diagnosis.json", got, `"agent_lines"`, `"incomplete_segments"`)
+
+	d.SessionFiles.Signals = follow.Signals{}
+	if got := string(report.DiagnosisJSON(d)); strings.Contains(got, `"signals"`) {
+		t.Errorf("diagnosis.json = %s, want no signals key when nothing was noticed", got)
+	}
+}
