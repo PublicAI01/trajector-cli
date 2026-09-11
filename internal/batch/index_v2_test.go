@@ -8,7 +8,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
-	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 func transcriptCapture(at time.Time) envelope.TranscriptCapture {
@@ -92,12 +91,8 @@ func TestIndexV2GarbledRawcallIsMarkedInTheIndex(t *testing.T) {
 }
 
 func TestParseIndexV2RefusesOtherVersions(t *testing.T) {
-	rc := simpleRawcall(t, "req-1", "session-a", buildTime)
-	v1, _, err := batch.Build("batch-1", buildTime, "test", []spool.Rawcall{rc}, batch.Run{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := batch.ParseIndexV2(v1.Envelope); err == nil {
+	v1 := []byte(`{"schema_version":"1","batch_id":"batch-1","client_version":"test","created_at":"2026-08-03T10:00:00Z","compression":"zstd","records_size":0,"records":[],"run":{}}`)
+	if _, err := batch.ParseIndexV2(v1); err == nil {
 		t.Error("a schema_version 1 envelope parsed as 2")
 	}
 	if _, err := batch.ParseIndexV2([]byte("{")); err == nil {
@@ -105,17 +100,20 @@ func TestParseIndexV2RefusesOtherVersions(t *testing.T) {
 	}
 }
 
-func TestBuildStillEmitsSchemaVersion1(t *testing.T) {
+func TestBuildEmitsSchemaVersion2(t *testing.T) {
 	rc := simpleRawcall(t, "req-1", "session-a", buildTime)
-	b, _, err := batch.Build("batch-1", buildTime, "test", []spool.Rawcall{rc}, batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(rc), batch.Run{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := parseEnvelope(t, b)
-	if env.SchemaVersion != "1" || env.Records[0].RequestID != "req-1" {
-		t.Errorf("Build changed the upload envelope: %s", b.Envelope)
+	ix, err := batch.ParseIndexV2(b.Envelope)
+	if err != nil {
+		t.Fatalf("Build's envelope is not a schema_version 2 index: %v", err)
 	}
-	if strings.Contains(string(b.Envelope), "record_id") || strings.Contains(string(b.Envelope), `"source"`) {
-		t.Errorf("Build emitted schema_version 2 fields: %s", b.Envelope)
+	if ix.SchemaVersion != "2" || ix.Records[0].RecordID != "req-1" || ix.Records[0].Source != "proxy" {
+		t.Errorf("Build emitted %s", b.Envelope)
+	}
+	if strings.Contains(string(b.Envelope), "request_id") {
+		t.Errorf("Build emitted the schema_version 1 key: %s", b.Envelope)
 	}
 }

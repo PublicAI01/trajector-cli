@@ -10,21 +10,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
-// The rejected store holds rawcalls no upload can carry: records of
+// The rejected store holds records no upload can carry: records of
 // batches the service refused as unacceptable, and records this machine
-// set aside itself because they no longer read back as rawcalls. Both
-// are moved out of the spool so one bad batch or one unreadable file
-// cannot block every upload behind it. The layout is a documented
-// product contract:
+// set aside itself because they no longer read back as what they claim
+// to be or could not be masked. Both are moved out of the spool so one
+// bad batch or one unreadable file cannot block every upload behind it.
+// Rawcalls and the segment and snapshot records share one layout, since
+// every record declares its own kind; a requeue reads that declaration
+// to return each record to its slot. The layout is a documented product
+// contract:
 //
-//	<dir>/<batch_id>/<request_id>.json   the rawcall, exactly as spooled
-//	<dir>/<batch_id>/reason.json         why the records were set aside
+//	<dir>/<batch_id>/<record_id>.json   the record, exactly as spooled
+//	<dir>/<batch_id>/reason.json        why the records were set aside
 //
 // Nothing here is deleted automatically: a quarantined record may still
 // correspond to compensation, so it waits — loudly, via status and
@@ -60,9 +64,10 @@ const (
 	// accept. Its records were sent, are intact, and may be requeued.
 	CauseRefused Cause = "service_refused"
 	// CauseUnreadable: this machine set the records aside because they
-	// no longer read back as rawcalls. They were never sent, and they
-	// can never re-enter a spool whose index derives from the envelope:
-	// discard is their only exit.
+	// no longer read back as what they claim to be, or because redaction
+	// could not mask them. They were never sent, and bytes do not heal,
+	// so they can never re-enter a spool whose index derives from the
+	// record: discard is their only exit.
 	CauseUnreadable Cause = "unreadable"
 )
 
@@ -101,13 +106,18 @@ func readReason(path string) Rejection {
 // rerunning after a partial move overwrites the same files. Writes go
 // through fsatomic so a concurrent reader — requeue or withdrawal in
 // another process — never observes a half-written record.
-func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, rawcalls []spool.Rawcall) error {
+func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, contents batch.Contents) error {
 	dir := filepath.Join(rejectedDir, rej.BatchID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	for _, rc := range rawcalls {
+	for _, rc := range contents.Rawcalls {
 		if err := fsatomic.WriteFile(filepath.Join(dir, rc.RequestID+".json"), rc.Data, 0o600); err != nil {
+			return err
+		}
+	}
+	for _, r := range contents.Records {
+		if err := fsatomic.WriteFile(filepath.Join(dir, r.ID+".json"), r.Raw, 0o600); err != nil {
 			return err
 		}
 	}
@@ -118,19 +128,14 @@ func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, rawcalls []s
 	if err := fsatomic.WriteFile(filepath.Join(dir, reasonName), append(reason, '\n'), 0o600); err != nil {
 		return err
 	}
-
-	moved := map[string]bool{}
-	for _, rc := range rawcalls {
-		moved[rc.RequestID] = true
-	}
-	_, err = sp.DeleteWhere(func(id string) bool { return moved[id] })
-	return err
+	return deleteFromSpool(sp, contents)
 }
 
-// PurgeRejected deletes a project's rawcalls from the rejected store,
-// for consent withdrawal: rejected records are still local unuploaded
-// data and withdrawal must reach them too. Batch directories left empty
-// of records are removed with their reason files.
+// PurgeRejected deletes a project's records of every kind from the
+// rejected store, for consent withdrawal: rejected records are still
+// local unuploaded data and withdrawal must reach them too. Batch
+// directories left empty of records are removed with their reason
+// files.
 func PurgeRejected(rejectedDir, projectIDHash string) (int, error) {
 	// Before the walk, whose ".json" filter cannot see a strand.
 	sweepStaleTemps(rejectedDir)
@@ -181,10 +186,10 @@ func PurgeRejected(rejectedDir, projectIDHash string) (int, error) {
 	return deleted, nil
 }
 
-// sweepStaleTemps removes rawcall temps stranded in the rejected store
+// sweepStaleTemps removes record temps stranded in the rejected store
 // by a writer that died between fsatomic.WriteFile's create and its
 // rename — an OOM kill, a power loss, a pulled plug. Such a file holds
-// a full unredacted rawcall.
+// a full unredacted record.
 //
 // It is the same split the spool closed on 2026-09-04, one directory
 // over: every reader here selects on a ".json" extension that
@@ -228,7 +233,7 @@ func sweepStaleTemps(rejectedDir string) {
 }
 
 // RejectedBatch is one quarantined batch as the rejected store holds
-// it: the directory name, how many rawcalls actually sit there, and the
+// it: the directory name, how many records actually sit there, and the
 // recorded reason (zero when reason.json is missing or unreadable —
 // the records still count).
 type RejectedBatch struct {
@@ -284,11 +289,13 @@ func ListRejected(rejectedDir string) ([]RejectedBatch, error) {
 // Requeue moves one quarantined batch's records back into the spool so
 // the next flush repacks them under a fresh batch id (the rejected id
 // was never acknowledged, so no idempotency is at stake). Each record
-// is spooled before its quarantined copy is removed, mirroring
-// quarantine's crash safety in reverse. A record that no longer parses
-// as a rawcall envelope cannot re-enter a spool whose index derives
-// from the envelope: it stays quarantined with reason.json while every
-// readable record still moves, and the error reports what stayed.
+// returns to the slot its own bytes declare — a rawcall to the rawcall
+// slot, a segment or snapshot to the record slot — and is spooled
+// before its quarantined copy is removed, mirroring quarantine's crash
+// safety in reverse. A record that no longer parses as any record kind
+// cannot re-enter a spool whose index derives from the record: it stays
+// quarantined with reason.json while every readable record still moves,
+// and the error reports what stayed.
 func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, int, error) {
 	dir, err := batchDir(rejectedDir, batchID)
 	if err != nil {
@@ -304,9 +311,10 @@ func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, in
 	rej := readReason(filepath.Join(dir, reasonName))
 	if rej.Cause == CauseUnreadable {
 		// The whole batch was set aside because its records stopped
-		// reading back as rawcalls, and bytes do not heal: attempting the
-		// per-record moves would only restate that, one refusal at a time.
-		return rej, 0, fmt.Errorf("batch %s was never sent: its records no longer read back as rawcalls and cannot re-enter the spool; run `trajector doctor discard %s` to delete them for good", batchID, batchID)
+		// reading back or could not be masked, and bytes do not heal:
+		// attempting the per-record moves would only restate that, one
+		// refusal at a time.
+		return rej, 0, fmt.Errorf("batch %s was never sent: its records cannot be read back or masked and cannot re-enter the spool; run `trajector doctor discard %s` to delete them for good", batchID, batchID)
 	}
 
 	moved := 0
@@ -322,12 +330,12 @@ func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, in
 			stuck = append(stuck, err)
 			continue
 		}
-		env, err := envelope.Parse(data)
-		if err != nil {
-			stuck = append(stuck, fmt.Errorf("record %s is not a readable rawcall and stays quarantined: %w", name, err))
-			continue
-		}
-		if err := sp.Write(env); err != nil {
+		if err := respool(sp, data); err != nil {
+			var unreadable *errUnreadableRecord
+			if errors.As(err, &unreadable) {
+				stuck = append(stuck, fmt.Errorf("record %s is not a readable record and stays quarantined: %w", name, err))
+				continue
+			}
 			return rej, moved, err
 		}
 		if err := os.Remove(path); err != nil {
@@ -341,11 +349,54 @@ func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, in
 	return rej, moved, os.RemoveAll(dir)
 }
 
+// errUnreadableRecord is the positive classification of quarantined
+// bytes that parse as no record kind this client stores. It is distinct
+// from a spool write that failed: the record may be fine and the spool
+// full, and such a record must not be reported as one that can never
+// return.
+type errUnreadableRecord struct{ err error }
+
+func (e *errUnreadableRecord) Error() string { return e.err.Error() }
+
+func (e *errUnreadableRecord) Unwrap() error { return e.err }
+
+// respool writes one quarantined record back into the slot its bytes
+// declare. Only the declaration is trusted: a record whose bytes claim
+// one kind and parse as none is unreadable, whatever the index that
+// once described it said.
+func respool(sp *spool.Spool, data []byte) error {
+	kind, err := envelope.KindOf(data)
+	if err != nil {
+		return &errUnreadableRecord{err: err}
+	}
+	switch kind {
+	case envelope.KindRawcall:
+		env, err := envelope.Parse(data)
+		if err != nil {
+			return &errUnreadableRecord{err: err}
+		}
+		return sp.Write(env)
+	case envelope.KindSegment:
+		seg, err := envelope.ParseSegment(data)
+		if err != nil {
+			return &errUnreadableRecord{err: err}
+		}
+		return sp.WriteSegment(seg)
+	case envelope.KindMetaSnapshot:
+		snap, err := envelope.ParseMetaSnapshot(data)
+		if err != nil {
+			return &errUnreadableRecord{err: err}
+		}
+		return sp.WriteMetaSnapshot(snap)
+	}
+	return &errUnreadableRecord{err: fmt.Errorf("record declares %s/%s, which is not a kind this client stores", kind.Source, kind.RecordKind)}
+}
+
 // Discard deletes one quarantined batch and reports the recorded reason
-// with how many rawcalls left with it. It is Requeue's dual and the
-// terminal half of the pair: a record that no longer parses as an
-// envelope can never re-enter the spool, so deletion is the only way it
-// leaves the quarantine. Discard therefore reads nothing back and
+// with how many records left with it. It is Requeue's dual and the
+// terminal half of the pair: a record that no longer parses as any
+// record kind can never re-enter the spool, so deletion is the only way
+// it leaves the quarantine. Discard therefore reads nothing back and
 // judges nothing — every record in the batch counts and the directory
 // goes whole.
 func Discard(rejectedDir, batchID string) (Rejection, int, error) {
@@ -384,6 +435,6 @@ type errRejected struct {
 }
 
 func (e *errRejected) Error() string {
-	return fmt.Sprintf("the service rejected batch %s; %d rawcall(s) moved to %s and will not be retried automatically (%s)",
+	return fmt.Sprintf("the service rejected batch %s; %d record(s) moved to %s and will not be retried automatically (%s)",
 		e.rej.BatchID, e.rej.Records, e.dir, e.rej.Details)
 }

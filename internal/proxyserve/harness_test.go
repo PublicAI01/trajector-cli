@@ -1,7 +1,6 @@
 package proxyserve_test
 
 import (
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -119,31 +118,22 @@ func (e *env) flush() proxytest.FlushReply {
 // uploadedBatch is one recorded upload: which batch id carried which
 // spool records.
 type uploadedBatch struct {
-	BatchID    string
-	RequestIDs []string
+	BatchID   string
+	RecordIDs []string
 }
 
-// parseBatch reads the batch id and request ids one upload carried.
+// parseBatch reads the batch id and record ids one upload carried.
 func parseBatch(r fakeplatform.Request) (uploadedBatch, error) {
-	parts, err := fakeplatform.Parts(r)
+	ix, err := fakeplatform.UploadedIndex(r)
 	if err != nil {
 		return uploadedBatch{}, err
 	}
-	var env struct {
-		BatchID string `json:"batch_id"`
-		Records []struct {
-			RequestID string `json:"request_id"`
-		} `json:"records"`
-	}
-	if err := json.Unmarshal(parts["batch"], &env); err != nil {
-		return uploadedBatch{}, err
-	}
-	if env.BatchID == "" {
+	if ix.BatchID == "" {
 		return uploadedBatch{}, errors.New("no batch id in envelope")
 	}
-	b := uploadedBatch{BatchID: env.BatchID}
-	for _, rec := range env.Records {
-		b.RequestIDs = append(b.RequestIDs, rec.RequestID)
+	b := uploadedBatch{BatchID: ix.BatchID}
+	for _, rec := range ix.Records {
+		b.RecordIDs = append(b.RecordIDs, rec.RecordID)
 	}
 	return b, nil
 }

@@ -123,11 +123,12 @@ type Result struct {
 	// diagnosis reports every standing held, because more than one can
 	// be.
 	Standing Standing
-	// SetAside lists the rejections this flush itself wrote for rawcalls
-	// that no longer read back as rawcalls. They were never sent; they
-	// stop blocking the uploads behind them, and status and doctor keep
-	// pointing at them. Each entry carries its Cause, so a renderer says
-	// why without re-deriving it.
+	// SetAside lists the rejections this flush itself wrote for records
+	// that no longer read back as what they claim to be, or that could
+	// not be masked. They were never sent; they stop blocking the uploads
+	// behind them, and status and doctor keep pointing at them. Each
+	// entry carries its Cause, so a renderer says why without re-deriving
+	// it.
 	SetAside []Rejection
 }
 
@@ -367,33 +368,28 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 		if usage == 0 {
 			return res, nil
 		}
-		oldest, ok := u.deps.Spool.Oldest()
-		age := time.Duration(0)
-		if ok {
-			age = u.deps.Now().Sub(oldest)
-		}
-		if usage < flushBytes && age < flushAge {
+		if usage < flushBytes && u.spoolAge() < flushAge {
 			res.Outcome = BelowThreshold
 			return res, nil
 		}
 	}
 
 	for {
-		rawcalls, err := u.collect(flushBytes)
+		contents, err := u.collect(flushBytes)
 		if err != nil {
 			return res, fmt.Errorf("upload: reading the spool: %w", err)
 		}
-		if len(rawcalls) == 0 {
+		if contents.Len() == 0 {
 			break
 		}
 		if !deadline.IsZero() && time.Until(deadline) <= 0 {
 			return res, errBudgetSpent
 		}
-		l, err := openLease(u.deps.Dir, rawcalls)
+		l, err := openLease(u.deps.Dir, contents)
 		if err != nil {
 			return res, fmt.Errorf("upload: %w", err)
 		}
-		if err := u.send(token, l, rawcalls, &res, deadline); err != nil {
+		if err := u.send(token, l, contents, &res, deadline); err != nil {
 			return res, err
 		}
 	}
@@ -420,27 +416,36 @@ func (u *Uploader) resendPending(token string, res *Result, deadline time.Time) 
 		return nil
 	}
 	wanted := map[string]bool{}
-	for _, id := range l.requestIDs() {
+	for _, id := range l.recordIDs() {
 		wanted[id] = true
 	}
 	// EachWhere, not Each: this looks for one batch's records and must not
 	// pay to reread the whole spool to find them. See EachWhere.
-	var rawcalls []spool.Rawcall
+	var contents batch.Contents
 	err = u.deps.Spool.EachWhere(
 		func(id string) bool { return wanted[id] },
 		func(r spool.Rawcall) error {
-			rawcalls = append(rawcalls, r)
+			contents.Rawcalls = append(contents.Rawcalls, r)
 			return nil
 		})
 	if err != nil {
 		return fmt.Errorf("upload: reading the spool: %w", err)
 	}
-	if len(rawcalls) == 0 {
+	err = u.deps.Spool.EachRecord(func(r spool.Record) error {
+		if wanted[r.ID] {
+			contents.Records = append(contents.Records, r)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("upload: reading the spool: %w", err)
+	}
+	if contents.Len() == 0 {
 		// Every record is gone — consent withdrawal deletes spool records
 		// out from under a pending batch. Nothing is left to send.
 		return l.release()
 	}
-	return u.send(token, l, rawcalls, res, deadline)
+	return u.send(token, l, contents, res, deadline)
 }
 
 // discardUnreadablePending is the recovery for a pending file whose
@@ -466,18 +471,18 @@ func (u *Uploader) discardUnreadablePending(raw []byte) error {
 // applied. Failures leave the spool and the lease exactly as they were
 // — except records the build itself refused, which move to the rejected
 // store so one unreadable file cannot stall every upload behind it.
-func (u *Uploader) send(token string, l lease, rawcalls []spool.Rawcall, res *Result, deadline time.Time) error {
-	rawcalls, err := u.dropWithdrawn(rawcalls)
+func (u *Uploader) send(token string, l lease, contents batch.Contents, res *Result, deadline time.Time) error {
+	contents, err := u.dropWithdrawn(contents)
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
-	if len(rawcalls) == 0 {
+	if contents.Len() == 0 {
 		// Every record of this batch belonged to a project that has since
 		// withdrawn; they are deleted, so no later flush can find them and
 		// the lease has nothing left to protect.
 		return l.release()
 	}
-	b, refused, err := batch.Build(l.id(), u.deps.Now(), u.deps.Version, rawcalls, u.deps.Run())
+	b, refused, err := batch.Build(l.id(), u.deps.Now(), u.deps.Version, contents, u.deps.Run())
 	if err != nil {
 		u.noteAttempt(err)
 		return fmt.Errorf("upload: %w", err)
@@ -486,26 +491,12 @@ func (u *Uploader) send(token string, l lease, rawcalls []spool.Rawcall, res *Re
 		u.noteAttempt(err)
 		return fmt.Errorf("upload: %w", err)
 	}
-	if len(b.RequestIDs) == 0 {
+	if b.Packed.Len() == 0 {
 		// Every record of this batch was set aside. Nothing rides under
 		// this id anymore, and the records are out of the spool, so no
 		// later flush can re-upload them under a fresh id: the lease has
 		// nothing left to protect.
 		return l.release()
-	}
-	if len(refused) > 0 {
-		packed := b.RequestIDs
-		carries := make(map[string]bool, len(packed))
-		for _, rid := range packed {
-			carries[rid] = true
-		}
-		kept := rawcalls[:0:0]
-		for _, rc := range rawcalls {
-			if carries[rc.RequestID] {
-				kept = append(kept, rc)
-			}
-		}
-		rawcalls = kept
 	}
 	// One attempt's budget normally scales with the batch and with the
 	// attempts that timed out before it, up to a cap wide enough for a
@@ -523,23 +514,23 @@ func (u *Uploader) send(token string, l lease, rawcalls []spool.Rawcall, res *Re
 	ack, err := u.deps.Service.UploadBatch(token, b.ID, b.Envelope, b.Records, budget)
 	u.noteAttempt(err)
 	if err != nil {
-		res.Disposition, err = u.settleFailure(l, rawcalls, err)
+		res.Disposition, err = u.settleFailure(l, b.Packed, err)
 		return err
 	}
 	res.Disposition = Ack
 	u.upgradeGate, u.authorizationGate = Standing{}, Standing{}
 	u.timeouts = 0
 
-	if err := l.settle(u.deps.Spool, b.RequestIDs); err != nil {
+	if err := l.settle(u.deps.Spool, b.Packed); err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
 
 	res.Batches++
-	res.Records += len(b.RequestIDs)
+	res.Records += b.Packed.Len()
 	u.applyHandshake(ack.Handshake)
 	u.noteUpload(Receipt{
 		BatchID: ack.BatchID,
-		Records: len(b.RequestIDs),
+		Records: b.Packed.Len(),
 		Bytes:   int64(len(b.Envelope) + b.Records.Len()),
 		At:      u.deps.Now().UTC(),
 	})
@@ -564,27 +555,33 @@ func (u *Uploader) send(token string, l lease, rawcalls []spool.Rawcall, res *Re
 // oracle to guess with: a record no project can be read out of, and a
 // store that cannot be read, both count as not withdrawn — deleting
 // captured data on a failed read is the worse error. 2026-08-25.
-func (u *Uploader) dropWithdrawn(rawcalls []spool.Rawcall) ([]spool.Rawcall, error) {
-	kept := rawcalls[:0:0]
-	withdrawn := map[string]bool{}
-	for _, rc := range rawcalls {
+func (u *Uploader) dropWithdrawn(contents batch.Contents) (batch.Contents, error) {
+	var kept, withdrawn batch.Contents
+	for _, rc := range contents.Rawcalls {
 		if hash, ok := envelope.ProjectIDHashOf(rc.Data); ok && u.deps.Withdrawn(hash) {
-			withdrawn[rc.RequestID] = true
+			withdrawn.Rawcalls = append(withdrawn.Rawcalls, rc)
 			continue
 		}
-		kept = append(kept, rc)
+		kept.Rawcalls = append(kept.Rawcalls, rc)
 	}
-	if len(withdrawn) == 0 {
+	for _, r := range contents.Records {
+		if hash, ok := envelope.ProjectIDHashOf(r.Raw); ok && u.deps.Withdrawn(hash) {
+			withdrawn.Records = append(withdrawn.Records, r)
+			continue
+		}
+		kept.Records = append(kept.Records, r)
+	}
+	if withdrawn.Len() == 0 {
 		return kept, nil
 	}
-	if _, err := u.deps.Spool.DeleteWhere(func(id string) bool { return withdrawn[id] }); err != nil {
-		return nil, fmt.Errorf("deleting %d rawcall(s) of a project that withdrew consent: %w", len(withdrawn), err)
+	if err := deleteFromSpool(u.deps.Spool, withdrawn); err != nil {
+		return batch.Contents{}, fmt.Errorf("deleting %d record(s) of a project that withdrew consent: %w", withdrawn.Len(), err)
 	}
-	u.deps.Logf("upload: deleted %d rawcall(s) captured for a project that has since withdrawn consent; they were never sent", len(withdrawn))
+	u.deps.Logf("upload: deleted %d record(s) captured for a project that has since withdrawn consent; they were never sent", withdrawn.Len())
 	return kept, nil
 }
 
-// setAside quarantines the rawcalls a build refused — no batch can
+// setAside quarantines the records a build refused — no batch can
 // carry them. They are preserved, not deleted: like a service-rejected
 // batch they wait for the user, and everything queued behind them
 // uploads again.
@@ -592,22 +589,26 @@ func (u *Uploader) setAside(batchID string, refused []batch.Refusal, res *Result
 	if len(refused) == 0 {
 		return nil
 	}
-	records := make([]spool.Rawcall, len(refused))
-	for i, r := range refused {
-		records[i] = r.Rawcall
+	var records batch.Contents
+	for _, r := range refused {
+		if r.Record.ID != "" {
+			records.Records = append(records.Records, r.Record)
+		} else {
+			records.Rawcalls = append(records.Rawcalls, r.Rawcall)
+		}
 	}
 	rej := Rejection{
 		BatchID: batchID,
 		Records: len(refused),
 		Cause:   CauseUnreadable,
-		Details: fmt.Sprintf("rawcall %s: %v", refused[0].Rawcall.RequestID, refused[0].Err),
+		Details: fmt.Sprintf("record %s: %v", refused[0].ID(), refused[0].Err),
 		At:      u.deps.Now().UTC(),
 	}
 	if err := quarantine(u.deps.RejectedDir, u.deps.Spool, rej, records); err != nil {
-		return fmt.Errorf("setting aside %d unreadable rawcall(s): %w", len(refused), err)
+		return fmt.Errorf("setting aside %d unreadable record(s): %w", len(refused), err)
 	}
 	res.SetAside = append(res.SetAside, rej)
-	u.deps.Logf("upload: set aside %d unreadable rawcall(s) under %s; they were never sent — run `trajector doctor` to inspect them",
+	u.deps.Logf("upload: set aside %d unreadable record(s) under %s; they were never sent — run `trajector doctor` to inspect them",
 		len(refused), filepath.Join(u.deps.RejectedDir, batchID))
 	return nil
 }
@@ -625,7 +626,7 @@ func (u *Uploader) setAside(batchID string, refused []batch.Refusal, res *Result
 // data authorization that reached the rejection row would quarantine a
 // user's data over a condition they resolve elsewhere, which is the one
 // mistake that row exists to prevent.
-func (u *Uploader) settleFailure(l lease, rawcalls []spool.Rawcall, err error) (Disposition, error) {
+func (u *Uploader) settleFailure(l lease, packed batch.Contents, err error) (Disposition, error) {
 	id := l.id()
 	var upgrade *platform.UpgradeRequiredError
 	var unauthorized *platform.DataAuthorizationRequiredError
@@ -704,8 +705,8 @@ func (u *Uploader) settleFailure(l lease, rawcalls []spool.Rawcall, err error) (
 		if rejected.Details != "" {
 			details += ": " + rejected.Details
 		}
-		rej := Rejection{BatchID: id, Records: len(rawcalls), Cause: CauseRefused, Details: details, At: u.deps.Now().UTC()}
-		moved, qerr := l.quarantine(u.deps.RejectedDir, u.deps.Spool, rej, rawcalls)
+		rej := Rejection{BatchID: id, Records: packed.Len(), Cause: CauseRefused, Details: details, At: u.deps.Now().UTC()}
+		moved, qerr := l.quarantine(u.deps.RejectedDir, u.deps.Spool, rej, packed)
 		if !moved {
 			// Nothing moved, so the lease stands: the next flush hits the
 			// same rejection and tries the move again under the same id.
@@ -736,27 +737,77 @@ func (u *Uploader) applyHandshake(h platform.Handshake) {
 	}
 }
 
-// collect gathers the oldest stored rawcalls up to roughly limit bytes,
-// so one batch stays bounded no matter how much a long offline stretch
-// accumulated.
-func (u *Uploader) collect(limit int64) ([]spool.Rawcall, error) {
+// collect gathers stored records from both slots up to roughly limit
+// bytes in total, so one batch stays bounded no matter how much a long
+// offline stretch accumulated. Rawcalls are taken first, oldest day
+// first, and segments and snapshots fill what is left; a flush drains
+// until both slots are empty, so which slot fills a batch first decides
+// only which batch a record rides in, never whether it is sent.
+func (u *Uploader) collect(limit int64) (batch.Contents, error) {
 	var (
-		rawcalls []spool.Rawcall
+		contents batch.Contents
 		total    int64
 	)
 	errEnough := errors.New("collected enough")
 	err := u.deps.Spool.Each(func(r spool.Rawcall) error {
-		rawcalls = append(rawcalls, r)
+		contents.Rawcalls = append(contents.Rawcalls, r)
 		total += r.Size
 		if total >= limit {
 			return errEnough
 		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, errEnough) {
-		return nil, err
+	if err == nil {
+		err = u.deps.Spool.EachRecord(func(r spool.Record) error {
+			contents.Records = append(contents.Records, r)
+			total += int64(len(r.Raw))
+			if total >= limit {
+				return errEnough
+			}
+			return nil
+		})
 	}
-	return rawcalls, nil
+	if err != nil && !errors.Is(err, errEnough) {
+		return batch.Contents{}, err
+	}
+	return contents, nil
+}
+
+// spoolAge is how long the oldest record in either slot has waited.
+func (u *Uploader) spoolAge() time.Duration {
+	age := time.Duration(0)
+	if oldest, ok := u.deps.Spool.Oldest(); ok {
+		age = u.deps.Now().Sub(oldest)
+	}
+	if oldest, ok := u.deps.Spool.OldestRecord(); ok {
+		age = max(age, u.deps.Now().Sub(oldest))
+	}
+	return age
+}
+
+// deleteFromSpool removes the named entries from their slots. Each slot
+// is addressed by its own ids, so an id that happens to be spelled the
+// same in both slots is never deleted from the one it was not named in.
+func deleteFromSpool(sp *spool.Spool, contents batch.Contents) error {
+	rawcalls := make(map[string]bool, len(contents.Rawcalls))
+	for _, rc := range contents.Rawcalls {
+		rawcalls[rc.RequestID] = true
+	}
+	if len(rawcalls) > 0 {
+		if _, err := sp.DeleteWhere(func(id string) bool { return rawcalls[id] }); err != nil {
+			return err
+		}
+	}
+	records := make(map[string]bool, len(contents.Records))
+	for _, r := range contents.Records {
+		records[r.ID] = true
+	}
+	if len(records) > 0 {
+		if _, err := sp.DeleteRecordsWhere(func(r spool.Record) bool { return records[r.ID] }); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // maxTimeoutBackoff caps the pause between timed-out attempts, so
@@ -783,14 +834,6 @@ func timeoutBackoff(timeouts int) time.Duration {
 		pause *= 2
 	}
 	return min(pause, maxTimeoutBackoff)
-}
-
-func requestIDs(rawcalls []spool.Rawcall) []string {
-	ids := make([]string, len(rawcalls))
-	for i, r := range rawcalls {
-		ids[i] = r.RequestID
-	}
-	return ids
 }
 
 // newBatchID mints the idempotency key for one batch. Unlike a capture,

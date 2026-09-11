@@ -227,7 +227,7 @@ func TestASlowExitFlushReleasesThePortAndLeavesItsRecordsToTheSuccessor(t *testi
 		if err != nil {
 			t.Fatalf("unreadable upload request: %v", err)
 		}
-		if slices.Contains(b.RequestIDs, "req-old") {
+		if slices.Contains(b.RecordIDs, "req-old") {
 			batchIDs[b.BatchID] = true
 		}
 	}
@@ -264,7 +264,7 @@ func TestProxyTakeoverNeverUploadsARecordUnderTwoBatchIDs(t *testing.T) {
 			time.Sleep(3 * time.Second)
 		default:
 		}
-		if slices.Contains(b.RequestIDs, "req-new") {
+		if slices.Contains(b.RecordIDs, "req-new") {
 			select {
 			case <-failNewOnce:
 				return fakeplatform.JSON(503, map[string]any{"error": "temporarily down"})
@@ -327,7 +327,7 @@ func TestProxyTakeoverNeverUploadsARecordUnderTwoBatchIDs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unreadable upload request: %v", err)
 		}
-		for _, rid := range b.RequestIDs {
+		for _, rid := range b.RecordIDs {
 			if batchesByRecord[rid] == nil {
 				batchesByRecord[rid] = map[string]bool{}
 			}

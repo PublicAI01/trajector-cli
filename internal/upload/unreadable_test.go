@@ -56,7 +56,7 @@ func TestATornRawcallIsSetAsideAndTheRestUploads(t *testing.T) {
 	if !bytes.Equal(kept, torn) {
 		t.Error("the quarantined bytes differ from what was on disk")
 	}
-	if !strings.Contains(f.logs.String(), "set aside 1 unreadable rawcall(s)") {
+	if !strings.Contains(f.logs.String(), "set aside 1 unreadable record(s)") {
 		t.Errorf("log = %q, want the set-aside reported", f.logs.String())
 	}
 

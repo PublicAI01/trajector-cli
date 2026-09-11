@@ -280,3 +280,18 @@ func RecordIDsBySource(batchPart []byte) (map[string][]string, error) {
 	}
 	return groups, nil
 }
+
+// UploadedIndex reads the index part of one recorded upload as a
+// schema_version 2 envelope, for asserting which batch id carried which
+// record ids. It sends nothing and changes no stub.
+func UploadedIndex(r Request) (batch.IndexV2, error) {
+	parts, err := Parts(r)
+	if err != nil {
+		return batch.IndexV2{}, err
+	}
+	ix, err := batch.ParseIndexV2(parts["batch"])
+	if err != nil {
+		return batch.IndexV2{}, fmt.Errorf("fakeplatform: %w", err)
+	}
+	return ix, nil
+}

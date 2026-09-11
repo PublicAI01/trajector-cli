@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/upload"
+
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/conformance"
@@ -240,4 +242,112 @@ func signaturesIn(t *testing.T, line string) []string {
 		}
 	}
 	return sigs
+}
+
+// TestV2FixturesRoundTripThroughTheUploader drives every schema_version
+// 2 fixture through this client's own upload path: its records are
+// stored in the spool as the capture side would store them, flushed
+// through the uploader to the fake service, and what the service
+// received is compared with the fixture — the index item by item, the
+// stream record by record. The fixture records are already redacted, so
+// the packing pass must return them byte for byte; a rawcall is read
+// through the record version this client still writes.
+func TestV2FixturesRoundTripThroughTheUploader(t *testing.T) {
+	ran := 0
+	for _, c := range sharedFixtures(t) {
+		if c.Envelope["schema_version"] != "2" {
+			continue
+		}
+		ran++
+		t.Run(c.Name, func(t *testing.T) {
+			f := newFixture(t)
+			f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+			want, err := batch.ParseIndexV2(c.EnvelopeBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantBodies := make([][]byte, len(c.Records))
+			for i, line := range c.Records {
+				wantBodies[i] = f.storeFixtureRecord(t, line)
+			}
+
+			res, err := f.uploader.Flush(true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Outcome != upload.Uploaded || res.Batches != 1 || res.Records != len(c.Records) {
+				t.Fatalf("result = %+v, want one batch of %d records", res, len(c.Records))
+			}
+			reqs := f.server.Requests()
+			if len(reqs) != 1 {
+				t.Fatalf("service saw %d requests, want 1", len(reqs))
+			}
+			got := uploadedIndex(t, reqs[0])
+			stream := uploadedStream(t, reqs[0])
+			if got.SchemaVersion != "2" || got.Compression != want.Compression || got.RecordsSize != want.RecordsSize || int64(len(stream)) != want.RecordsSize {
+				t.Errorf("envelope = %s/%s/%d with a %d byte stream, fixture says %s/%s/%d", got.SchemaVersion, got.Compression, got.RecordsSize, len(stream), want.SchemaVersion, want.Compression, want.RecordsSize)
+			}
+			if len(got.Records) != len(want.Records) {
+				t.Fatalf("index has %d items, fixture has %d:\n%s", len(got.Records), len(want.Records), mustPart(t, reqs[0], "batch"))
+			}
+			for i, w := range want.Records {
+				g := got.Records[i]
+				g.Timestamp, w.Timestamp = sameInstantOrDiff(t, i, g.Timestamp, w.Timestamp), ""
+				if g != w {
+					t.Errorf("item %d:\n got %+v\nwant %+v", i, g, w)
+				}
+				body := stream[g.Offset : g.Offset+g.Size]
+				if !bytes.Equal(body, wantBodies[i]) {
+					t.Errorf("record %d differs from the fixture:\n got %s\nwant %s", i, body, wantBodies[i])
+				}
+			}
+			if f.spool.Usage() != 0 {
+				t.Errorf("spool holds %d bytes after the ack", f.spool.Usage())
+			}
+		})
+	}
+	if ran == 0 {
+		t.Fatal("no schema_version 2 fixture ran")
+	}
+}
+
+// storeFixtureRecord stores one fixture record in the slot its kind
+// names and returns the bytes the upload must carry for it.
+func (f *fixture) storeFixtureRecord(t *testing.T, line []byte) []byte {
+	t.Helper()
+	kind, err := envelope.KindOf(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	switch kind {
+	case envelope.KindRawcall:
+		asV1 := bytes.Replace(line, []byte(`"schema_version":"2"`), []byte(`"schema_version":"1"`), 1)
+		env, err := envelope.Parse(asV1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.spool.Write(env); err != nil {
+			t.Fatal(err)
+		}
+		return asV1
+	case envelope.KindSegment:
+		seg, err := envelope.ParseSegment(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.spool.WriteSegment(seg); err != nil {
+			t.Fatal(err)
+		}
+	case envelope.KindMetaSnapshot:
+		snap, err := envelope.ParseMetaSnapshot(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.spool.WriteMetaSnapshot(snap); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatalf("fixture record declares %+v, which this client cannot store", kind)
+	}
+	return line
 }

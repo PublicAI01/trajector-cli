@@ -35,26 +35,7 @@ import (
 // verbatim — including the one whose whole point is that the echoed id
 // is wrong.
 func TestSharedContractFixtures(t *testing.T) {
-	dir, tried := conformance.Find()
-	if dir == "" {
-		// Absent fixtures must never read as a pass. Everyone who checked
-		// out only this repository lands here, so it is a skip with the
-		// reason printed — and a failure in the one place they are certain
-		// to exist.
-		if os.Getenv(conformance.StrictEnv) == "1" {
-			t.Fatalf("shared contract fixtures not found; looked in:\n  %s", join(tried))
-		}
-		t.Skipf("shared contract fixtures not found — this layer is not running.\nLooked in:\n  %s\nSet %s to point at them, or %s=1 to make this a failure.",
-			join(tried), conformance.DirEnv, conformance.StrictEnv)
-	}
-
-	cases, err := conformance.Load(dir)
-	if err != nil {
-		t.Fatalf("loading fixtures from %s: %v", dir, err)
-	}
-	if len(cases) == 0 {
-		t.Fatalf("no fixtures under %s — a layer that checks nothing must not report success", dir)
-	}
+	cases := sharedFixtures(t)
 
 	seen := map[upload.Disposition]bool{}
 	versions := map[any]bool{}
@@ -159,6 +140,32 @@ func assertContractRow(t *testing.T, f *fixture, c conformance.Case, res upload.
 			t.Errorf("authorize URL = %q, want %q", res.Standing.AuthorizeURL, url)
 		}
 	}
+}
+
+// sharedFixtures loads the shared fixture set, or skips — loudly, and
+// as a failure where the fixtures are certain to exist.
+func sharedFixtures(t *testing.T) []conformance.Case {
+	t.Helper()
+	dir, tried := conformance.Find()
+	if dir == "" {
+		// Absent fixtures must never read as a pass. Everyone who checked
+		// out only this repository lands here, so it is a skip with the
+		// reason printed — and a failure in the one place they are certain
+		// to exist.
+		if os.Getenv(conformance.StrictEnv) == "1" {
+			t.Fatalf("shared contract fixtures not found; looked in:\n  %s", join(tried))
+		}
+		t.Skipf("shared contract fixtures not found — this layer is not running.\nLooked in:\n  %s\nSet %s to point at them, or %s=1 to make this a failure.",
+			join(tried), conformance.DirEnv, conformance.StrictEnv)
+	}
+	cases, err := conformance.Load(dir)
+	if err != nil {
+		t.Fatalf("loading fixtures from %s: %v", dir, err)
+	}
+	if len(cases) == 0 {
+		t.Fatalf("no fixtures under %s — a layer that checks nothing must not report success", dir)
+	}
+	return cases
 }
 
 func join(paths []string) string {

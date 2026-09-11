@@ -33,10 +33,15 @@ func BookkeepingFiles() []string {
 
 // pending is a batch that was offered to the service and not yet
 // acknowledged. It pins the batch id to its records so a retry reuses
-// the id and can never be ingested twice.
+// the id and can never be ingested twice. RecordIDs names the records
+// by their spool ids, across both slots. RequestIDs is the same list
+// under the key an earlier build wrote, when a batch could carry only
+// rawcalls: it is read so a batch that build left pending keeps its id
+// through an upgrade, and never written.
 type pending struct {
 	BatchID    string   `json:"batch_id"`
-	RequestIDs []string `json:"request_ids"`
+	RecordIDs  []string `json:"record_ids,omitempty"`
+	RequestIDs []string `json:"request_ids,omitempty"`
 }
 
 // Receipt is the last acknowledged upload.
@@ -248,6 +253,8 @@ func loadPending(dir string) (pending, bool, error) {
 		// close: the caller owns the recovery and its warning.
 		return pending{}, false, &errUnreadablePending{raw: data}
 	}
+	p.RecordIDs = append(p.RecordIDs, p.RequestIDs...)
+	p.RequestIDs = nil
 	return p, true, nil
 }
 

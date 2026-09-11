@@ -25,9 +25,9 @@ type FlushReply struct {
 	Outcome Outcome `json:"outcome"`
 	Batches int     `json:"batches"`
 	Records int     `json:"records"`
-	// SetAside lists the rejections this flush wrote for rawcalls that no
-	// longer read back as rawcalls, so the caller can say so — with the
-	// cause — instead of the records going quiet.
+	// SetAside lists the rejections this flush wrote for records that no
+	// longer read back or could not be masked, so the caller can say so
+	// — with the cause — instead of the records going quiet.
 	SetAside []Rejection `json:"set_aside,omitempty"`
 	// Standing is the one reason this flush stopped, carrying both
 	// sentences the caller prints about it. It rides on the wire so the
