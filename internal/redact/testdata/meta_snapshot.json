@@ -1,0 +1,9 @@
+{
+  "agentId": "a1b2c3d4",
+  "toolUseId": "toolu_01FixtureToolUse0002",
+  "parentAgentId": null,
+  "spawnDepth": 1,
+  "description": "Contact someone@example.org about the widget",
+  "createdAt": 1756720800000,
+  "status": "completed"
+}

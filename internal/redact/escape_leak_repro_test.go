@@ -8,7 +8,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
 
-// Overtly fake: the FAKE segment marks it, the random tail keeps the
+// Overtly fake: the FAKE segment marks it, the random remainder keeps the
 // entropy above the detection threshold.
 const fakeHighEntropyKey = "sk-ant-api03-FAKE-Jq2XvB9dR4nT6kM1wZ8pL0cY5hG3fS7aQ2eU9iO4tW6rN8mK1jH5gD3bV7xC0zA"
 

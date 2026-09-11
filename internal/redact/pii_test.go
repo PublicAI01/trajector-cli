@@ -8,12 +8,12 @@ import (
 )
 
 // configurePII selects PII categories for the duration of a test and
-// restores the disabled default afterwards. Tests using it mutate global
+// restores the package default afterwards. Tests using it mutate global
 // state and must NOT call t.Parallel().
 func configurePII(t *testing.T, categories ...redact.PIICategory) {
 	t.Helper()
 	redact.ConfigurePII(categories...)
-	t.Cleanup(func() { redact.ConfigurePII() })
+	t.Cleanup(func() { redact.ConfigurePII(redact.DefaultPIICategories...) })
 }
 
 func TestPII_EmailDetection(t *testing.T) {
@@ -110,14 +110,12 @@ func TestPII_MultipleEmails(t *testing.T) {
 	}
 }
 
-func TestPII_OffByDefault(t *testing.T) {
-	// Calling ConfigurePII with no categories disables PII masking, which is
-	// the package default: without opt-in, emails and phones pass through.
-	redact.ConfigurePII()
+func TestPII_ConfigureWithNoCategoriesDisablesMasking(t *testing.T) {
+	configurePII(t)
 
 	input := "contact user@example.com and call 555-123-4567"
 	if got := redactedField(t, input); got != input {
-		t.Errorf("PII should not be redacted when not configured, got %q", got)
+		t.Errorf("PII should not be redacted when narrowed to nothing, got %q", got)
 	}
 }
 
@@ -155,10 +153,10 @@ func TestPII_SecretAndPIICoexist(t *testing.T) {
 	}
 }
 
-// TestPII_JSONLTranscriptLineMasked drives a realistic transcript line through
+// TestPII_JSONLSessionLineMasked drives a realistic session line through
 // JSONLBytes with both categories on: email and phone in a content leaf must
 // be masked with their typed tokens.
-func TestPII_JSONLTranscriptLineMasked(t *testing.T) {
+func TestPII_JSONLSessionLineMasked(t *testing.T) {
 	configurePII(t, redact.PIIEmail, redact.PIIPhone)
 
 	input := `{"type":"user","content":"reach me at jane.doe@example.com or 555-123-4567"}`
@@ -184,7 +182,7 @@ func TestPII_JSONLTranscriptLineMasked(t *testing.T) {
 func TestPII_AllowlistedEmailsPreserved(t *testing.T) {
 	configurePII(t, redact.PIIEmail)
 
-	// These emails appear constantly in coding transcripts (git authors, bot
+	// These emails appear constantly in coding sessions (git authors, bot
 	// accounts) and are non-sensitive public metadata.
 	allowlisted := []string{
 		"noreply@github.com",

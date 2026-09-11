@@ -31,7 +31,7 @@ func openSSHPrivateKeyMarker(kind string) string {
 
 // redactedString feeds raw text through JSONLBytes. Text that is not
 // valid JSON takes the raw-line path, so this exercises the full
-// layered scan the way a malformed transcript line would.
+// layered scan the way a malformed session line would.
 func redactedString(t testing.TB, s string) string {
 	t.Helper()
 	rb, err := redact.JSONLBytes([]byte(s))
@@ -743,7 +743,7 @@ func TestSupabaseProviderTokenLongIdentifierOverRedaction(t *testing.T) {
 }
 
 // TestJSONLBytes_SupabaseSecretRedacted drives the secret through the
-// field-aware JSONL path, mirroring a Claude Code transcript line where
+// field-aware JSONL path, mirroring a Claude Code session line where
 // the secret lives in a message-content leaf.
 func TestJSONLBytes_SupabaseSecretRedacted(t *testing.T) {
 	t.Parallel()
@@ -781,7 +781,7 @@ func TestSupabaseProviderTokenBoundaries(t *testing.T) {
 			want:  "xREDACTED",
 		},
 		{
-			// Raw-text fall-back shape: the transcript line failed to parse as
+			// Raw-text fall-back shape: the session line failed to parse as
 			// JSON, so the scan runs on the undecoded bytes where "\n" is a
 			// literal backslash-n and the 'n' abuts the prefix.
 			name:  "sb_secret_ preceded by a literal JSON escape letter",
@@ -800,7 +800,7 @@ func TestSupabaseProviderTokenBoundaries(t *testing.T) {
 // through the JSONL fall-back branch (the raw-line scan runs on lines where
 // json.Unmarshal fails), with the secret glued to a literal "\n" escape so
 // the byte before the prefix is a word char. This is the realistic path by
-// which a malformed/truncated transcript line could leak a low-entropy
+// which a malformed/truncated session line could leak a low-entropy
 // Supabase secret; it must still be redacted.
 func TestJSONLBytes_SupabaseSecretMalformedLineFallback(t *testing.T) {
 	t.Parallel()
@@ -851,8 +851,8 @@ func TestCredentialedURIs(t *testing.T) {
 		},
 		{
 			name:  "URL without password is preserved",
-			input: "repo=ssh://git@github.com/PublicAI01/trajector-cli",
-			want:  "repo=ssh://git@github.com/PublicAI01/trajector-cli",
+			input: "repo=ssh://git@localhost/PublicAI01/trajector-cli",
+			want:  "repo=ssh://git@localhost/PublicAI01/trajector-cli",
 		},
 		{
 			name:  "colon and at-sign in path are preserved",
@@ -1758,9 +1758,9 @@ func TestJSONLBytes_ImageLookalikeTypeIsScanned(t *testing.T) {
 func TestJSONLBytes_CredentialKeyMasksWholeValue(t *testing.T) {
 	t.Parallel()
 	// The segment before the slash is high-entropy enough for the entropy
-	// layer on its own; "tail" is below the pattern's length floor, so
-	// before the fix the result was "REDACTED/tail".
-	const value = "aB3dEfGh1JkLmN0pQrStUvWxYz2/tail"
+	// layer on its own; "rest" is below the pattern's length floor, so
+	// before the fix the result was "REDACTED/rest".
+	const value = "aB3dEfGh1JkLmN0pQrStUvWxYz2/rest"
 	got := redactedString(t, `{"db_password":"`+value+`"}`)
 	if want := `{"db_password":"REDACTED"}`; got != want {
 		t.Errorf("redacted = %s, want %s", got, want)
@@ -1839,10 +1839,10 @@ func TestJSONLBytes_PrefixedCredentialKeyIsMasked(t *testing.T) {
 // depends on the enclosing object (host+user siblings), but the dedup key
 // was only (key, value) and Go randomizes map iteration, so whichever
 // occurrence walk reached first decided both — masking the whole value on
-// some runs and leaving "REDACTED/tail" on others.
+// some runs and leaving "REDACTED/rest" on others.
 func TestJSONLBytes_CredentialKeyVerdictIsDeterministic(t *testing.T) {
 	t.Parallel()
-	const value = "aB3dEfGh1JkLmN0pQrStUvWxYz2/tail"
+	const value = "aB3dEfGh1JkLmN0pQrStUvWxYz2/rest"
 	const doc = `{"svc":{"password":"` + value + `"},` +
 		`"db":{"password":"` + value + `","host":"db.example.com","user":"svc"}}`
 	want := redactedString(t, doc)
@@ -1851,8 +1851,8 @@ func TestJSONLBytes_CredentialKeyVerdictIsDeterministic(t *testing.T) {
 			t.Fatalf("run %d differs:\n got %s\nwant %s", i, got, want)
 		}
 	}
-	if strings.Contains(want, "tail") {
-		t.Errorf("credential value kept a tail in the clear: %s", want)
+	if strings.Contains(want, "rest") {
+		t.Errorf("credential value kept its remainder in the clear: %s", want)
 	}
 }
 

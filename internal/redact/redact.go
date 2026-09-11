@@ -251,7 +251,7 @@ var connectionStringRules = []connectionStringRule{
 //  4. Credentialed URIs: URLs containing userinfo passwords
 //  5. Database connection strings: JDBC, keyword DSNs, and semicolon strings
 //  6. Bounded credential key/value pairs: DB_PASSWORD=...
-//  7. PII detection: email and phone patterns (only when configured via ConfigurePII)
+//  7. PII detection: email and phone patterns (on by default; see ConfigurePII)
 //
 // A string is redacted if ANY method flags it.
 func redactString(s string) string {
@@ -357,9 +357,9 @@ func detectLayers(s string, full bool) []taggedRegion {
 	// 6. Bounded credential key/value detection (secrets — always on).
 	regions = append(regions, detectCredentialValues(s)...)
 
-	// 7. PII detection (opt-in — only runs when configured, and only on a
-	// full scan: a protected field keeping its PII is a standing decision
-	// of its own, see redactDeterministic).
+	// 7. PII detection (on by default, narrowed by ConfigurePII, and only
+	// on a full scan: a protected field keeping its PII is a standing
+	// decision of its own, see redactDeterministic).
 	if full {
 		regions = append(regions, detectPII(getPIIPatterns(), s)...)
 	}
@@ -1005,7 +1005,7 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 			// randomizes map iteration, so before 2026-09-04 whichever
 			// occurrence walk reached first won and the other was
 			// dropped here — the same document redacted to "REDACTED" on
-			// one run and "REDACTED/tail" on the next.
+			// one run and "REDACTED/rest" on the next.
 			//
 			// applyJSONReplacements is keyed by (key, original) and can
 			// hold exactly one verdict for the pair, so the dedup cannot
@@ -1136,10 +1136,13 @@ func jsonFieldPolicy(key string) fieldPolicy {
 		return policyDeterministic
 	}
 
-	// Common path and directory fields from agent transcripts. These
+	// Common path and directory fields from agent session records. These
 	// appear frequently in tool calls and are structural, not secrets.
+	// A git branch name is structural in the same way, and one that
+	// carries a commit hash or a ticket id reads as random to the
+	// entropy layer.
 	switch lower {
-	case "filepath", "file_path", "cwd", "root", "directory", "dir", "path":
+	case "filepath", "file_path", "cwd", "root", "directory", "dir", "path", "gitbranch":
 		return policyDeterministic
 	}
 

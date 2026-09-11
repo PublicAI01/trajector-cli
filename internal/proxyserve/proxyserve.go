@@ -21,7 +21,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
-	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
@@ -105,12 +104,6 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(stderr, format+"\n", args...)
 	}
-	// The serve process is the machine's one flusher, so this is the one
-	// place the redaction pass is configured. Email and phone patterns
-	// are the personally identifying strings PRIVACY.md promises to mask;
-	// broader patterns (street addresses) misfire too often on code and
-	// prose to be safe against observed values.
-	redact.ConfigurePII(redact.PIIEmail, redact.PIIPhone)
 	layout := a.Layout
 	sp, err := OpenSpool(layout)
 	if err != nil {

@@ -27,15 +27,32 @@ type piiPattern struct {
 	label string // e.g., "EMAIL", "PHONE"
 }
 
+// DefaultPIICategories are the categories every process masks without
+// being told to. The redaction pass runs in more than one kind of
+// process, and one of them has no startup step where a switch could be
+// flipped; a default that depends on who calls ConfigurePII first is a
+// default that is off somewhere. Email and phone are the two shapes
+// that can be matched without misfiring on code and prose; street
+// addresses cannot.
+var DefaultPIICategories = []PIICategory{PIIEmail, PIIPhone}
+
 var (
-	piiPatterns   []piiPattern
+	piiPatterns   = piiPatternsFor(DefaultPIICategories)
 	piiPatternsMu sync.RWMutex
 )
 
-// ConfigurePII selects which PII categories the redaction pass masks, on
-// top of the always-on secret layers. Matches are replaced with
-// [REDACTED_<CATEGORY>] tokens. Call once at startup; thread-safe.
+// ConfigurePII narrows or widens which PII categories the redaction
+// pass masks, replacing the default. Matches are replaced with
+// [REDACTED_<CATEGORY>] tokens. Thread-safe; no process needs to call
+// it to get the default.
 func ConfigurePII(categories ...PIICategory) {
+	patterns := piiPatternsFor(categories)
+	piiPatternsMu.Lock()
+	piiPatterns = patterns
+	piiPatternsMu.Unlock()
+}
+
+func piiPatternsFor(categories []PIICategory) []piiPattern {
 	patterns := make([]piiPattern, 0, len(categories))
 	for _, c := range categories {
 		for _, bp := range builtinPIIPatterns {
@@ -44,9 +61,7 @@ func ConfigurePII(categories ...PIICategory) {
 			}
 		}
 	}
-	piiPatternsMu.Lock()
-	piiPatterns = patterns
-	piiPatternsMu.Unlock()
+	return patterns
 }
 
 func getPIIPatterns() []piiPattern {
@@ -74,7 +89,7 @@ var (
 )
 
 // emailAllowPatterns are email patterns that should NOT be treated as PII.
-// These appear frequently in coding transcripts (git authors, bot accounts)
+// These appear frequently in coding sessions (git authors, bot accounts)
 // and are public metadata rather than private information.
 // Entries starting with "@" match the email suffix; entries ending with "@"
 // match the email prefix. All comparisons are case-insensitive.
@@ -122,7 +137,7 @@ var builtinPIIPatterns = []builtinPIIPattern{
 }
 
 // detectPII returns tagged regions for PII matches in s. Returns nil
-// immediately when no categories are configured.
+// when patterns is empty.
 func detectPII(patterns []piiPattern, s string) []taggedRegion {
 	var regions []taggedRegion
 	for _, p := range patterns {
