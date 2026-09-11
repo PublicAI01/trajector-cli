@@ -10,7 +10,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
@@ -184,21 +183,17 @@ func DoctorProject(f *Findings, d Diagnosis, disc Discovery) {
 // problem: the setting is the user's or their organization's to
 // keep, and a doctor run on a device that keeps it must still pass.
 func doctorHookPolicy(f *Findings, d Diagnosis) {
-	p := d.HookPolicy
-	if p == nil {
+	if d.HookPolicy == nil {
 		return
 	}
-	if p.Runs {
-		f.OK("%s", hooksWillLoad)
+	outlook := ExplainHooks(*d.HookPolicy, d.Project.Shape)
+	if outlook.Runs {
+		f.OK("%s", outlook.Judgement)
 		return
 	}
-	f.note("%s (%s)", HooksWillNotLoad, p.Reason)
+	f.note("%s", outlook.Judgement)
 	f.Detail("Change that setting where it is set, or ask whoever manages it to.")
-	if d.Project.Shape == routing.WithoutProxy {
-		f.Detail("%s. %s", nothingRecordedNow, noProxyWayOut)
-	} else {
-		f.Detail("%s.", ProxyHalfOnly)
-	}
+	f.Detail("%s", outlook.follows())
 }
 
 // doctorDiscovery holds the session files found on disk against the
@@ -314,7 +309,7 @@ func doctorStandings(f *Findings, standings []upload.Standing) {
 	for _, s := range standings {
 		f.note("%s", doctorClause(s.Explain()))
 		if s.Message != "" {
-			f.Detail(ServiceSays, s.Message)
+			f.Detail("%s", ServiceWords(s.Message))
 		}
 		if remedy := s.Remedy(); remedy != "" {
 			f.Detail("%s", remedy)

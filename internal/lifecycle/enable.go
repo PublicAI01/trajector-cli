@@ -161,7 +161,9 @@ func (m *Machine) enableProject(projectDir string, shape routing.Shape, io IO) e
 	if err != nil {
 		return fmt.Errorf("looking for this project's session files: %w", err)
 	}
-	reportEarlierSessions(io, earlier)
+	for _, line := range report.EarlierSessionLines(earlier) {
+		fmt.Fprintln(io.Out, line)
+	}
 
 	// The routing table, the consent file, and the project's .gitignore
 	// are all shared with concurrent processes, so rollback undoes them
@@ -284,11 +286,10 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 	}
 	if shape == routing.WithoutProxy {
 		fmt.Fprintln(io.Out, "Self-check passed: the resident process is up.")
-		fmt.Fprintln(io.Out, report.NoProxyShapeFact)
 	} else {
 		fmt.Fprintln(io.Out, "Self-check passed: routing and recording verified end to end.")
-		fmt.Fprintln(io.Out, report.RemoteControlNotice)
 	}
+	fmt.Fprintln(io.Out, report.ShapeNotice(shape))
 	fmt.Fprintln(io.Out, contributesNow)
 	return nil
 }
@@ -325,22 +326,24 @@ func (m *Machine) hookPolicy(root string) claudesettings.HookPolicy {
 	return claudesettings.JudgeHookPolicy(root, m.deps.Home, m.deps.Getenv, managed)
 }
 
-// confirmHooksWillRun says so when the static reading finds the hooks
-// will not load, and reports whether enable goes on. In the shape with
-// a base URL it always does: the proxy still records. In the shape
-// without one the hooks are the only source, so an enable would install
-// something that records nothing — the user is told and asked, and a
-// no leaves every file as it was.
+// confirmHooksWillRun says what the static reading of the hooks means
+// for this project, and reports whether enable goes on. Where another
+// source still records it always does, and the outlook is the whole of
+// what is said. Where the hooks are the only source an enable would
+// install something that records nothing, so the one question enable
+// adds is asked here, and a no leaves every file as it was.
 func (m *Machine) confirmHooksWillRun(io IO, root string, shape routing.Shape) (bool, error) {
-	policy := m.hookPolicy(root)
-	if policy.Runs {
+	outlook := report.ExplainHooks(m.hookPolicy(root), shape)
+	if outlook.Runs {
 		return true, nil
 	}
-	fmt.Fprintf(io.Out, "%s (%s)\n", report.HooksWillNotLoad, policy.Reason)
-	if shape != routing.WithoutProxy {
-		fmt.Fprintln(io.Out, report.ProxyHalfOnly)
+	if !outlook.RecordsNothing {
+		for _, line := range outlook.Lines() {
+			fmt.Fprintln(io.Out, line)
+		}
 		return true, nil
 	}
+	fmt.Fprintln(io.Out, outlook.Judgement)
 	fmt.Fprintln(io.Out, noProxyRecordsNothing)
 	yes, err := askYesNo(io, "Enable anyway? [y/N] ", false)
 	if err != nil {
@@ -350,22 +353,6 @@ func (m *Machine) confirmHooksWillRun(io IO, root string, shape routing.Shape) (
 		fmt.Fprintln(io.Out, "Nothing was changed.")
 	}
 	return yes, nil
-}
-
-// reportEarlierSessions tells the user how many session files this
-// project already has and how far back they go — they are collected
-// once the project is enabled — and that the count stopped short when
-// the directory tree was larger than the walk visits.
-func reportEarlierSessions(io IO, found discover.Result) {
-	if found.Sessions == 0 {
-		fmt.Fprintln(io.Out, "No earlier session records to collect.")
-	} else {
-		oldest := found.Oldest.Local()
-		fmt.Fprintf(io.Out, "%d earlier session record(s) will be collected once; the oldest is from %s.\n", found.Sessions, oldest.Format("2006-01-02"))
-	}
-	if found.Truncated {
-		fmt.Fprintln(io.Out, report.TreeLimitExceeded())
-	}
 }
 
 // registerEarlierSessions puts the session files found before the

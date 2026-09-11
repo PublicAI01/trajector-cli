@@ -78,7 +78,7 @@ func (m *Machine) Upload(force bool, io IO) error {
 func explainStanding(io IO, s upload.Standing, remedy string, reassurance ...string) {
 	fmt.Fprintln(io.Out, s.Explain())
 	if s.Message != "" {
-		fmt.Fprintf(io.Out, report.ServiceSays+"\n", s.Message)
+		fmt.Fprintln(io.Out, report.ServiceWords(s.Message))
 	}
 	for _, line := range reassurance {
 		fmt.Fprintln(io.Out, line)

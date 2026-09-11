@@ -3,25 +3,29 @@ package report
 import (
 	"fmt"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
-// The sentences more than one surface prints, spelled once. enable
-// says each at the moment it applies; status repeats the standing
-// ones every time; doctor reuses the ones it needs. A sentence about
-// what Claude Code will do is hedged, because it is read from
-// configuration on this machine and configuration can be overridden
-// from places a static reading cannot see.
+// The sentences more than one surface prints, and the functions that
+// decide which of them apply to a project right now. A surface asks for
+// the sentences and chooses how to present them; it never pairs the
+// facts itself, so status, doctor and enable cannot reach different
+// answers about the same project. A sentence about what Claude Code
+// will do is hedged, because it is read from configuration on this
+// machine and configuration can be overridden from places a static
+// reading cannot see.
 const (
-	// hooksWillLoad and HooksWillNotLoad open the report of a static
+	// hooksWillLoad and hooksWillNotLoad open the report of a static
 	// reading of Claude Code's configuration. The reason a reading
-	// found follows HooksWillNotLoad in parentheses.
+	// found follows hooksWillNotLoad in parentheses.
 	hooksWillLoad    = "Judged from configuration readable on this machine, Claude Code will load trajector's hooks in this project"
-	HooksWillNotLoad = "Judged from configuration readable on this machine, Claude Code will not load trajector's hooks in this project"
-	// ProxyHalfOnly is the consequence of hooks that will not load in
+	hooksWillNotLoad = "Judged from configuration readable on this machine, Claude Code will not load trajector's hooks in this project"
+	// proxyHalfOnly is the consequence of hooks that will not load in
 	// the shape with a base URL: the proxy records, the session files
 	// are not read.
-	ProxyHalfOnly = "Only the proxy records this project for now; its session files are not read"
+	proxyHalfOnly = "Only the proxy records this project for now; its session files are not read"
 	// nothingRecordedNow is the consequence in the shape without a
 	// base URL, where the hooks are the only source.
 	nothingRecordedNow = "Nothing is recorded from this project for now"
@@ -29,13 +33,13 @@ const (
 	// that records again.
 	noProxyWayOut = "Run trajector enable without --no-proxy to record through the proxy instead (/remote-control inside this project becomes unavailable; claude remote-control still works)."
 
-	// RemoteControlNotice is said for a project in the shape with a
+	// remoteControlNotice is said for a project in the shape with a
 	// base URL: that shape makes /remote-control unavailable inside
 	// the project, and both ways around it are named beside the fact.
-	RemoteControlNotice = "Remote Control: inside this project, /remote-control will not be available. To use it, either start sessions with claude remote-control (both sources are still recorded), or run trajector enable --no-proxy to record only the session files (Remote Control stays available; records from one source may be rewarded differently)."
-	// NoProxyShapeFact is said for a project in the shape without a
+	remoteControlNotice = "Remote Control: inside this project, /remote-control will not be available. To use it, either start sessions with claude remote-control (both sources are still recorded), or run trajector enable --no-proxy to record only the session files (Remote Control stays available; records from one source may be rewarded differently)."
+	// noProxyShapeFact is said for a project in the shape without a
 	// base URL.
-	NoProxyShapeFact = "This project records from its session files only, so Remote Control stays available."
+	noProxyShapeFact = "This project records from its session files only, so Remote Control stays available."
 
 	// workspaceNotTrusted is doctor's answer when session files of an
 	// enabled project exist that no hook of trajector's reported, and
@@ -55,10 +59,108 @@ const (
 	windowsSideWayOut     = "Run both on the same side: open the project from inside WSL with a Claude Code installed there, or run trajector on the side Claude Code runs on."
 )
 
-// TreeLimitExceeded says that the count of a project's earlier
+// HookOutlook is what a static reading of Claude Code's configuration
+// means for one enabled project: whether the hooks will load and, when
+// they will not, what is left recording and what records again. The
+// surfaces read the parts they have room for and add their own
+// question; none of them holds a sentence of its own about a reading.
+type HookOutlook struct {
+	// Runs reports that nothing readable on this machine keeps the
+	// hooks from loading. Judgement is then the whole outlook.
+	Runs bool
+	// RecordsNothing reports that the hooks are this project's only
+	// source, so nothing is recorded from it while they do not load.
+	// It is the one outlook a surface may have to ask about before it
+	// acts.
+	RecordsNothing bool
+	// Judgement states the reading in one sentence, with the reason in
+	// parentheses when the hooks will not load. It carries no final
+	// period: a surface that continues the sentence adds one.
+	Judgement string
+
+	// consequence is what hooks that will not load leave recording,
+	// and wayOut the one change that records again. The consequence
+	// carries no final period, as Judgement; the way out is a whole
+	// sentence, and is empty where another source still records.
+	consequence string
+	wayOut      string
+}
+
+// Lines is the outlook as whole lines, the judgement first: what status
+// prints under a project, and what enable prints where it needs no
+// answer.
+func (o HookOutlook) Lines() []string {
+	lines := []string{o.Judgement}
+	if o.consequence != "" {
+		lines = append(lines, o.consequence)
+	}
+	if o.wayOut != "" {
+		lines = append(lines, o.wayOut)
+	}
+	return lines
+}
+
+// follows is what comes after the judgement as one line of whole
+// sentences, which is the shape of a doctor follow-up.
+func (o HookOutlook) follows() string {
+	if o.wayOut == "" {
+		return o.consequence + "."
+	}
+	return o.consequence + ". " + o.wayOut
+}
+
+// ExplainHooks pairs a static reading of the hook configuration with
+// the shape the project records in, which is the only place the two
+// are read together: what "the hooks will not load" costs the user
+// depends on whether anything else records at all.
+func ExplainHooks(policy claudesettings.HookPolicy, shape routing.Shape) HookOutlook {
+	if policy.Runs {
+		return HookOutlook{Runs: true, Judgement: hooksWillLoad}
+	}
+	outlook := HookOutlook{Judgement: fmt.Sprintf("%s (%s)", hooksWillNotLoad, policy.Reason)}
+	if shape == routing.WithoutProxy {
+		outlook.RecordsNothing = true
+		outlook.consequence, outlook.wayOut = nothingRecordedNow, noProxyWayOut
+		return outlook
+	}
+	outlook.consequence = proxyHalfOnly
+	return outlook
+}
+
+// ShapeNotice is what the shape a project records in costs or keeps,
+// said wherever the shape is stated: status prints it under every
+// contributing project, and enable prints it once the install is
+// proven.
+func ShapeNotice(shape routing.Shape) string {
+	if shape == routing.WithoutProxy {
+		return noProxyShapeFact
+	}
+	return remoteControlNotice
+}
+
+// EarlierSessionLines is what enable says about the session files a
+// project already has: how many are collected once it is enabled and
+// how far back they go, and where the search stopped short of the
+// whole tree.
+func EarlierSessionLines(found discover.Result) []string {
+	var lines []string
+	if found.Sessions == 0 {
+		lines = append(lines, "No earlier session records to collect.")
+	} else {
+		oldest := found.Oldest.Local()
+		lines = append(lines, fmt.Sprintf("%d earlier session record(s) will be collected once; the oldest is from %s.",
+			found.Sessions, oldest.Format("2006-01-02")))
+	}
+	if found.Truncated {
+		lines = append(lines, treeLimitExceeded())
+	}
+	return lines
+}
+
+// treeLimitExceeded says that the count of a project's earlier
 // session files stopped short: the directory tree was larger than
 // the search visits, and the limit is part of the sentence so the
 // number is read against it.
-func TreeLimitExceeded() string {
+func treeLimitExceeded() string {
 	return fmt.Sprintf("This project's directory tree has more than %d directories, so the count above is incomplete.", discover.Limit)
 }

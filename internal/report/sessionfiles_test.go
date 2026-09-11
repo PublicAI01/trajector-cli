@@ -305,6 +305,31 @@ func TestDoctorExplainsHooksThatWillNotLoadWithoutFailing(t *testing.T) {
 	}
 }
 
+func TestNoSurfaceWordsTheHookReadingDifferently(t *testing.T) {
+	loading := &claudesettings.HookPolicy{Runs: true}
+	locked := &claudesettings.HookPolicy{Reason: "disableAllHooks in /home/dev/.claude/settings.json"}
+	sameShape := func(d report.Diagnosis) report.Diagnosis { return d }
+	for _, tc := range []struct {
+		name   string
+		shape  func(report.Diagnosis) report.Diagnosis
+		policy *claudesettings.HookPolicy
+	}{
+		{"hooks load beside a base URL", sameShape, loading},
+		{"hooks load without a base URL", withoutProxy, loading},
+		{"hooks will not load beside a base URL", sameShape, locked},
+		{"hooks will not load without a base URL", withoutProxy, locked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := tc.shape(enabledDevice())
+			d.HookPolicy = tc.policy
+			outlook := report.ExplainHooks(*tc.policy, d.Project.Shape)
+			wants(t, "status", dashboard(d), outlook.Lines()...)
+			_, out := doctorProjectText(d, report.Discovery{})
+			wants(t, "doctor", out, outlook.Judgement)
+		})
+	}
+}
+
 func TestDoctorReportsClaudeOnTheWindowsSideWithAWayOut(t *testing.T) {
 	d := enabledDevice()
 	d.Project.Root = "/mnt/c/Users/dev/sample-project"

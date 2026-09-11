@@ -134,7 +134,7 @@ func Dashboard(w io.Writer, d Diagnosis) {
 	for _, s := range d.Standings {
 		fmt.Fprintf(w, "  %s\n", s.Explain())
 		if s.Message != "" {
-			fmt.Fprintf(w, "  "+ServiceSays+"\n", s.Message)
+			fmt.Fprintf(w, "  %s\n", ServiceWords(s.Message))
 		}
 		if remedy := s.Remedy(); remedy != "" {
 			fmt.Fprintf(w, "  %s\n", remedy)
@@ -158,9 +158,7 @@ func projectLines(d Diagnosis) []string {
 	if st.WindowsSideClaude {
 		lines = append(lines, "WARNING: "+windowsSideClaudeFact+". Run `trajector doctor`.")
 	}
-	if st.Shape == routing.WithoutProxy {
-		lines = append(lines, NoProxyShapeFact)
-	} else {
+	if st.Shape != routing.WithoutProxy {
 		// The upstream is where the proxy forwards to; a project whose
 		// traffic never reaches the proxy has none to speak of.
 		if st.Upstream != capture.Anthropic.OfficialUpstream {
@@ -169,8 +167,8 @@ func projectLines(d Diagnosis) []string {
 		if st.UpstreamMoved.Happened() {
 			lines = append(lines, fmt.Sprintf("The upstream moved from %s at %s (base-URL configuration change).", st.UpstreamMoved.From, st.UpstreamMoved.At))
 		}
-		lines = append(lines, RemoteControlNotice)
 	}
+	lines = append(lines, ShapeNotice(st.Shape))
 	lines = append(lines, hookJudgementLines(d)...)
 	if st.MissingSessionEnd() {
 		lines = append(lines, sessionEndMissingLine(st.SettingsPath()))
@@ -218,22 +216,13 @@ func signalLines(d Diagnosis) []string {
 }
 
 // hookJudgementLines states the static reading of whether the hooks
-// load, and when they will not, what that leaves recording: in the
-// shape with a base URL the proxy alone, in the shape without one
-// nothing, with the one change that records again.
+// load and what follows from it for this project's shape. A project
+// with no hooks to read about is silent about them.
 func hookJudgementLines(d Diagnosis) []string {
-	p := d.HookPolicy
-	if p == nil {
+	if d.HookPolicy == nil {
 		return nil
 	}
-	if p.Runs {
-		return []string{hooksWillLoad}
-	}
-	lines := []string{fmt.Sprintf("%s (%s)", HooksWillNotLoad, p.Reason)}
-	if d.Project.Shape == routing.WithoutProxy {
-		return append(lines, nothingRecordedNow, noProxyWayOut)
-	}
-	return append(lines, ProxyHalfOnly)
+	return ExplainHooks(*d.HookPolicy, d.Project.Shape).Lines()
 }
 
 // sessionEndMissingLine names the one hook an injection made before
@@ -271,7 +260,7 @@ func sessionFileLines(s SessionFilesState) []string {
 func gapLines(g follow.Gaps) []string {
 	var lines []string
 	if g.Truncated {
-		lines = append(lines, TreeLimitExceeded())
+		lines = append(lines, treeLimitExceeded())
 	}
 	for _, a := range g.Ambiguous {
 		lines = append(lines, ambiguityLine(a))
