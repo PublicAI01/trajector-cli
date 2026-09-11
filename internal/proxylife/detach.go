@@ -17,11 +17,11 @@ func openLogAppend(logPath string) (*os.File, error) {
 	return os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 }
 
-// startDetached starts path with args in its own session or process
+// StartDetached starts path with args in its own session or process
 // group so it survives the caller's exit. Stdout and stderr are appended
 // to logPath (the null device when empty); stdin is the null device. The
 // child is released, not awaited.
-func startDetached(path string, args []string, logPath string) (pid int, err error) {
+func StartDetached(path string, args []string, logPath string) (pid int, err error) {
 	logFile, err := openLogAppend(logPath)
 	if err != nil {
 		return 0, err

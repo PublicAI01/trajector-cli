@@ -219,7 +219,7 @@ func (p *Proxy) Ensure() error {
 	}
 
 	argv := []string{Command, Supervise, addrFlag, p.addr}
-	if _, err := startDetached(p.execPath, argv, p.layout.ProxyLog()); err != nil {
+	if _, err := StartDetached(p.execPath, argv, p.layout.ProxyLog()); err != nil {
 		return fmt.Errorf("starting proxy: %w", err)
 	}
 	return p.waitHealthy()

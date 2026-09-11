@@ -3,7 +3,9 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
 
@@ -119,28 +121,97 @@ func (a *app) uninstallCmd(args []string) int {
 
 // hookCmd hosts the commands injected into Claude Code hooks. They must
 // never block a session: any failure is reported on stderr with a
-// non-blocking exit code, and success is silent.
+// non-blocking exit code, and success is silent — what a session hook
+// writes on stdout reaches the model, and what it writes on stderr
+// reaches the user.
 func (a *app) hookCmd(args []string) int {
-	if len(args) != 1 {
-		fmt.Fprintln(a.stderr, "usage: trajector hook <ensure-proxy|discovery>")
+	if len(args) == 0 {
+		hookUsage(a.stderr)
 		return 2
 	}
-	switch args[0] {
+	name, rest := args[0], args[1:]
+	switch name {
 	case "ensure-proxy":
+		// The argument marks an injection that carries no base URL. The
+		// proxy is brought up either way: with no route to serve it is
+		// still the resident process that uploads what this machine
+		// records.
+		rest, _ = takeFlag(rest, claudesettings.NoProxyMarker)
+		if len(rest) != 0 {
+			hookUsage(a.stderr)
+			return 2
+		}
+		hook := a.hookInput()
 		m, cwd, err := a.prelude()
 		if err != nil {
 			return a.fail(err)
 		}
-		return a.exit(m.EnsureProxy(cwd, a.io()))
+		err = m.EnsureProxy(cwd, a.io())
+		a.followSession(m, cwd, hook)
+		return a.exit(err)
+	case "session-end":
+		if len(rest) != 0 {
+			hookUsage(a.stderr)
+			return 2
+		}
+		// The session is closing: nothing said here is read, and the
+		// one thing that lasts past it is a file registered now.
+		hook := a.hookInput()
+		if m, cwd, err := a.prelude(); err == nil {
+			a.followSession(m, cwd, hook)
+		}
+		return 0
 	case "discovery":
+		if len(rest) != 0 {
+			hookUsage(a.stderr)
+			return 2
+		}
 		// A lost hint is acceptable; a blocked session is not, so every
 		// failure here is silent.
 		if m, cwd, err := a.prelude(); err == nil {
 			m.Discovery(cwd, a.io())
 		}
 		return 0
+	case "read":
+		if len(rest) != 1 {
+			fmt.Fprintln(a.stderr, "usage: trajector hook read <project-dir>")
+			return 2
+		}
+		m, err := a.machine()
+		if err != nil {
+			return a.fail(err)
+		}
+		return a.exit(m.ReadSessionFiles(rest[0], a.io()))
 	default:
-		fmt.Fprintf(a.stderr, "trajector: unknown hook %q\n", args[0])
+		fmt.Fprintf(a.stderr, "trajector: unknown hook %q\n", name)
+		hookUsage(a.stderr)
 		return 2
+	}
+}
+
+func hookUsage(w io.Writer) {
+	fmt.Fprintln(w, "usage: trajector hook <ensure-proxy [--no-proxy]|session-end|discovery>")
+}
+
+// hookInput decodes what the session wrote on stdin. A terminal is not
+// read: a person running the hook by hand would otherwise wait on it
+// for input only a session provides.
+func (a *app) hookInput() lifecycle.HookInput {
+	if f, ok := a.stdin.(*os.File); ok {
+		info, err := f.Stat()
+		if err != nil || info.Mode()&os.ModeCharDevice != 0 {
+			return lifecycle.HookInput{}
+		}
+	}
+	return lifecycle.ReadHookInput(a.stdin)
+}
+
+// followSession registers the session file a hook was told about and
+// starts the process that reads it. Both are silent on failure: the
+// session must not learn what the hook did, and the registry is where
+// the outcome is read afterwards.
+func (a *app) followSession(m *lifecycle.Machine, cwd string, hook lifecycle.HookInput) {
+	if registered, err := m.RegisterSessionFile(cwd, hook); err == nil && registered {
+		_ = m.SpawnReader(cwd)
 	}
 }
