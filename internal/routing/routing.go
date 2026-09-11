@@ -45,7 +45,7 @@ const (
 )
 
 // PauseReason is the device-wide pause written into the routing table.
-// Exactly two values are legal; each writer resumes only its own, so
+// Exactly three values are legal; each writer resumes only its own, so
 // accepting a new agreement can never silently lift a signed-out pause.
 // The machine is the only thing that sets and clears them.
 type PauseReason string
@@ -57,6 +57,11 @@ const (
 	// PauseConsentReconfirm suspends recording until the changed data
 	// agreement is reconfirmed.
 	PauseConsentReconfirm PauseReason = "consent_reconfirm"
+	// PauseRedactionDrift suspends recording when session records took
+	// a shape this build's redaction does not cover: what it cannot
+	// redact must not leave the device, and a pause is the only way
+	// to be sure nothing does.
+	PauseRedactionDrift PauseReason = "redaction_drift"
 )
 
 // Explain returns the pause as one user-readable sentence naming the
@@ -68,6 +73,8 @@ func (r PauseReason) Explain() string {
 		return "this device is signed out; run `trajector login` to resume recording"
 	case PauseConsentReconfirm:
 		return "the data agreement changed; run `trajector enable` to reconfirm it"
+	case PauseRedactionDrift:
+		return "session records changed shape in a way this build's redaction does not cover; run `trajector upgrade`, then `trajector doctor`"
 	default:
 		return string(r)
 	}

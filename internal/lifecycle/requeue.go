@@ -39,12 +39,12 @@ func (m *Machine) RequeueRejected(batchID string, all bool, io IO) error {
 		requeued += moved
 		if err != nil {
 			if moved > 0 {
-				fmt.Fprintf(io.Out, "Requeued %d rawcall(s) from batch %s before it failed.\n", moved, id)
+				fmt.Fprintf(io.Out, "Requeued %d record(s) from batch %s before it failed.\n", moved, id)
 			}
 			failed = append(failed, err)
 			continue
 		}
-		fmt.Fprintf(io.Out, "Requeued %d rawcall(s) from batch %s%s.\n", moved, id, rejectionSuffix(rej))
+		fmt.Fprintf(io.Out, "Requeued %d record(s) from batch %s%s.\n", moved, id, rejectionSuffix(rej))
 	}
 	if requeued > 0 {
 		fmt.Fprintln(io.Out, "They will upload with the next flush; run `trajector upload --force` to try now.")

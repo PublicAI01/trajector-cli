@@ -9,7 +9,10 @@ package report
 
 import (
 	"errors"
+	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -28,6 +31,45 @@ type SpoolState struct {
 	// WritableErr is nil while the spool accepts writes within quota.
 	WritableErr error
 	Days        []spool.DaySummary
+	// OldestRecord is when the oldest session record still waiting in
+	// the spool was captured, zero when none waits. With the day
+	// summaries it is how far behind uploading the records are.
+	OldestRecord time.Time
+}
+
+// recordsWaiting counts the session records — segments and snapshots
+// — the spool still holds, which is what has not been uploaded yet.
+func (s SpoolState) recordsWaiting() (segments, snapshots int) {
+	for _, day := range s.Days {
+		segments += day.Segments
+		snapshots += day.Snapshots
+	}
+	return segments, snapshots
+}
+
+// SessionFilesState is what the registry of an enabled project's
+// session files says, resolved in one read and without opening any
+// session file: how many sessions are registered, when one was last
+// read, how far reading is behind the files, and what the search for
+// the project's earlier files could not cover. It carries counts and
+// sizes only — never a session id or a session file's path — because
+// status prints it and the bundle serializes it.
+type SessionFilesState struct {
+	// Err, when non-nil, means the registry could not be read; every
+	// other field is then zero.
+	Err error
+	// Sessions counts the registered sessions: their own files, not
+	// the agent files kept beside them.
+	Sessions int
+	// LastReadAt is the most recent time any registered file was
+	// read, zero when none was read yet.
+	LastReadAt time.Time
+	// BytesBehind is how much of the registered files lies past their
+	// cursors: what a reader has yet to consume.
+	BytesBehind int64
+	// Gaps is what the search for earlier files left uncovered, as
+	// recorded with the registry when the search ran.
+	Gaps follow.Gaps
 }
 
 // full reports a spool that refuses writes because usage reached the
@@ -54,6 +96,19 @@ type Diagnosis struct {
 	// surface leads with and the version gates are judged against.
 	Version string
 	Project ProjectStatus
+	// HookPolicy is the static reading, taken fresh for this
+	// diagnosis, of whether Claude Code will load the hooks the
+	// project injection installs. It is nil for a project that is not
+	// enabled, where there are no hooks to read about.
+	HookPolicy *claudesettings.HookPolicy
+	// SessionFiles is the registry's account of the current project's
+	// session files, zero for a project that is not enabled.
+	SessionFiles SessionFilesState
+	// ProxyIdleBetweenSessions reports that every enabled project on
+	// this device records without the proxy, so the resident process
+	// living only while a session is open is the healthy state and an
+	// absent proxy is nothing to repair.
+	ProxyIdleBetweenSessions bool
 	// OptionalSettings is each optional Claude Code setting's state for
 	// the current project, resolved only while it contributes. status
 	// renders it and doctor never does: an optional setting left off is

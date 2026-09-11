@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
@@ -138,6 +139,98 @@ func doctorPause(f *Findings, st ProjectStatus) {
 		return
 	}
 	f.Problem("recording is paused everywhere: %s", st.PauseReason.Explain())
+}
+
+// Discovery is what a doctor run found by looking for the current
+// project's session files on disk and holding them against the
+// registry. Only doctor looks: the search walks the project's
+// directory tree, which status never pays for, and it registers
+// nothing — registering is enable's and the session hooks' alone.
+type Discovery struct {
+	// Err, when non-nil, means the search could not run; every other
+	// field is then zero.
+	Err error
+	// Unregistered counts the sessions whose files exist but which no
+	// hook of trajector's ever reported: the one sign that the hooks
+	// did not run for them.
+	Unregistered int
+	// Gaps is what this search could not cover.
+	Gaps follow.Gaps
+}
+
+// DoctorProject reports what a diagnosis and a search of the current
+// project's session files establish about it, and the next step where
+// there is one: an arrangement across a WSL boundary that records
+// nothing, the static reading of whether the hooks load, sessions the
+// hooks never reported, and the directories the search could not
+// cover. It says nothing about Remote Control: that is a choice made
+// at enable time and shown by status, not a fault.
+func DoctorProject(f *Findings, d Diagnosis, disc Discovery) {
+	st := d.Project
+	if !st.Enabled {
+		return
+	}
+	if st.WindowsSideClaude {
+		f.Problem("%s", windowsSideClaudeFact)
+		f.Detail("%s", windowsSideWayOut)
+	}
+	doctorHookPolicy(f, d)
+	doctorDiscovery(f, d, disc)
+}
+
+// doctorHookPolicy states the static reading of whether the hooks
+// load and, when they will not, what to change. It is never a
+// problem: the setting is the user's or their organization's to
+// keep, and a doctor run on a device that keeps it must still pass.
+func doctorHookPolicy(f *Findings, d Diagnosis) {
+	p := d.HookPolicy
+	if p == nil {
+		return
+	}
+	if p.Runs {
+		f.OK("%s", HooksWillLoad)
+		return
+	}
+	f.note("%s (%s)", HooksWillNotLoad, p.Reason)
+	f.Detail("Change that setting where it is set, or ask whoever manages it to.")
+	if d.Project.NoProxy {
+		f.Detail("Until then %s. %s", NothingRecordedNow, noProxyWayOut)
+	} else {
+		f.Detail("%s.", ProxyHalfOnly)
+	}
+}
+
+// doctorDiscovery holds the session files found on disk against the
+// registry. Files no hook reported are the one observation that says
+// the hooks did not run: when nothing readable explains why, the
+// unrecorded cause left is the workspace-trust dialog, and that is
+// the next step. Everything the search could not cover is stated as
+// it is, never counted as a fault.
+func doctorDiscovery(f *Findings, d Diagnosis, disc Discovery) {
+	if err := d.SessionFiles.Err; err != nil {
+		f.Problem("the session file registry could not be read: %v", err)
+		return
+	}
+	if disc.Err != nil {
+		f.Problem("could not look for this project's session files: %v", disc.Err)
+		return
+	}
+	switch {
+	case d.Project.WindowsSideClaude:
+		// Nothing was looked for: the files are on the other side, and
+		// the arrangement is already reported above with its way out.
+	case disc.Unregistered == 0:
+		f.OK("every session file of this project is registered (%d session(s))", d.SessionFiles.Sessions)
+	case d.HookPolicy != nil && !d.HookPolicy.Runs:
+		f.note("%d session(s) of this project were written without a hook of trajector's reporting them, which follows from the setting above", disc.Unregistered)
+	default:
+		f.Problem("%s", WorkspaceNotTrusted)
+		f.Detail("%d session(s) of this project were written without a hook of trajector's reporting them, and nothing readable", disc.Unregistered)
+		f.Detail("on this device keeps the hooks from loading. Claude Code runs them only once the workspace is trusted.")
+	}
+	for _, line := range gapLines(disc.Gaps) {
+		f.note("%s", line)
+	}
 }
 
 // doctorSpool verifies the capture spool accepts writes within quota.

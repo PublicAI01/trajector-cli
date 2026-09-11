@@ -58,12 +58,38 @@ type projectWire struct {
 	Enabled          bool        `json:"enabled"`
 	Upstream         string      `json:"upstream"`
 	Injected         bool        `json:"injected"`
+	NoProxy          bool        `json:"no_proxy"`
 	InjectedToken    maskedToken `json:"injected_token"`
 	Token            maskedToken `json:"token"`
 	HooksInstalled   bool        `json:"hooks_installed"`
+	SessionEndOK     bool        `json:"session_end_installed"`
 	AgreementVersion string      `json:"agreement_version"`
 	ConsentState     string      `json:"consent_state"`
 	PauseReason      string      `json:"pause_reason"`
+	WindowsSide      bool        `json:"windows_side_claude"`
+	// HookPolicy is present for an enabled project: the static
+	// reading of whether its hooks load, and the setting that decided
+	// against it.
+	HookPolicy *hookPolicyWire `json:"hook_policy,omitempty"`
+	// SessionFiles is counts and sizes only. A session id or a session
+	// file's path would name what the user worked on, and the bundle
+	// is handed to someone else.
+	SessionFiles sessionFilesWire `json:"session_files"`
+}
+
+type hookPolicyWire struct {
+	Runs   bool   `json:"runs"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type sessionFilesWire struct {
+	Err         string    `json:"err,omitempty"`
+	Sessions    int       `json:"sessions"`
+	LastReadAt  time.Time `json:"last_read_at,omitzero"`
+	BytesBehind int64     `json:"bytes_behind"`
+	Truncated   bool      `json:"truncated"`
+	Ambiguous   int       `json:"ambiguous"`
+	Unreadable  int       `json:"unreadable"`
 }
 
 type proxyWire struct {
@@ -81,6 +107,10 @@ type spoolWire struct {
 	QuotaBytes  int64              `json:"quota_bytes"`
 	WritableErr string             `json:"writable_err,omitempty"`
 	Days        []spool.DaySummary `json:"days"`
+	// OldestRecordAt is when the oldest session record still waiting
+	// was captured; with the day summaries it says how far behind
+	// uploading is.
+	OldestRecordAt time.Time `json:"oldest_record_at,omitzero"`
 }
 
 type rejectedWire struct {
@@ -130,17 +160,31 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			InjectedToken:    maskedToken(d.Project.InjectedToken),
 			Token:            maskedToken(d.Project.Token),
 			HooksInstalled:   d.Project.HookInstalled,
+			SessionEndOK:     d.Project.SessionEndInstalled,
 			AgreementVersion: d.Project.AgreementVersion,
 			ConsentState:     string(d.Project.ConsentState),
 			PauseReason:      string(d.Project.PauseReason),
+			NoProxy:          d.Project.NoProxy,
+			WindowsSide:      d.Project.WindowsSideClaude,
+			HookPolicy:       hookPolicyValue(d),
+			SessionFiles: sessionFilesWire{
+				Err:         errString(d.SessionFiles.Err),
+				Sessions:    d.SessionFiles.Sessions,
+				LastReadAt:  d.SessionFiles.LastReadAt,
+				BytesBehind: d.SessionFiles.BytesBehind,
+				Truncated:   d.SessionFiles.Gaps.Truncated,
+				Ambiguous:   len(d.SessionFiles.Gaps.Ambiguous),
+				Unreadable:  len(d.SessionFiles.Gaps.Unreadable),
+			},
 		},
 		Proxy: proxy,
 		Spool: spoolWire{
-			OpenErr:     errString(d.Spool.OpenErr),
-			UsageBytes:  d.Spool.Usage,
-			QuotaBytes:  d.Spool.Quota,
-			WritableErr: errString(d.Spool.WritableErr),
-			Days:        days,
+			OpenErr:        errString(d.Spool.OpenErr),
+			UsageBytes:     d.Spool.Usage,
+			QuotaBytes:     d.Spool.Quota,
+			WritableErr:    errString(d.Spool.WritableErr),
+			Days:           days,
+			OldestRecordAt: d.Spool.OldestRecord,
 		},
 		Uploads:     d.Uploads,
 		Rejected:    rejected,
@@ -150,6 +194,14 @@ func DiagnosisJSON(d Diagnosis) []byte {
 		TokenStore:  tokenStoreWire{Paired: d.TokenStore.Paired, Err: errString(d.TokenStore.Err)},
 		Selfcheck:   selfcheckValue(d),
 	})
+}
+
+// hookPolicyValue carries the static reading when one was taken.
+func hookPolicyValue(d Diagnosis) *hookPolicyWire {
+	if d.HookPolicy == nil {
+		return nil
+	}
+	return &hookPolicyWire{Runs: d.HookPolicy.Runs, Reason: d.HookPolicy.Reason}
 }
 
 // selfcheckValue keeps a nil *Selfcheck out of the JSON instead of

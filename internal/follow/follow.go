@@ -6,10 +6,13 @@
 //
 // A registry is one JSON object: {"version":1,"files":[...]}, each
 // element carrying path, inode, size, offset, next_segment, and
-// message_ids. The path is the entry's identity. Inode, size, and
-// offset describe the file as it was last observed locally:
-// they steer reading and never leave it. Directories are 0700 and
-// files 0600: the paths alone reveal what the user works on.
+// message_ids, and optionally read_at and subpath. The path is the
+// entry's identity. Inode, size, and offset describe the file as it
+// was last observed locally: they steer reading and never leave it.
+// An optional "gaps" object records what the one-time search for the
+// project's earlier files could not cover, so a later reading of the
+// registry can say so without searching again. Directories are 0700
+// and files 0600: the paths alone reveal what the user works on.
 //
 // Reading is a function of one registered entry and the file on disk:
 // Read consumes the complete lines a file gained since its cursor and
@@ -71,11 +74,59 @@ type File struct {
 	// metadata file has no messages: there it holds the record id of
 	// the last snapshot taken.
 	MessageIDs []string `json:"message_ids"`
+	// ReadAt is when the file was last read, in RFC 3339, and absent
+	// for a file never read. The reader writes it with the cursor; the
+	// registry only keeps it.
+	ReadAt string `json:"read_at,omitempty"`
+}
+
+// MainSession reports whether f is a session's own file rather than
+// an agent file kept beside it under subagents/. Counting sessions
+// means counting these.
+func (f File) MainSession() bool {
+	_, file := identify(f.Path)
+	return file == "" && strings.HasSuffix(f.Path, linesExt)
+}
+
+// Ambiguity is a directory whose session files were not registered
+// because Claude Code stores them under a name that at least one
+// other real directory shares, so they cannot be attributed to one
+// working directory.
+type Ambiguity struct {
+	// Dir is the directory under the project root that was skipped.
+	Dir string `json:"dir"`
+	// Name is the stored name Dir shares with the other directories.
+	Name string `json:"name"`
+	// Matches lists every real directory that stores under Name,
+	// sorted. Dir is among them when it was found.
+	Matches []string `json:"matches"`
+}
+
+// Gaps is what the search for a project's earlier session files
+// could not cover. It is recorded with the registry so the outcome
+// of the one search that ran can be shown afterwards without running
+// another.
+type Gaps struct {
+	// Truncated reports that the project's directory tree was larger
+	// than the search visits, so directories past its limit were not
+	// looked at.
+	Truncated bool `json:"truncated,omitempty"`
+	// Ambiguous lists the directories skipped for a shared name.
+	Ambiguous []Ambiguity `json:"ambiguous,omitempty"`
+	// Unreadable lists the directories whose entries could not be
+	// listed; directories below them were not looked at.
+	Unreadable []string `json:"unreadable,omitempty"`
+}
+
+// Any reports whether anything was left uncovered.
+func (g Gaps) Any() bool {
+	return g.Truncated || len(g.Ambiguous) > 0 || len(g.Unreadable) > 0
 }
 
 type registry struct {
 	Version int    `json:"version"`
 	Files   []File `json:"files"`
+	Gaps    *Gaps  `json:"gaps,omitempty"`
 }
 
 // Register adds path to projectIDHash's registry with a zero cursor and
@@ -110,6 +161,44 @@ func (r *Registry) RegisterUnder(projectIDHash, path, subpath string) error {
 		}
 		return encode(reg)
 	})
+}
+
+// SetGaps records what the latest search for projectIDHash's earlier
+// files left uncovered, replacing what an earlier search recorded. A
+// project with no registry gets one: a search that found nothing and
+// covered nothing is still an outcome to keep.
+func (r *Registry) SetGaps(projectIDHash string, gaps Gaps) error {
+	if err := checkProjectIDHash(projectIDHash); err != nil {
+		return err
+	}
+	if err := userdirs.EnsureOwnerDir(r.dir); err != nil {
+		return err
+	}
+	return fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
+		reg, err := parse(old)
+		if err != nil {
+			return nil, err
+		}
+		reg.Gaps = nil
+		if gaps.Any() {
+			reg.Gaps = &gaps
+		}
+		return encode(reg)
+	})
+}
+
+// Gaps reports what the latest search for projectIDHash's earlier
+// files left uncovered. A project with no registry, or one whose
+// search covered everything, has no gaps.
+func (r *Registry) Gaps(projectIDHash string) (Gaps, error) {
+	reg, err := r.read(projectIDHash)
+	if err != nil {
+		return Gaps{}, err
+	}
+	if reg.Gaps == nil {
+		return Gaps{}, nil
+	}
+	return *reg.Gaps, nil
 }
 
 // Registered reports whether path is in projectIDHash's registry.

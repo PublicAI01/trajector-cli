@@ -3,10 +3,12 @@ package report
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 )
@@ -36,13 +38,14 @@ func Dashboard(w io.Writer, d Diagnosis) {
 
 	fmt.Fprintf(w, "\nProject %s\n", st.Root)
 	switch {
-	case st.Consistent():
-		fmt.Fprintln(w, "  Contributing; recording is on for this project.")
-		if st.Upstream != capture.Anthropic.OfficialUpstream {
-			fmt.Fprintf(w, "  Upstream: %s (third-party origin).\n", st.Upstream)
+	case st.InjectionAgrees():
+		if st.PauseReason != "" {
+			fmt.Fprintln(w, "  Contributing; recording is paused for now (see Device above).")
+		} else {
+			fmt.Fprintln(w, "  Contributing; recording is on for this project.")
 		}
-		if st.UpstreamMoved.Happened() {
-			fmt.Fprintf(w, "  The upstream moved from %s at %s (base-URL configuration change).\n", st.UpstreamMoved.From, st.UpstreamMoved.At)
+		for _, line := range projectLines(d) {
+			fmt.Fprintf(w, "  %s\n", line)
 		}
 		for _, line := range optionalSettingLines(d.OptionalSettings) {
 			fmt.Fprintf(w, "  %s\n", line)
@@ -76,7 +79,11 @@ func Dashboard(w io.Writer, d Diagnosis) {
 			fmt.Fprintf(w, "  %s\n", remedy)
 		}
 	default:
-		fmt.Fprintln(w, "  Not running; it starts on demand with the next session.")
+		if d.ProxyIdleBetweenSessions {
+			fmt.Fprintln(w, "  Not running; on this device it runs only while a session is open, because every enabled project records without it.")
+		} else {
+			fmt.Fprintln(w, "  Not running; it starts on demand with the next session.")
+		}
 	}
 
 	fmt.Fprintln(w, "\nSpool")
@@ -106,6 +113,9 @@ func Dashboard(w io.Writer, d Diagnosis) {
 	if d.Uploads.LastError != "" {
 		fmt.Fprintf(w, "  Last error: %s (%s).\n", d.Uploads.LastError, d.Uploads.LastErrorAt.UTC().Format(time.RFC3339))
 	}
+	if d.Spool.OpenErr == nil {
+		fmt.Fprintf(w, "  %s\n", recordsWaitingLine(d.Spool))
+	}
 	switch {
 	case d.RejectedErr != nil:
 		fmt.Fprintf(w, "  WARNING: %s.\n", rejectedUnreadableHeadline(d))
@@ -134,6 +144,131 @@ func Dashboard(w io.Writer, d Diagnosis) {
 		fmt.Fprintln(w, "\nService")
 		fmt.Fprintf(w, "  Notice from the service: %s\n", d.Handshake.Notice)
 	}
+}
+
+// projectLines follows the contributing line with everything else
+// status states about an enabled project, one fact per line: the
+// shape it records in and what that shape costs, the static reading
+// of whether its hooks load, a hook doctor still has to add, and what
+// the registry says about its session files.
+func projectLines(d Diagnosis) []string {
+	st := d.Project
+	var lines []string
+	if st.WindowsSideClaude {
+		lines = append(lines, "WARNING: "+windowsSideClaudeFact+". Run `trajector doctor`.")
+	}
+	if st.NoProxy {
+		lines = append(lines, NoProxyShapeFact)
+	} else {
+		// The upstream is where the proxy forwards to; a project whose
+		// traffic never reaches the proxy has none to speak of.
+		if st.Upstream != capture.Anthropic.OfficialUpstream {
+			lines = append(lines, fmt.Sprintf("Upstream: %s (third-party origin).", st.Upstream))
+		}
+		if st.UpstreamMoved.Happened() {
+			lines = append(lines, fmt.Sprintf("The upstream moved from %s at %s (base-URL configuration change).", st.UpstreamMoved.From, st.UpstreamMoved.At))
+		}
+		lines = append(lines, RemoteControlNotice)
+	}
+	lines = append(lines, hookJudgementLines(d)...)
+	if !st.SessionEndInstalled {
+		lines = append(lines, sessionEndMissingLine(st.SettingsPath()))
+	}
+	return append(lines, sessionFileLines(d.SessionFiles)...)
+}
+
+// hookJudgementLines states the static reading of whether the hooks
+// load, and when they will not, what that leaves recording: in the
+// shape with a base URL the proxy alone, in the shape without one
+// nothing, with the one change that records again.
+func hookJudgementLines(d Diagnosis) []string {
+	p := d.HookPolicy
+	if p == nil {
+		return nil
+	}
+	if p.Runs {
+		return []string{HooksWillLoad}
+	}
+	lines := []string{fmt.Sprintf("%s (%s)", HooksWillNotLoad, p.Reason)}
+	if d.Project.NoProxy {
+		return append(lines, NothingRecordedNow, noProxyWayOut)
+	}
+	return append(lines, ProxyHalfOnly)
+}
+
+// sessionEndMissingLine names the one hook an injection made before
+// that hook existed lacks, and the command that adds it.
+func sessionEndMissingLine(settingsPath string) string {
+	return fmt.Sprintf("The session-end hook is missing from %s; run `trajector doctor` to add it.", settingsPath)
+}
+
+// sessionFileLines is the registry's account of the project's session
+// files: how many sessions, when one was last read, how much is not
+// read yet, then what the search for earlier files could not cover,
+// and the standing disclosure of what it cannot find by design. No
+// line names a session or a session file.
+func sessionFileLines(s SessionFilesState) []string {
+	if s.Err != nil {
+		return []string{fmt.Sprintf("WARNING: the session file registry could not be read: %v. Run `trajector doctor`.", s.Err)}
+	}
+	var lines []string
+	if s.Sessions == 0 {
+		lines = append(lines, "Session files: none registered yet.")
+	} else {
+		lastRead := "never"
+		if !s.LastReadAt.IsZero() {
+			lastRead = s.LastReadAt.UTC().Format(time.RFC3339)
+		}
+		lines = append(lines, fmt.Sprintf("Session files: %d session(s) registered; last read %s; %s not read yet.",
+			s.Sessions, lastRead, platform.HumanBytes(s.BytesBehind)))
+	}
+	lines = append(lines, gapLines(s.Gaps)...)
+	return append(lines, spellingVariantsNotice)
+}
+
+// gapLines states what the search for a project's earlier session
+// files could not cover, one directory per line with its reason.
+func gapLines(g follow.Gaps) []string {
+	var lines []string
+	if g.Truncated {
+		lines = append(lines, TreeLimitExceeded())
+	}
+	for _, a := range g.Ambiguous {
+		lines = append(lines, ambiguityLine(a))
+	}
+	for _, dir := range g.Unreadable {
+		lines = append(lines, fmt.Sprintf("Not looked at: %s could not be listed, nor anything below it.", dir))
+	}
+	return lines
+}
+
+// ambiguityLine says which directory is not collected and why: the
+// other real directories Claude Code stores under the same name.
+func ambiguityLine(a follow.Ambiguity) string {
+	others := make([]string, 0, len(a.Matches))
+	for _, m := range a.Matches {
+		if m != a.Dir {
+			others = append(others, m)
+		}
+	}
+	return fmt.Sprintf("Not collected: %s stores its session files under the same name as %s, and they cannot be told apart.",
+		a.Dir, strings.Join(others, ", "))
+}
+
+// recordsWaitingLine is how far behind uploading the session records
+// are: how many wait in the spool, and how old the oldest is. On a
+// device where the resident process lives only while a session is
+// open, the wait ends with the next session, not on a schedule.
+func recordsWaitingLine(s SpoolState) string {
+	segments, snapshots := s.recordsWaiting()
+	if segments+snapshots == 0 {
+		return "Session records waiting to upload: none."
+	}
+	line := fmt.Sprintf("Session records waiting to upload: %d segment(s), %d snapshot(s)", segments, snapshots)
+	if !s.OldestRecord.IsZero() {
+		line += fmt.Sprintf("; the oldest is from %s", s.OldestRecord.UTC().Format(time.RFC3339))
+	}
+	return line + "."
 }
 
 // optionalSettingLines closes the Project section with the optional

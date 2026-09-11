@@ -398,3 +398,24 @@ func TestRegister(t *testing.T) {
 		t.Error("Register with an invalid project id returned no error")
 	}
 }
+
+func TestRegister_RecordsWhatTheWalkCouldNotCover(t *testing.T) {
+	r := follow.Open(t.TempDir())
+	res := Result{
+		Truncated:  true,
+		Ambiguous:  []Ambiguity{{Dir: "/p/a-b", Name: "-p-a-b", Matches: []string{"/p/a-b", "/p/a_b"}}},
+		Unreadable: []string{"/p/locked"},
+	}
+
+	if err := Register(r, "hash", res); err != nil {
+		t.Fatal(err)
+	}
+
+	gaps, err := r.Gaps("hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gaps, res.Gaps()) {
+		t.Errorf("Gaps = %+v, want %+v", gaps, res.Gaps())
+	}
+}

@@ -66,6 +66,12 @@ type ProjectStatus struct {
 
 	// PauseReason is the device-wide pause, empty while recording.
 	PauseReason routing.PauseReason
+
+	// WindowsSideClaude reports that the project lies on a Windows
+	// drive mounted into WSL. Claude Code opens such a project from
+	// the Windows side, where its hooks run Windows commands that
+	// cannot reach this trajector, so nothing is recorded from it.
+	WindowsSideClaude bool
 }
 
 // Injected reports whether an injection of trajector's, in either
@@ -78,7 +84,16 @@ func (s ProjectStatus) Injected() bool { return s.InjectedBaseURL != "" || s.NoP
 // the settings inject. status presents it as contributing; doctor
 // treats anything else as something to reconcile or report.
 func (s ProjectStatus) Consistent() bool {
-	if !s.Enabled || !s.HookInstalled || !s.SessionEndInstalled {
+	return s.InjectionAgrees() && s.SessionEndInstalled
+}
+
+// InjectionAgrees reports that the injection stands in the shape the
+// grant records, whether or not the session-end hook is in place: the
+// project records, and the one thing that may still be missing is
+// what doctor completes. status presents such a project as
+// contributing and names the missing hook beside it.
+func (s ProjectStatus) InjectionAgrees() bool {
+	if !s.Enabled || !s.HookInstalled {
 		return false
 	}
 	if s.GrantNoProxy {

@@ -1,8 +1,11 @@
 package lifecycle
 
 import (
+	"time"
+
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -22,7 +25,14 @@ func (m *Machine) Diagnose(dir string) (report.Diagnosis, error) {
 	d.Project = st
 	if st.Enabled {
 		d.OptionalSettings = m.optionalSettingStatuses(st)
+		// Read fresh every time: the configuration it reads is the
+		// user's or their organization's and changes without notice,
+		// and a cached reading would report a state that no longer is.
+		policy := m.hookPolicy(st.Root)
+		d.HookPolicy = &policy
+		d.SessionFiles = m.sessionFilesState(st.Hash)
 	}
+	d.ProxyIdleBetweenSessions = m.proxyIdleBetweenSessions()
 
 	// Observe, never Settled: only callers that act on the verdict pay
 	// to wait out a sibling's startup. A diagnosis reports the port as
@@ -50,6 +60,7 @@ func (m *Machine) Diagnose(dir string) (report.Diagnosis, error) {
 			WritableErr: sp.Writable(),
 			Days:        days,
 		}
+		d.Spool.OldestRecord, _ = sp.OldestRecord()
 	}
 
 	d.Uploads = upload.LoadState(m.deps.Layout.UploadDir())
@@ -106,6 +117,8 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 	shape, _ := claudesettings.InjectionShape(settings)
 	st.NoProxy = shape == claudesettings.WithoutProxy
 
+	st.WindowsSideClaude = claudesettings.WindowsSideClaude(root, "")
+
 	if st.AgreementVersion, _, err = m.consent.AcceptedVersion(); err != nil {
 		return st, err
 	}
@@ -117,4 +130,56 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 		st.ConsentState = state
 	}
 	return st, nil
+}
+
+// sessionFilesState reads the project's registry into counts and
+// sizes: it stats the registered files to measure what is not read
+// yet and opens none of them. A registry that cannot be read is
+// reported as such, never as an empty one.
+func (m *Machine) sessionFilesState(projectIDHash string) report.SessionFilesState {
+	registry := follow.Open(m.deps.Layout.FollowDir())
+	files, err := registry.Files(projectIDHash)
+	if err != nil {
+		return report.SessionFilesState{Err: err}
+	}
+	gaps, err := registry.Gaps(projectIDHash)
+	if err != nil {
+		return report.SessionFilesState{Err: err}
+	}
+	state := report.SessionFilesState{Gaps: gaps}
+	for _, f := range files {
+		if f.MainSession() {
+			state.Sessions++
+		}
+		if at, err := time.Parse(time.RFC3339, f.ReadAt); err == nil && at.After(state.LastReadAt) {
+			state.LastReadAt = at
+		}
+		if st, err := follow.StatFile(f.Path); err == nil {
+			state.BytesBehind += f.Behind(st)
+		}
+	}
+	return state
+}
+
+// proxyIdleBetweenSessions reports that every enabled project on this
+// device records without the proxy. A routing table that cannot be
+// read answers false: an unreadable table is its own finding, and a
+// surface that read it as "nothing uses the proxy" would hide one.
+func (m *Machine) proxyIdleBetweenSessions() bool {
+	grants, err := m.routes.All()
+	if err != nil {
+		return false
+	}
+	var projects []report.ProjectStatus
+	for _, g := range grants {
+		if g.Revoked {
+			continue
+		}
+		st, err := m.Project(g.RootPath)
+		if err != nil {
+			return false
+		}
+		projects = append(projects, st)
+	}
+	return allProjectsWithoutProxy(projects)
 }

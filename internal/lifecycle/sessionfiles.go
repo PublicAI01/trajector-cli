@@ -177,6 +177,7 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) error {
 		return nil
 	}
 	now := m.deps.Now().UTC().Format(time.RFC3339Nano)
+	readAt := m.deps.Now().UTC().Format(time.RFC3339)
 
 	for _, f := range files {
 		capture := envelope.TranscriptCapture{
@@ -208,6 +209,9 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) error {
 			_ = registry.Remove(st.Hash, f.Path)
 			continue
 		}
+		// The cursor carries when it was last moved, so status can say
+		// when a file was last read without a clock of its own.
+		res.File.ReadAt = readAt
 		_ = registry.Update(st.Hash, res.File)
 	}
 	return nil

@@ -2,9 +2,12 @@ package lifecycle
 
 import (
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
+	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
@@ -39,6 +42,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 		return 0, err
 	}
 	m.doctorDiscoveryHint(f, d.TokenStore)
+	m.doctorSessionFiles(f, d)
 	report.DoctorData(f, d)
 	report.DoctorEnvironment(f)
 	m.doctorSelfcheck(f, d)
@@ -84,6 +88,13 @@ func (m *Machine) doctorProxy(f *report.Findings, d report.Diagnosis) {
 	default:
 		if !d.Project.Enabled {
 			f.OK("proxy not running; it starts on demand with the next session")
+			return
+		}
+		if d.ProxyIdleBetweenSessions {
+			// Nothing to start: the resident process comes up with the
+			// next session, and a device where no project routes through
+			// it has no traffic waiting on it in between.
+			f.OK("proxy not running; on this device it runs only while a session is open, because every enabled project records without it")
 			return
 		}
 		if err := m.proxy.Ensure(); err != nil {
@@ -224,4 +235,47 @@ func (m *Machine) doctorSelfcheck(f *report.Findings, d report.Diagnosis) {
 		return
 	}
 	f.OK("live proxy confirms this project routes and records")
+}
+
+// doctorSessionFiles looks for the current project's session files on
+// disk and holds them against the registry, then hands what it found
+// to the renderer. It registers nothing: registering is enable's and
+// the session hooks' alone, and a doctor run must leave the state it
+// diagnosed as it found it. A project Claude Code opens from the
+// Windows side is not searched: its session files are on that side,
+// where this process cannot reach, and the diagnosis already says so.
+func (m *Machine) doctorSessionFiles(f *report.Findings, d report.Diagnosis) {
+	st := d.Project
+	if !st.Enabled {
+		return
+	}
+	if st.WindowsSideClaude || d.SessionFiles.Err != nil {
+		report.DoctorProject(f, d, report.Discovery{})
+		return
+	}
+	report.DoctorProject(f, d, m.discoverSessionFiles(st))
+}
+
+// discoverSessionFiles walks the project's tree once and counts the
+// sessions found there that the registry does not hold.
+func (m *Machine) discoverSessionFiles(st report.ProjectStatus) report.Discovery {
+	found, err := discover.Walk(st.Root, filepath.Dir(m.sessionFilesRoot()))
+	if err != nil {
+		return report.Discovery{Err: err}
+	}
+	files, err := follow.Open(m.deps.Layout.FollowDir()).Files(st.Hash)
+	if err != nil {
+		return report.Discovery{Err: err}
+	}
+	registered := make(map[string]bool, len(files))
+	for _, f := range files {
+		registered[f.Path] = true
+	}
+	disc := report.Discovery{Gaps: found.Gaps()}
+	for _, path := range found.Files {
+		if (follow.File{Path: path}).MainSession() && !registered[path] {
+			disc.Unregistered++
+		}
+	}
+	return disc
 }

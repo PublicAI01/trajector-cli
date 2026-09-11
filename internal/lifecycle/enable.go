@@ -31,28 +31,11 @@ const (
 	// every project on this device, not only the one being enabled.
 	deviceWideTerms = "You are accepting these terms for this device, not only for this project. Any project you enable on this device is covered."
 
-	// hooksWillNotLoad opens the report of a static reading of Claude
-	// Code's configuration that says the injected hooks will not run.
-	// The reading is hedged because it is static: a setting given on
-	// the command line or in a process environment is invisible to it.
-	hooksWillNotLoad = "Judged from configuration readable on this machine, Claude Code will not load trajector's hooks in this project"
-	// proxyHalfOnly is the consequence in the shape with a base URL: the
-	// proxy records, the session files are not read.
-	proxyHalfOnly = "Only the proxy records this project for now; its session files are not read"
 	// noProxyRecordsNothing is the consequence in the shape without a
 	// base URL, where the hooks are the only source. Enabling is not
 	// refused — the setting is the user's, or their organization's, to
 	// change — but it is not done silently either.
 	noProxyRecordsNothing = "Judged from configuration readable on this machine, Claude Code will not run trajector's hooks here, so --no-proxy would record nothing from this project. Either accept that nothing is recorded for now, or run trajector enable without --no-proxy (the proxy records; /remote-control inside this project becomes unavailable, claude remote-control still works)."
-
-	// remoteControlNotice is said once, when a project is enabled in
-	// the shape with a base URL: that shape makes /remote-control
-	// unavailable inside the project, and both ways around it are
-	// named beside the fact.
-	remoteControlNotice = "Remote Control: inside this project, /remote-control will not be available. To use it, either start sessions with claude remote-control (both sources are still recorded), or run trajector enable --no-proxy to record only the session files (Remote Control stays available; records from one source may be rewarded differently)."
-	// noProxyShapeFact is said once, when a project is enabled in the
-	// shape without a base URL.
-	noProxyShapeFact = "This project records from its session files only, so Remote Control stays available."
 
 	contributesNow = "This project now contributes data. Run `trajector disable` here to stop."
 )
@@ -303,10 +286,10 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 	}
 	if noProxy {
 		fmt.Fprintln(io.Out, "Self-check passed: the resident process is up.")
-		fmt.Fprintln(io.Out, noProxyShapeFact)
+		fmt.Fprintln(io.Out, report.NoProxyShapeFact)
 	} else {
 		fmt.Fprintln(io.Out, "Self-check passed: routing and recording verified end to end.")
-		fmt.Fprintln(io.Out, remoteControlNotice)
+		fmt.Fprintln(io.Out, report.RemoteControlNotice)
 	}
 	fmt.Fprintln(io.Out, contributesNow)
 	return nil
@@ -355,9 +338,9 @@ func (m *Machine) confirmHooksWillRun(io IO, root string, noProxy bool) (bool, e
 	if policy.Runs {
 		return true, nil
 	}
-	fmt.Fprintf(io.Out, "%s (%s)\n", hooksWillNotLoad, policy.Reason)
+	fmt.Fprintf(io.Out, "%s (%s)\n", report.HooksWillNotLoad, policy.Reason)
 	if !noProxy {
-		fmt.Fprintln(io.Out, proxyHalfOnly)
+		fmt.Fprintln(io.Out, report.ProxyHalfOnly)
 		return true, nil
 	}
 	fmt.Fprintln(io.Out, noProxyRecordsNothing)
@@ -383,7 +366,7 @@ func reportEarlierSessions(io IO, found discover.Result) {
 		fmt.Fprintf(io.Out, "%d earlier session record(s) will be collected once; the oldest is from %s.\n", found.Sessions, oldest.Format("2006-01-02"))
 	}
 	if found.Truncated {
-		fmt.Fprintf(io.Out, "本项目目录树超过 %d,这个数字不完整\n", discover.Limit)
+		fmt.Fprintln(io.Out, report.TreeLimitExceeded())
 	}
 }
 

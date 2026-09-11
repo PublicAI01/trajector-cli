@@ -38,7 +38,7 @@ func TestRequeueMovesABatchBackIntoTheSpool(t *testing.T) {
 		t.Error("rejected batch directory still present after requeue")
 	}
 	out := e.stdout.String()
-	for _, want := range []string{"2 rawcall(s)", "b-poison", "413 Request Entity Too Large", "`trajector upload --force`"} {
+	for _, want := range []string{"2 record(s)", "b-poison", "413 Request Entity Too Large", "`trajector upload --force`"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output = %q, want it to contain %q", out, want)
 		}

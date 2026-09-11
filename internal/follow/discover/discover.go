@@ -50,16 +50,9 @@ const projectsDir = "projects"
 
 // Ambiguity is a directory whose encoded name is shared with at least
 // one other real directory. Its sessions cannot be attributed to one
-// working directory, so none of them are collected.
-type Ambiguity struct {
-	// Dir is the directory under the walked root that was skipped.
-	Dir string
-	// Name is the encoded name Dir shares with the other directories.
-	Name string
-	// Matches lists every real directory on this file system that
-	// encodes to Name, sorted. Dir is among them when it was found.
-	Matches []string
-}
+// working directory, so none of them are collected. It is the
+// registry's own type: a walk's outcome is recorded there.
+type Ambiguity = follow.Ambiguity
 
 // Result is what one walk found.
 type Result struct {
@@ -244,12 +237,19 @@ func collectAgents(dir string, res *Result) error {
 	return nil
 }
 
-// Register puts every file Walk found into the project's registry.
+// Register puts every file Walk found into the project's registry,
+// and records with it what the walk could not cover, so the registry
+// can answer for the walk afterwards.
 func Register(r *follow.Registry, projectIDHash string, res Result) error {
 	for _, f := range res.Files {
 		if err := r.Register(projectIDHash, f); err != nil {
 			return err
 		}
 	}
-	return nil
+	return r.SetGaps(projectIDHash, res.Gaps())
+}
+
+// Gaps is what the walk could not cover, in the registry's own terms.
+func (r Result) Gaps() follow.Gaps {
+	return follow.Gaps{Truncated: r.Truncated, Ambiguous: r.Ambiguous, Unreadable: r.Unreadable}
 }
