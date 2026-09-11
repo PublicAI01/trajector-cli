@@ -13,19 +13,19 @@ import (
 // configuration on this machine and configuration can be overridden
 // from places a static reading cannot see.
 const (
-	// HooksWillLoad and HooksWillNotLoad open the report of a static
+	// hooksWillLoad and HooksWillNotLoad open the report of a static
 	// reading of Claude Code's configuration. The reason a reading
 	// found follows HooksWillNotLoad in parentheses.
-	HooksWillLoad    = "Judged from configuration readable on this machine, Claude Code will load trajector's hooks in this project"
+	hooksWillLoad    = "Judged from configuration readable on this machine, Claude Code will load trajector's hooks in this project"
 	HooksWillNotLoad = "Judged from configuration readable on this machine, Claude Code will not load trajector's hooks in this project"
 	// ProxyHalfOnly is the consequence of hooks that will not load in
 	// the shape with a base URL: the proxy records, the session files
 	// are not read.
 	ProxyHalfOnly = "Only the proxy records this project for now; its session files are not read"
-	// NothingRecordedNow is the consequence in the shape without a
+	// nothingRecordedNow is the consequence in the shape without a
 	// base URL, where the hooks are the only source.
-	NothingRecordedNow = "Nothing is recorded from this project for now"
-	// noProxyWayOut follows NothingRecordedNow with the one change
+	nothingRecordedNow = "Nothing is recorded from this project for now"
+	// noProxyWayOut follows nothingRecordedNow with the one change
 	// that records again.
 	noProxyWayOut = "Run trajector enable without --no-proxy to record through the proxy instead (/remote-control inside this project becomes unavailable; claude remote-control still works)."
 
@@ -37,12 +37,12 @@ const (
 	// base URL.
 	NoProxyShapeFact = "This project records from its session files only, so Remote Control stays available."
 
-	// WorkspaceNotTrusted is doctor's answer when session files of an
+	// workspaceNotTrusted is doctor's answer when session files of an
 	// enabled project exist that no hook of trajector's reported, and
 	// nothing readable on this machine keeps the hooks from loading:
 	// Claude Code runs a project's hooks only once the workspace is
 	// trusted, and that trust is given in a dialog no file records.
-	WorkspaceNotTrusted = "This workspace is not trusted yet; accept the trust dialog in Claude Code."
+	workspaceNotTrusted = "This workspace is not trusted yet; accept the trust dialog in Claude Code."
 
 	// spellingVariantsNotice is the standing disclosure of what the
 	// search for a project's session files cannot find by design.

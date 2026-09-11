@@ -275,7 +275,7 @@ func (m *Machine) purgeProjectRecords(projectIDHash string, w *withdrawal) error
 
 func reportPurge(io IO, w withdrawal) {
 	if deleted := w.spooled + w.rejected; deleted > 0 {
-		fmt.Fprintf(io.Out, "Deleted %d unuploaded rawcall(s) for this project (%d from the spool, %d from rejected batches).\n",
+		fmt.Fprintf(io.Out, "Deleted %d unuploaded record(s) for this project (%d from the spool, %d from rejected batches).\n",
 			deleted, w.spooled, w.rejected)
 	}
 }

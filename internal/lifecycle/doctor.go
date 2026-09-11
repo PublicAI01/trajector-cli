@@ -2,7 +2,6 @@ package lifecycle
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -294,7 +293,7 @@ func (m *Machine) doctorSessionFiles(f *report.Findings, d report.Diagnosis) {
 // discoverSessionFiles walks the project's tree once and counts the
 // sessions found there that the registry does not hold.
 func (m *Machine) discoverSessionFiles(st report.ProjectStatus) report.Discovery {
-	found, err := discover.Walk(st.Root, filepath.Dir(m.sessionFilesRoot()))
+	found, err := discover.Walk(st.Root, m.claudeConfigDir())
 	if err != nil {
 		return report.Discovery{Err: err}
 	}

@@ -1003,8 +1003,8 @@ func TestInjectProjectWithoutBaseURLRefusesOverAnInjectedBaseURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := InjectProject(path, "", testHooks); !errors.Is(err, ErrBaseURLInjected) {
-		t.Fatalf("InjectProject without a base URL over an injected one = %v, want ErrBaseURLInjected", err)
+	if err := InjectProject(path, "", testHooks); !errors.Is(err, errBaseURLInjected) {
+		t.Fatalf("InjectProject without a base URL over an injected one = %v, want errBaseURLInjected", err)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(after, before) {

@@ -378,7 +378,7 @@ func TestDisableSplitsTheDeletionCountBySource(t *testing.T) {
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if out := e.stdout.String(); !strings.Contains(out, "Deleted 2 unuploaded rawcall(s) for this project (1 from the spool, 1 from rejected batches).") {
+	if out := e.stdout.String(); !strings.Contains(out, "Deleted 2 unuploaded record(s) for this project (1 from the spool, 1 from rejected batches).") {
 		t.Errorf("stdout = %q, want the deletion count split by source", out)
 	}
 }

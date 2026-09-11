@@ -27,7 +27,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 	"unicode/utf16"
 
@@ -44,9 +43,10 @@ const Limit = 50_000
 // nameLimit is the longest name Claude Code writes unhashed.
 const nameLimit = 200
 
-// projectsDir is the directory under configDir that holds one
-// directory per working directory Claude Code has run in.
-const projectsDir = "projects"
+// ProjectsDir is the directory under Claude Code's configuration
+// directory that holds one directory per working directory Claude Code
+// has run in.
+const ProjectsDir = "projects"
 
 // Ambiguity is a directory whose encoded name is shared with at least
 // one other real directory. Its sessions cannot be attributed to one
@@ -65,8 +65,8 @@ type Result struct {
 	// Oldest is the modification time of the oldest main session file,
 	// or the zero time when none was found.
 	Oldest time.Time
-	// Visited counts the directories the walk looked at.
-	Visited int
+	// visited counts the directories the walk looked at.
+	visited int
 	// Truncated reports that the tree holds more than Limit directories
 	// and the walk stopped at Limit. Everything found before that point
 	// is kept.
@@ -149,7 +149,7 @@ func walk(root, configDir string, limit int) (Result, error) {
 		return Result{}, fmt.Errorf("discover: config dir %q is not absolute", configDir)
 	}
 	root = filepath.Clean(root)
-	projects := filepath.Join(configDir, projectsDir)
+	projects := filepath.Join(configDir, ProjectsDir)
 
 	var res Result
 	err := filepath.WalkDir(root, func(dir string, d fs.DirEntry, err error) error {
@@ -166,11 +166,11 @@ func walk(root, configDir string, limit int) (Result, error) {
 		if dir == projects {
 			return filepath.SkipDir
 		}
-		if res.Visited == limit {
+		if res.visited == limit {
 			res.Truncated = true
 			return filepath.SkipAll
 		}
-		res.Visited++
+		res.visited++
 
 		name, hashed := encode(dir)
 		hit := filepath.Join(projects, name)
@@ -199,7 +199,7 @@ func collect(hit string, res *Result) error {
 	for _, e := range entries {
 		p := filepath.Join(hit, e.Name())
 		switch {
-		case e.Type().IsRegular() && strings.HasSuffix(e.Name(), ".jsonl"):
+		case e.Type().IsRegular() && follow.IsSessionFile(e.Name()):
 			info, err := e.Info()
 			if err != nil {
 				return err
@@ -210,7 +210,7 @@ func collect(hit string, res *Result) error {
 				res.Oldest = info.ModTime()
 			}
 		case e.IsDir():
-			if err := collectAgents(filepath.Join(p, "subagents"), res); err != nil {
+			if err := collectAgents(filepath.Join(p, follow.SubagentsDir), res); err != nil {
 				return err
 			}
 		}
@@ -227,10 +227,7 @@ func collectAgents(dir string, res *Result) error {
 		return err
 	}
 	for _, e := range entries {
-		if !e.Type().IsRegular() || !strings.HasPrefix(e.Name(), "agent-") {
-			continue
-		}
-		if strings.HasSuffix(e.Name(), ".jsonl") || strings.HasSuffix(e.Name(), ".meta.json") {
+		if e.Type().IsRegular() && follow.IsAgentFile(e.Name()) {
 			res.Files = append(res.Files, filepath.Join(dir, e.Name()))
 		}
 	}

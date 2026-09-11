@@ -214,3 +214,17 @@ func TestScan_RefusesALineThatIsNotAJSONObject(t *testing.T) {
 		}
 	}
 }
+
+func TestScan_ResponseFieldProbeReportsNothingWhileItsListIsEmpty(t *testing.T) {
+	line := []byte(`{"type":"assistant","uuid":"u1","message":{"id":"msg_1","role":"assistant","content":[]}}` + "\n")
+	r, err := drift.Scan(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.AssistantLines != 1 || r.AssistantLinesMissingResponseFields != 0 {
+		t.Errorf("assistant lines = %d, missing response fields = %d; want 1 and 0 while no field is required", r.AssistantLines, r.AssistantLinesMissingResponseFields)
+	}
+	if r.Alerts() {
+		t.Error("Alerts() = true for a bare assistant line, want false while no response field is required")
+	}
+}

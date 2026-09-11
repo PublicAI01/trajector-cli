@@ -61,6 +61,11 @@ func New(t *testing.T) *Env {
 
 	userdirs.Isolate(t.Setenv, home)
 	t.Setenv("ANTHROPIC_BASE_URL", "")
+	// Claude Code's own configuration is read by the CLI too: its session
+	// files root and the managed settings that decide whether hooks load.
+	// Both point into this test's tree, never at the developer's.
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "claude"))
+	t.Setenv("CLAUDE_CODE_MANAGED_SETTINGS_PATH", filepath.Join(home, "managed"))
 	// The file token backend keeps tests away from the developer's OS
 	// keyring. The CLI always talks to this test's own fake service: a
 	// call a test did not stub fails loudly and is recorded, instead of

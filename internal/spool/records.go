@@ -123,7 +123,7 @@ func (s *Spool) writeRecord(id, kind, sessionID string, capture envelope.Transcr
 		return ErrQuotaExceeded
 	}
 
-	dayDir := filepath.Join(s.dir, recordsDirName, at.UTC().Format("20060102"))
+	dayDir := filepath.Join(s.dir, recordsDirName, at.UTC().Format(dayLayout))
 	if err := os.MkdirAll(dayDir, 0o700); err != nil {
 		return err
 	}

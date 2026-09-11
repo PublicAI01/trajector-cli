@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -159,7 +158,7 @@ func (m *Machine) enableProject(projectDir string, noProxy bool, io IO) error {
 	// The session files this project already has are counted and named
 	// here, before anything is written: the count is part of what the
 	// user is enabling, and reading them is not asked about separately.
-	earlier, err := discover.Walk(st.Root, filepath.Dir(m.sessionFilesRoot()))
+	earlier, err := discover.Walk(st.Root, m.claudeConfigDir())
 	if err != nil {
 		return fmt.Errorf("looking for this project's session files: %w", err)
 	}

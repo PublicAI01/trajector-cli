@@ -89,8 +89,8 @@ and never evicts.
 The uploader lives inside the resident process, which a session hook
 brings up under either injection shape — the one that routes the
 project's traffic through the proxy and the one that routes none. Where
-it routes none it forwards nothing; it is only where read records land
-and the one process that flushes them. On thresholds (10 MiB or 24
+it routes none it forwards nothing; it is then only the one process that
+flushes what the readers stored. On thresholds (10 MiB or 24
 hours, adjustable by the service handshake), records are redacted (secret masking that preserves
 JSON structure, ordering, tool-call pairing, and signatures), packed with
 same-session records adjacent for compression, zstd-compressed, and uploaded

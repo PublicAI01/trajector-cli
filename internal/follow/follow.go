@@ -316,16 +316,6 @@ func (r *Registry) Signals(projectIDHash string) (Signals, error) {
 	return *reg.Signals, nil
 }
 
-// Registered reports whether path is in projectIDHash's registry.
-func (r *Registry) Registered(projectIDHash, path string) (bool, error) {
-	reg, err := r.read(projectIDHash)
-	if err != nil {
-		return false, err
-	}
-	_, ok := find(reg.Files, path)
-	return ok, nil
-}
-
 // Files lists projectIDHash's registered files, ordered by path. A
 // project with no registry has no files.
 func (r *Registry) Files(projectIDHash string) ([]File, error) {

@@ -84,15 +84,15 @@ func (s ProjectStatus) Injected() bool { return s.InjectedBaseURL != "" || s.NoP
 // the settings inject. status presents it as contributing; doctor
 // treats anything else as something to reconcile or report.
 func (s ProjectStatus) Consistent() bool {
-	return s.InjectionAgrees() && s.SessionEndInstalled
+	return s.injectionAgrees() && s.SessionEndInstalled
 }
 
-// InjectionAgrees reports that the injection stands in the shape the
+// injectionAgrees reports that the injection stands in the shape the
 // grant records, whether or not the session-end hook is in place: the
 // project records, and the one thing that may still be missing is
 // what doctor completes. status presents such a project as
 // contributing and names the missing hook beside it.
-func (s ProjectStatus) InjectionAgrees() bool {
+func (s ProjectStatus) injectionAgrees() bool {
 	if !s.Enabled || !s.HookInstalled {
 		return false
 	}

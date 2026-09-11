@@ -145,7 +145,7 @@ func TestWalk_FindsSessionsUnderEveryDirectory(t *testing.T) {
 		Files:    []string{rootSession, subSession, cjkSession},
 		Sessions: 3,
 		Oldest:   t0,
-		Visited:  7,
+		visited:  7,
 	}
 	slices.Sort(want.Files)
 	slices.Sort(res.Files)
@@ -184,7 +184,7 @@ func TestWalk_DoesNotFollowSymbolicLinks(t *testing.T) {
 
 	res := mustWalk(t, tr)
 
-	if len(res.Files) != 0 || res.Visited != 1 {
+	if len(res.Files) != 0 || res.visited != 1 {
 		t.Errorf("Walk = %+v, want nothing found and one directory visited", res)
 	}
 }
@@ -230,8 +230,8 @@ func TestWalk_TruncatesAtLimit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if res.Visited != c.visited || res.Truncated != c.truncated {
-				t.Errorf("Visited, Truncated = %d, %v; want %d, %v", res.Visited, res.Truncated, c.visited, c.truncated)
+			if res.visited != c.visited || res.Truncated != c.truncated {
+				t.Errorf("visited, Truncated = %d, %v; want %d, %v", res.visited, res.Truncated, c.visited, c.truncated)
 			}
 			if c.files != nil && !slices.Equal(res.Files, c.files) {
 				t.Errorf("Files = %v, want %v", res.Files, c.files)

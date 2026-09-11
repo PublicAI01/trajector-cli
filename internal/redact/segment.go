@@ -61,8 +61,8 @@ type pathField struct {
 // line's root, never by key name, so a same-named key in a tool result
 // or in message text is an observed value and stays as it was.
 //
-// A field goes on this list only when its value cannot point outside
-// the project. A tool's file path, a request's file_path, an
+// A field goes on this list only when its value is, by construction,
+// the project's location or derived from it. A tool's file path, a request's file_path, an
 // attachment's filename can all name a file elsewhere, and masking
 // them would rewrite an observation; they are not here.
 var anchoredPaths = []pathField{
@@ -74,9 +74,10 @@ var anchoredPaths = []pathField{
 }
 
 // acknowledgedPaths lists the fields AbsolutePathFields has already
-// seen and that are deliberately left as observed: the same value is
-// rendered into the prompt text on the same line, so masking the
-// structured copy alone would hide nothing.
+// seen and that are deliberately left as observed: the same value
+// stands as text elsewhere in the session, on the same line or in the
+// line it was copied from, so masking the structured copy alone would
+// hide nothing.
 var acknowledgedPaths = []pathField{
 	{path: keyPath{"attachment", "snapshot", "workingDirectory"}},
 	// lastPrompt is the text the user typed last, which Claude Code

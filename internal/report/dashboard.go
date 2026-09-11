@@ -39,7 +39,7 @@ func Dashboard(w io.Writer, d Diagnosis) {
 
 	fmt.Fprintf(w, "\nProject %s\n", st.Root)
 	switch {
-	case st.InjectionAgrees():
+	case st.injectionAgrees():
 		if st.PauseReason != "" {
 			fmt.Fprintln(w, "  Contributing; recording is paused for now (see Device above).")
 		} else {
@@ -172,7 +172,7 @@ func projectLines(d Diagnosis) []string {
 		lines = append(lines, RemoteControlNotice)
 	}
 	lines = append(lines, hookJudgementLines(d)...)
-	if !st.SessionEndInstalled {
+	if st.MissingSessionEnd() {
 		lines = append(lines, sessionEndMissingLine(st.SettingsPath()))
 	}
 	lines = append(lines, sessionFileLines(d.SessionFiles)...)
@@ -223,11 +223,11 @@ func hookJudgementLines(d Diagnosis) []string {
 		return nil
 	}
 	if p.Runs {
-		return []string{HooksWillLoad}
+		return []string{hooksWillLoad}
 	}
 	lines := []string{fmt.Sprintf("%s (%s)", HooksWillNotLoad, p.Reason)}
 	if d.Project.NoProxy {
-		return append(lines, NothingRecordedNow, noProxyWayOut)
+		return append(lines, nothingRecordedNow, noProxyWayOut)
 	}
 	return append(lines, ProxyHalfOnly)
 }

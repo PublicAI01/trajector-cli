@@ -71,9 +71,9 @@ const (
 	WithoutProxy
 )
 
-// ErrBaseURLInjected reports an attempt to inject without a base URL
+// errBaseURLInjected reports an attempt to inject without a base URL
 // into a file that still carries an injected one.
-var ErrBaseURLInjected = errors.New("claudesettings: an injected base URL stands in the settings file")
+var errBaseURLInjected = errors.New("claudesettings: an injected base URL stands in the settings file")
 
 // ProjectLocalRel is the injected settings file's path relative to the
 // project root, in slash form for gitignore entries and user-facing
@@ -139,7 +139,7 @@ func TokenFromBaseURL(value string) (string, bool) {
 // here: that key is where the user's own configuration lives, and
 // removal is the one operation that knows what to put back. A file
 // still carrying an injected base URL therefore refuses the
-// WithoutProxy shape with ErrBaseURLInjected; remove first.
+// WithoutProxy shape with errBaseURLInjected; remove first.
 //
 // Writing the base URL is the one write that leaves a consent token in
 // the file, so that form goes through editSecret; the other leaves the
@@ -162,7 +162,7 @@ func InjectProject(path string, baseURL string, hooks HookCommands) error {
 			}
 			env[envBaseURL] = baseURL
 		} else if value, _ := envValue(root, envBaseURL); isProxyBaseURL(value) {
-			return fmt.Errorf("%w: %s", ErrBaseURLInjected, path)
+			return fmt.Errorf("%w: %s", errBaseURLInjected, path)
 		}
 		eachHookEntry(root, func(event string, entry map[string]any) hookAction {
 			cmd, _ := entry["command"].(string)

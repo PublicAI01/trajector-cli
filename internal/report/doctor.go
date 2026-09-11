@@ -188,13 +188,13 @@ func doctorHookPolicy(f *Findings, d Diagnosis) {
 		return
 	}
 	if p.Runs {
-		f.OK("%s", HooksWillLoad)
+		f.OK("%s", hooksWillLoad)
 		return
 	}
 	f.note("%s (%s)", HooksWillNotLoad, p.Reason)
 	f.Detail("Change that setting where it is set, or ask whoever manages it to.")
 	if d.Project.NoProxy {
-		f.Detail("Until then %s. %s", NothingRecordedNow, noProxyWayOut)
+		f.Detail("%s. %s", nothingRecordedNow, noProxyWayOut)
 	} else {
 		f.Detail("%s.", ProxyHalfOnly)
 	}
@@ -224,7 +224,7 @@ func doctorDiscovery(f *Findings, d Diagnosis, disc Discovery) {
 	case d.HookPolicy != nil && !d.HookPolicy.Runs:
 		f.note("%d session(s) of this project were written without a hook of trajector's reporting them, which follows from the setting above", disc.Unregistered)
 	default:
-		f.Problem("%s", WorkspaceNotTrusted)
+		f.Problem("%s", workspaceNotTrusted)
 		f.Detail("%d session(s) of this project were written without a hook of trajector's reporting them, and nothing readable", disc.Unregistered)
 		f.Detail("on this device keeps the hooks from loading. Claude Code runs them only once the workspace is trusted.")
 	}

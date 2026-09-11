@@ -53,11 +53,11 @@ func TestRegistry_RegisterIsIdempotent(t *testing.T) {
 	if len(files) != 1 || !sameFile(files[0], follow.File{Path: path}) {
 		t.Errorf("Files() = %+v, want one zero-cursor entry for %q", files, path)
 	}
-	ok, err := r.Registered(project, path)
+	ok, err := registered(r, project, path)
 	if err != nil || !ok {
 		t.Errorf("Registered() = %v, %v, want true", ok, err)
 	}
-	ok, err = r.Registered(project, abs(t, "other.jsonl"))
+	ok, err = registered(r, project, abs(t, "other.jsonl"))
 	if err != nil || ok {
 		t.Errorf("Registered(other) = %v, %v, want false", ok, err)
 	}
@@ -135,7 +135,7 @@ func TestRegistry_FilesOfUnknownProjectIsEmpty(t *testing.T) {
 			if files == nil || len(files) != 0 {
 				t.Errorf("Files() = %#v, want an empty slice", files)
 			}
-			ok, err := r.Registered(project, abs(t, "a.jsonl"))
+			ok, err := registered(r, project, abs(t, "a.jsonl"))
 			if err != nil || ok {
 				t.Errorf("Registered() = %v, %v, want false", ok, err)
 			}
@@ -233,7 +233,7 @@ func TestRegistry_UpdateUnregisteredFails(t *testing.T) {
 			if !errors.Is(err, follow.ErrNotRegistered) {
 				t.Errorf("Update() = %v, want ErrNotRegistered", err)
 			}
-			ok, _ := r.Registered(project, abs(t, "a.jsonl"))
+			ok, _ := registered(r, project, abs(t, "a.jsonl"))
 			if ok {
 				t.Error("a failed Update registered the path")
 			}
@@ -380,7 +380,7 @@ func TestRegistry_UnknownVersionIsAnError(t *testing.T) {
 			if _, err := r.Files(project); err == nil {
 				t.Error("Files() = nil error, want refused")
 			}
-			if _, err := r.Registered(project, path); err == nil {
+			if _, err := registered(r, project, path); err == nil {
 				t.Error("Registered() = nil error, want refused")
 			}
 			if err := r.Register(project, path); err == nil {
@@ -441,4 +441,19 @@ func TestRegistry_ConcurrentRegistersDoNotLoseEntries(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Files() has %d paths, want all %d: got %v", len(got), len(want), got)
 	}
+}
+
+// registered reports whether path is in project's registry, read back
+// through Files.
+func registered(r *follow.Registry, project, path string) (bool, error) {
+	files, err := r.Files(project)
+	if err != nil {
+		return false, err
+	}
+	for _, f := range files {
+		if f.Path == path {
+			return true, nil
+		}
+	}
+	return false, nil
 }

@@ -51,6 +51,10 @@ var ErrQuotaExceeded = errors.New("spool: quota exceeded")
 // indexName is the per-day sidecar index file name.
 const indexName = "index.jsonl"
 
+// dayLayout names the day directory a record is stored under, in UTC,
+// in both slots.
+const dayLayout = "20060102"
+
 // indexLine is one record in the sidecar index. SessionKey groups
 // records of the same coding session so upload batching can lay them
 // out adjacently; ProjectIDHash lets consent withdrawal find a
@@ -327,7 +331,7 @@ func (s *Spool) Write(env envelope.Envelope) error {
 	defer s.mu.Unlock()
 	s.refreshLocked()
 
-	day := at.UTC().Format("20060102")
+	day := at.UTC().Format(dayLayout)
 	dayDir := filepath.Join(s.dir, day)
 	final := filepath.Join(dayDir, id+".json")
 	var replaced int64

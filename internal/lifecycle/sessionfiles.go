@@ -14,6 +14,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
+	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -53,15 +54,19 @@ func ReadHookInput(r io.Reader) HookInput {
 // ever written to it here.
 const cloudPlaceholder = "cloud-transcript.jsonl"
 
-// sessionFilesRoot is the directory Claude Code keeps session files
-// under: projects/ inside its configuration directory, which
-// CLAUDE_CONFIG_DIR relocates.
-func (m *Machine) sessionFilesRoot() string {
-	dir := m.deps.Getenv("CLAUDE_CONFIG_DIR")
-	if dir == "" {
-		dir = filepath.Join(m.deps.Home, ".claude")
+// claudeConfigDir is Claude Code's configuration directory on this
+// machine, which CLAUDE_CONFIG_DIR relocates.
+func (m *Machine) claudeConfigDir() string {
+	if dir := m.deps.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return dir
 	}
-	return filepath.Join(dir, "projects")
+	return filepath.Join(m.deps.Home, ".claude")
+}
+
+// sessionFilesRoot is the directory Claude Code keeps session files
+// under.
+func (m *Machine) sessionFilesRoot() string {
+	return filepath.Join(m.claudeConfigDir(), discover.ProjectsDir)
 }
 
 // RegisterSessionFile registers the session file a hook was told about,
@@ -292,7 +297,9 @@ type readerLogLine struct {
 // appendReaderLog adds one line for a scan that found something. The
 // reader has no other voice: its streams are the null device, and the
 // registry keeps sums, not events. A log that cannot be written is
-// let go — the registry still has the finding.
+// let go — the registry still has the finding. Readers of different
+// projects run at once and share this file: each line goes down in
+// one append-mode write, which is what keeps lines whole.
 func (m *Machine) appendReaderLog(projectIDHash string, found drift.Report) {
 	path := m.deps.Layout.ReaderLog()
 	if err := userdirs.EnsureOwnerDir(filepath.Dir(path)); err != nil {

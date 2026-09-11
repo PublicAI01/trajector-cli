@@ -12,7 +12,6 @@ import (
 
 func TestEnable_NoProxyFlagInstallsHooksWithoutABaseURL(t *testing.T) {
 	e := clitest.New(t)
-	t.Setenv("CLAUDE_CODE_MANAGED_SETTINGS_PATH", t.TempDir())
 	e.Paired()
 	p := e.StartProxy()
 	defer p.Stop()

@@ -13,11 +13,14 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 )
 
+// SubagentsDir is the directory beside a session's main file, under a
+// directory named after the session, that holds its agent files.
+const SubagentsDir = "subagents"
+
 const (
-	linesExt     = ".jsonl"
-	metaExt      = ".meta.json"
-	agentPrefix  = "agent-"
-	subagentsDir = "subagents"
+	linesExt    = ".jsonl"
+	metaExt     = ".meta.json"
+	agentPrefix = "agent-"
 
 	// maxLineBytes bounds what one line may occupy in memory. A longer
 	// line is consumed like a malformed one: reading moves past it and
@@ -222,8 +225,8 @@ func readMeta(res ReadResult, st Stat, capture envelope.TranscriptCapture) (Read
 // session directory for an agent file.
 func identify(path string) (sessionID, file string) {
 	dir := filepath.Dir(path)
-	if filepath.Base(dir) == subagentsDir {
-		return filepath.Base(filepath.Dir(dir)), subagentsDir + "/" + filepath.Base(path)
+	if filepath.Base(dir) == SubagentsDir {
+		return filepath.Base(filepath.Dir(dir)), SubagentsDir + "/" + filepath.Base(path)
 	}
 	return strings.TrimSuffix(filepath.Base(path), linesExt), ""
 }
@@ -235,22 +238,30 @@ func identify(path string) (sessionID, file string) {
 // link could lead outside the session directory.
 func Siblings(mainPath string) []string {
 	sessionID := strings.TrimSuffix(filepath.Base(mainPath), linesExt)
-	dir := filepath.Join(filepath.Dir(mainPath), sessionID, subagentsDir)
+	dir := filepath.Join(filepath.Dir(mainPath), sessionID, SubagentsDir)
 	found := []string{}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return found
 	}
 	for _, e := range entries {
-		name := e.Name()
-		if !e.Type().IsRegular() || !strings.HasPrefix(name, agentPrefix) {
-			continue
-		}
-		if strings.HasSuffix(name, linesExt) || strings.HasSuffix(name, metaExt) {
-			found = append(found, filepath.Join(dir, name))
+		if e.Type().IsRegular() && IsAgentFile(e.Name()) {
+			found = append(found, filepath.Join(dir, e.Name()))
 		}
 	}
 	return found
+}
+
+// IsSessionFile reports whether name is the name of a session's main
+// file, the lines Claude Code appends as the session runs.
+func IsSessionFile(name string) bool {
+	return strings.HasSuffix(name, linesExt)
+}
+
+// IsAgentFile reports whether name is the name of an agent file under
+// SubagentsDir: its lines, or the metadata beside them.
+func IsAgentFile(name string) bool {
+	return strings.HasPrefix(name, agentPrefix) && (strings.HasSuffix(name, linesExt) || strings.HasSuffix(name, metaExt))
 }
 
 // lineFields are the only parts of a line reading looks at.
