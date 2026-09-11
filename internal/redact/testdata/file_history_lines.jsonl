@@ -1,0 +1,3 @@
+{"type":"file-history-snapshot","messageId":"msg_0f1e2d3c4b5a","snapshot":{"trackedFileBackups":{"/home/jdoe/work/project-alpha/main.go":{"backupId":"b1a2c3","timestamp":"2026-09-01T10:00:00.000Z"}}},"isSnapshotUpdate":false,"sessionId":"0f1e2d3c-4b5a-4968-8776-655443322110"}
+{"type":"file-history-delta","messageId":"msg_0f1e2d3c4b5b","/home/jdoe/work/project-alpha/main.go":"/home/jdoe/work/project-alpha/main.go.bak","sessionId":"0f1e2d3c-4b5a-4968-8776-655443322110"}
+{"type":"file-history-delta","messageId":"msg_0f1e2d3c4b5c","attachment":{"type":"environment","snapshot":{"C:\\Users\\jdoe\\work\\project alpha":"C:\\Users\\jdoe\\work\\project-alpha\\main.go"}}}

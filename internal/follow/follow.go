@@ -131,8 +131,10 @@ func (g Gaps) Any() bool {
 // without reading the files again. Counts only ever grow, and a list
 // holds each name once: the reader adds what one read found, and the
 // registry sums it with what earlier reads found. It carries no path
-// of the user's, no session id, and no value from a line — field
-// names and counts are all a surface may print.
+// of the user's and no session id. The field names arrive already
+// printable: the redaction pass that makes a name keeps a location out
+// of it. The other lists hold the words a line used to name its own
+// shape.
 type Signals struct {
 	// UnanchoredPathFields are the JSON paths of fields found holding
 	// an absolute path that this build does not know how to mask.

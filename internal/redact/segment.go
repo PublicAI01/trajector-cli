@@ -19,12 +19,54 @@ var ErrIncompleteLine = errors.New("redact: segment does not end in a newline")
 // project-locating value gets.
 const labelPath = "PATH"
 
+// labelKey is the label of the replacement token a key that is not a
+// plain field name gets when a key path is made printable.
+const labelKey = "KEY"
+
 // keyPath addresses one string value in a line by object keys alone,
 // from the line's root down. A value under an array is never addressed
 // by a keyPath.
 type keyPath []string
 
-func (p keyPath) String() string { return "$." + strings.Join(p, ".") }
+// printable returns the name a surface may show for this key path. A
+// key is data as much as a value is: a session line can hold a file of
+// the user's in key position, so a name built from keys alone can
+// carry a path that never went through masking. Every key that is not
+// a plain field name is replaced by the [REDACTED_KEY] token here, at
+// the one place a name is made. The result holds no key that this
+// package did not first prove printable.
+func (p keyPath) printable() string {
+	keys := make([]string, len(p))
+	for i, key := range p {
+		if isPlainFieldName(key) {
+			keys[i] = key
+			continue
+		}
+		keys[i] = replacementToken(labelKey)
+	}
+	return "$." + strings.Join(keys, ".")
+}
+
+// isPlainFieldName reports whether a key is spelled with ASCII letters,
+// digits, "_" and "-" only. A path always needs a separator, a drive
+// colon, or a space, and this set holds none of them, so a key that
+// passes names no location. The set also keeps "." out of a key, which
+// lets the printed name be read back as the address it states.
+func isPlainFieldName(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 func (p keyPath) equal(q []string) bool {
 	if len(p) != len(q) {
@@ -204,6 +246,12 @@ func stripAnchoredPaths(line string) string {
 // list and the acknowledged list. A non-empty result means a field
 // appeared that neither list knows.
 //
+// What comes back is printable as it stands: a name holds field names
+// and replacement tokens and nothing else, so no path of the user's
+// can leave through a name even when the line puts its files in key
+// position. No value from the line is ever part of a name. Each name
+// appears once.
+//
 // Only two layers are looked at: the line's top-level fields, and the
 // fields directly under attachment.snapshot. Deeper values — message
 // content, tool inputs, tool results — are observations that may name
@@ -232,6 +280,7 @@ func AbsolutePathFields(line []byte) ([]string, error) {
 		}
 	})
 	var found []string
+	seen := make(map[string]bool)
 	for _, c := range candidates {
 		known := false
 		for i, a := range listed {
@@ -239,9 +288,15 @@ func AbsolutePathFields(line []byte) ([]string, error) {
 				known = true
 			}
 		}
-		if !known {
-			found = append(found, c.String())
+		if known {
+			continue
 		}
+		name := c.printable()
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		found = append(found, name)
 	}
 	return found, nil
 }

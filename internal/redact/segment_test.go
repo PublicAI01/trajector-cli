@@ -420,6 +420,94 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 	}
 }
 
+func TestAbsolutePathFields_NamesNoKeyThatCouldBeAPath(t *testing.T) {
+	t.Parallel()
+	const keyToken = "[REDACTED_KEY]"
+	cases := []struct {
+		name string
+		line string
+		want []string
+	}{
+		{
+			name: "an absolute path in key position",
+			line: `{"/home/jdoe/work/project-alpha/main.go":"/home/jdoe/work/project-alpha/main.go"}`,
+			want: []string{"$." + keyToken},
+		},
+		{
+			name: "a windows path in key position",
+			line: `{"C:\\Users\\jdoe\\work":"C:\\Users\\jdoe\\work\\notes.md"}`,
+			want: []string{"$." + keyToken},
+		},
+		{
+			name: "a key holding a user name and spaces",
+			line: `{"jdoe project files":"/srv/work/project-alpha"}`,
+			want: []string{"$." + keyToken},
+		},
+		{
+			name: "a key spelled with escapes still hides its separators",
+			line: `{"\u002fhome\u002fjdoe\u002fwork":"/home/jdoe/work"}`,
+			want: []string{"$." + keyToken},
+		},
+		{
+			name: "a key that looks like a file name",
+			line: `{"agent-a1.jsonl":"/srv/work/project-alpha"}`,
+			want: []string{"$." + keyToken},
+		},
+		{
+			name: "two path keys on one line report one name",
+			line: `{"/home/jdoe/a.go":"/home/jdoe/a.go","/home/jdoe/b.go":"/home/jdoe/b.go"}`,
+			want: []string{"$." + keyToken},
+		},
+		{
+			name: "a path key under the snapshot layer",
+			line: `{"attachment":{"type":"environment","snapshot":{"/home/jdoe/work":"/home/jdoe/work/main.go"}}}`,
+			want: []string{"$.attachment.snapshot." + keyToken},
+		},
+		{
+			name: "a plain field name is still named in full",
+			line: `{"someNewPath":"/srv/elsewhere/thing","another_new-Path2":"/srv/elsewhere/other"}`,
+			want: []string{"$.someNewPath", "$.another_new-Path2"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := redact.AbsolutePathFields([]byte(tc.line))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAbsolutePathFields_NamesNoPathFromLinesTheReaderNeverKeeps(t *testing.T) {
+	t.Parallel()
+	lines := fixtureLines(t, "file_history_lines.jsonl")
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"/home/jdoe/work/project-alpha", `C:\\Users\\jdoe`} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("fixture no longer holds %q in key position", want)
+		}
+	}
+	for i, line := range lines {
+		got, err := redact.AbsolutePathFields([]byte(line))
+		if err != nil {
+			t.Fatalf("line %d: %v", i, err)
+		}
+		for _, name := range got {
+			if strings.ContainsAny(name, `/\: `) {
+				t.Errorf("line %d: name %q carries a path", i, name)
+			}
+			if strings.Contains(name, "jdoe") || strings.Contains(name, "project-alpha") {
+				t.Errorf("line %d: name %q carries a value from the line", i, name)
+			}
+		}
+	}
+}
+
 func TestAbsolutePathFields_RefusesALineThatIsNotJSON(t *testing.T) {
 	t.Parallel()
 	if _, err := redact.AbsolutePathFields([]byte(`{"cwd":"/srv/wo`)); err == nil {
