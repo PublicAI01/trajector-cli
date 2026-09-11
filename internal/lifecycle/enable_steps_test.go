@@ -78,9 +78,9 @@ func (e *env) acceptCurrentAgreement() {
 	}
 }
 
-func (e *env) enable(noProxy bool) {
+func (e *env) enable(shape proxytest.Shape) {
 	e.t.Helper()
-	if err := e.machine().Enable(e.project, noProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, shape, e.io()); err != nil {
 		e.t.Fatalf("enable: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
 	}
 }
@@ -166,7 +166,7 @@ func TestEnable_StepsAppearInOrder(t *testing.T) {
 			tt.prepare(e)
 			e.stdin = tt.stdin
 
-			e.enable(false)
+			e.enable(proxytest.WithProxy)
 
 			out := e.stdout.String()
 			assertOrdered(t, out, tt.want...)
@@ -212,7 +212,7 @@ func TestEnable_PrintsEarlierSessionCountBeforeInjecting(t *testing.T) {
 			e.stdin = ""
 			tt.prepare(e)
 
-			e.enable(false)
+			e.enable(proxytest.WithProxy)
 
 			out := e.stdout.String()
 			assertOrdered(t, out, tt.want, "Injected ")
@@ -244,7 +244,7 @@ func TestEnable_SaysTheCountIsIncompleteAboveTheWalkLimit(t *testing.T) {
 		}
 	}
 
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 
 	assertOrdered(t, e.stdout.String(), " earlier session record(s) will be collected once", truncatedLine(), "Injected ")
 }
@@ -253,7 +253,7 @@ func TestEnable_AcceptsTermsForTheDevice(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 
 	assertOrdered(t, e.stdout.String(), consent.AgreementText, deviceWideTermsLine, agreementPrompt)
 }
@@ -277,20 +277,20 @@ func TestEnable_NoProxyInjectsThreeHooksWithoutBaseURL(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 
-	e.enable(true)
+	e.enable(proxytest.WithoutProxy)
 
 	st := e.status()
-	if !st.Enabled || !st.GrantNoProxy {
+	if !st.Enabled || st.Shape != proxytest.WithoutProxy {
 		t.Errorf("status = %+v, want a grant recording the shape without a base URL", st)
 	}
-	if st.InjectedBaseURL != "" || !st.NoProxy || !st.HookInstalled || !st.SessionEndInstalled {
+	if st.InjectedBaseURL != "" || !st.InjectionAgrees || !st.HookInstalled || !st.SessionEndInstalled {
 		t.Errorf("status = %+v, want three hooks and no base URL", st)
 	}
 	if !st.Consistent() {
 		t.Error("status does not read as consistent")
 	}
-	if grant, ok := e.sandbox.ActiveGrant(e.canonicalRoot()); !ok || !grant.NoProxy || grant.Token != st.Token {
-		t.Errorf("grant = %+v, want the token granted with NoProxy", grant)
+	if grant, ok := e.sandbox.ActiveGrant(e.canonicalRoot()); !ok || grant.Shape != proxytest.WithoutProxy || grant.Token != st.Token {
+		t.Errorf("grant = %+v, want the token granted in the shape without a base URL", grant)
 	}
 	settings := readSettings(t, e.settingsPath())
 	if env, ok := settings["env"].(map[string]any); ok && env["ANTHROPIC_BASE_URL"] != nil {
@@ -332,7 +332,7 @@ func TestEnable_NoProxyWithHooksThatWillNotRunAsksFirst(t *testing.T) {
 			consentBefore := e.consentFileContents()
 			e.stdin = tt.stdin
 
-			e.enable(true)
+			e.enable(proxytest.WithoutProxy)
 
 			out := e.stdout.String()
 			assertOrdered(t, out, hooksWillNotLoadLine+" (disableAllHooks in "+lock+")", noProxyNothingLine, enableAnywayPrompt)
@@ -344,7 +344,7 @@ func TestEnable_NoProxyWithHooksThatWillNotRunAsksFirst(t *testing.T) {
 				t.Fatalf("enabled = %v, want %v\n%s", st.Enabled, tt.wantEnabled, out)
 			}
 			if tt.wantEnabled {
-				if !st.NoProxy || !st.Consistent() {
+				if st.Shape != proxytest.WithoutProxy || !st.Consistent() {
 					t.Errorf("status = %+v, want the shape without a base URL installed", st)
 				}
 				return
@@ -352,7 +352,7 @@ func TestEnable_NoProxyWithHooksThatWillNotRunAsksFirst(t *testing.T) {
 			if _, err := os.Stat(e.settingsPath()); !os.IsNotExist(err) {
 				t.Error("settings file written for a project left as it is")
 			}
-			if st.Injected() || st.ConsentState != "" {
+			if st.Injected || st.ConsentState != "" {
 				t.Errorf("status = %+v, want nothing recorded", st)
 			}
 			if got := e.consentFileContents(); got != consentBefore {
@@ -378,7 +378,7 @@ func TestEnable_WithProxyAndDeadHooksSaysSo(t *testing.T) {
 	lock := e.lockHooksInUserSettings()
 	e.stdin = ""
 
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 
 	out := e.stdout.String()
 	assertOrdered(t, out, hooksWillNotLoadLine+" (disableAllHooks in "+lock+")", proxyHalfOnlyLine, "Injected ", contributesLine)
@@ -395,18 +395,18 @@ func TestEnable_WithProxyAndDeadHooksSaysSo(t *testing.T) {
 func TestEnable_SaysRemoteControlOnce(t *testing.T) {
 	tests := []struct {
 		name          string
-		noProxy       bool
+		shape         proxytest.Shape
 		wantRC, wantF int
 	}{
-		{"with a base URL", false, 1, 0},
-		{"without a base URL", true, 0, 1},
+		{"with a base URL", proxytest.WithProxy, 1, 0},
+		{"without a base URL", proxytest.WithoutProxy, 0, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newEnv(t)
 			e.startProxy()
 
-			e.enable(tt.noProxy)
+			e.enable(tt.shape)
 
 			out := e.stdout.String()
 			if got := strings.Count(out, remoteControlLine); got != tt.wantRC {
@@ -425,7 +425,7 @@ func TestEnable_SaysRemoteControlOnce(t *testing.T) {
 func TestEnable_SwitchesShapeCleanly(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	first := e.status()
 	withProxy, err := os.ReadFile(e.settingsPath())
 	if err != nil {
@@ -433,9 +433,9 @@ func TestEnable_SwitchesShapeCleanly(t *testing.T) {
 	}
 	e.stdin = ""
 
-	e.enable(true)
+	e.enable(proxytest.WithoutProxy)
 	middle := e.status()
-	if !middle.NoProxy || !middle.GrantNoProxy || middle.InjectedBaseURL != "" || !middle.Consistent() {
+	if middle.Shape != proxytest.WithoutProxy || middle.InjectedBaseURL != "" || !middle.Consistent() {
 		t.Fatalf("status after switching to --no-proxy = %+v", middle)
 	}
 	if middle.Token != first.Token {
@@ -445,9 +445,9 @@ func TestEnable_SwitchesShapeCleanly(t *testing.T) {
 		t.Errorf("shape sentence missing:\n%s", e.stdout)
 	}
 
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	last := e.status()
-	if last.NoProxy || last.GrantNoProxy || last.InjectedToken != first.Token || !last.Consistent() {
+	if last.Shape != proxytest.WithProxy || last.InjectedToken != first.Token || !last.Consistent() {
 		t.Fatalf("status after switching back = %+v", last)
 	}
 	back, err := os.ReadFile(e.settingsPath())
@@ -463,12 +463,12 @@ func TestEnable_SwitchingShapeKeepsAUsersOwnBaseURL(t *testing.T) {
 	e := enabledOverAUsersOwnRelay(t)
 	e.stdin = ""
 
-	e.enable(true)
+	e.enable(proxytest.WithoutProxy)
 
 	if got := ownBaseURL(t, e); got != relayInSettingsLocal {
 		t.Errorf("after switching to --no-proxy the project's own base URL is %q, want %q back", got, relayInSettingsLocal)
 	}
-	if st := e.status(); !st.NoProxy || !st.Consistent() {
+	if st := e.status(); st.Shape != proxytest.WithoutProxy || !st.Consistent() {
 		t.Errorf("status = %+v", st)
 	}
 }
@@ -487,7 +487,7 @@ func TestEnable_RegistersExistingSessionFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 
 	if got := e.registeredPaths(e.canonicalRoot()); len(got) != 2 || got[0] != main && got[1] != main || got[0] != agent && got[1] != agent {
 		t.Errorf("registered = %v, want %q and %q", got, main, agent)
@@ -516,7 +516,7 @@ func TestEnable_RollbackUnregistersWhatItRegistered(t *testing.T) {
 				e.sandbox.RegisterSessionFile(e.status().Hash, earlier, "")
 			}
 
-			if err := e.machine().Enable(e.project, false, e.io()); err == nil {
+			if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err == nil {
 				t.Fatal("enable succeeded against a foreign port")
 			}
 
@@ -535,7 +535,7 @@ func TestDisable_UnregistersTheProject(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	if len(e.registeredPaths(e.canonicalRoot())) != 1 {
 		t.Fatal("precondition: enable registers the session file")
 	}
@@ -580,7 +580,7 @@ func TestDisableAndUninstall_LeaveSessionFilesUntouched(t *testing.T) {
 		}
 	}
 
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	check("enable")
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
@@ -596,7 +596,7 @@ func TestDisableAndUninstall_LeaveSessionFilesUntouched(t *testing.T) {
 func TestDoctorRewritesTheInjectionInTheGrantsShape(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	e.enable(true)
+	e.enable(proxytest.WithoutProxy)
 	// The file was edited into the other shape behind the grant's back.
 	if err := claudesettings.RemoveProject(e.settingsPath()); err != nil {
 		t.Fatal(err)
@@ -604,7 +604,7 @@ func TestDoctorRewritesTheInjectionInTheGrantsShape(t *testing.T) {
 	if err := claudesettings.InjectProject(e.settingsPath(), "http://127.0.0.1:1/t/"+e.status().Token, e.projectHooks()); err != nil {
 		t.Fatal(err)
 	}
-	if st := e.status(); st.Consistent() || !st.GrantNoProxy || st.NoProxy {
+	if st := e.status(); st.Consistent() || st.Shape != proxytest.WithoutProxy || st.InjectedBaseURL == "" {
 		t.Fatalf("precondition: status = %+v", st)
 	}
 	e.stdout.Reset()
@@ -616,8 +616,37 @@ func TestDoctorRewritesTheInjectionInTheGrantsShape(t *testing.T) {
 	if !strings.Contains(e.stdout.String(), "rewrote the injection") {
 		t.Errorf("doctor = %q, want the rewrite reported", e.stdout)
 	}
-	if st := e.status(); !st.NoProxy || st.InjectedBaseURL != "" || !st.Consistent() {
+	if st := e.status(); st.Shape != proxytest.WithoutProxy || st.InjectedBaseURL != "" || !st.Consistent() {
 		t.Errorf("status after doctor = %+v, want the grant's shape restored", st)
+	}
+}
+
+func TestDoctorReadsOneShapeWhenTheSettingsFileDisagreesWithTheGrant(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.sandbox.GrantProject(proxytest.Grant{
+		Token:         "tok-proj",
+		ProjectIDHash: e.status().Hash,
+		RootPath:      e.canonicalRoot(),
+		Upstream:      "https://api.anthropic.com",
+		Shape:         proxytest.WithProxy,
+	})
+	// The file was edited into the other shape behind the grant's back.
+	e.injectWithoutBaseURL()
+
+	problems, out := e.doctor()
+
+	if strings.Contains(out, "runs only while a session is open") {
+		t.Errorf("doctor = %q, want the proxy finding to read the shape the injection is repaired to", out)
+	}
+	if !strings.Contains(out, "rewrote the injection") {
+		t.Errorf("doctor = %q, want the injection rewritten in the shape the grant records", out)
+	}
+	if st := e.status(); st.InjectedBaseURL == "" {
+		t.Errorf("status after doctor = %+v, want the base URL of the grant's shape injected", st)
+	}
+	if problems == 0 {
+		t.Errorf("problems = %d, doctor = %q; want the proxy this project needs reported as down", problems, out)
 	}
 }
 
@@ -625,7 +654,7 @@ func TestGrantRecordsTheShapeAcrossReads(t *testing.T) {
 	e := newEnv(t)
 	e.sandbox.GrantProject(proxytest.Grant{
 		Token: "tok-shape", ProjectIDHash: e.status().Hash, RootPath: e.canonicalRoot(),
-		Upstream: "https://api.anthropic.com", NoProxy: true,
+		Upstream: "https://api.anthropic.com", Shape: proxytest.WithoutProxy,
 	})
 	data, err := os.ReadFile(e.layout().RoutingTable())
 	if err != nil {
@@ -640,7 +669,7 @@ func TestGrantRecordsTheShapeAcrossReads(t *testing.T) {
 	if table.Projects["tok-shape"]["no_proxy"] != true {
 		t.Errorf("table = %s, want no_proxy recorded", data)
 	}
-	if !e.status().GrantNoProxy {
+	if e.status().Shape != proxytest.WithoutProxy {
 		t.Error("the shape did not read back from the grant")
 	}
 }
@@ -651,7 +680,7 @@ func TestEnable_RollsBackWhenSessionFilesCannotBeRegistered(t *testing.T) {
 	e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
 	e.obstruct(e.layout().FollowDir())
 
-	err := e.machine().Enable(e.project, false, e.io())
+	err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
 	if err == nil || !strings.Contains(err.Error(), "session files") || !strings.Contains(err.Error(), "rolled back") {
 		t.Fatalf("err = %v, want the registration failure with the rollback notice", err)
 	}
@@ -677,7 +706,7 @@ func TestEnable_FailsWhenTheProjectTreeCannotBeListed(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(root, 0o755) })
 
-	err := e.machine().Enable(e.project, false, e.io())
+	err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
 	if err == nil || !strings.Contains(err.Error(), "looking for this project's session files") {
 		t.Fatalf("err = %v, want the walk failure named", err)
 	}
@@ -691,12 +720,12 @@ func TestEnable_SwitchingShapeInsideASessionNamesTheBaseURLItCouldNotPutBack(t *
 	e.environ["ANTHROPIC_BASE_URL"] = e.status().InjectedBaseURL
 	e.stdin = ""
 
-	e.enable(true)
+	e.enable(proxytest.WithoutProxy)
 
 	if !strings.Contains(e.stderr.String(), relayInSettingsLocal) {
 		t.Errorf("switching to --no-proxy dropped the user's own base URL %q without naming it:\nstderr: %s", relayInSettingsLocal, e.stderr)
 	}
-	if st := e.status(); !st.NoProxy || !st.Consistent() {
+	if st := e.status(); st.Shape != proxytest.WithoutProxy || !st.Consistent() {
 		t.Errorf("status = %+v", st)
 	}
 }
@@ -708,7 +737,7 @@ func TestEnable_NoProxyFailsWhenTheAnswerIsUnavailable(t *testing.T) {
 	e.lockHooksInUserSettings()
 	e.stdin = ""
 
-	err := e.machine().Enable(e.project, true, e.io())
+	err := e.machine().Enable(e.project, proxytest.WithoutProxy, e.io())
 	if err == nil || !strings.Contains(err.Error(), "reading the answer") {
 		t.Fatalf("err = %v, want the unavailable answer reported", err)
 	}
@@ -724,14 +753,14 @@ func TestDisable_FailsLoudlyWhenTheRegistryCannotBeRemoved(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	e.obstruct(e.layout().FollowDir())
 
 	err := e.machine().Disable(e.project, false, e.io())
 	if err == nil || !strings.Contains(err.Error(), "withdrawing this project's session files") {
 		t.Fatalf("err = %v, want the registry failure named", err)
 	}
-	if st := e.status(); st.Enabled || st.Injected() {
+	if st := e.status(); st.Enabled || st.Injected {
 		t.Fatalf("status = %+v, want traffic stopped before the failing step", st)
 	}
 	// The rerun takes the withdrawal-in-progress path and meets the same
@@ -759,7 +788,7 @@ func TestDoctorPutsBackAUsersOwnBaseURLWhenTheGrantsShapeHasNoBaseURL(t *testing
 			// the settings file's back.
 			e.sandbox.GrantProject(proxytest.Grant{
 				Token: st.Token, ProjectIDHash: st.Hash, RootPath: st.Root,
-				Upstream: relayInSettingsLocal, NoProxy: true,
+				Upstream: relayInSettingsLocal, Shape: proxytest.WithoutProxy,
 			})
 			if tt.masked {
 				e.environ["ANTHROPIC_BASE_URL"] = st.InjectedBaseURL
@@ -775,7 +804,7 @@ func TestDoctorPutsBackAUsersOwnBaseURLWhenTheGrantsShapeHasNoBaseURL(t *testing
 				t.Errorf("doctor = %q, want the rewrite and %q", out, tt.wantLine)
 			}
 			after := e.status()
-			if !after.NoProxy || after.InjectedBaseURL != "" || !after.Consistent() {
+			if after.Shape != proxytest.WithoutProxy || after.InjectedBaseURL != "" || !after.Consistent() {
 				t.Errorf("status after doctor = %+v, want the grant's shape", after)
 			}
 			if got := ownBaseURL(t, e); !tt.masked && got != relayInSettingsLocal {

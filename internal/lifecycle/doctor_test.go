@@ -26,7 +26,7 @@ func (e *env) doctor() (int, string) {
 func TestDoctorOnAHealthyEnabledProject(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	// A first pass may repair what enable does not own (the discovery
@@ -51,7 +51,7 @@ func TestDoctorOnAHealthyEnabledProject(t *testing.T) {
 func TestDoctorEndsWithTheLiveProxyConfirmation(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -71,7 +71,7 @@ func TestDoctorFlagsALiveProxyThatWillNotRecord(t *testing.T) {
 	}
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	// Every file is consistent, but the machine changed under the live
@@ -125,7 +125,7 @@ func TestDoctorOnAFreshDeviceIsClean(t *testing.T) {
 func TestDoctorRemovesAStaleInjection(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	// The grant is revoked behind the settings file's back, leaving an
@@ -148,7 +148,7 @@ func TestDoctorRemovesAStaleInjection(t *testing.T) {
 func TestDoctorRepairsMissingHooks(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	// The user deleted the hooks block; the injected base URL now routes
@@ -183,7 +183,7 @@ func TestDoctorRepairsMissingHooks(t *testing.T) {
 func TestDoctorCompletesAnInjectionMadeBeforeTheSessionEndHook(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.dropSessionEndHook()
@@ -216,11 +216,11 @@ func TestDoctorRepairsTheInjectionWithoutBaseURLInItsOwnShape(t *testing.T) {
 		ProjectIDHash: e.status().Hash,
 		RootPath:      e.canonicalRoot(),
 		Upstream:      "https://api.anthropic.com",
-		NoProxy:       true,
+		Shape:         proxytest.WithoutProxy,
 	})
 	e.injectWithoutBaseURL()
 	e.dropSessionEndHook()
-	if st := e.status(); !st.MissingSessionEnd() || !st.NoProxy {
+	if st := e.status(); !st.MissingSessionEnd() || st.Shape != proxytest.WithoutProxy {
 		t.Fatalf("status = %+v, want the missing session-end hook reported on the shape without a base URL", st)
 	}
 
@@ -230,7 +230,7 @@ func TestDoctorRepairsTheInjectionWithoutBaseURLInItsOwnShape(t *testing.T) {
 		t.Errorf("doctor = %q, want the repair reported", out)
 	}
 	after := e.status()
-	if !after.NoProxy || !after.SessionEndInstalled || !after.Consistent() {
+	if after.Shape != proxytest.WithoutProxy || !after.SessionEndInstalled || !after.Consistent() {
 		t.Errorf("status after doctor = %+v, want the same shape completed", after)
 	}
 	if after.InjectedBaseURL != "" {
@@ -245,7 +245,7 @@ func TestDoctorLeavesAConsistentInjectionWithoutBaseURLAlone(t *testing.T) {
 		ProjectIDHash: e.status().Hash,
 		RootPath:      e.canonicalRoot(),
 		Upstream:      "https://api.anthropic.com",
-		NoProxy:       true,
+		Shape:         proxytest.WithoutProxy,
 	})
 	e.injectWithoutBaseURL()
 	before, err := os.ReadFile(e.settingsPath())
@@ -387,7 +387,7 @@ func TestDoctorFixesUpstreamDrift(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.environ["ANTHROPIC_BASE_URL"] = "https://relay-one.example.com"
-	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.environ["ANTHROPIC_BASE_URL"] = "https://relay-two.example.com"

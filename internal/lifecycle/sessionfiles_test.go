@@ -477,22 +477,30 @@ func TestReadSessionFiles_KeepsReadingPastAFileThatFails(t *testing.T) {
 	}
 }
 
-func TestReadSessionFiles_FillsCaptureFromTheProjectShape(t *testing.T) {
+func TestReadSessionFiles_FillsCaptureFromTheShapeTheGrantRecords(t *testing.T) {
 	tests := []struct {
 		name          string
+		shape         proxytest.Shape
 		inject        func(e *env)
 		wantInjection string
 	}{
-		{name: "proxy shape", inject: (*env).injectWithProxy, wantInjection: "proxy"},
-		{name: "no-proxy shape", inject: (*env).injectWithoutBaseURL, wantInjection: "tail_only"},
+		{name: "proxy shape", shape: proxytest.WithProxy, inject: (*env).injectWithProxy, wantInjection: "proxy"},
+		{name: "no-proxy shape", shape: proxytest.WithoutProxy, inject: (*env).injectWithoutBaseURL, wantInjection: "tail_only"},
+		{name: "settings file edited into the other shape", shape: proxytest.WithoutProxy, inject: (*env).injectWithProxy, wantInjection: "tail_only"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newEnv(t)
 			e.aProxylessTarget()
-			e.enableProject()
-			tt.inject(e)
 			root := e.canonicalRoot()
+			e.sandbox.GrantProject(proxytest.Grant{
+				Token:         "tok-proj",
+				ProjectIDHash: consent.ProjectIDHash(root),
+				RootPath:      root,
+				Upstream:      "https://api.anthropic.com",
+				Shape:         tt.shape,
+			})
+			tt.inject(e)
 			main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
 			e.registerFile(root, main, "service/api")
 

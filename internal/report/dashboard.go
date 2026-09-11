@@ -39,7 +39,7 @@ func Dashboard(w io.Writer, d Diagnosis) {
 
 	fmt.Fprintf(w, "\nProject %s\n", st.Root)
 	switch {
-	case st.injectionAgrees():
+	case st.InjectionAgrees:
 		if st.PauseReason != "" {
 			fmt.Fprintln(w, "  Contributing; recording is paused for now (see Device above).")
 		} else {
@@ -51,7 +51,7 @@ func Dashboard(w io.Writer, d Diagnosis) {
 		for _, line := range optionalSettingLines(d.OptionalSettings) {
 			fmt.Fprintf(w, "  %s\n", line)
 		}
-	case !st.Enabled && !st.Injected():
+	case !st.Enabled && !st.Injected:
 		fmt.Fprintln(w, "  Not enabled. Run `trajector enable` to contribute from this project.")
 	default:
 		fmt.Fprintln(w, "  WARNING: the injected settings and the routing table disagree. Run `trajector doctor`.")
@@ -158,7 +158,7 @@ func projectLines(d Diagnosis) []string {
 	if st.WindowsSideClaude {
 		lines = append(lines, "WARNING: "+windowsSideClaudeFact+". Run `trajector doctor`.")
 	}
-	if st.NoProxy {
+	if st.Shape == routing.WithoutProxy {
 		lines = append(lines, NoProxyShapeFact)
 	} else {
 		// The upstream is where the proxy forwards to; a project whose
@@ -226,7 +226,7 @@ func hookJudgementLines(d Diagnosis) []string {
 		return []string{hooksWillLoad}
 	}
 	lines := []string{fmt.Sprintf("%s (%s)", HooksWillNotLoad, p.Reason)}
-	if d.Project.NoProxy {
+	if d.Project.Shape == routing.WithoutProxy {
 		return append(lines, nothingRecordedNow, noProxyWayOut)
 	}
 	return append(lines, ProxyHalfOnly)

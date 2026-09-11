@@ -7,6 +7,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 func (a *app) loginCmd(args []string) int {
@@ -25,8 +26,12 @@ func (a *app) enableCmd(args []string) int {
 	// The flag is spelled exactly as the marker the injected hook
 	// carries, so the one word names the shape everywhere it shows.
 	args, noProxy := takeFlag(args, claudesettings.NoProxyMarker)
+	shape := routing.WithProxy
+	if noProxy {
+		shape = routing.WithoutProxy
+	}
 	return a.with("usage: trajector enable [--no-proxy]", args, 0, func(m *lifecycle.Machine, cwd string) error {
-		return m.Enable(cwd, noProxy, a.io())
+		return m.Enable(cwd, shape, a.io())
 	})
 }
 

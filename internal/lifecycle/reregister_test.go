@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 // appendLine adds one line to a session file, as Claude Code adds one
@@ -52,7 +53,7 @@ func TestEnableAfterASessionLeftTheProjectRegistersTheFileAgainAndSendsItsSegmen
 	path := e.putSessionFile(discover.Encode(root)+"/0f1e2d3c.jsonl",
 		`{"type":"user","message":{"id":"m1"}}`+"\n")
 
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	m := e.machine()
 	m.ReadSessionFiles(e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 1 {
@@ -71,7 +72,7 @@ func TestEnableAfterASessionLeftTheProjectRegistersTheFileAgainAndSendsItsSegmen
 		t.Fatalf("registry after the session left the project = %+v, want the entry retired", got)
 	}
 
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	files := e.registeredFiles(root)
 	if len(files) != 1 || files[0].Path != path {
 		t.Fatalf("registry after the second enable = %+v, want the retired file registered again", files)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
@@ -193,7 +194,7 @@ func doctorHookPolicy(f *Findings, d Diagnosis) {
 	}
 	f.note("%s (%s)", HooksWillNotLoad, p.Reason)
 	f.Detail("Change that setting where it is set, or ask whoever manages it to.")
-	if d.Project.NoProxy {
+	if d.Project.Shape == routing.WithoutProxy {
 		f.Detail("%s. %s", nothingRecordedNow, noProxyWayOut)
 	} else {
 		f.Detail("%s.", ProxyHalfOnly)

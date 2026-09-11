@@ -35,6 +35,17 @@ func (e *Env) Sandbox() *Sandbox { return Open(e.t, e.layout) }
 // it does not redeclare the contract.
 type Grant = routing.Grant
 
+// Shape is the form a grant records, in routing's own type, with the
+// two shapes a project can be enabled in. Tests name them through the
+// harness so nothing above the proxy has to reach into the routing
+// table's vocabulary.
+type Shape = routing.Shape
+
+const (
+	WithProxy    = routing.WithProxy
+	WithoutProxy = routing.WithoutProxy
+)
+
 // seedTime is the instant every seeder stamps when the test does not
 // care when something happened.
 var seedTime = time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)

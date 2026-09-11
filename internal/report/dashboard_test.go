@@ -284,8 +284,11 @@ func contributing() report.ProjectStatus {
 		Enabled:             true,
 		Token:               "tok-1",
 		Upstream:            "https://api.anthropic.com",
+		Shape:               routing.WithProxy,
 		InjectedBaseURL:     "http://127.0.0.1:41100/t/tok-1",
 		InjectedToken:       "tok-1",
+		Injected:            true,
+		InjectionAgrees:     true,
 		HookInstalled:       true,
 		SessionEndInstalled: true,
 	}

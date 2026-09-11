@@ -44,7 +44,7 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 	// 2026-08-14 this returned early past the purge, which made rerunning
 	// a no-op. Only the consent-changing steps are skipped now; the purge
 	// runs either way and stays silent when there is nothing to delete.
-	if !st.Injected() && !st.Enabled {
+	if !st.Injected && !st.Enabled {
 		// A recorded setting write can outlive the rest of a withdrawal the
 		// same way spooled rawcalls can — an earlier disable that failed to
 		// restore kept the record — so the rerun reaches for it here too.

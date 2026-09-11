@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 const testBaseURL = "http://127.0.0.1:41100/t/tok-abc123"
@@ -61,7 +62,7 @@ func TestInjectProjectCreatesFileWithEnvAndAllThreeHooks(t *testing.T) {
 			t.Errorf("HasHook(%q) = false after injection", marker)
 		}
 	}
-	if shape, ok := InjectionShape(path); !ok || shape != WithProxy {
+	if shape, ok := InjectionShape(path); !ok || shape != routing.WithProxy {
 		t.Errorf("InjectionShape = %v, %v; want WithProxy", shape, ok)
 	}
 
@@ -936,7 +937,7 @@ func TestInjectProjectWithoutBaseURLInstallsMarkedHooksAndNoEnv(t *testing.T) {
 			t.Errorf("HasHook(%q) = false after injection", marker)
 		}
 	}
-	if shape, ok := InjectionShape(path); !ok || shape != WithoutProxy {
+	if shape, ok := InjectionShape(path); !ok || shape != routing.WithoutProxy {
 		t.Errorf("InjectionShape = %v, %v; want WithoutProxy", shape, ok)
 	}
 	if _, ok := InjectedBaseURL(path); ok {
@@ -968,7 +969,7 @@ func TestInjectProjectWithoutBaseURLLeavesAUsersOwnBaseURLAlone(t *testing.T) {
 	if env[envBaseURL] != "https://relay.example.com" {
 		t.Errorf("env = %v, want the user's relay untouched", env)
 	}
-	if shape, ok := InjectionShape(path); !ok || shape != WithoutProxy {
+	if shape, ok := InjectionShape(path); !ok || shape != routing.WithoutProxy {
 		t.Errorf("InjectionShape = %v, %v; want WithoutProxy", shape, ok)
 	}
 }
@@ -1028,7 +1029,7 @@ func TestInjectProjectWithBaseURLReplacesHooksSpelledWithoutOne(t *testing.T) {
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
-	if shape, ok := InjectionShape(path); !ok || shape != WithProxy {
+	if shape, ok := InjectionShape(path); !ok || shape != routing.WithProxy {
 		t.Errorf("InjectionShape = %v, %v; want WithProxy", shape, ok)
 	}
 }
@@ -1077,7 +1078,7 @@ func TestInjectProjectCompletesAnInjectionMadeBeforeTheSessionEndHook(t *testing
 `
 	writeFile(t, path, []byte(legacy))
 
-	if shape, ok := InjectionShape(path); !ok || shape != WithProxy {
+	if shape, ok := InjectionShape(path); !ok || shape != routing.WithProxy {
 		t.Fatalf("InjectionShape of the older file = %v, %v; want WithProxy", shape, ok)
 	}
 	if !HasHook(path, EnsureProxyMarker) || HasHook(path, SessionEndMarker) {
@@ -1106,7 +1107,7 @@ func TestInjectionShapeReadsEitherFormAndNothingElse(t *testing.T) {
 	tests := []struct {
 		name      string
 		content   string
-		wantShape Shape
+		wantShape routing.Shape
 		wantOK    bool
 	}{
 		{name: "no file"},
@@ -1114,19 +1115,19 @@ func TestInjectionShapeReadsEitherFormAndNothingElse(t *testing.T) {
 		{
 			name:      "base URL alone",
 			content:   `{"env": {"ANTHROPIC_BASE_URL": "` + testBaseURL + `"}}`,
-			wantShape: WithProxy,
+			wantShape: routing.WithProxy,
 			wantOK:    true,
 		},
 		{
 			name:      "base URL with hooks",
 			content:   `{"env": {"ANTHROPIC_BASE_URL": "` + testBaseURL + `"}, "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": ` + ours + `}]}]}}`,
-			wantShape: WithProxy,
+			wantShape: routing.WithProxy,
 			wantOK:    true,
 		},
 		{
 			name:      "marked hooks without base URL",
 			content:   `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": ` + marked + `}]}]}}`,
-			wantShape: WithoutProxy,
+			wantShape: routing.WithoutProxy,
 			wantOK:    true,
 		},
 		{

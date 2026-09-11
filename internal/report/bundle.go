@@ -159,7 +159,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			ProjectIDHash:    d.Project.Hash,
 			Enabled:          d.Project.Enabled,
 			Upstream:         maskUpstreamCredentials(d.Project.Upstream),
-			Injected:         d.Project.Injected(),
+			Injected:         d.Project.Injected,
 			InjectedToken:    maskedToken(d.Project.InjectedToken),
 			Token:            maskedToken(d.Project.Token),
 			HooksInstalled:   d.Project.HookInstalled,
@@ -167,7 +167,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			AgreementVersion: d.Project.AgreementVersion,
 			ConsentState:     string(d.Project.ConsentState),
 			PauseReason:      string(d.Project.PauseReason),
-			NoProxy:          d.Project.NoProxy,
+			NoProxy:          d.Project.Shape == routing.WithoutProxy,
 			WindowsSide:      d.Project.WindowsSideClaude,
 			HookPolicy:       hookPolicyValue(d),
 			SessionFiles: sessionFilesWire{

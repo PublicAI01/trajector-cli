@@ -52,7 +52,7 @@ func (e *env) enabledWithOneSessionAndOneUnreported() (locked string) {
 	e.t.Helper()
 	e.startProxy()
 	e.sessionFile(sessionMarker+"-1", time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC))
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	e.sessionFile(sessionMarker+"-2", time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC))
 	locked = e.lockedSubdir("vendor")
 	e.stdout.Reset()
@@ -123,7 +123,7 @@ func TestStatusShowsWhenAFileWasLastReadAndWhatIsNotReadYet(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	path := e.sessionFile("s-1", time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC))
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	e.machine().ReadSessionFiles(e.project, e.io())
 	e.stdout.Reset()
 
@@ -153,7 +153,7 @@ func TestStatusShowsWhenAFileWasLastReadAndWhatIsNotReadYet(t *testing.T) {
 func TestStatusReportsAMissingSessionEndHookThatDoctorAdds(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	e.dropSessionEndHook()
 	e.stdout.Reset()
 
@@ -187,7 +187,7 @@ func TestStatusAndDoctorTakeAnIdleProxyAsNormalWhereNoProjectUsesIt(t *testing.T
 			ProjectIDHash: consent.ProjectIDHash(root),
 			RootPath:      root,
 			Upstream:      "https://api.anthropic.com",
-			NoProxy:       true,
+			Shape:         proxytest.WithoutProxy,
 		})
 		e.injectWithoutBaseURL()
 		e.aProxylessTarget()
@@ -250,7 +250,7 @@ func TestStatusNeverListsASessionId(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.sessionFile(sessionMarker+"-1", time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC))
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	e.stdout.Reset()
 
 	out := e.statusOutput()
@@ -268,7 +268,7 @@ func TestDoctorBundleCarriesSessionCountsWithoutIdsOrPaths(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.sessionFile(sessionMarker+"-1", time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC))
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 
 	t.Chdir(t.TempDir())
 	path, err := e.machine().DoctorBundle(e.project, e.io())
@@ -294,7 +294,7 @@ func TestDoctorBundleCarriesSessionCountsWithoutIdsOrPaths(t *testing.T) {
 func TestStatusAndDoctorReportARegistryTheyCannotRead(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	e.enable(false)
+	e.enable(proxytest.WithProxy)
 	e.obstruct(e.layout().FollowDir())
 	e.stdout.Reset()
 

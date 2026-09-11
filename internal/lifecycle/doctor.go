@@ -147,11 +147,11 @@ func (m *Machine) doctorProxy(f *report.Findings, d report.Diagnosis) {
 func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) error {
 	settingsPath := st.SettingsPath()
 	switch {
-	case !st.Enabled && !st.Injected():
+	case !st.Enabled && !st.Injected:
 		f.OK("this project is not enabled; nothing to reconcile")
 		return nil
 
-	case st.Enabled && !st.Injected():
+	case st.Enabled && !st.Injected:
 		// Re-injecting would resume capture the user may have stopped on
 		// purpose by hand-editing; consent questions are theirs to answer.
 		f.Problem("the routing table grants this project but its settings inject nothing.")
@@ -159,7 +159,7 @@ func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) e
 		f.Detail("to withdraw this project.")
 		return nil
 
-	case !st.Enabled && st.Injected():
+	case !st.Enabled && st.Injected:
 		restored, unrestored, err := m.removeInjection(st.Root)
 		if err != nil {
 			f.Problem("a stale injection points traffic at a token that no longer records, and removing it failed: %v", err)
@@ -191,7 +191,7 @@ func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) e
 		// The file is rewritten in the shape the grant records: the shape
 		// was the user's choice at enable time, and the grant is where
 		// enable wrote that choice down.
-		restored, unrestored, err := m.injectProject(st, st.Token, st.GrantNoProxy)
+		restored, unrestored, err := m.injectProject(st, st.Token, st.Shape)
 		if err != nil {
 			return fmt.Errorf("repairing the injection in %s: %w", settingsPath, err)
 		}

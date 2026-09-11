@@ -22,6 +22,28 @@ type Store struct {
 // OpenStore returns a writer for the table at path.
 func OpenStore(path string) *Store { return &Store{path: path} }
 
+// Shape is the form of a project's injection: whether the project's
+// traffic goes through the proxy, or the session hooks stand alone and
+// only the files a session leaves are read. The grant is where the
+// user's choice is recorded, so the type lives here and every surface
+// reads the shape from the grant; a settings file states the same
+// choice but is a file the user also edits, and what it says is a
+// reading to reconcile, never a second answer.
+//
+// The table keeps storing the choice as the boolean it has always
+// stored: the type is what the code passes around, not a new format.
+type Shape string
+
+const (
+	// WithProxy routes the project's traffic through the proxy: a base
+	// URL is injected beside the session hooks.
+	WithProxy Shape = "with_proxy"
+	// WithoutProxy installs the session hooks alone: the project's
+	// traffic goes wherever it went before, and only the files its
+	// sessions leave are read.
+	WithoutProxy Shape = "without_proxy"
+)
+
 // Grant is one project's consent record: which project, where it lives,
 // and the token that identifies its traffic. The proxy never sees these
 // fields; it only needs a Route.
@@ -38,11 +60,9 @@ type Grant struct {
 	// pause. A caller that wants to know whether traffic is being
 	// recorded must ask the Table.
 	Revoked bool
-	// NoProxy reports the shape enable installed: hooks without a base
-	// URL, so no traffic of this project's reaches the proxy. It is
-	// recorded here, where the user's choice was made, so a repair
-	// reasons from it rather than from a file the user also edits.
-	NoProxy bool
+	// Shape is the form enable installed. A grant read back from the
+	// table always carries one of the two shapes.
+	Shape Shape
 }
 
 // UpstreamMove is one recorded unattended upstream change: where the
@@ -87,7 +107,7 @@ func (s *Store) Grant(g Grant) error {
 			RootPath:      g.RootPath,
 			Upstream:      g.Upstream,
 			GrantedAt:     g.GrantedAt,
-			NoProxy:       g.NoProxy,
+			NoProxy:       g.Shape == WithoutProxy,
 		}
 	})
 }
@@ -257,6 +277,10 @@ func (s *Store) All() ([]Grant, error) {
 	}
 	grants := make([]Grant, 0, len(f.Projects))
 	for tok, rec := range f.Projects {
+		shape := WithProxy
+		if rec.NoProxy {
+			shape = WithoutProxy
+		}
 		g := Grant{
 			Token:         tok,
 			ProjectIDHash: rec.ProjectIDHash,
@@ -264,7 +288,7 @@ func (s *Store) All() ([]Grant, error) {
 			Upstream:      rec.Upstream,
 			GrantedAt:     rec.GrantedAt,
 			Revoked:       rec.RevokedAt != "",
-			NoProxy:       rec.NoProxy,
+			Shape:         shape,
 		}
 		if rec.UpstreamMoved != nil {
 			g.UpstreamMoved = UpstreamMove{From: rec.UpstreamMoved.From, At: rec.UpstreamMoved.At}

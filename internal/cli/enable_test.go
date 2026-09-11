@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 func TestEnable_NoProxyFlagInstallsHooksWithoutABaseURL(t *testing.T) {
@@ -59,7 +60,7 @@ func TestEnable_NoProxyFlagInstallsHooksWithoutABaseURL(t *testing.T) {
 	if cmd := settings.Hooks["SessionStart"][0].Hooks[0].Command; !strings.HasSuffix(cmd, " hook ensure-proxy --no-proxy") {
 		t.Errorf("SessionStart command = %q, want it marked --no-proxy", cmd)
 	}
-	if grant, ok := e.Sandbox().ActiveGrant(e.Project()); !ok || !grant.NoProxy {
+	if grant, ok := e.Sandbox().ActiveGrant(e.Project()); !ok || grant.Shape != proxytest.WithoutProxy {
 		t.Errorf("grant = %+v, want the shape recorded on the grant", grant)
 	}
 }

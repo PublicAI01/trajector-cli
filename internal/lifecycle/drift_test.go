@@ -196,7 +196,7 @@ func TestStatus_ShowsSignalCounts(t *testing.T) {
 		ProjectIDHash: consent.ProjectIDHash(root),
 		RootPath:      root,
 		Upstream:      "https://api.anthropic.com",
-		NoProxy:       true,
+		Shape:         proxytest.WithoutProxy,
 	})
 	e.injectWithoutBaseURL()
 	e.sandbox.AddSignals(consent.ProjectIDHash(root), proxytest.Signals{

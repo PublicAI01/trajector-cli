@@ -78,7 +78,7 @@ func projectHooks(execPath string) claudesettings.HookCommands {
 // the one answer enable ever waits for is given with the facts in
 // view. Re-running enable on an enabled project walks the same steps:
 // that is how an injection made by an older build is completed.
-func (m *Machine) enableProject(projectDir string, noProxy bool, io IO) error {
+func (m *Machine) enableProject(projectDir string, shape routing.Shape, io IO) error {
 	// Every prompt in one enable must read through one buffered reader: a
 	// second bufio over the same stream would find the bytes the first
 	// one buffered ahead already gone. bufio.NewReader hands this same
@@ -91,7 +91,7 @@ func (m *Machine) enableProject(projectDir string, noProxy bool, io IO) error {
 	if err := m.confirmAgreement(io); err != nil {
 		return err
 	}
-	if proceed, err := m.confirmHooksWillRun(io, st.Root, noProxy); err != nil || !proceed {
+	if proceed, err := m.confirmHooksWillRun(io, st.Root, shape); err != nil || !proceed {
 		return err
 	}
 
@@ -185,7 +185,7 @@ func (m *Machine) enableProject(projectDir string, noProxy bool, io IO) error {
 	}
 
 	var undo enableUndo
-	if err := m.installAndVerify(io, st, upstream, noProxy, earlier, &undo); err != nil {
+	if err := m.installAndVerify(io, st, upstream, shape, earlier, &undo); err != nil {
 		restoreErr := errors.Join(
 			snap.restore(),
 			claudesettings.RemoveGitIgnored(st.Root, undo.ignoreRules),
@@ -217,7 +217,7 @@ type enableUndo struct {
 	registeredHere bool
 }
 
-func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream string, noProxy bool, earlier discover.Result, undo *enableUndo) error {
+func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream string, shape routing.Shape, earlier discover.Result, undo *enableUndo) error {
 	token, err := projectToken(st)
 	if err != nil {
 		return err
@@ -230,7 +230,7 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		RootPath:      st.Root,
 		Upstream:      upstream,
 		GrantedAt:     now,
-		NoProxy:       noProxy,
+		Shape:         shape,
 	}); err != nil {
 		return fmt.Errorf("updating routing table: %w", err)
 	}
@@ -241,7 +241,7 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		return fmt.Errorf("registering this project's session files: %w", err)
 	}
 	m.offerOptionalSettings(io, st)
-	restored, unrestored, err := m.injectProject(st, token, noProxy)
+	restored, unrestored, err := m.injectProject(st, token, shape)
 	if err != nil {
 		return fmt.Errorf("injecting %s: %w", settingsPath, err)
 	}
@@ -251,7 +251,7 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 	if unrestored != "" {
 		fmt.Fprintf(io.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(settingsPath, unrestored))
 	}
-	if noProxy {
+	if shape == routing.WithoutProxy {
 		fmt.Fprintf(io.Out, "Injected %s (session hooks, no base URL)\n", settingsPath)
 	} else {
 		fmt.Fprintf(io.Out, "Injected %s (base URL and session hooks)\n", settingsPath)
@@ -279,10 +279,10 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		fmt.Fprintf(io.Err, "WARNING: .gitignore is a symbolic link and was left alone; add %s to your git ignores so the injected settings and diagnostic bundles are never committed.\n", strings.Join(projectIgnoreRules, ", "))
 	}
 
-	if err := m.selfCheck(token, noProxy); err != nil {
+	if err := m.selfCheck(token, shape); err != nil {
 		return err
 	}
-	if noProxy {
+	if shape == routing.WithoutProxy {
 		fmt.Fprintln(io.Out, "Self-check passed: the resident process is up.")
 		fmt.Fprintln(io.Out, report.NoProxyShapeFact)
 	} else {
@@ -301,13 +301,13 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 // injected one. enable and doctor both write through here, so a shape
 // change is spelled once. The results are removal's: what was put back,
 // and what could not be.
-func (m *Machine) injectProject(st report.ProjectStatus, token string, noProxy bool) (restored, unrestored string, err error) {
+func (m *Machine) injectProject(st report.ProjectStatus, token string, shape routing.Shape) (restored, unrestored string, err error) {
 	settingsPath := st.SettingsPath()
-	want, baseURL := claudesettings.WithProxy, m.proxy.BaseURL(token)
-	if noProxy {
-		want, baseURL = claudesettings.WithoutProxy, ""
+	baseURL := m.proxy.BaseURL(token)
+	if shape == routing.WithoutProxy {
+		baseURL = ""
 	}
-	if shape, ok := claudesettings.InjectionShape(settingsPath); ok && shape != want {
+	if onFile, ok := claudesettings.InjectionShape(settingsPath); ok && onFile != shape {
 		if restored, unrestored, err = m.removeInjection(st.Root); err != nil {
 			return "", "", err
 		}
@@ -331,13 +331,13 @@ func (m *Machine) hookPolicy(root string) claudesettings.HookPolicy {
 // without one the hooks are the only source, so an enable would install
 // something that records nothing — the user is told and asked, and a
 // no leaves every file as it was.
-func (m *Machine) confirmHooksWillRun(io IO, root string, noProxy bool) (bool, error) {
+func (m *Machine) confirmHooksWillRun(io IO, root string, shape routing.Shape) (bool, error) {
 	policy := m.hookPolicy(root)
 	if policy.Runs {
 		return true, nil
 	}
 	fmt.Fprintf(io.Out, "%s (%s)\n", report.HooksWillNotLoad, policy.Reason)
-	if !noProxy {
+	if shape != routing.WithoutProxy {
 		fmt.Fprintln(io.Out, report.ProxyHalfOnly)
 		return true, nil
 	}
@@ -442,14 +442,14 @@ func projectToken(st report.ProjectStatus) (string, error) {
 // what the hooks will bring up on every session is the resident process
 // that uploads what this device records, and that it comes up is the
 // check. No upstream call is made and nothing is billed.
-func (m *Machine) selfCheck(token string, noProxy bool) error {
+func (m *Machine) selfCheck(token string, shape routing.Shape) error {
 	if err := m.proxy.Ensure(); err != nil {
 		if remedy := report.ProxyRemedy(err); remedy != "" {
 			return fmt.Errorf("self-check failed: %v. %s", err, remedy)
 		}
 		return fmt.Errorf("self-check failed: %w", err)
 	}
-	if noProxy {
+	if shape == routing.WithoutProxy {
 		return nil
 	}
 	if _, err := m.verifyRoute(token); err != nil {

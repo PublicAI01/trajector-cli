@@ -48,6 +48,36 @@ func TestGrantMakesTokenResolvable(t *testing.T) {
 	}
 }
 
+func TestGrantReadsBackTheShapeItWasGrantedIn(t *testing.T) {
+	store, _ := openStore(t)
+	if err := store.Grant(routing.Grant{
+		Token:         "tok-files",
+		ProjectIDHash: "hash-files",
+		RootPath:      "/home/dev/files",
+		Upstream:      "https://api.anthropic.com",
+		GrantedAt:     "2026-08-01T00:00:00Z",
+		Shape:         routing.WithoutProxy,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	grant(t, store, "tok-proxy", "/home/dev/proxy")
+
+	shapes := map[string]routing.Shape{}
+	grants, err := store.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range grants {
+		shapes[g.Token] = g.Shape
+	}
+	if shapes["tok-files"] != routing.WithoutProxy {
+		t.Errorf("shape of a grant made without the proxy = %q, want %q", shapes["tok-files"], routing.WithoutProxy)
+	}
+	if shapes["tok-proxy"] != routing.WithProxy {
+		t.Errorf("shape of a grant made with the proxy = %q, want %q", shapes["tok-proxy"], routing.WithProxy)
+	}
+}
+
 // TestGrantRetiresThePreviousTokenInsteadOfDeletingIt pins the
 // 2026-09-18 fix. A re-enable rotates the token, but the token it
 // rotates away from is still exported into every Claude Code session

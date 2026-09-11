@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 // envBaseURL is the environment key Claude Code reads for its API base
@@ -67,19 +68,6 @@ type HookCommands struct {
 	EnsureProxy string
 	SessionEnd  string
 }
-
-// Shape is the form of a project injection.
-type Shape int
-
-const (
-	// WithProxy routes the project's traffic through the proxy: the
-	// base URL is injected beside the hooks.
-	WithProxy Shape = iota + 1
-	// WithoutProxy installs the hooks alone, each ensure-proxy command
-	// marked NoProxyMarker; the project's traffic goes wherever it
-	// went before.
-	WithoutProxy
-)
 
 // errBaseURLInjected reports an attempt to inject without a base URL
 // into a file that still carries an injected one.
@@ -214,19 +202,20 @@ func RemoveProject(path string) error {
 
 // InjectionShape reports which shape of injection stands in the
 // settings file at path, and false when nothing of trajector's does.
-// An injected base URL decides WithProxy on its own, hooks or no
-// hooks: it is the part that routes traffic, so it is the part a
-// repair must reason from. Without one, an ensure-proxy hook marked
-// NoProxyMarker decides WithoutProxy. Unmarked hooks with no base URL
-// are not a shape: whichever form put them there has lost the part
-// that distinguished it.
-func InjectionShape(path string) (Shape, bool) {
+// It is a reading of the file, never the answer to what shape a
+// project records in: the grant holds that. An injected base URL
+// decides WithProxy on its own, hooks or no hooks: it is the part that
+// routes traffic, so it is the part a repair must reason from. Without
+// one, an ensure-proxy hook marked NoProxyMarker decides WithoutProxy.
+// Unmarked hooks with no base URL are not a shape: whichever form put
+// them there has lost the part that distinguished it.
+func InjectionShape(path string) (routing.Shape, bool) {
 	root, err := readSettings(path)
 	if err != nil {
-		return 0, false
+		return "", false
 	}
 	if value, _ := envValue(root, envBaseURL); isProxyBaseURL(value) {
-		return WithProxy, true
+		return routing.WithProxy, true
 	}
 	marked := false
 	eachHookEntry(root, func(_ string, entry map[string]any) hookAction {
@@ -236,9 +225,9 @@ func InjectionShape(path string) (Shape, bool) {
 		return keepEntry
 	})
 	if marked {
-		return WithoutProxy, true
+		return routing.WithoutProxy, true
 	}
-	return 0, false
+	return "", false
 }
 
 // hasArgument reports whether a shell command carries arg as one of

@@ -189,21 +189,20 @@ func (m *Machine) SpawnReader(projectDir string) error {
 // next run, still make progress.
 //
 // A project that is not enabled, or whose injection was removed, is
-// nothing to read: the injection shape is what the record must state
-// about this client, so without one there is no record to write.
-// Whenever there is a shape, the resident process is brought up on the
-// way out: it is the one flusher, and it drains whatever the spool
-// holds — the records just written, and any a previous run left behind
-// because no flusher was up to send them.
+// nothing to read: no injection stands, so no session of Claude Code's
+// ran under one. What each record states about this client is the
+// shape the grant records, never a reading of the settings file, so a
+// hand-edited file cannot make two runs disagree about one project.
+// Otherwise the resident process is brought up on the way out: it is
+// the one flusher, and it drains whatever the spool holds — the
+// records just written, and any a previous run left behind because no
+// flusher was up to send them.
 func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 	st, err := m.Project(projectDir)
-	if err != nil || !st.Enabled {
+	if err != nil || !st.Enabled || !st.Injected {
 		return
 	}
-	injection, ok := injectionValue(claudesettings.InjectionShape(st.SettingsPath()))
-	if !ok {
-		return
-	}
+	injection := injectionValue(st.Shape)
 	defer func() { _ = m.EnsureProxy(projectDir, io) }()
 
 	sp, err := m.spool()
@@ -371,18 +370,11 @@ func storeRecords(sp *spool.Spool, res follow.ReadResult) (full bool, err error)
 }
 
 // injectionValue names, for a record, what this client did with the
-// project's traffic: forwarded it, or only read the files it left. An
-// injection that is neither shape is not set up to record, and the
-// second return is false.
-func injectionValue(shape claudesettings.Shape, present bool) (string, bool) {
-	if !present {
-		return "", false
+// project's traffic: forwarded it, or only read the files it left. It
+// is the wire spelling of the shape the grant records.
+func injectionValue(shape routing.Shape) string {
+	if shape == routing.WithoutProxy {
+		return envelope.InjectionTailOnly
 	}
-	switch shape {
-	case claudesettings.WithProxy:
-		return envelope.InjectionProxy, true
-	case claudesettings.WithoutProxy:
-		return envelope.InjectionTailOnly, true
-	}
-	return "", false
+	return envelope.InjectionProxy
 }

@@ -51,7 +51,7 @@ type upstreamResolution struct {
 // credentials to Anthropic. Enable and the unattended reconcile answer
 // from this one spelling so they cannot drift apart again.
 func (r upstreamResolution) keepsRecordedUpstream(st report.ProjectStatus) bool {
-	return !r.external && st.Enabled && st.Injected() && st.Upstream != "" && !st.UpstreamMoved.Happened()
+	return !r.external && st.Enabled && st.Injected && st.Upstream != "" && !st.UpstreamMoved.Happened()
 }
 
 // desiredUpstream resolves a project's upstream: an unsupported channel

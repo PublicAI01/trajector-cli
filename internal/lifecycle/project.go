@@ -59,10 +59,11 @@ var ErrProxyUnverified = proxylife.ErrProxyUnverified
 
 // Enable starts contributing data from a project. Pairing is the
 // precondition, so an unpaired device pairs first rather than failing.
-// With noProxy the project's settings receive the session hooks and no
-// base URL: its session files are read, its traffic is not routed
+// The shape is what the project's settings receive and what the grant
+// records: with the proxy, or the session hooks and no base URL, where
+// the files its sessions leave are read and its traffic is not routed
 // through the proxy.
-func (m *Machine) Enable(projectDir string, noProxy bool, io IO) error {
+func (m *Machine) Enable(projectDir string, shape routing.Shape, io IO) error {
 	m.warnNonDefaultEndpoint(io.Out)
 	if !m.Paired() {
 		fmt.Fprintln(io.Out, "This device is not paired yet; starting pairing first.")
@@ -70,7 +71,7 @@ func (m *Machine) Enable(projectDir string, noProxy bool, io IO) error {
 			return err
 		}
 	}
-	return m.enableProject(projectDir, noProxy, io)
+	return m.enableProject(projectDir, shape, io)
 }
 
 // Disable stops contributing from a project. With purge it also asks

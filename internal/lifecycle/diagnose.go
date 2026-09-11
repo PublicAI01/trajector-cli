@@ -8,6 +8,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
@@ -115,7 +116,7 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 		st.Upstream = grant.Upstream
 		st.UpstreamMoved = grant.UpstreamMoved
 		st.GrantHash = grant.ProjectIDHash
-		st.GrantNoProxy = grant.NoProxy
+		st.Shape = grant.Shape
 	}
 	if st.PauseReason, err = m.routes.PausedReason(); err != nil {
 		return st, err
@@ -128,8 +129,9 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 	}
 	st.HookInstalled = claudesettings.HasHook(settings, claudesettings.EnsureProxyMarker)
 	st.SessionEndInstalled = claudesettings.HasHook(settings, claudesettings.SessionEndMarker)
-	shape, _ := claudesettings.InjectionShape(settings)
-	st.NoProxy = shape == claudesettings.WithoutProxy
+	onFile, injected := claudesettings.InjectionShape(settings)
+	st.Injected = injected
+	st.InjectionAgrees = injectionAgrees(st, onFile)
 
 	st.WindowsSideClaude = claudesettings.WindowsSideClaude(root, "")
 
@@ -144,6 +146,18 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 		st.ConsentState = state
 	}
 	return st, nil
+}
+
+// injectionAgrees holds the injection read from the settings file
+// against the grant: it is the injection the grant calls for when it
+// stands in the grant's shape and, in the shape that carries a base
+// URL, carries this project's own token. It is decided here because
+// this is the one place that has read both.
+func injectionAgrees(st report.ProjectStatus, onFile routing.Shape) bool {
+	if !st.Enabled || !st.HookInstalled || onFile != st.Shape {
+		return false
+	}
+	return st.Shape == routing.WithoutProxy || st.InjectedToken == st.Token
 }
 
 // sessionFilesState turns the project's registry into counts and
@@ -170,11 +184,13 @@ func (m *Machine) sessionFilesState(projectIDHash string) report.SessionFilesSta
 // device records without the proxy. On such a device the resident
 // process lives only while a session runs, which is the healthy state,
 // not a fault: a surface must not read a proxy that is absent between
-// sessions as something to repair. It is false when no project is
-// enabled, because then there is nothing the reading is about, and
-// false when the routing table cannot be read: an unreadable table is
-// its own finding, and a surface that read it as "nothing uses the
-// proxy" would hide one.
+// sessions as something to repair. The shape is read from the grants,
+// the same record a repair reasons from, so one doctor run cannot
+// pass an idle proxy and then rewrite a project into needing it. It is
+// false when no project is enabled, because then there is nothing the
+// reading is about, and false when the routing table cannot be read:
+// an unreadable table is its own finding, and a surface that read it
+// as "nothing uses the proxy" would hide one.
 func (m *Machine) proxyIdleBetweenSessions() bool {
 	grants, err := m.routes.All()
 	if err != nil {
@@ -185,15 +201,8 @@ func (m *Machine) proxyIdleBetweenSessions() bool {
 		if g.Revoked {
 			continue
 		}
-		st, err := m.Project(g.RootPath)
-		if err != nil {
-			return false
-		}
-		if !st.Enabled {
-			continue
-		}
 		enabled++
-		if !st.NoProxy {
+		if g.Shape != routing.WithoutProxy {
 			return false
 		}
 	}

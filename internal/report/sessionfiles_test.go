@@ -39,7 +39,7 @@ func enabledDevice() report.Diagnosis {
 // without a base URL.
 func withoutProxy(d report.Diagnosis) report.Diagnosis {
 	d.Project.InjectedBaseURL, d.Project.InjectedToken = "", ""
-	d.Project.NoProxy, d.Project.GrantNoProxy = true, true
+	d.Project.Shape = routing.WithoutProxy
 	return d
 }
 
