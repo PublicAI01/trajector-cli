@@ -272,3 +272,22 @@ func windowsLayout(getenv func(string) string) (Layout, error) {
 		state:  filepath.Join(local, appDir),
 	}, nil
 }
+
+// ClaudeManagedSettingsDir is where Claude Code reads the settings an
+// organization manages for this host: managed-settings.json and the
+// managed-settings.d/ drop-in directory beside it. The location is
+// fixed per platform. CLAUDE_CODE_MANAGED_SETTINGS_PATH replaces the
+// whole directory — it names a directory, not a file.
+func ClaudeManagedSettingsDir(env Env) string {
+	if dir := env.Getenv("CLAUDE_CODE_MANAGED_SETTINGS_PATH"); dir != "" {
+		return dir
+	}
+	switch env.GOOS {
+	case "darwin":
+		return "/Library/Application Support/ClaudeCode"
+	case "windows":
+		return `C:\Program Files\ClaudeCode`
+	default:
+		return "/etc/claude-code"
+	}
+}

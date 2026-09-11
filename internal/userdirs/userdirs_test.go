@@ -297,3 +297,57 @@ func TestHostReadsTheProcessEnvironment(t *testing.T) {
 		t.Errorf("RoutingTable() = %q, want %q", got.RoutingTable(), want)
 	}
 }
+
+func TestClaudeManagedSettingsDirIsFixedPerPlatform(t *testing.T) {
+	tests := []struct {
+		name string
+		env  userdirs.Env
+		want string
+	}{
+		{
+			name: "linux",
+			env:  env("linux", map[string]string{"HOME": "/home/u"}),
+			want: "/etc/claude-code",
+		},
+		{
+			name: "darwin",
+			env:  env("darwin", map[string]string{"HOME": "/Users/u"}),
+			want: "/Library/Application Support/ClaudeCode",
+		},
+		{
+			name: "windows",
+			env:  env("windows", map[string]string{"USERPROFILE": `C:\Users\u`}),
+			want: `C:\Program Files\ClaudeCode`,
+		},
+		{
+			name: "unknown goos uses the unix location",
+			env:  env("freebsd", map[string]string{"HOME": "/home/u"}),
+			want: "/etc/claude-code",
+		},
+		{
+			name: "CLAUDE_CODE_MANAGED_SETTINGS_PATH replaces the directory on every platform",
+			env: env("darwin", map[string]string{
+				"HOME":                              "/Users/u",
+				"CLAUDE_CODE_MANAGED_SETTINGS_PATH": "/opt/policy",
+			}),
+			want: "/opt/policy",
+		},
+		{
+			name: "XDG overrides do not move it",
+			env: env("linux", map[string]string{
+				"HOME":            "/home/u",
+				"XDG_CONFIG_HOME": "/tmp/t/config",
+				"XDG_DATA_HOME":   "/tmp/t/data",
+				"XDG_STATE_HOME":  "/tmp/t/state",
+			}),
+			want: "/etc/claude-code",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := userdirs.ClaudeManagedSettingsDir(tt.env); got != tt.want {
+				t.Errorf("ClaudeManagedSettingsDir() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
