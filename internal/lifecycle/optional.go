@@ -17,9 +17,9 @@ import (
 // recorded — a setting decision has no record to attach to before that
 // — and before injection. It never returns an error: a failure to ask,
 // write, or record degrades to "nothing changed", because the optional
-// ask must never break enable. Every question changes the file only on
-// an explicit yes: the suggested default and an answer of no both leave
-// it untouched, whichever way the question points.
+// ask must never break enable. Every question points the same way: yes
+// means the setting is on. An answer that keeps the file as it is never
+// touches it; only an explicit answer in the other direction writes.
 func (m *Machine) offerOptionalSettings(io IO, st report.ProjectStatus) {
 	// A decision store that cannot be read leaves writtenByUs unknowable;
 	// every true then classifies as the user's own, which disable will
@@ -41,12 +41,12 @@ func (m *Machine) offerOptionalSettings(io IO, st report.ProjectStatus) {
 			printWrapped(io.Out, statementIndent, fmt.Sprintf(
 				"%s is on for this project; trajector set it when you enabled. `trajector disable` puts it back.", s.Key))
 			fmt.Fprintln(io.Out)
-			off, err := askYesNo(io, "Turn it off? [y/N] ", false)
+			keep, err := askYesNo(io, "Keep it on? [Y/n] ", true)
 			if err != nil {
 				printNeedsInteractive(io)
 				return
 			}
-			if off {
+			if !keep {
 				undone, failures := m.restoreRecordedSettings(st.Root, st.Hash, []claudesettings.OptionalSetting{s})
 				reportRestoredSettings(io, "  ", undone, failures)
 			}

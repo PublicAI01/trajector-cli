@@ -215,7 +215,7 @@ func TestEnableLeavesAUsersOwnTrueAlone(t *testing.T) {
 			if !containsWrapped(out, tc.wantSaid) {
 				t.Errorf("stdout misses %q:\n%s", tc.wantSaid, out)
 			}
-			if strings.Contains(out, "Turn it on?") || strings.Contains(out, "Turn it off?") {
+			if strings.Contains(out, "Turn it on?") || strings.Contains(out, "Keep it on?") {
 				t.Errorf("a value the user set was questioned:\n%s", out)
 			}
 			if _, ok := settingDecision(t, e, e.status().Hash); ok {
@@ -307,14 +307,18 @@ func TestEnableRecordFailureLeavesTheSettingUnwritten(t *testing.T) {
 	}
 }
 
-func TestEnableRerunStatesOurWriteAndKeepsItWithoutAnExplicitYes(t *testing.T) {
-	for _, input := range []string{"\n", "n\n"} {
+func TestEnableSecondRunKeepsAnOptionalSettingOnByDefault(t *testing.T) {
+	for _, input := range []string{"y\n", "\n"} {
 		t.Run(strings.TrimSuffix(input, "\n")+"<enter>", func(t *testing.T) {
 			e := newEnv(t)
 			e.startProxy()
 			e.stdin = "yes\ny\n"
 			if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 				t.Fatalf("enable: %v", err)
+			}
+			before, err := os.ReadFile(e.settingsPath())
+			if err != nil {
+				t.Fatal(err)
 			}
 
 			e.stdout.Reset()
@@ -326,11 +330,18 @@ func TestEnableRerunStatesOurWriteAndKeepsItWithoutAnExplicitYes(t *testing.T) {
 			if !strings.Contains(out, "showThinkingSummaries is on for this project; trajector set it when") {
 				t.Errorf("stdout misses the rerun statement:\n%s", out)
 			}
-			if !strings.Contains(out, "Turn it off? [y/N]") {
-				t.Errorf("stdout misses the turn-off question:\n%s", out)
+			if !strings.Contains(out, "Keep it on? [Y/n]") {
+				t.Errorf("stdout misses the keep-it-on question:\n%s", out)
+			}
+			after, err := os.ReadFile(e.settingsPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(before) {
+				t.Errorf("keeping the setting rewrote the file:\n%s\nwant:\n%s", after, before)
 			}
 			if value, found := settingValue(t, e.settingsPath()); !found || !value {
-				t.Errorf("an answer short of an explicit yes turned the setting off: %v, %v", value, found)
+				t.Errorf("an answer that keeps it on turned the setting off: %v, %v", value, found)
 			}
 			if d, ok := settingDecision(t, e, e.status().Hash); !ok || d.Prior != consent.PriorAbsent {
 				t.Errorf("decision = %+v, %v, want the original record kept", d, ok)
@@ -339,7 +350,7 @@ func TestEnableRerunStatesOurWriteAndKeepsItWithoutAnExplicitYes(t *testing.T) {
 	}
 }
 
-func TestEnableRerunAnswerYesTurnsTheSettingBackOff(t *testing.T) {
+func TestEnableSecondRunAnswerNoRestoresTheSetting(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\ny\n"
@@ -348,7 +359,7 @@ func TestEnableRerunAnswerYesTurnsTheSettingBackOff(t *testing.T) {
 	}
 
 	e.stdout.Reset()
-	e.stdin = "y\n"
+	e.stdin = "n\n"
 	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("rerun: %v", err)
 	}
@@ -369,6 +380,60 @@ func TestEnableRerunAnswerYesTurnsTheSettingBackOff(t *testing.T) {
 	}
 	if !strings.Contains(e.stdout.String(), "Turn it on? [Y/n]") {
 		t.Errorf("after turning it off the rerun did not ask afresh:\n%s", e.stdout)
+	}
+}
+
+func TestEnableEveryOptionalQuestionMeansOnOnYes(t *testing.T) {
+	cases := []struct {
+		name       string
+		seed       func(t *testing.T, e *env)
+		stdin      string
+		wantPrompt string
+	}{
+		{
+			name:       "a setting nobody decided on",
+			seed:       func(*testing.T, *env) {},
+			stdin:      "yes\ny\n",
+			wantPrompt: "Turn it on? [Y/n]",
+		},
+		{
+			name: "a setting the user turned off",
+			seed: func(t *testing.T, e *env) {
+				writeUserSettings(t, e, `{"showThinkingSummaries": false}`)
+			},
+			stdin:      "yes\ny\n",
+			wantPrompt: "Turn it on for this project? [y/N]",
+		},
+		{
+			name: "a setting trajector turned on",
+			seed: func(t *testing.T, e *env) {
+				e.stdin = "yes\ny\n"
+				if err := e.machine().Enable(e.project, false, e.io()); err != nil {
+					t.Fatalf("first enable: %v", err)
+				}
+				e.stdout.Reset()
+			},
+			stdin:      "y\n",
+			wantPrompt: "Keep it on? [Y/n]",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.startProxy()
+			tc.seed(t, e)
+			e.stdin = tc.stdin
+
+			if err := e.machine().Enable(e.project, false, e.io()); err != nil {
+				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
+			}
+			if !strings.Contains(e.stdout.String(), tc.wantPrompt) {
+				t.Errorf("stdout misses %q:\n%s", tc.wantPrompt, e.stdout)
+			}
+			if value, found := settingValue(t, e.settingsPath()); !found || !value {
+				t.Errorf("setting = %v, %v after yes, want it on", value, found)
+			}
+		})
 	}
 }
 
