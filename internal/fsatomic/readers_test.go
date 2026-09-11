@@ -29,6 +29,10 @@ var plainReadFiles = map[string]bool{
 	// Session files belong to Claude Code, which writes them plainly;
 	// nothing in this codebase writes them at all.
 	"internal/follow/read.go": true,
+	// The log of what reading noticed is only ever appended to, by the
+	// one package that owns it, and the harness reads that same file.
+	"internal/drift/log.go":                   true,
+	"internal/harness/proxytest/readerlog.go": true,
 	// This module's own sources sit in the checkout, where nothing in
 	// this codebase writes them.
 	"internal/harness/repotest/repotest.go": true,

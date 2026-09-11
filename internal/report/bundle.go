@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/follow"
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -92,7 +92,7 @@ type sessionFilesWire struct {
 	Ambiguous   int       `json:"ambiguous"`
 	Unreadable  int       `json:"unreadable"`
 	// Signals is counts and field names, the registry's own form.
-	Signals follow.Signals `json:"signals,omitzero"`
+	Signals drift.Signals `json:"signals,omitzero"`
 }
 
 type proxyWire struct {

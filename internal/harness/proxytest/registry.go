@@ -1,6 +1,7 @@
 package proxytest
 
 import (
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
 
@@ -10,8 +11,8 @@ import (
 type RegisteredFile = follow.File
 
 // Signals is what reading a project's session files noticed about the
-// shape of their lines, in follow's own type.
-type Signals = follow.Signals
+// shape of their lines, in the type of the module that names them.
+type Signals = drift.Signals
 
 func (s *Sandbox) registry() *follow.Registry { return follow.Open(s.layout.FollowDir()) }
 

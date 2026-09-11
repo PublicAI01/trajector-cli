@@ -202,6 +202,10 @@ func signalLines(d Diagnosis) []string {
 		lines = append(lines, fmt.Sprintf("%d of %d assistant lines in this project's session files carried no message id.",
 			s.AssistantLinesWithoutMessageID, s.AssistantLines))
 	}
+	if s.AssistantLinesMissingResponseFields > 0 {
+		lines = append(lines, fmt.Sprintf("%d of %d assistant lines in this project's session files lacked a response field a record is read by.",
+			s.AssistantLinesMissingResponseFields, s.AssistantLines))
+	}
 	if s.MessagesWithBlockIndexGap > 0 {
 		lines = append(lines, fmt.Sprintf("%d message(s) in this project's session files had block indexes that repeat or skip a number.",
 			s.MessagesWithBlockIndexGap))

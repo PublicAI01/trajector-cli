@@ -7,19 +7,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
 
 func TestRegistry_SignalsAccumulateAcrossReads(t *testing.T) {
 	dir := t.TempDir()
 	r := follow.Open(dir)
-	first := follow.Signals{
+	first := drift.Signals{
 		UnanchoredPathFields:           []string{"$.someNewPath"},
 		AssistantLines:                 3,
 		AssistantLinesWithoutMessageID: 1,
 		NewTopLevelTypes:               []string{"mood-ring"},
 	}
-	second := follow.Signals{
+	second := drift.Signals{
 		UnanchoredPathFields:      []string{"$.attachment.snapshot.newDir", "$.someNewPath"},
 		IncompleteSegments:        1,
 		AssistantLines:            2,
@@ -29,7 +30,7 @@ func TestRegistry_SignalsAccumulateAcrossReads(t *testing.T) {
 		NewTopLevelTypes:          []string{"aurora"},
 		NewLaunchSurfaces:         []string{"claude-holodeck"},
 	}
-	for _, s := range []follow.Signals{first, second} {
+	for _, s := range []drift.Signals{first, second} {
 		if err := r.AddSignals(project, s); err != nil {
 			t.Fatal(err)
 		}
@@ -39,7 +40,7 @@ func TestRegistry_SignalsAccumulateAcrossReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := follow.Signals{
+	want := drift.Signals{
 		UnanchoredPathFields:           []string{"$.attachment.snapshot.newDir", "$.someNewPath"},
 		IncompleteSegments:             1,
 		AssistantLines:                 5,
@@ -76,7 +77,7 @@ func TestRegistry_SignalsOfAnUnknownProjectAreNone(t *testing.T) {
 func TestRegistry_AddingNothingWritesNoSignals(t *testing.T) {
 	dir := t.TempDir()
 	r := follow.Open(dir)
-	if err := r.AddSignals(project, follow.Signals{}); err != nil {
+	if err := r.AddSignals(project, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(filepath.Join(dir, project+".json"))
@@ -87,7 +88,7 @@ func TestRegistry_AddingNothingWritesNoSignals(t *testing.T) {
 
 func TestRegistry_UnregisterDropsTheSignals(t *testing.T) {
 	r := follow.Open(t.TempDir())
-	if err := r.AddSignals(project, follow.Signals{AssistantLines: 1}); err != nil {
+	if err := r.AddSignals(project, drift.Signals{AssistantLines: 1, AssistantLinesWithoutMessageID: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Unregister(project); err != nil {

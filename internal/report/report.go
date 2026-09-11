@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
@@ -74,7 +75,7 @@ type SessionFilesState struct {
 	// Signals is what reading the files noticed about their shape, as
 	// the registry accumulated it: counts and field names, never a
 	// value.
-	Signals follow.Signals
+	Signals drift.Signals
 }
 
 // full reports a spool that refuses writes because usage reached the

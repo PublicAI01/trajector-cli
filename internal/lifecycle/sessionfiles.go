@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,7 +17,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
-	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // HookInput is what Claude Code writes on a hook's stdin: which session
@@ -111,7 +109,7 @@ func (m *Machine) RegisterSessionFile(cwd string, hook HookInput) (registered bo
 type registryContents struct {
 	Files   []follow.File
 	Gaps    follow.Gaps
-	Signals follow.Signals
+	Signals drift.Signals
 	// Err, when non-nil, is why the registry could not be read. The
 	// other fields are then zero.
 	Err error
@@ -266,7 +264,10 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 // until a different build reads them; everything else is counted and
 // reading goes on. This is the one place a line's fields are read
 // before the spool, so it is where the shape is checked; the reader
-// itself interprets nothing.
+// itself interprets nothing, and what a finding is called is stated
+// where the scan happens, not here. A registry or a log that cannot be
+// written is let go: what was noticed is worth keeping and never worth
+// stopping a read for.
 func (m *Machine) inspectSegments(projectIDHash string, segments []envelope.Segment) (stop bool, err error) {
 	for _, seg := range segments {
 		found, err := drift.Scan([]byte(seg.Lines))
@@ -276,73 +277,14 @@ func (m *Machine) inspectSegments(projectIDHash string, segments []envelope.Segm
 		if !found.Any() {
 			continue
 		}
-		_ = m.registry.AddSignals(projectIDHash, signalsOf(found))
-		m.appendReaderLog(projectIDHash, found)
+		_ = m.registry.AddSignals(projectIDHash, found)
+		_ = drift.AppendLog(m.deps.Layout.ReaderLog(), m.now(), projectIDHash, found)
 		if found.Stop() {
 			_ = m.routes.PauseByBuild(routing.PauseRedactionDrift, m.deps.Version)
 			return true, nil
 		}
 	}
 	return false, nil
-}
-
-// signalsOf is one scan's findings in the registry's accumulating
-// form.
-func signalsOf(r drift.Report) follow.Signals {
-	s := follow.Signals{
-		UnanchoredPathFields:           r.UnanchoredPathFields,
-		AssistantLines:                 r.AssistantLines,
-		AssistantLinesWithoutMessageID: r.AssistantLinesWithoutMessageID,
-		MessagesWithBlockIndexGap:      r.MessagesWithBlockIndexGap,
-		AgentLines:                     r.AgentLines,
-		AgentLinesWithoutParent:        r.AgentLinesWithoutParent,
-		NewLaunchSurfaces:              r.NewLaunchSurfaces,
-		NewAttachmentTypes:             r.NewAttachmentTypes,
-		NewSystemSubtypes:              r.NewSystemSubtypes,
-		NewTopLevelTypes:               r.NewTopLevelTypes,
-	}
-	if r.IncompleteLine {
-		s.IncompleteSegments = 1
-	}
-	return s
-}
-
-// readerLogLine is one entry of the reader log: when, for which
-// project, whether reading stopped, and what was found. It carries no
-// path and no session id.
-type readerLogLine struct {
-	At            string `json:"at"`
-	ProjectIDHash string `json:"project_id_hash"`
-	Stop          bool   `json:"stop,omitempty"`
-	follow.Signals
-}
-
-// appendReaderLog adds one line for a scan that found something. The
-// reader has no other voice: its streams are the null device, and the
-// registry keeps sums, not events. A log that cannot be written is
-// let go — the registry still has the finding. Readers of different
-// projects run at once and share this file: each line goes down in
-// one append-mode write, which is what keeps lines whole.
-func (m *Machine) appendReaderLog(projectIDHash string, found drift.Report) {
-	path := m.deps.Layout.ReaderLog()
-	if err := userdirs.EnsureOwnerDir(filepath.Dir(path)); err != nil {
-		return
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	line, err := json.Marshal(readerLogLine{
-		At:            m.now(),
-		ProjectIDHash: projectIDHash,
-		Stop:          found.Stop(),
-		Signals:       signalsOf(found),
-	})
-	if err != nil {
-		return
-	}
-	_, _ = f.Write(append(line, '\n'))
 }
 
 // storeRecords writes a read result's segments and snapshots to the

@@ -19,7 +19,7 @@ func fixture(t *testing.T, name string) []byte {
 	return data
 }
 
-func scan(t *testing.T, name string) drift.Report {
+func scan(t *testing.T, name string) drift.Signals {
 	t.Helper()
 	r, err := drift.Scan(fixture(t, name))
 	if err != nil {
@@ -68,8 +68,8 @@ func TestScan_IncompleteTrailingLine(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if r.IncompleteLine != tc.want || r.Stop() != tc.want {
-				t.Errorf("IncompleteLine = %v, Stop() = %v, want both %v", r.IncompleteLine, r.Stop(), tc.want)
+			if (r.IncompleteSegments > 0) != tc.want || r.Stop() != tc.want {
+				t.Errorf("IncompleteSegments = %d, Stop() = %v, want a cut line = %v", r.IncompleteSegments, r.Stop(), tc.want)
 			}
 		})
 	}
@@ -175,14 +175,14 @@ func TestScan_AgentLineWithoutAnyParentField(t *testing.T) {
 
 func TestScan_NewValuesAreListedNotJudged(t *testing.T) {
 	r := scan(t, "new_values.jsonl")
-	want := drift.Report{
+	want := drift.Signals{
 		NewLaunchSurfaces:  []string{"claude-holodeck"},
 		NewAttachmentTypes: []string{"weather_report"},
 		NewSystemSubtypes:  []string{"coffee_break"},
 		NewTopLevelTypes:   []string{"mood-ring"},
 	}
 	if !reflect.DeepEqual(r, want) {
-		t.Errorf("Report = %+v, want %+v", r, want)
+		t.Errorf("Signals = %+v, want %+v", r, want)
 	}
 	if !r.Logs() || r.Stop() || r.Alerts() {
 		t.Errorf("Logs() = %v, Stop() = %v, Alerts() = %v; want a new value to log and nothing more", r.Logs(), r.Stop(), r.Alerts())
@@ -192,7 +192,7 @@ func TestScan_NewValuesAreListedNotJudged(t *testing.T) {
 func TestScan_KnownValuesAreSilent(t *testing.T) {
 	r := scan(t, "known_values.jsonl")
 	if r.Any() {
-		t.Errorf("Report = %+v, want nothing found in lines of the expected shape", r)
+		t.Errorf("Signals = %+v, want nothing found in lines of the expected shape", r)
 	}
 	if r.AssistantLines != 2 || r.AgentLines != 1 {
 		t.Errorf("assistant lines = %d, agent lines = %d; want the lines counted even when nothing is found", r.AssistantLines, r.AgentLines)
@@ -202,7 +202,7 @@ func TestScan_KnownValuesAreSilent(t *testing.T) {
 func TestScan_IgnoresFreeText(t *testing.T) {
 	r := scan(t, "free_text.jsonl")
 	if r.Any() {
-		t.Errorf("Report = %+v, want nothing found from paths and names spelled inside text", r)
+		t.Errorf("Signals = %+v, want nothing found from paths and names spelled inside text", r)
 	}
 }
 

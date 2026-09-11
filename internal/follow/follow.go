@@ -14,8 +14,10 @@
 // registry can say so without searching again. An optional "signals"
 // object accumulates what the reader noticed about the shape of the
 // lines it read, as counts and field names only, so a surface can
-// state it without opening a session file. Directories are 0700
-// and files 0600: the paths alone reveal what the user works on.
+// state it without opening a session file; it is kept in the form
+// drift gives it and summed by drift's own arithmetic. Directories
+// are 0700 and files 0600: the paths alone reveal what the user works
+// on.
 //
 // Reading is a function of one registered entry and the file on disk:
 // Read consumes the complete lines a file gained since its cursor and
@@ -33,6 +35,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
@@ -126,84 +129,11 @@ func (g Gaps) Any() bool {
 	return g.Truncated || len(g.Ambiguous) > 0 || len(g.Unreadable) > 0
 }
 
-// Signals is what the reader noticed about the shape of the lines it
-// read for a project, kept with the registry so it can be shown
-// without reading the files again. Counts only ever grow, and a list
-// holds each name once: the reader adds what one read found, and the
-// registry sums it with what earlier reads found. It carries no path
-// of the user's and no session id. The field names arrive already
-// printable: the redaction pass that makes a name keeps a location out
-// of it. The other lists hold the words a line used to name its own
-// shape.
-type Signals struct {
-	// UnanchoredPathFields are the JSON paths of fields found holding
-	// an absolute path that this build does not know how to mask.
-	UnanchoredPathFields []string `json:"unanchored_path_fields,omitempty"`
-	// IncompleteSegments counts the reads whose lines did not end in a
-	// newline.
-	IncompleteSegments int `json:"incomplete_segments,omitempty"`
-
-	AssistantLines                 int `json:"assistant_lines,omitempty"`
-	AssistantLinesWithoutMessageID int `json:"assistant_lines_without_message_id,omitempty"`
-	MessagesWithBlockIndexGap      int `json:"messages_with_block_index_gap,omitempty"`
-	AgentLines                     int `json:"agent_lines,omitempty"`
-	AgentLinesWithoutParent        int `json:"agent_lines_without_parent,omitempty"`
-
-	NewLaunchSurfaces  []string `json:"new_launch_surfaces,omitempty"`
-	NewAttachmentTypes []string `json:"new_attachment_types,omitempty"`
-	NewSystemSubtypes  []string `json:"new_system_subtypes,omitempty"`
-	NewTopLevelTypes   []string `json:"new_top_level_types,omitempty"`
-}
-
-// Any reports whether anything was ever noticed.
-func (s Signals) Any() bool {
-	return len(s.UnanchoredPathFields) > 0 || s.IncompleteSegments > 0 ||
-		s.AssistantLines > 0 || s.AgentLines > 0 ||
-		len(s.NewLaunchSurfaces) > 0 || len(s.NewAttachmentTypes) > 0 ||
-		len(s.NewSystemSubtypes) > 0 || len(s.NewTopLevelTypes) > 0
-}
-
-// add sums another read's signals into s.
-func (s *Signals) add(more Signals) {
-	s.UnanchoredPathFields = union(s.UnanchoredPathFields, more.UnanchoredPathFields)
-	s.IncompleteSegments += more.IncompleteSegments
-	s.AssistantLines += more.AssistantLines
-	s.AssistantLinesWithoutMessageID += more.AssistantLinesWithoutMessageID
-	s.MessagesWithBlockIndexGap += more.MessagesWithBlockIndexGap
-	s.AgentLines += more.AgentLines
-	s.AgentLinesWithoutParent += more.AgentLinesWithoutParent
-	s.NewLaunchSurfaces = union(s.NewLaunchSurfaces, more.NewLaunchSurfaces)
-	s.NewAttachmentTypes = union(s.NewAttachmentTypes, more.NewAttachmentTypes)
-	s.NewSystemSubtypes = union(s.NewSystemSubtypes, more.NewSystemSubtypes)
-	s.NewTopLevelTypes = union(s.NewTopLevelTypes, more.NewTopLevelTypes)
-}
-
-// union merges two name lists into one sorted list without repeats,
-// nil when both are empty.
-func union(a, b []string) []string {
-	if len(a)+len(b) == 0 {
-		return nil
-	}
-	seen := make(map[string]bool, len(a)+len(b))
-	for _, v := range a {
-		seen[v] = true
-	}
-	for _, v := range b {
-		seen[v] = true
-	}
-	out := make([]string, 0, len(seen))
-	for v := range seen {
-		out = append(out, v)
-	}
-	sort.Strings(out)
-	return out
-}
-
 type registry struct {
-	Version int      `json:"version"`
-	Files   []File   `json:"files"`
-	Gaps    *Gaps    `json:"gaps,omitempty"`
-	Signals *Signals `json:"signals,omitempty"`
+	Version int            `json:"version"`
+	Files   []File         `json:"files"`
+	Gaps    *Gaps          `json:"gaps,omitempty"`
+	Signals *drift.Signals `json:"signals,omitempty"`
 }
 
 // Register adds path to projectIDHash's registry with a zero cursor and
@@ -280,8 +210,9 @@ func (r *Registry) Gaps(projectIDHash string) (Gaps, error) {
 
 // AddSignals sums what one read noticed into projectIDHash's registry.
 // A project with no registry gets one: what was noticed about a
-// project's files outlives the entries for the files themselves.
-func (r *Registry) AddSignals(projectIDHash string, more Signals) error {
+// project's files outlives the entries for the files themselves. What
+// a signal holds is drift's to name; the registry only keeps the sum.
+func (r *Registry) AddSignals(projectIDHash string, more drift.Signals) error {
 	if err := checkProjectIDHash(projectIDHash); err != nil {
 		return err
 	}
@@ -293,12 +224,14 @@ func (r *Registry) AddSignals(projectIDHash string, more Signals) error {
 		if err != nil {
 			return nil, err
 		}
-		if reg.Signals == nil {
-			reg.Signals = &Signals{}
+		var sum drift.Signals
+		if reg.Signals != nil {
+			sum = *reg.Signals
 		}
-		reg.Signals.add(more)
-		if !reg.Signals.Any() {
-			reg.Signals = nil
+		sum = sum.Add(more)
+		reg.Signals = nil
+		if sum.Any() {
+			reg.Signals = &sum
 		}
 		return encode(reg)
 	})
@@ -307,13 +240,13 @@ func (r *Registry) AddSignals(projectIDHash string, more Signals) error {
 // Signals reports everything the reader noticed about projectIDHash's
 // files so far. A project with no registry, or one whose reads noticed
 // nothing, has none.
-func (r *Registry) Signals(projectIDHash string) (Signals, error) {
+func (r *Registry) Signals(projectIDHash string) (drift.Signals, error) {
 	reg, err := r.read(projectIDHash)
 	if err != nil {
-		return Signals{}, err
+		return drift.Signals{}, err
 	}
 	if reg.Signals == nil {
-		return Signals{}, nil
+		return drift.Signals{}, nil
 	}
 	return *reg.Signals, nil
 }

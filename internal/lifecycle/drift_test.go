@@ -1,8 +1,6 @@
 package lifecycle_test
 
 import (
-	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -14,27 +12,6 @@ import (
 func (e *env) signals(root string) proxytest.Signals {
 	e.t.Helper()
 	return e.sandbox.Signals(consent.ProjectIDHash(root))
-}
-
-// readerLog is every line the reader logged on this device, decoded.
-func (e *env) readerLog() []map[string]any {
-	e.t.Helper()
-	data, err := os.ReadFile(e.layout().ReaderLog())
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	var lines []map[string]any
-	for _, raw := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		var line map[string]any
-		if err := json.Unmarshal([]byte(raw), &line); err != nil {
-			e.t.Fatalf("reader log line %q: %v", raw, err)
-		}
-		lines = append(lines, line)
-	}
-	return lines
 }
 
 // pausedBy is the build recorded with the standing pause.
@@ -71,13 +48,13 @@ func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
 	if strings.Join(s.UnanchoredPathFields, ",") != "$.someNewPath" {
 		t.Errorf("signals = %+v, want the field name recorded", s)
 	}
-	log := e.readerLog()
-	if len(log) != 1 || log[0]["stop"] != true || log[0]["project_id_hash"] != consent.ProjectIDHash(root) {
-		t.Fatalf("reader log = %v, want one stop line for the project", log)
+	log := e.sandbox.ReaderLog()
+	if len(log) != 1 || !log[0].Stop || log[0].ProjectIDHash != consent.ProjectIDHash(root) {
+		t.Fatalf("reader log = %+v, want one stop entry for the project", log)
 	}
-	raw, _ := os.ReadFile(e.layout().ReaderLog())
+	raw := e.sandbox.ReaderLogText()
 	for _, unwanted := range []string{"/srv/elsewhere", "0f1e2d3c", main} {
-		if strings.Contains(string(raw), unwanted) {
+		if strings.Contains(raw, unwanted) {
 			t.Errorf("reader log = %s, want no %q", raw, unwanted)
 		}
 	}
@@ -110,8 +87,8 @@ func TestReadSessionFiles_RecordsAlertsWithoutStopping(t *testing.T) {
 	if s.AssistantLines != 2 || s.AssistantLinesWithoutMessageID != 1 || strings.Join(s.NewTopLevelTypes, ",") != "mood-ring" {
 		t.Errorf("signals = %+v, want 1 of 2 assistant lines without an id and the new type", s)
 	}
-	if log := e.readerLog(); len(log) != 1 || log[0]["stop"] != nil || log[0]["assistant_lines_without_message_id"] != float64(1) {
-		t.Errorf("reader log = %v, want one line with the count and no stop", log)
+	if log := e.sandbox.ReaderLog(); len(log) != 1 || log[0].Stop || log[0].AssistantLinesWithoutMessageID != 1 {
+		t.Errorf("reader log = %+v, want one entry with the count and no stop", log)
 	}
 
 	// The same lines read again on a rewrite are counted again: the
@@ -136,8 +113,8 @@ func TestReadSessionFiles_LinesOfTheExpectedShapeLeaveNoTrace(t *testing.T) {
 	if got := e.signals(root); got.Any() {
 		t.Errorf("signals = %+v, want nothing recorded for lines of the expected shape", got)
 	}
-	if _, err := os.Stat(e.layout().ReaderLog()); !os.IsNotExist(err) {
-		t.Errorf("reader log exists (%v), want none written when nothing was found", err)
+	if got := e.sandbox.ReaderLogText(); got != "" {
+		t.Errorf("reader log = %q, want nothing written when nothing was found", got)
 	}
 }
 
@@ -200,15 +177,19 @@ func TestStatus_ShowsSignalCounts(t *testing.T) {
 	})
 	e.injectWithoutBaseURL()
 	e.sandbox.AddSignals(consent.ProjectIDHash(root), proxytest.Signals{
-		AssistantLines:                 7,
-		AssistantLinesWithoutMessageID: 2,
-		UnanchoredPathFields:           []string{"$.someNewPath"},
-		NewTopLevelTypes:               []string{"mood-ring"},
+		AssistantLines:                      7,
+		AssistantLinesWithoutMessageID:      2,
+		AssistantLinesMissingResponseFields: 3,
+		UnanchoredPathFields:                []string{"$.someNewPath"},
+		NewTopLevelTypes:                    []string{"mood-ring"},
 	})
 
 	out := e.statusOutput()
 	if !strings.Contains(out, "2 of 7 assistant lines in this project's session files carried no message id.") {
 		t.Errorf("status = %q, want the count stated", out)
+	}
+	if !strings.Contains(out, "3 of 7 assistant lines in this project's session files lacked a response field a record is read by.") {
+		t.Errorf("status = %q, want every count the registry holds stated", out)
 	}
 	if strings.Contains(out, "$.someNewPath") || strings.Contains(out, "mood-ring") {
 		t.Errorf("status = %q, want no field names while recording is not paused for them, and never a logged value", out)

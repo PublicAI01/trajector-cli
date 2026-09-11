@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -204,10 +205,10 @@ func TestStatusReportsClaudeOnTheWindowsSideAsAFact(t *testing.T) {
 func TestStatusTellsTheTwoRecordingPausesApart(t *testing.T) {
 	agreement := device()
 	agreement.Project.PauseReason = routing.PauseConsentReconfirm
-	drift := device()
-	drift.Project.PauseReason = routing.PauseRedactionDrift
+	redaction := device()
+	redaction.Project.PauseReason = routing.PauseRedactionDrift
 
-	a, b := dashboard(agreement), dashboard(drift)
+	a, b := dashboard(agreement), dashboard(redaction)
 	wants(t, "status", a, "Recording is paused everywhere", "the data agreement changed", "`trajector enable`")
 	wants(t, "status", b, "Recording is paused everywhere", "redaction does not cover", "`trajector upgrade`")
 	paused := enabledDevice()
@@ -393,14 +394,15 @@ func TestTheBundleCarriesShapeAndSessionCountsWithoutIdsOrPaths(t *testing.T) {
 }
 
 func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
-	alerts := follow.Signals{
-		AssistantLines:                 12,
-		AssistantLinesWithoutMessageID: 3,
-		MessagesWithBlockIndexGap:      2,
-		AgentLines:                     5,
-		AgentLinesWithoutParent:        1,
+	alerts := drift.Signals{
+		AssistantLines:                      12,
+		AssistantLinesWithoutMessageID:      3,
+		AssistantLinesMissingResponseFields: 4,
+		MessagesWithBlockIndexGap:           2,
+		AgentLines:                          5,
+		AgentLinesWithoutParent:             1,
 	}
-	stopped := follow.Signals{
+	stopped := drift.Signals{
 		UnanchoredPathFields: []string{"$.attachment.snapshot.newDir", "$.someNewPath"},
 		IncompleteSegments:   1,
 		NewTopLevelTypes:     []string{"mood-ring"},
@@ -408,14 +410,14 @@ func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name    string
-		signals follow.Signals
+		signals drift.Signals
 		pause   routing.PauseReason
 		want    []string
 		reject  []string
 	}{
 		{
 			name:    "nothing noticed",
-			signals: follow.Signals{AssistantLines: 12, AgentLines: 5},
+			signals: drift.Signals{AssistantLines: 12, AgentLines: 5},
 			reject:  []string{"carried no message id", "block indexes", "started by", "redaction does not cover"},
 		},
 		{
@@ -423,6 +425,7 @@ func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
 			signals: alerts,
 			want: []string{
 				"3 of 12 assistant lines in this project's session files carried no message id.",
+				"4 of 12 assistant lines in this project's session files lacked a response field a record is read by.",
 				"2 message(s) in this project's session files had block indexes that repeat or skip a number.",
 				"1 of 5 agent lines in this project's session files named nothing they were started by.",
 			},
@@ -463,7 +466,7 @@ func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
 
 func TestTheBundleCarriesWhatReadingNoticedWithoutValues(t *testing.T) {
 	d := enabledDevice()
-	d.SessionFiles.Signals = follow.Signals{
+	d.SessionFiles.Signals = drift.Signals{
 		UnanchoredPathFields:           []string{"$.someNewPath"},
 		AssistantLines:                 4,
 		AssistantLinesWithoutMessageID: 1,
@@ -479,7 +482,7 @@ func TestTheBundleCarriesWhatReadingNoticedWithoutValues(t *testing.T) {
 	)
 	rejects(t, "diagnosis.json", got, `"agent_lines"`, `"incomplete_segments"`)
 
-	d.SessionFiles.Signals = follow.Signals{}
+	d.SessionFiles.Signals = drift.Signals{}
 	if got := string(report.DiagnosisJSON(d)); strings.Contains(got, `"signals"`) {
 		t.Errorf("diagnosis.json = %s, want no signals key when nothing was noticed", got)
 	}

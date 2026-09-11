@@ -34,6 +34,13 @@
 // why there: the groups are defined by what a wrong shape costs, and a
 // check that is not placed is a check that is not run.
 //
+// What a scan found is one value, Signals, and this package holds the
+// only spelling of it: a store keeps that value and sums it across
+// scans without naming its fields, a surface prints it by those same
+// names, and the log of what reading noticed, which this package also
+// writes and reads, carries it as it is. A check added here is
+// therefore a field here and a sentence where it is printed.
+//
 // Two kinds of run answer two different questions. The fixtures under
 // testdata are frozen and synthetic; a run over them proves the code
 // does what it says. A run over the real session files on a
@@ -52,74 +59,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
-
-// Report is what one scan found, grouped by what the caller does
-// next: Stop, Alerts, and Logs each read the fields of one group.
-//
-// A fourth check is expected in the Alert group once its list of
-// fields is settled: whether every assistant line carries the
-// response fields a record is complete without help from. The list
-// is not settled, so requiredResponseFields is empty and
-// AssistantLinesMissingResponseFields is always zero.
-type Report struct {
-	// UnanchoredPathFields lists, sorted and without repeats, the JSON
-	// paths of fields whose whole value is an absolute path and that
-	// neither the anchored list nor the acknowledged list knows.
-	UnanchoredPathFields []string
-	// IncompleteLine reports input that does not end in a newline. A
-	// reader only ever hands over complete lines, so this is a
-	// contradiction when it is true; it is checked again here because
-	// the cost of letting it through is a masked line that is not JSON.
-	IncompleteLine bool
-
-	AssistantLines                 int
-	AssistantLinesWithoutMessageID int
-	// MessagesWithBlockIndexGap counts the message ids whose block
-	// indexes, within these lines, repeat or skip a number. A message
-	// may continue across scans, so only what is decidable from these
-	// lines counts: a run that starts above zero or ends early is not
-	// a gap here.
-	MessagesWithBlockIndexGap int
-	// AssistantLinesMissingResponseFields is reserved; see Report.
-	AssistantLinesMissingResponseFields int
-
-	AgentLines int
-	// AgentLinesWithoutParent counts the agent lines that carry none
-	// of the fields naming what started the agent.
-	AgentLinesWithoutParent int
-
-	// The remaining lists hold values not on this build's known lists,
-	// sorted and without repeats.
-	NewLaunchSurfaces  []string
-	NewAttachmentTypes []string
-	NewSystemSubtypes  []string
-	NewTopLevelTypes   []string
-}
-
-// Stop reports a finding after which these lines must not be stored.
-func (r Report) Stop() bool {
-	return len(r.UnanchoredPathFields) > 0 || r.IncompleteLine
-}
-
-// Alerts reports a finding to show and log while reading goes on.
-func (r Report) Alerts() bool {
-	return r.AssistantLinesWithoutMessageID > 0 ||
-		r.MessagesWithBlockIndexGap > 0 ||
-		r.AssistantLinesMissingResponseFields > 0 ||
-		r.AgentLinesWithoutParent > 0
-}
-
-// Logs reports a value seen for the first time, to log and nothing
-// more.
-func (r Report) Logs() bool {
-	return len(r.NewLaunchSurfaces) > 0 ||
-		len(r.NewAttachmentTypes) > 0 ||
-		len(r.NewSystemSubtypes) > 0 ||
-		len(r.NewTopLevelTypes) > 0
-}
-
-// Any reports whether the scan found anything at all.
-func (r Report) Any() bool { return r.Stop() || r.Alerts() || r.Logs() }
 
 // The top-level keys a scan reads. launchSurfaceKey is the key under
 // which Claude Code records how it was started.
@@ -158,10 +97,10 @@ var requiredResponseFields []string
 // reports what does not match the shape this build expects. It never
 // reads free text. Every line must be a JSON object, as a reader
 // guarantees; a line that is not is an error, not a finding.
-func Scan(lines []byte) (Report, error) {
-	var r Report
+func Scan(lines []byte) (Signals, error) {
+	var r Signals
 	if !bytes.HasSuffix(lines, []byte("\n")) {
-		r.IncompleteLine = true
+		r.IncompleteSegments = 1
 	}
 	s := scanner{
 		paths:       map[string]bool{},
@@ -180,7 +119,7 @@ func Scan(lines []byte) (Report, error) {
 		line := rest[:nl]
 		rest = rest[nl+1:]
 		if err := s.line(&r, line); err != nil {
-			return Report{}, fmt.Errorf("drift: line %d: %w", n, err)
+			return Signals{}, fmt.Errorf("drift: line %d: %w", n, err)
 		}
 	}
 	r.UnanchoredPathFields = sorted(s.paths)
@@ -204,7 +143,7 @@ type scanner struct {
 	types       map[string]bool
 }
 
-func (s *scanner) line(r *Report, line []byte) error {
+func (s *scanner) line(r *Signals, line []byte) error {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(line, &top); err != nil || top == nil {
 		return fmt.Errorf("not a JSON object")
@@ -261,7 +200,7 @@ func (s *scanner) line(r *Report, line []byte) error {
 	return nil
 }
 
-func (s *scanner) assistant(r *Report, top map[string]json.RawMessage) {
+func (s *scanner) assistant(r *Signals, top map[string]json.RawMessage) {
 	r.AssistantLines++
 	var message map[string]json.RawMessage
 	decode(top[messageKey], &message)

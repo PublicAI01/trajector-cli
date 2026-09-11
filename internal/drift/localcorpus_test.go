@@ -39,19 +39,8 @@ func TestLocalCorpus(t *testing.T) {
 
 	var (
 		files, unreadable, segments int
-		total                       drift.Report
-		stopFields                  = map[string]bool{}
-		incomplete                  int
-		newValues                   = map[string]map[string]bool{}
+		total                       drift.Signals
 	)
-	note := func(kind string, values []string) {
-		for _, v := range values {
-			if newValues[kind] == nil {
-				newValues[kind] = map[string]bool{}
-			}
-			newValues[kind][v] = true
-		}
-	}
 	// Every directory counts as consented to, so a session that moved
 	// is read through rather than stopped at the move.
 	opts := follow.ReadOptions{Authorized: func(string) bool { return true }}
@@ -72,21 +61,7 @@ func TestLocalCorpus(t *testing.T) {
 				unreadable++
 				continue
 			}
-			if rep.IncompleteLine {
-				incomplete++
-			}
-			for _, field := range rep.UnanchoredPathFields {
-				stopFields[field] = true
-			}
-			total.AssistantLines += rep.AssistantLines
-			total.AssistantLinesWithoutMessageID += rep.AssistantLinesWithoutMessageID
-			total.MessagesWithBlockIndexGap += rep.MessagesWithBlockIndexGap
-			total.AgentLines += rep.AgentLines
-			total.AgentLinesWithoutParent += rep.AgentLinesWithoutParent
-			note("launch surface", rep.NewLaunchSurfaces)
-			note("attachment type", rep.NewAttachmentTypes)
-			note("system subtype", rep.NewSystemSubtypes)
-			note("top-level type", rep.NewTopLevelTypes)
+			total = total.Add(rep)
 		}
 		return nil
 	})
@@ -94,22 +69,21 @@ func TestLocalCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Logf("files %d, segments %d, unreadable %d, segments ending without a newline %d", files, segments, unreadable, incomplete)
-	t.Logf("assistant lines %d, without message id %d; messages with a block index gap %d",
-		total.AssistantLines, total.AssistantLinesWithoutMessageID, total.MessagesWithBlockIndexGap)
+	t.Logf("files %d, segments %d, unreadable %d, segments ending without a newline %d", files, segments, unreadable, total.IncompleteSegments)
+	t.Logf("assistant lines %d, without message id %d, missing a response field %d; messages with a block index gap %d",
+		total.AssistantLines, total.AssistantLinesWithoutMessageID, total.AssistantLinesMissingResponseFields, total.MessagesWithBlockIndexGap)
 	t.Logf("agent lines %d, without a parent field %d", total.AgentLines, total.AgentLinesWithoutParent)
-	for kind, values := range newValues {
-		names := make([]string, 0, len(values))
-		for v := range values {
-			names = append(names, v)
+	for kind, values := range map[string][]string{
+		"launch surface":  total.NewLaunchSurfaces,
+		"attachment type": total.NewAttachmentTypes,
+		"system subtype":  total.NewSystemSubtypes,
+		"top-level type":  total.NewTopLevelTypes,
+	} {
+		if len(values) > 0 {
+			t.Logf("new %s values: %d (%s)", kind, len(values), strings.Join(values, ", "))
 		}
-		t.Logf("new %s values: %d (%s)", kind, len(names), strings.Join(names, ", "))
 	}
-	if len(stopFields) > 0 {
-		names := make([]string, 0, len(stopFields))
-		for f := range stopFields {
-			names = append(names, f)
-		}
-		t.Errorf("fields holding an absolute path that the anchored list does not know: %s", strings.Join(names, ", "))
+	if len(total.UnanchoredPathFields) > 0 {
+		t.Errorf("fields holding an absolute path that the anchored list does not know: %s", strings.Join(total.UnanchoredPathFields, ", "))
 	}
 }
