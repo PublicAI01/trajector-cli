@@ -297,10 +297,7 @@ func (m *Machine) discoverSessionFiles(st report.ProjectStatus) report.Discovery
 	if err != nil {
 		return report.Discovery{Err: err}
 	}
-	files, err := follow.Open(m.deps.Layout.FollowDir()).Files(st.Hash)
-	if err != nil {
-		return report.Discovery{Err: err}
-	}
+	files := m.sessionFiles(st.Hash).Files
 	registered := make(map[string]bool, len(files))
 	for _, f := range files {
 		registered[f.Path] = true

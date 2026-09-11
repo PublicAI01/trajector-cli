@@ -1,16 +1,12 @@
 package lifecycle_test
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
-	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 const (
@@ -30,27 +26,10 @@ func forgetIntroFor(sessionID string) string {
 		"Recording of this session continues; only what was collected so far is gone.\n"
 }
 
-func sessionRequestBody(t *testing.T, sessionID string) []byte {
-	t.Helper()
-	userID, err := json.Marshal(map[string]string{"device_id": "d", "account_uuid": "a", "session_id": sessionID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := json.Marshal(map[string]any{
-		"model":    "claude-fable-5",
-		"metadata": map[string]string{"user_id": string(userID)},
-		"messages": []map[string]string{{"role": "user", "content": "hello"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return body
-}
-
 func seedSessionRawcall(e *env, requestID, sessionID string) {
 	e.t.Helper()
 	e.sandbox.SeedRawcall(requestID, "hash-project", e.deps.Now(), func(o *proxytest.Observation) {
-		o.Request = sessionRequestBody(e.t, sessionID)
+		o.Request = proxytest.RequestBodyOfSession(e.t, sessionID)
 	})
 }
 
@@ -58,51 +37,20 @@ func seedSessionRawcall(e *env, requestID, sessionID string) {
 // one snapshot of a sub-agent's, both under the session's id.
 func seedSessionRecords(e *env, sessionID string) (segmentID, snapshotID string) {
 	e.t.Helper()
-	sp, err := spool.Create(e.layout().SpoolDir(), 0)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	capture := envelope.TranscriptCapture{
-		ClientVersion: e.deps.Version,
-		Timestamp:     e.deps.Now().Format(time.RFC3339Nano),
-		ProjectIDHash: "hash-project",
-		Injection:     envelope.InjectionProxy,
-	}
-	seg := envelope.NewSegment(sessionID, "", 0, capture, `{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
-	if err := sp.WriteSegment(seg); err != nil {
-		e.t.Fatal(err)
-	}
-	snap, err := envelope.NewMetaSnapshot(sessionID, "subagents/agent-0000.meta.json", capture, []byte(`{"agentId":"0000"}`))
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	if err := sp.WriteMetaSnapshot(snap); err != nil {
-		e.t.Fatal(err)
-	}
-	return seg.RecordID, snap.RecordID
+	at := e.deps.Now()
+	return e.sandbox.SeedSegment(sessionID, "hash-project", at),
+		e.sandbox.SeedMetaSnapshot(sessionID, "hash-project", at)
 }
 
 // spoolHeld lists what the spool still holds, rawcalls by request id
 // and records by record id.
 func spoolHeld(e *env) (rawcalls, records []string) {
 	e.t.Helper()
-	sp, err := spool.Open(e.layout().SpoolDir(), 0)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	err = sp.Each(func(r spool.Rawcall) error {
+	for _, r := range e.sandbox.Rawcalls() {
 		rawcalls = append(rawcalls, r.RequestID)
-		return nil
-	})
-	if err != nil {
-		e.t.Fatal(err)
 	}
-	err = sp.EachRecord(func(r spool.Record) error {
+	for _, r := range e.sandbox.Records() {
 		records = append(records, r.ID)
-		return nil
-	})
-	if err != nil {
-		e.t.Fatal(err)
 	}
 	return rawcalls, records
 }

@@ -20,7 +20,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 	"github.com/PublicAI01/trajector-cli/internal/report"
-	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -31,7 +30,6 @@ import (
 type env struct {
 	t        *testing.T
 	deps     lifecycle.Deps
-	tokens   *tokenstore.Store
 	service  *fakeplatform.Server
 	project  string
 	stdin    string
@@ -50,7 +48,7 @@ func newEnv(t *testing.T) *env {
 	// The file token backend keeps these tests away from the developer's
 	// OS keyring; the machine opens the store itself, so this is the one
 	// place that can choose which backend it opens.
-	t.Setenv(tokenstore.BackendEnv, "file")
+	proxytest.FileTokens(t)
 	e := &env{
 		t:       t,
 		service: fakeplatform.New(t),
@@ -64,7 +62,6 @@ func newEnv(t *testing.T) *env {
 		environ: map[string]string{"CLAUDE_CODE_MANAGED_SETTINGS_PATH": filepath.Join(home, "managed")},
 		sandbox: proxytest.Open(t, layout),
 		client:  proxytest.Client(t),
-		tokens:  tokenstore.Files(layout.SecretsDir()),
 	}
 	e.deps = lifecycle.Deps{
 		Layout:      layout,
@@ -86,9 +83,7 @@ func newEnv(t *testing.T) *env {
 func newUnpairedEnv(t *testing.T) *env {
 	t.Helper()
 	e := newEnv(t)
-	if err := e.tokens.ClearDeviceToken(); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.ClearDeviceToken()
 	return e
 }
 
@@ -357,9 +352,7 @@ func ackBatch(extra map[string]any) func(fakeplatform.Request) fakeplatform.Resp
 
 func (e *env) seedDeviceToken() {
 	e.t.Helper()
-	if err := e.tokens.SetDeviceToken("dev-tok-fake"); err != nil {
-		e.t.Fatal(err)
-	}
+	e.sandbox.SetDeviceToken("dev-tok-fake")
 }
 
 func freeAddr(t *testing.T) string {

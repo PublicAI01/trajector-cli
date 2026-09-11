@@ -13,13 +13,10 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/cli"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
-	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
-	"github.com/PublicAI01/trajector-cli/internal/spool"
-	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -68,15 +65,7 @@ func (e *env) sessionFilesRoot() string {
 
 func (e *env) registeredPaths(root string) []string {
 	e.t.Helper()
-	files, err := follow.Open(e.layout().FollowDir()).Files(consent.ProjectIDHash(root))
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	paths := make([]string, 0, len(files))
-	for _, f := range files {
-		paths = append(paths, f.Path)
-	}
-	return paths
+	return e.sandbox.RegisteredPaths(consent.ProjectIDHash(root))
 }
 
 func TestRegisterSessionFile(t *testing.T) {
@@ -336,36 +325,19 @@ func (e *env) putSessionFile(rel, content string) string {
 // subpath, standing in for what a hook records.
 func (e *env) registerFile(root, path, subpath string) {
 	e.t.Helper()
-	if err := follow.Open(e.layout().FollowDir()).RegisterUnder(consent.ProjectIDHash(root), path, subpath); err != nil {
-		e.t.Fatal(err)
-	}
+	e.sandbox.RegisterSessionFile(consent.ProjectIDHash(root), path, subpath)
 }
 
 // registeredFiles returns root's registered entries, cursors included.
-func (e *env) registeredFiles(root string) []follow.File {
+func (e *env) registeredFiles(root string) []proxytest.RegisteredFile {
 	e.t.Helper()
-	files, err := follow.Open(e.layout().FollowDir()).Files(consent.ProjectIDHash(root))
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return files
+	return e.sandbox.RegisteredFiles(consent.ProjectIDHash(root))
 }
 
 // storedRecords lists the segments and snapshots in this device's spool.
-func (e *env) storedRecords() []spool.Record {
+func (e *env) storedRecords() []proxytest.Record {
 	e.t.Helper()
-	sp, err := spool.Open(e.layout().SpoolDir(), 0)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	var recs []spool.Record
-	if err := sp.EachRecord(func(r spool.Record) error {
-		recs = append(recs, r)
-		return nil
-	}); err != nil {
-		e.t.Fatal(err)
-	}
-	return recs
+	return e.sandbox.Records()
 }
 
 // injectWithProxy writes the injection shape that routes the project's
@@ -576,12 +548,9 @@ func TestReadSessionFiles_KilledReaderIsIdempotentOnRerun(t *testing.T) {
 
 	// A reader killed after storing the segment but before it advanced
 	// the cursor leaves the entry as it was: rewind it to that state.
-	reg := follow.Open(e.layout().FollowDir())
 	f := e.registeredFiles(root)[0]
 	f.Offset, f.Size, f.Inode, f.NextSegment, f.MessageIDs = 0, 0, 0, 0, nil
-	if err := reg.Update(consent.ProjectIDHash(root), f); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.PutRegisteredFile(consent.ProjectIDHash(root), f)
 
 	e.machine().ReadSessionFiles(e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 1 {
@@ -595,27 +564,14 @@ func TestReadSessionFiles_KilledReaderIsIdempotentOnRerun(t *testing.T) {
 // whatever proxy comes up to be drained with the test.
 func (e *env) isolateForSpawn() userdirs.Layout {
 	e.t.Helper()
-	dir := e.t.TempDir()
-	e.t.Setenv("HOME", e.deps.Home)
-	e.t.Setenv("XDG_CONFIG_HOME", dir)
-	e.t.Setenv("XDG_DATA_HOME", dir)
-	e.t.Setenv("XDG_STATE_HOME", dir)
-	layout := proxytest.SandboxLayout(e.t, dir)
+	layout := proxytest.ResolvableLayout(e.t, e.deps.Home, e.t.TempDir())
 	e.deps.Layout = layout
 	e.sandbox = proxytest.Open(e.t, layout)
-	e.tokens = tokenstore.Files(layout.SecretsDir())
 	e.seedDeviceToken()
 	e.deps.ExecPath = procbin.Self(e.t, "cli")
 	e.deps.ProxyAddr = freeAddr(e.t)
 	e.t.Setenv(cli.ProxyAddrEnv, e.deps.ProxyAddr)
-	// A spawned proxy resolves its upload endpoint from the user config
-	// file; point it at this test's fake service.
-	if err := os.MkdirAll(filepath.Dir(layout.ConfigFile()), 0o700); err != nil {
-		e.t.Fatal(err)
-	}
-	if err := os.WriteFile(layout.ConfigFile(), []byte(`{"platform_url":"`+e.service.URL()+`"}`), 0o600); err != nil {
-		e.t.Fatal(err)
-	}
+	e.sandbox.PointAtService(e.service.URL())
 	addr := e.deps.ProxyAddr
 	e.t.Cleanup(func() {
 		_ = proxylife.For(layout, e.deps.Version, e.deps.ExecPath, addr).StopGone()

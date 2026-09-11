@@ -7,7 +7,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -247,7 +246,7 @@ func (m *Machine) recordedUpstream(root, injectedToken string) string {
 // which files are read and how far each was read — so nothing of the
 // project's is read again. The files stay where Claude Code wrote them.
 func (m *Machine) unregisterSessionFiles(projectIDHash string) error {
-	if err := follow.Open(m.deps.Layout.FollowDir()).Unregister(projectIDHash); err != nil {
+	if err := m.registry.Unregister(projectIDHash); err != nil {
 		return fmt.Errorf("withdrawing this project's session files from reading: %w", err)
 	}
 	return nil

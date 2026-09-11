@@ -11,7 +11,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
@@ -77,10 +76,6 @@ func (e *env) acceptCurrentAgreement() {
 	if err := e.consentStore().AcceptAgreement(consent.AgreementVersion, "2026-08-01T00:00:00Z"); err != nil {
 		e.t.Fatal(err)
 	}
-}
-
-func (e *env) registry() *follow.Registry {
-	return follow.Open(e.layout().FollowDir())
 }
 
 func (e *env) enable(noProxy bool) {
@@ -518,9 +513,7 @@ func TestEnable_RollbackUnregistersWhatItRegistered(t *testing.T) {
 			found := e.sessionFile("s-found", at)
 			earlier := filepath.Join(filepath.Dir(found), "s-earlier.jsonl")
 			if tt.registered {
-				if err := e.registry().Register(e.status().Hash, earlier); err != nil {
-					t.Fatal(err)
-				}
+				e.sandbox.RegisterSessionFile(e.status().Hash, earlier, "")
 			}
 
 			if err := e.machine().Enable(e.project, false, e.io()); err == nil {
@@ -554,11 +547,7 @@ func TestDisable_UnregistersTheProject(t *testing.T) {
 	if got := e.registeredPaths(e.canonicalRoot()); len(got) != 0 {
 		t.Errorf("registry survived disable: %v", got)
 	}
-	projects, err := e.registry().Projects()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, hash := range projects {
+	for _, hash := range e.sandbox.ProjectsWithRegistry() {
 		if hash == e.status().Hash {
 			t.Error("the project's registry file still exists")
 		}

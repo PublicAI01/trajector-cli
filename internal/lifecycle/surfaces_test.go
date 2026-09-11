@@ -9,7 +9,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 const (
@@ -230,7 +229,7 @@ func TestStatusAndDoctorTakeAnIdleProxyAsNormalWhereNoProjectUsesIt(t *testing.T
 
 func TestStatusTellsARedactionPauseFromAnAgreementPause(t *testing.T) {
 	e := newEnv(t)
-	e.sandbox.Pause(routing.PauseRedactionDrift)
+	e.sandbox.Pause(proxytest.PauseRedactionDrift)
 	out := e.statusOutput()
 	if !strings.Contains(out, "Recording is paused everywhere") || !strings.Contains(out, "redaction does not cover") {
 		t.Errorf("status = %q, want the redaction pause explained", out)
@@ -239,7 +238,7 @@ func TestStatusTellsARedactionPauseFromAnAgreementPause(t *testing.T) {
 		t.Errorf("status = %q, want no word about the agreement", out)
 	}
 
-	e.sandbox.Pause(routing.PauseConsentReconfirm)
+	e.sandbox.Pause(proxytest.PauseConsentReconfirm)
 	e.stdout.Reset()
 	out = e.statusOutput()
 	if !strings.Contains(out, "the data agreement changed") || strings.Contains(out, "redaction") {

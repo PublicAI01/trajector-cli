@@ -68,9 +68,7 @@ func TestUploadReportsEachOutcomeThroughTheResidentProxy(t *testing.T) {
 	}
 
 	e.stdout.Reset()
-	if err := e.tokens.ClearDeviceToken(); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.ClearDeviceToken()
 	e.sandbox.SeedRawcall("req-2", "hash-p1", time.Now().UTC())
 	if err := m.Upload(true, e.io()); err != nil {
 		t.Fatal(err)

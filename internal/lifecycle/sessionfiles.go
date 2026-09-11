@@ -97,13 +97,47 @@ func (m *Machine) RegisterSessionFile(cwd string, hook HookInput) (registered bo
 		return false, nil
 	}
 	subpath := projectSubpath(st.Root, hook.Cwd)
-	registry := follow.Open(m.deps.Layout.FollowDir())
 	for _, p := range append([]string{path}, follow.Siblings(path)...) {
-		if err := registry.RegisterUnder(st.Hash, p, subpath); err != nil {
+		if err := m.registry.RegisterUnder(st.Hash, p, subpath); err != nil {
 			return false, err
 		}
 	}
 	return true, nil
+}
+
+// registryContents is one project's registry as everything here reads
+// it: which files are registered, what the one search for earlier
+// files could not cover, and what reading noticed about their shape.
+type registryContents struct {
+	Files   []follow.File
+	Gaps    follow.Gaps
+	Signals follow.Signals
+	// Err, when non-nil, is why the registry could not be read. The
+	// other fields are then zero.
+	Err error
+}
+
+// sessionFiles reads one project's registry, and is the one place this
+// package says what a registry that cannot be read means: no files and
+// a stated reason. A surface then prints the reason rather than an
+// empty registry, and a reading run does nothing rather than start
+// every file from its beginning again. Withdrawal on disable is the
+// exception and keeps its own failure: it changes the registry, so it
+// must not report that it took back what it could not reach.
+func (m *Machine) sessionFiles(projectIDHash string) registryContents {
+	files, err := m.registry.Files(projectIDHash)
+	if err != nil {
+		return registryContents{Err: err}
+	}
+	gaps, err := m.registry.Gaps(projectIDHash)
+	if err != nil {
+		return registryContents{Err: err}
+	}
+	signals, err := m.registry.Signals(projectIDHash)
+	if err != nil {
+		return registryContents{Err: err}
+	}
+	return registryContents{Files: files, Gaps: gaps, Signals: signals}
 }
 
 // projectSubpath reports where a session ran relative to the project
@@ -172,11 +206,6 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 	}
 	defer func() { _ = m.EnsureProxy(projectDir, io) }()
 
-	registry := follow.Open(m.deps.Layout.FollowDir())
-	files, err := registry.Files(st.Hash)
-	if err != nil {
-		return
-	}
 	sp, err := m.spool()
 	if err != nil {
 		return
@@ -184,7 +213,7 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 	now := m.deps.Now().UTC().Format(time.RFC3339Nano)
 	readAt := m.deps.Now().UTC().Format(time.RFC3339)
 
-	for _, f := range files {
+	for _, f := range m.sessionFiles(st.Hash).Files {
 		capture := envelope.TranscriptCapture{
 			ClientVersion:  m.deps.Version,
 			Timestamp:      now,
@@ -199,7 +228,7 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 			// next run. Reading the rest of the project goes on.
 			continue
 		}
-		stop, err := m.inspectSegments(registry, st.Hash, res.Segments)
+		stop, err := m.inspectSegments(st.Hash, res.Segments)
 		if err != nil {
 			continue
 		}
@@ -221,13 +250,13 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 			continue
 		}
 		if res.Reaction == follow.Vanished || res.Stopped {
-			_ = registry.Remove(st.Hash, f.Path)
+			_ = m.registry.Remove(st.Hash, f.Path)
 			continue
 		}
 		// The cursor carries when it was last moved, so status can say
 		// when a file was last read without a clock of its own.
 		res.File.ReadAt = readAt
-		_ = registry.Update(st.Hash, res.File)
+		_ = m.registry.Update(st.Hash, res.File)
 	}
 }
 
@@ -239,7 +268,7 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 // reading goes on. This is the one place a line's fields are read
 // before the spool, so it is where the shape is checked; the reader
 // itself interprets nothing.
-func (m *Machine) inspectSegments(registry *follow.Registry, projectIDHash string, segments []envelope.Segment) (stop bool, err error) {
+func (m *Machine) inspectSegments(projectIDHash string, segments []envelope.Segment) (stop bool, err error) {
 	for _, seg := range segments {
 		found, err := drift.Scan([]byte(seg.Lines))
 		if err != nil {
@@ -248,7 +277,7 @@ func (m *Machine) inspectSegments(registry *follow.Registry, projectIDHash strin
 		if !found.Any() {
 			continue
 		}
-		_ = registry.AddSignals(projectIDHash, signalsOf(found))
+		_ = m.registry.AddSignals(projectIDHash, signalsOf(found))
 		m.appendReaderLog(projectIDHash, found)
 		if found.Stop() {
 			_ = m.routes.PauseByBuild(routing.PauseRedactionDrift, m.deps.Version)

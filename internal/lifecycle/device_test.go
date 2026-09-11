@@ -347,9 +347,7 @@ func TestPurgeWithoutAPairedDeviceStillDisablesLocally(t *testing.T) {
 	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.tokens.ClearDeviceToken(); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.ClearDeviceToken()
 
 	err := e.machine().Disable(e.project, true, e.io())
 	if err == nil || !strings.Contains(err.Error(), "trajector login") {

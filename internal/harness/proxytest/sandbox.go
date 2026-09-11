@@ -84,6 +84,7 @@ type PauseReason = routing.PauseReason
 const (
 	PauseSignedOut        = routing.PauseSignedOut
 	PauseConsentReconfirm = routing.PauseConsentReconfirm
+	PauseRedactionDrift   = routing.PauseRedactionDrift
 )
 
 // PausedReason reports why recording is suspended device-wide, or empty
@@ -103,6 +104,26 @@ func (s *Sandbox) Pause(reason routing.PauseReason) {
 	if err := routing.OpenStore(s.layout.RoutingTable()).Pause(reason); err != nil {
 		s.t.Fatal(err)
 	}
+}
+
+// PauseByBuild suspends recording device-wide and records which build
+// did it, as a build that cannot mask what it read would.
+func (s *Sandbox) PauseByBuild(reason routing.PauseReason, version string) {
+	s.t.Helper()
+	if err := routing.OpenStore(s.layout.RoutingTable()).PauseByBuild(reason, version); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// PausedByBuild reports which build suspended recording, or empty when
+// the pause names no build.
+func (s *Sandbox) PausedByBuild() string {
+	s.t.Helper()
+	by, err := routing.OpenStore(s.layout.RoutingTable()).PausedByBuild()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return by
 }
 
 // Recording reports what the proxy would decide for a token, read the

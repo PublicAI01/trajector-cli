@@ -1,16 +1,13 @@
 package cli_test
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
-	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 const (
@@ -23,58 +20,10 @@ const (
 func seedSession(t *testing.T, e *clitest.Env, sessionID string) {
 	t.Helper()
 	at := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
-	userID, err := json.Marshal(map[string]string{"device_id": "d", "account_uuid": "a", "session_id": sessionID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := json.Marshal(map[string]any{
-		"model":    "claude-fable-5",
-		"metadata": map[string]string{"user_id": string(userID)},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	e.Sandbox().SeedRawcall("req-"+sessionID[9:13], "hash-project", at, func(o *proxytest.Observation) {
-		o.Request = body
+		o.Request = proxytest.RequestBodyOfSession(t, sessionID)
 	})
-	sp, err := spool.Create(e.Layout().SpoolDir(), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	capture := envelope.TranscriptCapture{
-		ClientVersion: "test",
-		Timestamp:     at.Format(time.RFC3339Nano),
-		ProjectIDHash: "hash-project",
-		Injection:     envelope.InjectionProxy,
-	}
-	seg := envelope.NewSegment(sessionID, "", 0, capture, `{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
-	if err := sp.WriteSegment(seg); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// sessionsHeld reports which sessions the spool still has anything
-// for, counting rawcalls and records together.
-func sessionsHeld(t *testing.T, e *clitest.Env) map[string]int {
-	t.Helper()
-	held := map[string]int{}
-	for _, r := range e.Sandbox().Rawcalls() {
-		if id, ok := spool.SessionIDFromUserID(r.SessionKey); ok {
-			held[id]++
-		}
-	}
-	sp, err := spool.Open(e.Layout().SpoolDir(), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = sp.EachRecord(func(r spool.Record) error {
-		held[r.SessionID]++
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return held
+	e.Sandbox().SeedSegment(sessionID, "hash-project", at)
 }
 
 func TestForget_DefaultsToTheCurrentSession(t *testing.T) {
@@ -94,7 +43,7 @@ func TestForget_DefaultsToTheCurrentSession(t *testing.T) {
 	if !strings.Contains(got.Stdout, "Deleted 1 recorded call(s) and 1 session record(s).") {
 		t.Errorf("stdout = %q, want both counts reported", got.Stdout)
 	}
-	if held := sessionsHeld(t, e); held[sessionOne] != 0 || held[sessionTwo] != 2 {
+	if held := e.Sandbox().SessionsHeld(); held[sessionOne] != 0 || held[sessionTwo] != 2 {
 		t.Errorf("spool holds %v, want nothing of the current session and everything of the other", held)
 	}
 }
@@ -113,7 +62,7 @@ func TestForget_AcceptsAnExplicitID(t *testing.T) {
 	if !strings.Contains(got.Stdout, "Forgetting session "+sessionOne+":") {
 		t.Errorf("stdout = %q, want the named session, not the current one", got.Stdout)
 	}
-	if held := sessionsHeld(t, e); held[sessionOne] != 0 || held[sessionTwo] != 2 {
+	if held := e.Sandbox().SessionsHeld(); held[sessionOne] != 0 || held[sessionTwo] != 2 {
 		t.Errorf("spool holds %v, want the named session gone and the current one untouched", held)
 	}
 }
@@ -136,7 +85,7 @@ func TestForget_WithoutAnyIDExplainsHowToGiveOne(t *testing.T) {
 	if got.Stdout != "" {
 		t.Errorf("stdout = %q, want nothing", got.Stdout)
 	}
-	if held := sessionsHeld(t, e); held[sessionOne] != 2 {
+	if held := e.Sandbox().SessionsHeld(); held[sessionOne] != 2 {
 		t.Errorf("spool holds %v, want everything untouched", held)
 	}
 }
@@ -165,7 +114,7 @@ func TestForget_RefusesWhatCannotBeASessionID(t *testing.T) {
 			if got.Stdout != "" {
 				t.Errorf("stdout = %q, want nothing announced", got.Stdout)
 			}
-			if held := sessionsHeld(t, e); held[sessionOne] != 2 {
+			if held := e.Sandbox().SessionsHeld(); held[sessionOne] != 2 {
 				t.Errorf("spool holds %v, want everything untouched", held)
 			}
 		})

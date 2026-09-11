@@ -132,26 +132,13 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 	return st, nil
 }
 
-// sessionFilesState reads the project's registry into counts and
+// sessionFilesState turns the project's registry into counts and
 // sizes: it stats the registered files to measure what is not read
-// yet and opens none of them. A registry that cannot be read is
-// reported as such, never as an empty one.
+// yet and opens none of them.
 func (m *Machine) sessionFilesState(projectIDHash string) report.SessionFilesState {
-	registry := follow.Open(m.deps.Layout.FollowDir())
-	files, err := registry.Files(projectIDHash)
-	if err != nil {
-		return report.SessionFilesState{Err: err}
-	}
-	gaps, err := registry.Gaps(projectIDHash)
-	if err != nil {
-		return report.SessionFilesState{Err: err}
-	}
-	signals, err := registry.Signals(projectIDHash)
-	if err != nil {
-		return report.SessionFilesState{Err: err}
-	}
-	state := report.SessionFilesState{Gaps: gaps, Signals: signals}
-	for _, f := range files {
+	registered := m.sessionFiles(projectIDHash)
+	state := report.SessionFilesState{Err: registered.Err, Gaps: registered.Gaps, Signals: registered.Signals}
+	for _, f := range registered.Files {
 		if f.MainSession() {
 			state.Sessions++
 		}

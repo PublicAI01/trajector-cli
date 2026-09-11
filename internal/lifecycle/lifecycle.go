@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -97,6 +98,10 @@ type Machine struct {
 	proxy   *proxylife.Proxy
 	routes  *routing.Store
 	consent *consent.Store
+	// registry holds which session files each enabled project reads and
+	// how far each is read. It is a store of this device like the ones
+	// above, so it is opened here and never anywhere else.
+	registry *follow.Registry
 }
 
 // Open assembles the machine. It is the only place these collaborators
@@ -120,6 +125,8 @@ func Open(deps Deps) *Machine {
 		proxy:   proxylife.For(deps.Layout, deps.Version, deps.ExecPath, deps.ProxyAddr),
 		routes:  routing.OpenStore(deps.Layout.RoutingTable()),
 		consent: consent.Open(deps.Layout.ConsentFile()),
+
+		registry: follow.Open(deps.Layout.FollowDir()),
 	}
 }
 

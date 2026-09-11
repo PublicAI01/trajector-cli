@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
@@ -79,15 +78,7 @@ func (h *hookEnv) input(path string) string {
 
 func (h *hookEnv) registered() []string {
 	h.t.Helper()
-	files, err := follow.Open(h.Layout().FollowDir()).Files(h.ProjectHash())
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	paths := make([]string, 0, len(files))
-	for _, f := range files {
-		paths = append(paths, f.Path)
-	}
-	return paths
+	return h.Sandbox().RegisteredPaths(h.ProjectHash())
 }
 
 func assertSilentSuccess(t *testing.T, got clitest.Result) {

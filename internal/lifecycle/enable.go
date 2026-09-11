@@ -12,7 +12,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
@@ -373,13 +372,12 @@ func reportEarlierSessions(io IO, found discover.Result) {
 // install into the project's registry, noting on the undo whether the
 // registry is this install's own creation.
 func (m *Machine) registerEarlierSessions(projectIDHash string, found discover.Result, undo *enableUndo) error {
-	registry := follow.Open(m.deps.Layout.FollowDir())
-	projects, err := registry.Projects()
+	projects, err := m.registry.Projects()
 	if err != nil {
 		return err
 	}
 	undo.registeredHere = !slices.Contains(projects, projectIDHash)
-	return discover.Register(registry, projectIDHash, found)
+	return discover.Register(m.registry, projectIDHash, found)
 }
 
 // unregisterIfRegisteredHere takes back the registry a failed install
@@ -388,7 +386,7 @@ func (m *Machine) unregisterIfRegisteredHere(projectIDHash string, undo enableUn
 	if !undo.registeredHere {
 		return nil
 	}
-	return follow.Open(m.deps.Layout.FollowDir()).Unregister(projectIDHash)
+	return m.registry.Unregister(projectIDHash)
 }
 
 // confirmAgreement shows the agreement and records the explicit

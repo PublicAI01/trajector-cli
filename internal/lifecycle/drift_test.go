@@ -7,18 +7,13 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/follow"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 // signals is what the registry accumulated about root's session files.
-func (e *env) signals(root string) follow.Signals {
+func (e *env) signals(root string) proxytest.Signals {
 	e.t.Helper()
-	s, err := follow.Open(e.layout().FollowDir()).Signals(consent.ProjectIDHash(root))
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return s
+	return e.sandbox.Signals(consent.ProjectIDHash(root))
 }
 
 // readerLog is every line the reader logged on this device, decoded.
@@ -45,11 +40,7 @@ func (e *env) readerLog() []map[string]any {
 // pausedBy is the build recorded with the standing pause.
 func (e *env) pausedBy() string {
 	e.t.Helper()
-	by, err := routing.OpenStore(e.layout().RoutingTable()).PausedByBuild()
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return by
+	return e.sandbox.PausedByBuild()
 }
 
 func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
@@ -70,8 +61,8 @@ func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
 	if f := e.registeredFiles(root)[0]; f.Offset != 0 || f.NextSegment != 0 {
 		t.Errorf("cursor = %+v, want left where it was", f)
 	}
-	if got := e.sandbox.PausedReason(); got != routing.PauseRedactionDrift {
-		t.Errorf("PausedReason = %q, want %q", got, routing.PauseRedactionDrift)
+	if got := e.sandbox.PausedReason(); got != proxytest.PauseRedactionDrift {
+		t.Errorf("PausedReason = %q, want %q", got, proxytest.PauseRedactionDrift)
 	}
 	if got := e.pausedBy(); got != e.deps.Version {
 		t.Errorf("paused by build %q, want this build %q", got, e.deps.Version)
@@ -162,9 +153,7 @@ func TestDoctor_ResumesRedactionPauseAfterUpgrade(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
-			if err := routing.OpenStore(e.layout().RoutingTable()).PauseByBuild(routing.PauseRedactionDrift, tc.pausedBy); err != nil {
-				t.Fatal(err)
-			}
+			e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, tc.pausedBy)
 
 			problems, out := e.doctor()
 
@@ -187,9 +176,9 @@ func TestDoctor_ResumesRedactionPauseAfterUpgrade(t *testing.T) {
 	}
 	t.Run("the other pause is not touched", func(t *testing.T) {
 		e := newEnv(t)
-		e.sandbox.Pause(routing.PauseConsentReconfirm)
+		e.sandbox.Pause(proxytest.PauseConsentReconfirm)
 		_, out := e.doctor()
-		if got := e.sandbox.PausedReason(); got != routing.PauseConsentReconfirm {
+		if got := e.sandbox.PausedReason(); got != proxytest.PauseConsentReconfirm {
 			t.Errorf("PausedReason = %q, want the agreement pause left standing", got)
 		}
 		if strings.Contains(out, "resumed") {
@@ -202,7 +191,7 @@ func TestStatus_ShowsSignalCounts(t *testing.T) {
 	e := newEnv(t)
 	e.aProxylessTarget()
 	root := e.canonicalRoot()
-	e.sandbox.GrantProject(routing.Grant{
+	e.sandbox.GrantProject(proxytest.Grant{
 		Token:         "tok-proj",
 		ProjectIDHash: consent.ProjectIDHash(root),
 		RootPath:      root,
@@ -210,14 +199,12 @@ func TestStatus_ShowsSignalCounts(t *testing.T) {
 		NoProxy:       true,
 	})
 	e.injectWithoutBaseURL()
-	if err := follow.Open(e.layout().FollowDir()).AddSignals(consent.ProjectIDHash(root), follow.Signals{
+	e.sandbox.AddSignals(consent.ProjectIDHash(root), proxytest.Signals{
 		AssistantLines:                 7,
 		AssistantLinesWithoutMessageID: 2,
 		UnanchoredPathFields:           []string{"$.someNewPath"},
 		NewTopLevelTypes:               []string{"mood-ring"},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 
 	out := e.statusOutput()
 	if !strings.Contains(out, "2 of 7 assistant lines in this project's session files carried no message id.") {
@@ -227,9 +214,7 @@ func TestStatus_ShowsSignalCounts(t *testing.T) {
 		t.Errorf("status = %q, want no field names while recording is not paused for them, and never a logged value", out)
 	}
 
-	if err := routing.OpenStore(e.layout().RoutingTable()).PauseByBuild(routing.PauseRedactionDrift, e.deps.Version); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
 	e.stdout.Reset()
 	out = e.statusOutput()
 	if !strings.Contains(out, "redaction does not cover: $.someNewPath.") {
