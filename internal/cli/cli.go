@@ -98,6 +98,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return a.doctorCmd(args[1:])
 	case "upload":
 		return a.uploadCmd(args[1:])
+	case "forget":
+		return a.forgetCmd(args[1:])
 	case "upgrade":
 		return a.upgradeCmd(args[1:])
 	case "hook":
@@ -123,6 +125,7 @@ commands:
   status       show pairing, project, proxy, capture, and upload state
   doctor       diagnose and repair injection, hooks, proxy, and spool issues
   upload       upload captured data now [--force]
+  forget       delete one session's not-yet-uploaded records from this machine [<session-id>]
   upgrade      install the newest published release over this one
   version      print the trajector version
   proxy run    run the local proxy (internal; started automatically)
