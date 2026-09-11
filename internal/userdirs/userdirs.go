@@ -25,6 +25,7 @@ const (
 	proxyLogName     = "proxy.log"
 	adminTokenName   = "admin_token"
 	uploadDirName    = "upload"
+	followDirName    = "follow"
 )
 
 // Env is the machine a Layout is resolved against.
@@ -86,6 +87,10 @@ func (l Layout) SpoolDir() string { return filepath.Join(l.data, spoolDirName) }
 // UploadDir holds the uploader's bookkeeping: the pending batch, the
 // last attempt, and the service handshake.
 func (l Layout) UploadDir() string { return filepath.Join(l.data, uploadDirName) }
+
+// FollowDir holds, per enabled project, the registry of files trajector
+// reads for it and how far each has been read.
+func (l Layout) FollowDir() string { return filepath.Join(l.data, followDirName) }
 
 // RejectedDir holds rawcalls of batches the service rejected as
 // unacceptable, moved out of the spool so one bad batch cannot block

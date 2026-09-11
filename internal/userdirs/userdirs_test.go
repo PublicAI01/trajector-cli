@@ -154,6 +154,17 @@ func TestFilesShareTheDirectoryTheyBelongIn(t *testing.T) {
 			t.Errorf("%s() = %q, want it under %q", name, got, config)
 		}
 	}
+	data := "/home/u/.local/share/trajector"
+	for name, got := range map[string]string{
+		"SpoolDir":    l.SpoolDir(),
+		"UploadDir":   l.UploadDir(),
+		"RejectedDir": l.RejectedDir(),
+		"FollowDir":   l.FollowDir(),
+	} {
+		if slash(filepath.Dir(got)) != data {
+			t.Errorf("%s() = %q, want it under %q", name, got, data)
+		}
+	}
 }
 
 func TestRootsCollapseWhenThePlatformSharesOneDirectory(t *testing.T) {
