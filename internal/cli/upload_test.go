@@ -81,7 +81,7 @@ func TestUploadForceDrainsTheSpoolThroughTheProxy(t *testing.T) {
 	if got.Exit != 0 {
 		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
 	}
-	if !strings.Contains(got.Stdout, "Uploaded 1 batch(es), 1 rawcall(s).") {
+	if !strings.Contains(got.Stdout, "Uploaded 1 batch(es), 1 record(s).") {
 		t.Errorf("stdout = %q", got.Stdout)
 	}
 	if n := len(e.Sandbox().Rawcalls()); n != 0 {
@@ -235,8 +235,8 @@ func TestUploadSetsAsideATornRawcallAndKeepsUploading(t *testing.T) {
 		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
 	}
 	for _, want := range []string{
-		"Uploaded 1 batch(es), 1 rawcall(s).",
-		"Set aside 1 unreadable rawcall(s)",
+		"Uploaded 1 batch(es), 1 record(s).",
+		"Set aside 1 unreadable record(s)",
 	} {
 		if !strings.Contains(got.Stdout, want) {
 			t.Errorf("stdout = %q, want it to contain %q", got.Stdout, want)
@@ -253,7 +253,7 @@ func TestUploadSetsAsideATornRawcallAndKeepsUploading(t *testing.T) {
 	}
 
 	status := e.InProject("status")
-	if !strings.Contains(status.Stdout, "1 rawcall(s) in 1 rejected batch(es)") {
+	if !strings.Contains(status.Stdout, "1 record(s) in 1 rejected batch(es)") {
 		t.Errorf("status stdout = %q, want the quarantined count", status.Stdout)
 	}
 	doc := e.InProject("doctor")
@@ -336,7 +336,7 @@ func TestUploadReportsSetAsideRecordsEvenWhenTheServicePausesUploads(t *testing.
 		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
 	}
 	for _, want := range []string{
-		"Set aside 1 unreadable rawcall(s)",
+		"Set aside 1 unreadable record(s)",
 		"Uploads are paused",
 	} {
 		if !strings.Contains(got.Stdout, want) {
@@ -503,5 +503,68 @@ func TestUploadOnASignedOutDeviceSaysWhatToRun(t *testing.T) {
 	}
 	if n := len(e.Sandbox().Rawcalls()); n != 1 {
 		t.Errorf("spool holds %d rawcalls, want the record kept", n)
+	}
+}
+
+func TestUploadCountsEveryKindOfRecordItSent(t *testing.T) {
+	e := newUploadEnv(t)
+	at := time.Now().UTC()
+	seedRawcall(e, "req-1", at)
+	e.Sandbox().SeedSegment("sess-1", e.ProjectHash(), at)
+	e.Sandbox().SeedMetaSnapshot("sess-1", e.ProjectHash(), at)
+	p := e.StartProxy()
+	defer p.Stop()
+
+	got := e.Run("upload", "--force")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stdout, "Uploaded 1 batch(es), 3 record(s).") {
+		t.Errorf("stdout = %q, want every kind of record counted", got.Stdout)
+	}
+	if n := len(e.Sandbox().Records()); n != 0 {
+		t.Errorf("spool holds %d session records after an acknowledged upload", n)
+	}
+	status := e.InProject("status")
+	if !strings.Contains(status.Stdout, "Last upload: 3 record(s)") {
+		t.Errorf("status stdout = %q, want the last upload counted the same way", status.Stdout)
+	}
+}
+
+func TestQuarantineCountsEveryKindOfRecordItHolds(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	e.Service().Stub("POST", "/v1/batches", fakeplatform.JSON(400, map[string]any{"error": "bad multipart"}))
+	at := time.Now().UTC()
+	seedRawcall(e, "req-1", at)
+	e.Sandbox().SeedSegment("sess-1", e.ProjectHash(), at)
+	e.Sandbox().SeedMetaSnapshot("sess-1", e.ProjectHash(), at)
+	p := e.StartProxy()
+	defer p.Stop()
+
+	if got := e.Run("upload", "--force"); got.Exit != 1 {
+		t.Fatalf("upload exit = %d (stdout: %q), want the rejection reported loudly", got.Exit, got.Stdout)
+	}
+	status := e.InProject("status")
+	if !strings.Contains(status.Stdout, "3 record(s) in 1 rejected batch(es)") {
+		t.Errorf("status stdout = %q, want every quarantined kind counted", status.Stdout)
+	}
+	doc := e.InProject("doctor")
+	if !strings.Contains(doc.Stdout, ": 3 record(s)") {
+		t.Errorf("doctor stdout = %q, want the quarantined batch counted by record", doc.Stdout)
+	}
+
+	discard := e.RunInput("y\n", "doctor", "discard", "--all")
+	if discard.Exit != 0 {
+		t.Fatalf("discard exit = %d (stderr: %q)", discard.Exit, discard.Stderr)
+	}
+	for _, want := range []string{
+		"The records are deleted from this machine for good",
+		"Discarded 3 record(s)",
+		"Deleted 3 quarantined record(s)",
+	} {
+		if !strings.Contains(discard.Stdout, want) {
+			t.Errorf("discard stdout = %q, want it to contain %q", discard.Stdout, want)
+		}
 	}
 }

@@ -49,10 +49,10 @@ func (m *Machine) DiscardRejected(batchID string, all, confirmed bool, io IO) er
 			failed = append(failed, err)
 			continue
 		}
-		fmt.Fprintf(io.Out, "Discarded %d rawcall(s) from batch %s%s.\n", deleted, id, rejectionSuffix(rej))
+		fmt.Fprintf(io.Out, "Discarded %d record(s) from batch %s%s.\n", deleted, id, rejectionSuffix(rej))
 	}
 	if discarded > 0 {
-		fmt.Fprintf(io.Out, "Deleted %d quarantined rawcall(s) from this machine; they cannot be recovered.\n", discarded)
+		fmt.Fprintf(io.Out, "Deleted %d quarantined record(s) from this machine; they cannot be recovered.\n", discarded)
 	}
 	return errors.Join(failed...)
 }
@@ -64,5 +64,5 @@ func discardPrompt(ids []string) string {
 	if len(ids) > 1 {
 		what = fmt.Sprintf("all %d quarantined batches", len(ids))
 	}
-	return fmt.Sprintf("Discard %s? The rawcalls are deleted from this machine for good. [y/N]: ", what)
+	return fmt.Sprintf("Discard %s? The records are deleted from this machine for good. [y/N]: ", what)
 }

@@ -26,8 +26,8 @@ func TestTheEnvelopeSerializesEveryContractFieldInOrder(t *testing.T) {
 	snap := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime.Add(time.Minute), `{"agentId":"x"}`)
 
 	b, refused, err := batch.Build("batch-42", buildTime, "1.2.3", batch.Contents{
-		Rawcalls: []spool.Rawcall{rc},
-		Records:  []spool.Record{seg, snap},
+		Rawcalls:       []spool.Rawcall{rc},
+		SessionRecords: []spool.Record{seg, snap},
 	}, batch.Run{RecordedToday: 3})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
@@ -68,7 +68,7 @@ func TestTheEnvelopeSerializesEveryContractFieldInOrder(t *testing.T) {
 
 func TestTranscriptItemsCarryNoUpstreamFields(t *testing.T) {
 	seg := storedSegment(t, "sess-1", "", 0, buildTime, "{}\n")
-	b, refused, err := batch.Build("batch-1", buildTime, "test", batch.Contents{Records: []spool.Record{seg}}, batch.Run{})
+	b, refused, err := batch.Build("batch-1", buildTime, "test", batch.Contents{SessionRecords: []spool.Record{seg}}, batch.Run{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
 	}

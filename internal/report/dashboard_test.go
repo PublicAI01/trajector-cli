@@ -122,7 +122,7 @@ func TestStatusShowsSpoolUsageAndLastUpload(t *testing.T) {
 	out := dashboard(d)
 
 	rejects(t, "status", out, "0 B of")
-	wants(t, "status", out, "Last upload: 3 rawcall(s)", "2026-08-02T10:00:00Z", "boom")
+	wants(t, "status", out, "Last upload: 3 record(s)", "2026-08-02T10:00:00Z", "boom")
 }
 
 func TestStatusWarnsAboutRejectedBatches(t *testing.T) {
@@ -135,8 +135,26 @@ func TestStatusWarnsAboutRejectedBatches(t *testing.T) {
 	out := dashboard(d)
 
 	wants(t, "status", out,
-		"WARNING", "2 rawcall(s)", "1 rejected batch(es)",
+		"WARNING", "2 record(s)", "1 rejected batch(es)",
 		"not be retried automatically", "`trajector doctor`")
+}
+
+func TestStatusCountsWaitingRawcallsOnADeviceThatRecordsOnlyThroughTheProxy(t *testing.T) {
+	d := device()
+	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Rawcalls: 2}, {Day: "20260910", Rawcalls: 1}}
+	d.Spool.OldestRecord = time.Date(2026, 9, 9, 7, 0, 0, 0, time.UTC)
+	out := dashboard(d)
+
+	wants(t, "status", out, "Records waiting to upload: 3 rawcall(s); the oldest is from 2026-09-09T07:00:00Z.")
+	rejects(t, "status", out, "waiting to upload: none", "segment(s)", "snapshot(s)")
+}
+
+func TestStatusCountsEveryKindWaitingOnADeviceThatRecordsBothWays(t *testing.T) {
+	d := device()
+	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Rawcalls: 2, Segments: 3, Snapshots: 1}}
+	out := dashboard(d)
+
+	wants(t, "status", out, "Records waiting to upload: 2 rawcall(s), 3 segment(s), 1 snapshot(s).")
 }
 
 func TestStatusRendersEverySectionWhenTheSpoolCannotOpen(t *testing.T) {

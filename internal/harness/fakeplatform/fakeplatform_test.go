@@ -109,8 +109,8 @@ func TestRecordIDsBySourceGroupsTheIndexBySource(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := batch.Contents{
-		Rawcalls: []spool.Rawcall{fixtureRawcall(t, "msg_1", at), fixtureRawcall(t, "msg_2", at.Add(time.Minute))},
-		Records:  []spool.Record{storedRecord(t, seg.RecordID, segBytes), storedRecord(t, snap.RecordID, snapBytes)},
+		Rawcalls:       []spool.Rawcall{fixtureRawcall(t, "msg_1", at), fixtureRawcall(t, "msg_2", at.Add(time.Minute))},
+		SessionRecords: []spool.Record{storedRecord(t, seg.RecordID, segBytes), storedRecord(t, snap.RecordID, snapBytes)},
 	}
 	b, refused, err := batch.Build("b-1", at, "test", in, batch.Run{})
 	if err != nil || len(refused) != 0 {

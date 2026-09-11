@@ -232,17 +232,17 @@ func TestDoctorTellsTheTwoRecordingPausesApart(t *testing.T) {
 	rejects(t, "doctor", out, "agreement")
 }
 
-func TestStatusShowsHowFarBehindUploadingTheSessionRecordsAre(t *testing.T) {
+func TestStatusShowsHowFarBehindUploadingTheRecordsAre(t *testing.T) {
 	d := device()
 	rejects(t, "status", dashboard(d), "segment(s)")
-	wants(t, "status", dashboard(d), "Session records waiting to upload: none.")
+	wants(t, "status", dashboard(d), "Records waiting to upload: none.")
 
 	d.Spool.Days = []spool.DaySummary{
 		{Day: "20260909", Segments: 2, Snapshots: 1},
 		{Day: "20260910", Segments: 3},
 	}
 	d.Spool.OldestRecord = time.Date(2026, 9, 9, 7, 0, 0, 0, time.UTC)
-	wants(t, "status", dashboard(d), "Session records waiting to upload: 5 segment(s), 1 snapshot(s); the oldest is from 2026-09-09T07:00:00Z.")
+	wants(t, "status", dashboard(d), "Records waiting to upload: 5 segment(s), 1 snapshot(s); the oldest is from 2026-09-09T07:00:00Z.")
 
 	d.Spool = report.SpoolState{Dir: spoolDir, OpenErr: errors.New("not a directory")}
 	rejects(t, "status", dashboard(d), "waiting to upload")

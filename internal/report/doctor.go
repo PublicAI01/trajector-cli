@@ -269,7 +269,7 @@ func doctorRejected(f *Findings, d Diagnosis) {
 	f.Problem("%s:", quarantineHeadline(d.Rejected))
 	refused, unreadable := false, false
 	for _, b := range d.Rejected {
-		line := fmt.Sprintf("%s: %d rawcall(s)", b.BatchID, b.Records)
+		line := fmt.Sprintf("%s: %d record(s)", b.BatchID, b.Records)
 		when := ""
 		if !b.Reason.At.IsZero() {
 			when = " " + b.Reason.At.UTC().Format(time.RFC3339)
@@ -342,7 +342,7 @@ func quarantineHeadline(rejected []upload.RejectedBatch) string {
 	for _, b := range rejected {
 		records += b.Records
 	}
-	return fmt.Sprintf("%d rawcall(s) in %d rejected batch(es) are quarantined and will not be retried automatically", records, len(rejected))
+	return fmt.Sprintf("%d record(s) in %d rejected batch(es) are quarantined and will not be retried automatically", records, len(rejected))
 }
 
 // spoolUnusableHeadline is the one sentence both status and doctor use

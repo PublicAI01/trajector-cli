@@ -440,7 +440,7 @@ func (u *Uploader) resendPending(token string, res *Result, deadline time.Time) 
 	}
 	err = u.deps.Spool.EachRecord(func(r spool.Record) error {
 		if wanted[r.ID] {
-			contents.Records = append(contents.Records, r)
+			contents.SessionRecords = append(contents.SessionRecords, r)
 		}
 		return nil
 	})
@@ -571,12 +571,12 @@ func (u *Uploader) dropWithdrawn(contents batch.Contents) (batch.Contents, error
 		}
 		kept.Rawcalls = append(kept.Rawcalls, rc)
 	}
-	for _, r := range contents.Records {
+	for _, r := range contents.SessionRecords {
 		if hash, ok := envelope.ProjectIDHashOf(r.Raw); ok && u.deps.Withdrawn(hash) {
-			withdrawn.Records = append(withdrawn.Records, r)
+			withdrawn.SessionRecords = append(withdrawn.SessionRecords, r)
 			continue
 		}
-		kept.Records = append(kept.Records, r)
+		kept.SessionRecords = append(kept.SessionRecords, r)
 	}
 	if withdrawn.Len() == 0 {
 		return kept, nil
@@ -599,7 +599,7 @@ func (u *Uploader) setAside(batchID string, refused []batch.Refusal, res *Result
 	var records batch.Contents
 	for _, r := range refused {
 		if r.Record.ID != "" {
-			records.Records = append(records.Records, r.Record)
+			records.SessionRecords = append(records.SessionRecords, r.Record)
 		} else {
 			records.Rawcalls = append(records.Rawcalls, r.Rawcall)
 		}
@@ -781,7 +781,7 @@ func (u *Uploader) collect(limit int64) (batch.Contents, error) {
 	})
 	if err == nil {
 		err = u.deps.Spool.EachRecord(func(r spool.Record) error {
-			contents.Records = append(contents.Records, r)
+			contents.SessionRecords = append(contents.SessionRecords, r)
 			total += int64(len(r.Raw))
 			if total >= limit {
 				return errEnough
@@ -820,8 +820,8 @@ func deleteFromSpool(sp *spool.Spool, contents batch.Contents) error {
 			return err
 		}
 	}
-	records := make(map[string]bool, len(contents.Records))
-	for _, r := range contents.Records {
+	records := make(map[string]bool, len(contents.SessionRecords))
+	for _, r := range contents.SessionRecords {
 		records[r.ID] = true
 	}
 	if len(records) > 0 {

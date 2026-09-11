@@ -6,9 +6,9 @@
 // can route a batch without unpacking it; its serialized layout is a
 // product contract like the record envelopes'.
 //
-// Two kinds of record ride in one batch: rawcalls, and the segments
+// Records of every kind ride in one batch: rawcalls, and the segments
 // and snapshots the spool's second slot holds. They share the stream
-// and the index, and nothing else — each kind is masked by its own
+// and the index, and nothing else — each slot is masked by its own
 // redaction pass and ordered by its own session key.
 package batch
 
@@ -36,25 +36,26 @@ type Run struct {
 	SpoolQuotaBytes  int64 `json:"spool_quota_bytes"`
 }
 
-// Contents is a set of spool entries addressed by slot: the rawcalls
-// and the segment and snapshot records. It is what a batch is built
-// from and what a batch reports it packed, so a caller deleting or
-// setting aside what a batch carried addresses each slot exactly.
+// Contents is a set of records addressed by the slot each is stored
+// in: the rawcalls, and the segments and snapshots read from session
+// files. It is what a batch is built from and what a batch reports it
+// packed, so a caller deleting or setting aside what a batch carried
+// addresses each slot exactly.
 type Contents struct {
-	Rawcalls []spool.Rawcall
-	Records  []spool.Record
+	Rawcalls       []spool.Rawcall
+	SessionRecords []spool.Record
 }
 
-// Len counts the entries across both slots.
-func (c Contents) Len() int { return len(c.Rawcalls) + len(c.Records) }
+// Len counts the records across both slots.
+func (c Contents) Len() int { return len(c.Rawcalls) + len(c.SessionRecords) }
 
-// IDs lists every entry's spool id, rawcalls first.
+// IDs lists every record's spool id, rawcalls first.
 func (c Contents) IDs() []string {
 	ids := make([]string, 0, c.Len())
 	for _, rc := range c.Rawcalls {
 		ids = append(ids, rc.RequestID)
 	}
-	for _, r := range c.Records {
+	for _, r := range c.SessionRecords {
 		ids = append(ids, r.ID)
 	}
 	return ids
@@ -139,7 +140,7 @@ func Build(id string, createdAt time.Time, clientVersion string, in Contents, ru
 		packed.Rawcalls = append(packed.Rawcalls, rc)
 	}
 
-	ordered, unreadable := orderRecords(in.Records)
+	ordered, unreadable := orderRecords(in.SessionRecords)
 	refused = append(refused, unreadable...)
 	for _, r := range ordered {
 		item, masked, err := r.pack()
@@ -148,7 +149,7 @@ func Build(id string, createdAt time.Time, clientVersion string, in Contents, ru
 			continue
 		}
 		pack(item, masked)
-		packed.Records = append(packed.Records, r.stored)
+		packed.SessionRecords = append(packed.SessionRecords, r.stored)
 	}
 
 	if packed.Len() == 0 {

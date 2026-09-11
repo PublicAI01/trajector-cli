@@ -136,7 +136,7 @@ func TestEveryStandingNamesWhatIsTrueAndTheGatesNameWhatEndsThem(t *testing.T) {
 		{
 			name:     "quarantine only",
 			standing: upload.Standing{Reason: upload.QuarantineOnly},
-			explain:  "Uploads have nothing to send: every rawcall left on this machine is quarantined.",
+			explain:  "Uploads have nothing to send: every record left on this machine is quarantined.",
 			remedy:   "",
 		},
 		{

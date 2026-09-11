@@ -106,7 +106,7 @@ func Dashboard(w io.Writer, d Diagnosis) {
 
 	fmt.Fprintln(w, "\nUploads")
 	if r := d.Uploads.LastUpload; r != nil {
-		fmt.Fprintf(w, "  Last upload: %d rawcall(s) (%s) at %s.\n",
+		fmt.Fprintf(w, "  Last upload: %d record(s) (%s) at %s.\n",
 			r.Records, platform.HumanBytes(r.Bytes), r.At.UTC().Format(time.RFC3339))
 	} else {
 		fmt.Fprintln(w, "  Never uploaded.")
@@ -291,16 +291,28 @@ func ambiguityLine(a follow.Ambiguity) string {
 		a.Dir, strings.Join(others, ", "))
 }
 
-// recordsWaitingLine is how far behind uploading the session records
-// are: how many wait in the spool, and how old the oldest is. On a
+// recordsWaitingLine is how far behind uploading the records are: how
+// many wait in the spool and of which kinds, and how old the oldest is.
+// Every kind the spool holds is counted, so a device that records only
+// through the proxy is never told it has nothing waiting. A kind with
+// nothing waiting is left out rather than printed as a zero. On a
 // device where the resident process lives only while a session is
 // open, the wait ends with the next session, not on a schedule.
 func recordsWaitingLine(s SpoolState) string {
-	segments, snapshots := s.recordsWaiting()
-	if segments+snapshots == 0 {
-		return "Session records waiting to upload: none."
+	rawcalls, segments, snapshots := s.recordsWaiting()
+	if rawcalls+segments+snapshots == 0 {
+		return "Records waiting to upload: none."
 	}
-	line := fmt.Sprintf("Session records waiting to upload: %d segment(s), %d snapshot(s)", segments, snapshots)
+	var kinds []string
+	count := func(n int, noun string) {
+		if n > 0 {
+			kinds = append(kinds, fmt.Sprintf("%d %s", n, noun))
+		}
+	}
+	count(rawcalls, "rawcall(s)")
+	count(segments, "segment(s)")
+	count(snapshots, "snapshot(s)")
+	line := "Records waiting to upload: " + strings.Join(kinds, ", ")
 	if !s.OldestRecord.IsZero() {
 		line += fmt.Sprintf("; the oldest is from %s", s.OldestRecord.UTC().Format(time.RFC3339))
 	}

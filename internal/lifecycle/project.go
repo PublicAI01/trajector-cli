@@ -135,7 +135,7 @@ func leftoverIgnoreRules(root string) []string {
 // decided (deleteData false) is asked here, before anything changes.
 func (m *Machine) Uninstall(deleteData bool, io IO) error {
 	if !deleteData {
-		deleteData, _ = askYesNo(io, "Delete local data (captured rawcalls, configuration, device token)? [y/N]: ", false)
+		deleteData, _ = askYesNo(io, "Delete local data (captured records, configuration, device token)? [y/N]: ", false)
 	}
 	grants, err := m.routes.All()
 	if err != nil {

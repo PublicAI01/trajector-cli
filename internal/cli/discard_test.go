@@ -70,7 +70,7 @@ func TestDoctorDiscardDeletesAConfirmedBatch(t *testing.T) {
 	if got.Exit != 0 {
 		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
 	}
-	if !strings.Contains(got.Stdout, "2 rawcall(s)") {
+	if !strings.Contains(got.Stdout, "2 record(s)") {
 		t.Errorf("stdout = %q, want the deletion count", got.Stdout)
 	}
 	if n := len(e.Sandbox().QuarantinedBatches()); n != 0 {

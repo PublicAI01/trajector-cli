@@ -116,7 +116,7 @@ func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, contents bat
 			return err
 		}
 	}
-	for _, r := range contents.Records {
+	for _, r := range contents.SessionRecords {
 		if err := fsatomic.WriteFile(filepath.Join(dir, r.ID+".json"), r.Raw, 0o600); err != nil {
 			return err
 		}

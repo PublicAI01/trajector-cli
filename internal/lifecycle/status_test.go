@@ -431,7 +431,7 @@ func TestStatusSaysWhenTheOnlyRecordsLeftAreQuarantined(t *testing.T) {
 	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-1"}, map[string][]byte{"req-1": []byte("{}")})
 	out := e.statusOutput()
 
-	if !strings.Contains(out, "every rawcall left on this machine is quarantined") {
+	if !strings.Contains(out, "every record left on this machine is quarantined") {
 		t.Errorf("status = %q, want the quarantine-only standing", out)
 	}
 }

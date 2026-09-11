@@ -29,7 +29,7 @@ func TestDiscardDeletesAQuarantinedBatch(t *testing.T) {
 		t.Errorf("spool holds %d rawcall(s) after discard, want the records gone, not requeued", got)
 	}
 	out := e.stdout.String()
-	for _, want := range []string{"2 rawcall(s)", "b-poison", "413 Request Entity Too Large"} {
+	for _, want := range []string{"2 record(s)", "b-poison", "413 Request Entity Too Large"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output = %q, want it to contain %q", out, want)
 		}
@@ -54,7 +54,7 @@ func TestDiscardDeletesRecordsRequeueRefusesToMove(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.layout().RejectedDir(), "b-torn")); !os.IsNotExist(err) {
 		t.Error("a locally quarantined batch survived discard")
 	}
-	if !strings.Contains(e.stdout.String(), "1 rawcall(s)") {
+	if !strings.Contains(e.stdout.String(), "1 record(s)") {
 		t.Errorf("output = %q, want the deleted record counted", e.stdout)
 	}
 }
@@ -128,7 +128,7 @@ func TestDiscardAllEmptiesTheQuarantine(t *testing.T) {
 	if entries, err := os.ReadDir(e.layout().RejectedDir()); err == nil && len(entries) != 0 {
 		t.Errorf("rejected store not empty after discard --all: %v", entries)
 	}
-	if !strings.Contains(e.stdout.String(), "Deleted 2 quarantined rawcall(s)") {
+	if !strings.Contains(e.stdout.String(), "Deleted 2 quarantined record(s)") {
 		t.Errorf("output = %q, want every deleted record counted", e.stdout)
 	}
 }

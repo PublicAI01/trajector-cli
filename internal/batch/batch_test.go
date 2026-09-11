@@ -242,8 +242,8 @@ func TestBuild_WritesSchemaVersionTwo(t *testing.T) {
 	segment := storedSegment(t, "sess-1", "", 0, buildTime, `{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
 	snapshot := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime, `{"agentId":"x"}`)
 	in := batch.Contents{
-		Rawcalls: []spool.Rawcall{simpleRawcall(t, "req-1", "session-a", buildTime)},
-		Records:  []spool.Record{segment, snapshot},
+		Rawcalls:       []spool.Rawcall{simpleRawcall(t, "req-1", "session-a", buildTime)},
+		SessionRecords: []spool.Record{segment, snapshot},
 	}
 	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
 	if err != nil || len(refused) != 0 {
@@ -322,8 +322,8 @@ func TestBuild_OrdersRawcallsFirstThenRecordsBySessionFileAndIndex(t *testing.T)
 	rc := simpleRawcall(t, "req-z", "session-z", later)
 
 	in := batch.Contents{
-		Rawcalls: []spool.Rawcall{rc},
-		Records:  []spool.Record{meta, seg2, other, sub, seg0, seg1},
+		Rawcalls:       []spool.Rawcall{rc},
+		SessionRecords: []spool.Record{meta, seg2, other, sub, seg0, seg1},
 	}
 	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
 	if err != nil {
@@ -342,7 +342,7 @@ func TestBuild_MasksSegmentsAndSnapshotsBeforePacking(t *testing.T) {
 	segment := storedSegment(t, "sess-1", "", 0, buildTime,
 		`{"type":"user","cwd":"/home/dev/proj","message":{"role":"user","content":"key `+fakeSecret+`"}}`+"\n")
 	snapshot := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime, `{"agentId":"x","note":"`+fakeSecret+`"}`)
-	in := batch.Contents{Records: []spool.Record{segment, snapshot}}
+	in := batch.Contents{SessionRecords: []spool.Record{segment, snapshot}}
 	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
@@ -375,7 +375,7 @@ func TestBuild_MasksSegmentsAndSnapshotsBeforePacking(t *testing.T) {
 
 func TestBuild_SegmentSignatureSurvivesPacking(t *testing.T) {
 	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"` + fakeSignature + `"}]}}` + "\n"
-	in := batch.Contents{Records: []spool.Record{storedSegment(t, "sess-1", "", 0, buildTime, line)}}
+	in := batch.Contents{SessionRecords: []spool.Record{storedSegment(t, "sess-1", "", 0, buildTime, line)}}
 	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -410,7 +410,7 @@ func TestBuild_RefusesRecordsItCannotReadOrMask(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			in := batch.Contents{Records: []spool.Record{tc.rec, good}}
+			in := batch.Contents{SessionRecords: []spool.Record{tc.rec, good}}
 			b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
 			if err != nil {
 				t.Fatalf("Build: %v", err)

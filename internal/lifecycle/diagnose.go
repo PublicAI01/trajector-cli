@@ -60,7 +60,7 @@ func (m *Machine) Diagnose(dir string) (report.Diagnosis, error) {
 			WritableErr: sp.Writable(),
 			Days:        days,
 		}
-		d.Spool.OldestRecord, _ = sp.OldestRecord()
+		d.Spool.OldestRecord = oldestWaiting(sp)
 	}
 
 	d.Uploads = upload.LoadState(m.deps.Layout.UploadDir())
@@ -79,6 +79,20 @@ func (m *Machine) Diagnose(dir string) (report.Diagnosis, error) {
 	_, paired, err := m.tokens.DeviceToken()
 	d.TokenStore = report.TokenStoreState{Paired: paired, Err: err}
 	return d, nil
+}
+
+// oldestWaiting is when the oldest record still in the spool was
+// captured, across both slots: status reports one wait, so it is the
+// wait of whichever slot has waited longest.
+func oldestWaiting(sp *spool.Spool) time.Time {
+	oldest := time.Time{}
+	if at, ok := sp.Oldest(); ok {
+		oldest = at
+	}
+	if at, ok := sp.OldestRecord(); ok && (oldest.IsZero() || at.Before(oldest)) {
+		oldest = at
+	}
+	return oldest
 }
 
 // Project resolves one project's full consent status. A store that

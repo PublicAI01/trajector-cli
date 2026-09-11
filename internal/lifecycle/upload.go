@@ -27,10 +27,10 @@ func (m *Machine) Upload(force bool, io IO) error {
 		return err
 	}
 	if reply.Batches > 0 {
-		fmt.Fprintf(io.Out, "Uploaded %d batch(es), %d rawcall(s).\n", reply.Batches, reply.Records)
+		fmt.Fprintf(io.Out, "Uploaded %d batch(es), %d record(s).\n", reply.Batches, reply.Records)
 	}
 	if n := setAsideUnreadable(reply.SetAside); n > 0 {
-		fmt.Fprintf(io.Out, "Set aside %d unreadable rawcall(s); they were never sent. Run `trajector doctor` to inspect them.\n", n)
+		fmt.Fprintf(io.Out, "Set aside %d unreadable record(s); they were never sent. Run `trajector doctor` to inspect them.\n", n)
 	}
 	switch reply.Outcome {
 	case upload.Uploaded:
@@ -94,7 +94,7 @@ func offer(remedy, follow string) string {
 	return strings.TrimSpace(remedy + follow)
 }
 
-// setAsideUnreadable counts the rawcalls a flush set aside as
+// setAsideUnreadable counts the records a flush set aside as
 // unreadable, reading each rejection's cause rather than assuming every
 // set-aside is one.
 func setAsideUnreadable(rejections []upload.Rejection) int {

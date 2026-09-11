@@ -110,9 +110,9 @@ type spoolWire struct {
 	QuotaBytes  int64              `json:"quota_bytes"`
 	WritableErr string             `json:"writable_err,omitempty"`
 	Days        []spool.DaySummary `json:"days"`
-	// OldestRecordAt is when the oldest session record still waiting
-	// was captured; with the day summaries it says how far behind
-	// uploading is.
+	// OldestRecordAt is when the oldest record of either slot still
+	// waiting was captured; with the day summaries it says how far
+	// behind uploading is.
 	OldestRecordAt time.Time `json:"oldest_record_at,omitzero"`
 }
 

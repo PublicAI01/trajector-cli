@@ -478,7 +478,7 @@ func TestSpool_SummarySeparatesSlots(t *testing.T) {
 	}
 	tests := []struct {
 		day                           string
-		records, segments, snapshots  int
+		rawcalls, segments, snapshots int
 		rawcallBytes, recordBytesZero bool
 	}{
 		{"20260801", 1, 2, 0, true, false},
@@ -487,7 +487,7 @@ func TestSpool_SummarySeparatesSlots(t *testing.T) {
 	var total int64
 	for i, tc := range tests {
 		d := days[i]
-		if d.Day != tc.day || d.Records != tc.records || d.Segments != tc.segments || d.Snapshots != tc.snapshots {
+		if d.Day != tc.day || d.Rawcalls != tc.rawcalls || d.Segments != tc.segments || d.Snapshots != tc.snapshots {
 			t.Errorf("day %s = %+v, want %+v", tc.day, d, tc)
 		}
 		if (d.Bytes > 0) != tc.rawcallBytes {

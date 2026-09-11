@@ -63,7 +63,7 @@ func TestUploadReportsEachOutcomeThroughTheResidentProxy(t *testing.T) {
 	if err := m.Upload(true, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(e.stdout.String(), "Uploaded 1 batch(es), 1 rawcall(s).") {
+	if !strings.Contains(e.stdout.String(), "Uploaded 1 batch(es), 1 record(s).") {
 		t.Errorf("stdout = %q", e.stdout)
 	}
 
@@ -339,7 +339,7 @@ func TestUploadReportsProgressBeforeAPauseStopsTheDrain(t *testing.T) {
 	if err := m.Upload(true, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(e.stdout.String(), "Uploaded 1 batch(es), 1 rawcall(s).") {
+	if !strings.Contains(e.stdout.String(), "Uploaded 1 batch(es), 1 record(s).") {
 		t.Errorf("stdout = %q, want the acknowledged batch reported", e.stdout)
 	}
 	if !strings.Contains(e.stdout.String(), "Uploads are paused") {

@@ -31,20 +31,21 @@ type SpoolState struct {
 	// WritableErr is nil while the spool accepts writes within quota.
 	WritableErr error
 	Days        []spool.DaySummary
-	// OldestRecord is when the oldest session record still waiting in
-	// the spool was captured, zero when none waits. With the day
-	// summaries it is how far behind uploading the records are.
+	// OldestRecord is when the oldest record of either slot still
+	// waiting in the spool was captured, zero when none waits. With the
+	// day summaries it is how far behind uploading the records are.
 	OldestRecord time.Time
 }
 
-// recordsWaiting counts the session records — segments and snapshots
-// — the spool still holds, which is what has not been uploaded yet.
-func (s SpoolState) recordsWaiting() (segments, snapshots int) {
+// recordsWaiting counts by kind the records the spool still holds,
+// which is what has not been uploaded yet.
+func (s SpoolState) recordsWaiting() (rawcalls, segments, snapshots int) {
 	for _, day := range s.Days {
+		rawcalls += day.Rawcalls
 		segments += day.Segments
 		snapshots += day.Snapshots
 	}
-	return segments, snapshots
+	return rawcalls, segments, snapshots
 }
 
 // SessionFilesState is what the registry of an enabled project's

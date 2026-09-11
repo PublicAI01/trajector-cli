@@ -3,6 +3,7 @@ package cli_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 )
@@ -25,5 +26,36 @@ func TestStatusRejectsStrayArguments(t *testing.T) {
 	got := e.Run("status", "extra")
 	if got.Exit != 2 || !strings.Contains(got.Stderr, "usage: trajector status") {
 		t.Errorf("got %+v, want a usage error", got)
+	}
+}
+
+func TestStatusCountsEveryKindOfRecordWaitingInTheSpool(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	at := time.Now().UTC()
+	seedRawcall(e, "req-1", at)
+	e.Sandbox().SeedSegment("sess-1", e.ProjectHash(), at)
+	e.Sandbox().SeedMetaSnapshot("sess-1", e.ProjectHash(), at)
+
+	got := e.InProject("status")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stdout, "Records waiting to upload: 1 rawcall(s), 1 segment(s), 1 snapshot(s)") {
+		t.Errorf("stdout = %q, want every waiting kind counted", got.Stdout)
+	}
+}
+
+func TestStatusCountsWaitingRawcallsWhereNoSessionFileWasRead(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	seedRawcall(e, "req-1", time.Now().UTC())
+
+	got := e.InProject("status")
+	if !strings.Contains(got.Stdout, "Records waiting to upload: 1 rawcall(s)") {
+		t.Errorf("stdout = %q, want the waiting rawcall counted", got.Stdout)
+	}
+	if strings.Contains(got.Stdout, "waiting to upload: none") {
+		t.Errorf("stdout = %q, want the wait reported by what is in the spool", got.Stdout)
 	}
 }

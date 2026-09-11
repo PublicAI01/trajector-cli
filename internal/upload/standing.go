@@ -125,7 +125,7 @@ func (s Standing) Explain() string {
 	case TimedOut:
 		return fmt.Sprintf("Uploads are paused until %s: the last attempt ran out of time.", s.pauseUntil())
 	case QuarantineOnly:
-		return "Uploads have nothing to send: every rawcall left on this machine is quarantined."
+		return "Uploads have nothing to send: every record left on this machine is quarantined."
 	case AccessRefused:
 		return fmt.Sprintf("Uploads are paused until %s: the upload endpoint refused this client access. Captured data is kept.", s.pauseUntil())
 	default:

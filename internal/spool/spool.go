@@ -430,13 +430,13 @@ func (s *Spool) rewriteIndexFileLocked(path string, drop func(line []byte) bool)
 }
 
 // DaySummary reports one day of the spool: counts and sizes only, never
-// file names — ids belong to the records, not to diagnostics. Records
+// file names — ids belong to the records, not to diagnostics. Rawcalls
 // and Bytes describe the rawcall slot's day directory; Segments,
 // Snapshots and RecordBytes describe the same day in the record slot.
 // A day appears when either slot holds it.
 type DaySummary struct {
 	Day         string `json:"day"`
-	Records     int    `json:"records"`
+	Rawcalls    int    `json:"rawcalls"`
 	Bytes       int64  `json:"bytes"`
 	Segments    int    `json:"segments"`
 	Snapshots   int    `json:"snapshots"`
@@ -476,7 +476,7 @@ func (s *Spool) Summary() ([]DaySummary, error) {
 				d.Bytes += info.Size()
 			}
 			if filepath.Ext(f.Name()) == ".json" {
-				d.Records++
+				d.Rawcalls++
 			}
 		}
 	}
