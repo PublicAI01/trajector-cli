@@ -18,7 +18,7 @@ func TestEnableInjectsRoutesAndSelfChecks(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 	}
 
@@ -68,13 +68,13 @@ func TestEnableInjectsRoutesAndSelfChecks(t *testing.T) {
 func TestEnableIsIdempotentAndKeepsToken(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	first := e.status()
 
 	e.stdin = ""
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("second enable: %v", err)
 	}
 	second := e.status()
@@ -101,7 +101,7 @@ func TestEnableDeclinedLeavesNoTrace(t *testing.T) {
 	e.startProxy()
 	e.stdin = "no\n"
 
-	err := e.machine().Enable(e.project, e.io())
+	err := e.machine().Enable(e.project, false, e.io())
 	if err == nil || !strings.Contains(err.Error(), "declined") {
 		t.Fatalf("err = %v, want declined", err)
 	}
@@ -122,7 +122,7 @@ func TestEnableSkipsPromptWhenAlreadyAccepted(t *testing.T) {
 	}
 	e.stdin = ""
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if strings.Contains(e.stdout.String(), "[yes/no]") {
@@ -139,7 +139,7 @@ func TestEnableStaleAgreementRepromptsAndResumesCapture(t *testing.T) {
 	}
 	e.sandbox.Pause(proxytest.PauseConsentReconfirm)
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "agreement changed") {
@@ -159,7 +159,7 @@ func TestEnableRefusesBedrockChannel(t *testing.T) {
 	e.startProxy()
 	e.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"
 
-	err := e.machine().Enable(e.project, e.io())
+	err := e.machine().Enable(e.project, false, e.io())
 	if err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("err = %v", err)
 	}
@@ -173,7 +173,7 @@ func TestEnableChainsThirdPartyUpstream(t *testing.T) {
 	e.startProxy()
 	e.environ["ANTHROPIC_BASE_URL"] = "https://relay.example.com"
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	st := e.status()
@@ -189,7 +189,7 @@ func TestEnableRollsBackWhenPortIsForeign(t *testing.T) {
 	e := newEnv(t)
 	e.occupyPort()
 
-	err := e.machine().Enable(e.project, e.io())
+	err := e.machine().Enable(e.project, false, e.io())
 	if err == nil || !strings.Contains(err.Error(), "not the trajector proxy") {
 		t.Fatalf("err = %v", err)
 	}
@@ -222,7 +222,7 @@ func TestEnableRollbackRestoresUserSettingsBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := e.machine().Enable(e.project, e.io()); err == nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err == nil {
 		t.Fatal("enable succeeded against a foreign port")
 	}
 	data, err := os.ReadFile(e.settingsPath())
@@ -245,7 +245,7 @@ func TestEnableRollsBackWhenProxyCannotStart(t *testing.T) {
 	e.deps.ProxyAddr = l.Addr().String()
 	l.Close()
 
-	if err := e.machine().Enable(e.project, e.io()); err == nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err == nil {
 		t.Fatal("enable succeeded without a startable proxy")
 	}
 	if _, err := os.Stat(e.settingsPath()); !os.IsNotExist(err) {
@@ -259,7 +259,7 @@ func TestEnableRollsBackWhenProxyCannotStart(t *testing.T) {
 func TestDisableRemovesInjectionRevokesAndDeletesProjectData(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	route := e.status()
@@ -310,7 +310,7 @@ func TestDisableWithoutEnableIsCleanNoop(t *testing.T) {
 func TestDisableTwiceIsIdempotent(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
@@ -324,7 +324,7 @@ func TestDisableTwiceIsIdempotent(t *testing.T) {
 func TestDisableAlsoDeletesRejectedRawcallsOfTheProject(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	route := e.status()
@@ -365,7 +365,7 @@ func TestDisableAlsoDeletesRejectedRawcallsOfTheProject(t *testing.T) {
 func TestDisableSplitsTheDeletionCountBySource(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	route := e.status()
@@ -406,7 +406,7 @@ func rejectedRecordFor(t *testing.T, projectIDHash string) []byte {
 func TestDisableRerunFinishesAnInterruptedWithdrawal(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	route := e.status()
@@ -461,7 +461,7 @@ func enabledOverAUsersOwnRelay(t *testing.T) *env {
 	if err := os.WriteFile(e.settingsPath(), []byte(`{"env":{"ANTHROPIC_BASE_URL":"`+relayInSettingsLocal+`"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 	}
 	if got := e.status().Upstream; got != relayInSettingsLocal {
@@ -515,7 +515,7 @@ func TestUninstallDoesNotWriteABaseURLIntoAProjectItNeverDisplacedOneIn(t *testi
 	// The user's relay lives in their shell, so enable records it without
 	// overwriting anything of theirs in a file.
 	e.environ["ANTHROPIC_BASE_URL"] = shellRelay
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 	}
 	if got := e.status().Upstream; got != shellRelay {
@@ -611,7 +611,7 @@ func TestRemovalRestoresTheBaseURLTheInjectionItselfNamed(t *testing.T) {
 func TestEnableAndDisableKeepAUsersOwnBaseURL(t *testing.T) {
 	e := enabledOverAUsersOwnRelay(t)
 	// Re-running enable repairs rather than re-keys, the relay included.
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("re-enable: %v\nstdout: %s", err, e.stdout)
 	}
 	if got := e.status().Upstream; got != relayInSettingsLocal {
@@ -658,6 +658,7 @@ func TestDisableRemovesTheInjectionWithoutBaseURL(t *testing.T) {
 		ProjectIDHash: e.status().Hash,
 		RootPath:      e.canonicalRoot(),
 		Upstream:      "https://api.anthropic.com",
+		NoProxy:       true,
 	})
 	e.injectWithoutBaseURL()
 	before := e.status()

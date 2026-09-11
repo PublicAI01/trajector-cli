@@ -15,7 +15,7 @@ func TestEnableWarnsWhenTheEndpointIsNotTheDefault(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	out := e.stdout.String()
@@ -32,7 +32,7 @@ func TestEnableStaysQuietOnTheDefaultEndpoint(t *testing.T) {
 	e.startProxy()
 	e.deps.PlatformURL = platform.DefaultBaseURL
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if out := e.stdout.String(); strings.Contains(out, "WARNING") {

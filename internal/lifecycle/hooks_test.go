@@ -74,7 +74,7 @@ func TestEnsureProxyPausesRecordingOnAStaleAgreement(t *testing.T) {
 func TestEnsureProxyFollowsUpstreamDrift(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,7 +101,7 @@ func TestUnsupportedChannelIsReportedNotRewritten(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.environ["ANTHROPIC_BASE_URL"] = "https://relay.example.com"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	// The user moves the project to Bedrock after enabling it. From here

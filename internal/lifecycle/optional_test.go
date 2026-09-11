@@ -61,7 +61,7 @@ func TestEnableAsksAndWritesTheOptionalSettingOnYes(t *testing.T) {
 	e.startProxy()
 	e.stdin = "yes\ny\n"
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 	}
 
@@ -125,7 +125,7 @@ func TestEnableEmptyInputTakesTheStatedDefault(t *testing.T) {
 			tc.seed(t, e)
 			e.stdin = "yes\n\n"
 
-			if err := e.machine().Enable(e.project, e.io()); err != nil {
+			if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
 			out := e.stdout.String()
@@ -149,7 +149,7 @@ func TestEnableDeclineIsRecordedAndRerunStillAsks(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\nn\n"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if value, found := settingValue(t, e.settingsPath()); found {
@@ -161,7 +161,7 @@ func TestEnableDeclineIsRecordedAndRerunStillAsks(t *testing.T) {
 
 	e.stdout.Reset()
 	e.stdin = "y\n"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("rerun: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "Turn it on? [Y/n]") {
@@ -208,7 +208,7 @@ func TestEnableLeavesAUsersOwnTrueAlone(t *testing.T) {
 			e.startProxy()
 			tc.seed(t, e)
 
-			if err := e.machine().Enable(e.project, e.io()); err != nil {
+			if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
 			out := e.stdout.String()
@@ -252,7 +252,7 @@ func TestEnableAcceptWhenAlreadyTrueRecordsNoWriteOfOurs(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\nn\n"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 
@@ -264,7 +264,7 @@ func TestEnableAcceptWhenAlreadyTrueRecordsNoWriteOfOurs(t *testing.T) {
 		},
 		answer: strings.NewReader("y\n"),
 	}
-	if err := e.machine().Enable(e.project, lifecycle.IO{In: in, Out: e.stdout, Err: e.stderr}); err != nil {
+	if err := e.machine().Enable(e.project, false, lifecycle.IO{In: in, Out: e.stdout, Err: e.stderr}); err != nil {
 		t.Fatalf("rerun: %v\nstdout: %s", err, e.stdout)
 	}
 	d, ok := settingDecision(t, e, e.status().Hash)
@@ -284,7 +284,7 @@ func TestEnableRecordFailureLeavesTheSettingUnwritten(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\nn\n"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 
@@ -296,7 +296,7 @@ func TestEnableRecordFailureLeavesTheSettingUnwritten(t *testing.T) {
 		},
 		answer: strings.NewReader("y\n"),
 	}
-	if err := e.machine().Enable(e.project, lifecycle.IO{In: in, Out: e.stdout, Err: e.stderr}); err != nil {
+	if err := e.machine().Enable(e.project, false, lifecycle.IO{In: in, Out: e.stdout, Err: e.stderr}); err != nil {
 		t.Fatalf("rerun: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
 	}
 	if !strings.Contains(e.stderr.String(), "nothing was changed") {
@@ -313,13 +313,13 @@ func TestEnableRerunStatesOurWriteAndKeepsItWithoutAnExplicitYes(t *testing.T) {
 			e := newEnv(t)
 			e.startProxy()
 			e.stdin = "yes\ny\n"
-			if err := e.machine().Enable(e.project, e.io()); err != nil {
+			if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 				t.Fatalf("enable: %v", err)
 			}
 
 			e.stdout.Reset()
 			e.stdin = input
-			if err := e.machine().Enable(e.project, e.io()); err != nil {
+			if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 				t.Fatalf("rerun: %v", err)
 			}
 			out := e.stdout.String()
@@ -343,13 +343,13 @@ func TestEnableRerunAnswerYesTurnsTheSettingBackOff(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\ny\n"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 
 	e.stdout.Reset()
 	e.stdin = "y\n"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("rerun: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "Set showThinkingSummaries back to what it was before trajector wrote it.") {
@@ -364,7 +364,7 @@ func TestEnableRerunAnswerYesTurnsTheSettingBackOff(t *testing.T) {
 
 	e.stdout.Reset()
 	e.stdin = "n\n"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("third run: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "Turn it on? [Y/n]") {
@@ -397,7 +397,7 @@ func TestDisableRestoresTheSettingToItsPriorState(t *testing.T) {
 			e.startProxy()
 			tc.seed(t, e)
 			e.stdin = "yes\ny\n"
-			if err := e.machine().Enable(e.project, e.io()); err != nil {
+			if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
 			if value, found := settingValue(t, e.settingsPath()); !found || !value {
@@ -425,7 +425,7 @@ func TestDisableLeavesAHandEditedValueAlone(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\ny\n"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if err := claudesettings.SetTopLevelBool(e.settingsPath(), optionalKey, false); err != nil {
@@ -489,7 +489,7 @@ func TestEnableNonInteractiveChangesNoOptionalSetting(t *testing.T) {
 	e.startProxy()
 	e.stdin = "yes\n"
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 	}
 	out := e.stdout.String()
@@ -509,7 +509,7 @@ func TestDisableLeavesDeclinedRecordsInPlace(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\nn\n"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
@@ -525,11 +525,11 @@ func TestUninstallRestoresSettingsAcrossRoots(t *testing.T) {
 	e.startProxy()
 	second := t.TempDir()
 	e.stdin = "yes\ny\n"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable first project: %v", err)
 	}
 	e.stdin = "y\n"
-	if err := e.machine().Enable(second, e.io()); err != nil {
+	if err := e.machine().Enable(second, false, e.io()); err != nil {
 		t.Fatalf("enable second project: %v", err)
 	}
 	secondRoot, err := consent.CanonicalRoot(second)
@@ -561,7 +561,7 @@ func TestDoctorCompletesTheWithdrawalOfAWrittenSetting(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\ny\n"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	e.sandbox.RevokeProject(e.canonicalRoot(), "2026-08-21T00:00:00Z")

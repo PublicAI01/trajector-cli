@@ -58,7 +58,10 @@ func newEnv(t *testing.T) *env {
 		stdin:   "yes\n",
 		stdout:  &bytes.Buffer{},
 		stderr:  &bytes.Buffer{},
-		environ: map[string]string{},
+		// The managed settings an organization pushes to this device
+		// are read from a fixed directory; an empty one of this test's
+		// own keeps the developer's out of every judgement.
+		environ: map[string]string{"CLAUDE_CODE_MANAGED_SETTINGS_PATH": filepath.Join(home, "managed")},
 		sandbox: proxytest.Open(t, layout),
 		client:  proxytest.Client(t),
 		tokens:  tokenstore.Files(layout.SecretsDir()),

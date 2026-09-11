@@ -22,8 +22,11 @@ func (a *app) logoutCmd(args []string) int {
 }
 
 func (a *app) enableCmd(args []string) int {
-	return a.with("usage: trajector enable", args, 0, func(m *lifecycle.Machine, cwd string) error {
-		return m.Enable(cwd, a.io())
+	// The flag is spelled exactly as the marker the injected hook
+	// carries, so the one word names the shape everywhere it shows.
+	args, noProxy := takeFlag(args, claudesettings.NoProxyMarker)
+	return a.with("usage: trajector enable [--no-proxy]", args, 0, func(m *lifecycle.Machine, cwd string) error {
+		return m.Enable(cwd, noProxy, a.io())
 	})
 }
 

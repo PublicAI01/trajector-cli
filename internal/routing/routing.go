@@ -108,6 +108,11 @@ type projectRecord struct {
 	// move made where no user was watching stays visible afterwards. A
 	// fresh grant clears it: enabling is the user's own baseline.
 	UpstreamMoved *upstreamMoveRecord `json:"upstream_moved,omitempty"`
+	// NoProxy marks a grant whose project injects no base URL: its
+	// traffic never reaches the proxy, and only its session files are
+	// read. The token stays granted so the project is found the same
+	// way in either shape.
+	NoProxy bool `json:"no_proxy,omitempty"`
 }
 
 type upstreamMoveRecord struct {

@@ -37,6 +37,11 @@ type ProjectStatus struct {
 	Upstream      string
 	UpstreamMoved routing.UpstreamMove
 	GrantHash     string
+	// GrantNoProxy is the shape the grant records: true when enable
+	// installed hooks without a base URL. The grant is the record of
+	// what the user chose; NoProxy below is what the settings file
+	// carries now.
+	GrantNoProxy bool
 
 	// InjectedBaseURL is the base URL trajector injected into the
 	// project's settings, empty when no base URL is injected;
@@ -68,15 +73,18 @@ type ProjectStatus struct {
 func (s ProjectStatus) Injected() bool { return s.InjectedBaseURL != "" || s.NoProxy }
 
 // Consistent reports the fully healthy enabled state: a standing grant
-// with all three session hooks in place and, unless the injection is
-// the shape without a base URL, a token exactly what the settings
-// inject. status presents it as contributing; doctor treats anything
-// else as something to reconcile or report.
+// with all three session hooks in place, in the shape the grant
+// records — and, in the shape with a base URL, a token exactly what
+// the settings inject. status presents it as contributing; doctor
+// treats anything else as something to reconcile or report.
 func (s ProjectStatus) Consistent() bool {
 	if !s.Enabled || !s.HookInstalled || !s.SessionEndInstalled {
 		return false
 	}
-	return s.NoProxy || s.InjectedToken == s.Token
+	if s.GrantNoProxy {
+		return s.NoProxy
+	}
+	return !s.NoProxy && s.InjectedToken == s.Token
 }
 
 // MissingSessionEnd reports an injection that predates the session-end

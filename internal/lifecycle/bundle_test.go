@@ -47,7 +47,7 @@ func readBundle(t *testing.T, path string) map[string]string {
 func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	writeUploadFile(t, e, "state.json", map[string]any{"last_error": "boom"})
@@ -134,7 +134,7 @@ func TestDoctorBundleRecordsStoreFailuresInsteadOfFailing(t *testing.T) {
 func TestDoctorBundleNeverLeaksRecordDataOrTokens(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	token := e.status().Token
@@ -166,7 +166,7 @@ func TestDoctorBundleStripsUpstreamCredentials(t *testing.T) {
 	// A user routes through their own relay and put credentials in the
 	// base URL. The bundle records where traffic went, never the secret.
 	e.environ["ANTHROPIC_BASE_URL"] = "https://user:sekret-pw@relay.example.com/v1?api_key=SECRET-KEY"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -191,7 +191,7 @@ func TestDoctorBundleStripsUpstreamCredentials(t *testing.T) {
 func TestDoctorBundleRepairsNothing(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	// Drift the injected token — exactly what doctor would repair by
@@ -246,7 +246,7 @@ func TestDoctorBundleIsGitIgnoredInTheProject(t *testing.T) {
 	e := newEnv(t)
 	e.gitRepo()
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -279,7 +279,7 @@ func TestDoctorBundleRestoresIgnoreRulesWhenMissing(t *testing.T) {
 	e := newEnv(t)
 	e.gitRepo()
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(e.canonicalRoot(), ".gitignore")); err != nil {

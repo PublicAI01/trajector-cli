@@ -6,14 +6,55 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
+	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
+)
+
+// What enable says, in the words the user reads. Each sentence states a
+// fact about this device or this project and, where the fact costs the
+// user something, the ways out of it; none of them asks for a second
+// agreement.
+const (
+	// deviceWideTerms follows the agreement text: accepting it covers
+	// every project on this device, not only the one being enabled.
+	deviceWideTerms = "You are accepting these terms for this device, not only for this project. Any project you enable on this device is covered."
+
+	// hooksWillNotLoad opens the report of a static reading of Claude
+	// Code's configuration that says the injected hooks will not run.
+	// The reading is hedged because it is static: a setting given on
+	// the command line or in a process environment is invisible to it.
+	hooksWillNotLoad = "Judged from configuration readable on this machine, Claude Code will not load trajector's hooks in this project"
+	// proxyHalfOnly is the consequence in the shape with a base URL: the
+	// proxy records, the session files are not read.
+	proxyHalfOnly = "Only the proxy records this project for now; its session files are not read"
+	// noProxyRecordsNothing is the consequence in the shape without a
+	// base URL, where the hooks are the only source. Enabling is not
+	// refused — the setting is the user's, or their organization's, to
+	// change — but it is not done silently either.
+	noProxyRecordsNothing = "Judged from configuration readable on this machine, Claude Code will not run trajector's hooks here, so --no-proxy would record nothing from this project. Either accept that nothing is recorded for now, or run trajector enable without --no-proxy (the proxy records; /remote-control inside this project becomes unavailable, claude remote-control still works)."
+
+	// remoteControlNotice is said once, when a project is enabled in
+	// the shape with a base URL: that shape makes /remote-control
+	// unavailable inside the project, and both ways around it are
+	// named beside the fact.
+	remoteControlNotice = "Remote Control: inside this project, /remote-control will not be available. To use it, either start sessions with claude remote-control (both sources are still recorded), or run trajector enable --no-proxy to record only the session files (Remote Control stays available; records from one source may be rewarded differently)."
+	// noProxyShapeFact is said once, when a project is enabled in the
+	// shape without a base URL.
+	noProxyShapeFact = "This project records from its session files only, so Remote Control stays available."
+
+	contributesNow = "This project now contributes data. Run `trajector disable` here to stop."
 )
 
 // projectIgnoreRules are the .gitignore lines an enabled project
@@ -49,7 +90,14 @@ func projectHooks(execPath string) claudesettings.HookCommands {
 // its token in the routing table and all three session hooks present —
 // a half-enabled project routing traffic at a dead port must be
 // impossible.
-func (m *Machine) enableProject(projectDir string, io IO) error {
+//
+// Everything the user is told before the install — the agreement, a
+// hook configuration that will not load, a base URL of their own, the
+// session files already on disk — is said before any file changes, so
+// the one answer enable ever waits for is given with the facts in
+// view. Re-running enable on an enabled project walks the same steps:
+// that is how an injection made by an older build is completed.
+func (m *Machine) enableProject(projectDir string, noProxy bool, io IO) error {
 	// Every prompt in one enable must read through one buffered reader: a
 	// second bufio over the same stream would find the bytes the first
 	// one buffered ahead already gone. bufio.NewReader hands this same
@@ -60,6 +108,9 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		return err
 	}
 	if err := m.confirmAgreement(io); err != nil {
+		return err
+	}
+	if proceed, err := m.confirmHooksWillRun(io, st.Root, noProxy); err != nil || !proceed {
 		return err
 	}
 
@@ -122,6 +173,15 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 		return ErrUpstreamUnroutable
 	}
 
+	// The session files this project already has are counted and named
+	// here, before anything is written: the count is part of what the
+	// user is enabling, and reading them is not asked about separately.
+	earlier, err := discover.Walk(st.Root, filepath.Dir(m.sessionFilesRoot()))
+	if err != nil {
+		return fmt.Errorf("looking for this project's session files: %w", err)
+	}
+	reportEarlierSessions(io, earlier)
+
 	// The routing table, the consent file, and the project's .gitignore
 	// are all shared with concurrent processes, so rollback undoes them
 	// entry-wise through their own writers; a byte-for-byte restore would
@@ -144,12 +204,13 @@ func (m *Machine) enableProject(projectDir string, io IO) error {
 	}
 
 	var undo enableUndo
-	if err := m.installAndVerify(io, st, upstream, &undo); err != nil {
+	if err := m.installAndVerify(io, st, upstream, noProxy, earlier, &undo); err != nil {
 		restoreErr := errors.Join(
 			snap.restore(),
 			claudesettings.RemoveGitIgnored(st.Root, undo.ignoreRules),
 			m.routes.RestoreGrants(grants),
 			m.consent.RestoreProject(decision),
+			m.unregisterIfRegisteredHere(st.Hash, undo),
 		)
 		if restoreErr != nil {
 			return fmt.Errorf("%w (rollback incomplete: %v)", err, restoreErr)
@@ -168,9 +229,14 @@ type enableUndo struct {
 	// ignoreRules are the .gitignore lines this install appended, in the
 	// order it appended them.
 	ignoreRules []string
+	// registeredHere reports that this install created the project's
+	// session file registry. A registry that already stood — from an
+	// earlier enable, or from a session's own hooks — is not this
+	// install's to take back.
+	registeredHere bool
 }
 
-func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream string, undo *enableUndo) error {
+func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream string, noProxy bool, earlier discover.Result, undo *enableUndo) error {
 	token, err := projectToken(st)
 	if err != nil {
 		return err
@@ -183,17 +249,32 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		RootPath:      st.Root,
 		Upstream:      upstream,
 		GrantedAt:     now,
+		NoProxy:       noProxy,
 	}); err != nil {
 		return fmt.Errorf("updating routing table: %w", err)
 	}
 	if err := m.consent.SetProjectState(st.Hash, st.Root, consent.StateGranted, now); err != nil {
 		return fmt.Errorf("recording project consent: %w", err)
 	}
+	if err := m.registerEarlierSessions(st.Hash, earlier, undo); err != nil {
+		return fmt.Errorf("registering this project's session files: %w", err)
+	}
 	m.offerOptionalSettings(io, st)
-	if err := claudesettings.InjectProject(settingsPath, m.proxy.BaseURL(token), projectHooks(m.deps.ExecPath)); err != nil {
+	restored, unrestored, err := m.injectProject(st, token, noProxy)
+	if err != nil {
 		return fmt.Errorf("injecting %s: %w", settingsPath, err)
 	}
-	fmt.Fprintf(io.Out, "Injected %s (base URL and session hooks)\n", settingsPath)
+	if restored != "" {
+		fmt.Fprintf(io.Out, "Restored your own base URL in %s: %s\n", settingsPath, restored)
+	}
+	if unrestored != "" {
+		fmt.Fprintf(io.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(settingsPath, unrestored))
+	}
+	if noProxy {
+		fmt.Fprintf(io.Out, "Injected %s (session hooks, no base URL)\n", settingsPath)
+	} else {
+		fmt.Fprintf(io.Out, "Injected %s (base URL and session hooks)\n", settingsPath)
+	}
 
 	symlinked := false
 	for _, rule := range projectIgnoreRules {
@@ -217,12 +298,115 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		fmt.Fprintf(io.Err, "WARNING: .gitignore is a symbolic link and was left alone; add %s to your git ignores so the injected settings and diagnostic bundles are never committed.\n", strings.Join(projectIgnoreRules, ", "))
 	}
 
-	if err := m.selfCheck(token); err != nil {
+	if err := m.selfCheck(token, noProxy); err != nil {
 		return err
 	}
-	fmt.Fprintln(io.Out, "Self-check passed: routing and recording verified end to end.")
-	fmt.Fprintln(io.Out, "This project now contributes data. Run `trajector disable` here to stop.")
+	if noProxy {
+		fmt.Fprintln(io.Out, "Self-check passed: the resident process is up.")
+		fmt.Fprintln(io.Out, noProxyShapeFact)
+	} else {
+		fmt.Fprintln(io.Out, "Self-check passed: routing and recording verified end to end.")
+		fmt.Fprintln(io.Out, remoteControlNotice)
+	}
+	fmt.Fprintln(io.Out, contributesNow)
 	return nil
+}
+
+// injectProject writes the project injection in the shape asked for:
+// with the proxy base URL, or hooks alone. A file carrying the other
+// shape is cleared first, through the one remover that knows what to
+// put back — a base URL of the user's own that the injection displaced
+// — because the shape without a base URL refuses to install over an
+// injected one. enable and doctor both write through here, so a shape
+// change is spelled once. The results are removal's: what was put back,
+// and what could not be.
+func (m *Machine) injectProject(st report.ProjectStatus, token string, noProxy bool) (restored, unrestored string, err error) {
+	settingsPath := st.SettingsPath()
+	want, baseURL := claudesettings.WithProxy, m.proxy.BaseURL(token)
+	if noProxy {
+		want, baseURL = claudesettings.WithoutProxy, ""
+	}
+	if shape, ok := claudesettings.InjectionShape(settingsPath); ok && shape != want {
+		if restored, unrestored, err = m.removeInjection(st.Root); err != nil {
+			return "", "", err
+		}
+	}
+	return restored, unrestored, claudesettings.InjectProject(settingsPath, baseURL, projectHooks(m.deps.ExecPath))
+}
+
+// hookPolicy is the static reading of whether Claude Code will load the
+// hooks a project injection installs on this device, taken fresh each
+// time it is asked: the configuration it reads is the user's, or their
+// organization's, and changes without notice.
+func (m *Machine) hookPolicy(root string) claudesettings.HookPolicy {
+	host := userdirs.Env{GOOS: runtime.GOOS, Getenv: m.deps.Getenv}
+	managed := claudesettings.ManagedDirs{Policy: userdirs.ClaudeManagedSettingsDir(host)}
+	return claudesettings.JudgeHookPolicy(root, m.deps.Home, m.deps.Getenv, managed)
+}
+
+// confirmHooksWillRun says so when the static reading finds the hooks
+// will not load, and reports whether enable goes on. In the shape with
+// a base URL it always does: the proxy still records. In the shape
+// without one the hooks are the only source, so an enable would install
+// something that records nothing — the user is told and asked, and a
+// no leaves every file as it was.
+func (m *Machine) confirmHooksWillRun(io IO, root string, noProxy bool) (bool, error) {
+	policy := m.hookPolicy(root)
+	if policy.Runs {
+		return true, nil
+	}
+	fmt.Fprintf(io.Out, "%s (%s)\n", hooksWillNotLoad, policy.Reason)
+	if !noProxy {
+		fmt.Fprintln(io.Out, proxyHalfOnly)
+		return true, nil
+	}
+	fmt.Fprintln(io.Out, noProxyRecordsNothing)
+	yes, err := askYesNo(io, "Enable anyway? [y/N] ", false)
+	if err != nil {
+		return false, fmt.Errorf("reading the answer: %w", err)
+	}
+	if !yes {
+		fmt.Fprintln(io.Out, "Nothing was changed.")
+	}
+	return yes, nil
+}
+
+// reportEarlierSessions tells the user how many session files this
+// project already has and how far back they go — they are collected
+// once the project is enabled — and that the count stopped short when
+// the directory tree was larger than the walk visits.
+func reportEarlierSessions(io IO, found discover.Result) {
+	if found.Sessions == 0 {
+		fmt.Fprintln(io.Out, "No earlier session records to collect.")
+	} else {
+		oldest := found.Oldest.Local()
+		fmt.Fprintf(io.Out, "%d earlier session record(s) will be collected once; the oldest is from %s.\n", found.Sessions, oldest.Format("2006-01-02"))
+	}
+	if found.Truncated {
+		fmt.Fprintf(io.Out, "本项目目录树超过 %d,这个数字不完整\n", discover.Limit)
+	}
+}
+
+// registerEarlierSessions puts the session files found before the
+// install into the project's registry, noting on the undo whether the
+// registry is this install's own creation.
+func (m *Machine) registerEarlierSessions(projectIDHash string, found discover.Result, undo *enableUndo) error {
+	registry := follow.Open(m.deps.Layout.FollowDir())
+	projects, err := registry.Projects()
+	if err != nil {
+		return err
+	}
+	undo.registeredHere = !slices.Contains(projects, projectIDHash)
+	return discover.Register(registry, projectIDHash, found)
+}
+
+// unregisterIfRegisteredHere takes back the registry a failed install
+// created, and leaves one that stood before it alone.
+func (m *Machine) unregisterIfRegisteredHere(projectIDHash string, undo enableUndo) error {
+	if !undo.registeredHere {
+		return nil
+	}
+	return follow.Open(m.deps.Layout.FollowDir()).Unregister(projectIDHash)
 }
 
 // confirmAgreement shows the agreement and records the explicit
@@ -240,6 +424,8 @@ func (m *Machine) confirmAgreement(io IO) error {
 		fmt.Fprintln(io.Out, "The data agreement changed since you last accepted it.")
 	}
 	fmt.Fprintln(io.Out, consent.AgreementText)
+	fmt.Fprintln(io.Out)
+	fmt.Fprintln(io.Out, deviceWideTerms)
 	fmt.Fprintln(io.Out)
 	yes, err := askYesNo(io, "Do you accept the data agreement? [yes/no]: ", false)
 	if err != nil {
@@ -270,15 +456,21 @@ func projectToken(st report.ProjectStatus) (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// selfCheck proves the injected route works before enable reports
-// success: the proxy is up and this exact token routes and records.
-// No upstream call is made and nothing is billed.
-func (m *Machine) selfCheck(token string) error {
+// selfCheck proves the injection works before enable reports success:
+// the proxy is up and, when a base URL was injected, this exact token
+// routes and records. Without a base URL there is no route to prove;
+// what the hooks will bring up on every session is the resident process
+// that uploads what this device records, and that it comes up is the
+// check. No upstream call is made and nothing is billed.
+func (m *Machine) selfCheck(token string, noProxy bool) error {
 	if err := m.proxy.Ensure(); err != nil {
 		if remedy := report.ProxyRemedy(err); remedy != "" {
 			return fmt.Errorf("self-check failed: %v. %s", err, remedy)
 		}
 		return fmt.Errorf("self-check failed: %w", err)
+	}
+	if noProxy {
+		return nil
 	}
 	if _, err := m.verifyRoute(token); err != nil {
 		return fmt.Errorf("self-check failed: %v", err)

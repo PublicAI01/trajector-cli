@@ -90,6 +90,7 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 		st.Upstream = grant.Upstream
 		st.UpstreamMoved = grant.UpstreamMoved
 		st.GrantHash = grant.ProjectIDHash
+		st.GrantNoProxy = grant.NoProxy
 	}
 	if st.PauseReason, err = m.routes.PausedReason(); err != nil {
 		return st, err

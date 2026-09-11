@@ -7,6 +7,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -21,10 +22,13 @@ type withdrawal struct {
 }
 
 // disableProject withdraws a project's consent: injection removed,
-// token revoked, consent recorded as denied, and the project's
-// unuploaded rawcalls deleted. Steps run in the order that fails safe:
-// a partial disable can only under-collect, never keep routing traffic
-// while looking disabled, and rerunning completes the remainder.
+// token revoked, its session files withdrawn from reading, consent
+// recorded as denied, and the project's unuploaded records deleted.
+// Steps run in the order that fails safe: a partial disable can only
+// under-collect, never keep routing traffic while looking disabled, and
+// rerunning completes the remainder. The session files themselves are
+// Claude Code's and the user's: withdrawing drops what this tool keeps
+// about them and touches none of them.
 func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 	st, err := m.Project(projectDir)
 	if err != nil {
@@ -47,6 +51,9 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 		// restore kept the record — so the rerun reaches for it here too.
 		undone, failures := m.restoreRecordedSettings(st.Root, st.Hash, claudesettings.OptionalSettings)
 		reportRestoredSettings(io, "", undone, failures)
+		if err := m.unregisterSessionFiles(st.Hash); err != nil {
+			return w, err
+		}
 		if err := m.purgeProjectRecords(st.Hash, &w); err != nil {
 			return w, fmt.Errorf("deleting local unuploaded data: %w", err)
 		}
@@ -79,6 +86,9 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 		return w, fmt.Errorf("revoking the project token: %w", err)
 	}
 	fmt.Fprintln(io.Out, "Project token revoked; recording for this project is off.")
+	if err := m.unregisterSessionFiles(st.Hash); err != nil {
+		return w, err
+	}
 
 	if err := m.consent.SetProjectState(st.Hash, st.Root, consent.StateDenied, now); err != nil {
 		return w, fmt.Errorf("recording withdrawal: %w", err)
@@ -231,6 +241,16 @@ func (m *Machine) recordedUpstream(root, injectedToken string) string {
 		return active
 	}
 	return revoked
+}
+
+// unregisterSessionFiles drops the project's session file registry —
+// which files are read and how far each was read — so nothing of the
+// project's is read again. The files stay where Claude Code wrote them.
+func (m *Machine) unregisterSessionFiles(projectIDHash string) error {
+	if err := follow.Open(m.deps.Layout.FollowDir()).Unregister(projectIDHash); err != nil {
+		return fmt.Errorf("withdrawing this project's session files from reading: %w", err)
+	}
+	return nil
 }
 
 // purgeProjectRecords deletes one project's unuploaded records from both

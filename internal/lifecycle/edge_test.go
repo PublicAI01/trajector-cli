@@ -19,7 +19,7 @@ func TestInjectedHookQuotesBinaryPathsWithSpaces(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.deps.ExecPath = "/Users/dev/My Tools/trajector"
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	settings, err := os.ReadFile(e.settingsPath())
@@ -37,7 +37,7 @@ func TestEnableUsesWallClockWhenNowUnset(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.deps.Now = time.Now
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	route, ok := e.sandbox.ActiveGrant(e.canonicalRoot())
@@ -50,7 +50,7 @@ func TestEnableFailsWhenAgreementAnswerUnavailable(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = ""
-	err := e.machine().Enable(e.project, e.io())
+	err := e.machine().Enable(e.project, false, e.io())
 	if err == nil || !strings.Contains(err.Error(), "agreement answer") {
 		t.Fatalf("err = %v", err)
 	}
@@ -67,7 +67,7 @@ func TestEnableRollsBackWhenSettingsFileIsMalformed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := e.machine().Enable(e.project, e.io())
+	err := e.machine().Enable(e.project, false, e.io())
 	if err == nil {
 		t.Fatal("enable succeeded over a malformed settings file")
 	}
@@ -85,7 +85,7 @@ func TestEnableFailsWhileCapturePaused(t *testing.T) {
 	e.startProxy()
 	e.sandbox.Pause(proxytest.PauseSignedOut)
 
-	err := e.machine().Enable(e.project, e.io())
+	err := e.machine().Enable(e.project, false, e.io())
 	if err == nil || !strings.Contains(err.Error(), "trajector login") {
 		t.Fatalf("err = %v, want the pause reason and what to do about it", err)
 	}
@@ -109,7 +109,7 @@ func TestEnableFailsWhenSpoolUnwritable(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(spoolDir, 0o700) })
 
-	err := e.machine().Enable(e.project, e.io())
+	err := e.machine().Enable(e.project, false, e.io())
 	if err == nil || !strings.Contains(err.Error(), "spool") {
 		t.Fatalf("err = %v", err)
 	}
@@ -123,7 +123,7 @@ func TestEnableAppendsGitIgnoreInsideRepo(t *testing.T) {
 	e.gitRepo()
 	e.startProxy()
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), ".gitignore") {
@@ -140,7 +140,7 @@ func TestEnableGitIgnoresBundleArchiveAndUnpackedDirectory(t *testing.T) {
 	e.gitRepo()
 	e.startProxy()
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	unpacked := filepath.Join(e.canonicalRoot(), "trajector-doctor-20260101-000000")
@@ -170,7 +170,7 @@ func TestEnableBackfillsUnpackedBundleRuleWithoutDuplicates(t *testing.T) {
 	}
 	e.startProxy()
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	want := old + ".claude/settings.local.json*\ntrajector-doctor-*/\n"
@@ -179,7 +179,7 @@ func TestEnableBackfillsUnpackedBundleRuleWithoutDuplicates(t *testing.T) {
 		t.Errorf(".gitignore = %q, %v, want %q", after, err, want)
 	}
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("second enable: %v", err)
 	}
 	again, err := os.ReadFile(ignorePath)
@@ -204,7 +204,7 @@ func TestEnableLeavesASymlinkedGitIgnoreAloneAndWarns(t *testing.T) {
 	}
 	e.startProxy()
 
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if !strings.Contains(e.stderr.String(), "symbolic link") {
@@ -239,7 +239,7 @@ func TestEnableLeavesASymlinkedSettingsFileAlone(t *testing.T) {
 	}
 	e.startProxy()
 
-	if err := e.machine().Enable(e.project, e.io()); err == nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err == nil {
 		t.Fatal("enable wrote through a symlinked settings file")
 	}
 	info, err := os.Lstat(link)
@@ -277,7 +277,7 @@ func TestEnableRollbackLeavesASymlinkedGitIgnoreAlone(t *testing.T) {
 	// Fails the self-check, so enable rolls back everything it did.
 	e.sandbox.Pause(proxytest.PauseSignedOut)
 
-	if err := e.machine().Enable(e.project, e.io()); err == nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err == nil {
 		t.Fatal("enable succeeded while capture was paused")
 	}
 	info, err := os.Lstat(link)
@@ -317,7 +317,7 @@ func TestEnableRollbackKeepsGitIgnoreLinesAddedMeanwhile(t *testing.T) {
 			t.Error(err)
 		}
 	}}
-	err := e.machine().Enable(e.project, lifecycle.IO{In: strings.NewReader(e.stdin), Out: out, Err: e.stderr})
+	err := e.machine().Enable(e.project, false, lifecycle.IO{In: strings.NewReader(e.stdin), Out: out, Err: e.stderr})
 	if err == nil {
 		t.Fatal("enable succeeded while capture was paused")
 	}
@@ -366,7 +366,7 @@ func TestEnableFailsWhenAcceptanceCannotBeRecorded(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	readOnly(t, filepath.Dir(e.layout().ConsentFile()))
-	if err := e.machine().Enable(e.project, e.io()); err == nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err == nil {
 		t.Fatal("enable succeeded without a writable consent store")
 	}
 }
@@ -380,7 +380,7 @@ func TestEnableRollsBackWhenRoutingTableUnwritable(t *testing.T) {
 	}
 	readOnly(t, filepath.Dir(e.layout().ConsentFile()))
 
-	err := e.machine().Enable(e.project, e.io())
+	err := e.machine().Enable(e.project, false, e.io())
 	if err == nil || !strings.Contains(err.Error(), "rolled back") {
 		t.Fatalf("err = %v", err)
 	}
@@ -401,7 +401,7 @@ func TestEnableFailsOnMalformedRoutingTable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := e.machine().Enable(e.project, e.io()); err == nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err == nil {
 		t.Fatal("enable succeeded over a malformed routing table")
 	}
 	data, err := os.ReadFile(tablePath)
@@ -413,7 +413,7 @@ func TestEnableFailsOnMalformedRoutingTable(t *testing.T) {
 func TestDisableFailsLoudlyWhenRevokeImpossible(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	readOnly(t, filepath.Dir(e.layout().ConsentFile()))

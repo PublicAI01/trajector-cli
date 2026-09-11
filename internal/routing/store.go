@@ -38,6 +38,11 @@ type Grant struct {
 	// pause. A caller that wants to know whether traffic is being
 	// recorded must ask the Table.
 	Revoked bool
+	// NoProxy reports the shape enable installed: hooks without a base
+	// URL, so no traffic of this project's reaches the proxy. It is
+	// recorded here, where the user's choice was made, so a repair
+	// reasons from it rather than from a file the user also edits.
+	NoProxy bool
 }
 
 // UpstreamMove is one recorded unattended upstream change: where the
@@ -82,6 +87,7 @@ func (s *Store) Grant(g Grant) error {
 			RootPath:      g.RootPath,
 			Upstream:      g.Upstream,
 			GrantedAt:     g.GrantedAt,
+			NoProxy:       g.NoProxy,
 		}
 	})
 }
@@ -237,6 +243,7 @@ func (s *Store) All() ([]Grant, error) {
 			Upstream:      rec.Upstream,
 			GrantedAt:     rec.GrantedAt,
 			Revoked:       rec.RevokedAt != "",
+			NoProxy:       rec.NoProxy,
 		}
 		if rec.UpstreamMoved != nil {
 			g.UpstreamMoved = UpstreamMove{From: rec.UpstreamMoved.From, At: rec.UpstreamMoved.At}
