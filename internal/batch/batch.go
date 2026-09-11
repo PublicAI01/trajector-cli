@@ -123,9 +123,9 @@ func Build(id string, createdAt time.Time, clientVersion string, in Contents, ru
 		refused []Refusal
 		packed  Contents
 	)
-	ix := NewIndexV2(id, createdAt, clientVersion, run)
+	ix := newIndexV2(id, createdAt, clientVersion, run)
 	pack := func(item IndexItemV2, masked redact.RedactedBytes) {
-		ix.Add(item, int64(masked.Len()))
+		ix.add(item, int64(masked.Len()))
 		stream.Write(masked.Bytes())
 	}
 
@@ -212,7 +212,7 @@ func packRawcall(rc spool.Rawcall) (IndexItemV2, redact.RedactedBytes, error) {
 		// An unmaskable record must not be shipped.
 		return IndexItemV2{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
 	}
-	item := RawcallItem(env)
+	item := rawcallItem(env)
 	if item.Timestamp == "" && !rc.Timestamp.IsZero() {
 		item.Timestamp = rc.Timestamp.UTC().Format(time.RFC3339Nano)
 	}
@@ -323,7 +323,7 @@ func (p parsedRecord) pack() (IndexItemV2, redact.RedactedBytes, error) {
 		if err != nil {
 			return IndexItemV2{}, redact.RedactedBytes{}, err
 		}
-		return SegmentItem(seg), redact.AlreadyRedacted(data), nil
+		return segmentItem(seg), redact.AlreadyRedacted(data), nil
 	}
 	snap, err := redact.RedactMetaSnapshot(p.snapshot)
 	if err != nil {
@@ -333,7 +333,7 @@ func (p parsedRecord) pack() (IndexItemV2, redact.RedactedBytes, error) {
 	if err != nil {
 		return IndexItemV2{}, redact.RedactedBytes{}, err
 	}
-	return MetaSnapshotItem(snap), redact.AlreadyRedacted(data), nil
+	return metaSnapshotItem(snap), redact.AlreadyRedacted(data), nil
 }
 
 func compress(data []byte) ([]byte, error) {

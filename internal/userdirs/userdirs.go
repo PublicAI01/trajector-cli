@@ -2,6 +2,9 @@
 // Both halves of that question live here: which per-user directories the
 // platform dictates, and which file each kind of trajector state goes
 // in. No other package may name a trajector file or spool directory.
+//
+// ClaudeManagedSettingsDir is the one exception in this package: it
+// names a directory of Claude Code, not of trajector.
 package userdirs
 
 import (

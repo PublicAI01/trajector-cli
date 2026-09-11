@@ -516,7 +516,7 @@ func TestAbsolutePathFields_RefusesALineThatIsNotJSON(t *testing.T) {
 }
 
 // TestPIIIsMaskedWithoutConfiguration runs its assertion in a fresh copy
-// of the test binary, so no ConfigurePII call from any other test in
+// of the test binary, so no configurePII call from any other test in
 // this process can have set the state it observes.
 func TestPIIIsMaskedWithoutConfiguration(t *testing.T) {
 	const marker = "REDACT_TEST_FRESH_PROCESS"

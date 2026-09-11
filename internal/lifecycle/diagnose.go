@@ -166,15 +166,20 @@ func (m *Machine) sessionFilesState(projectIDHash string) report.SessionFilesSta
 }
 
 // proxyIdleBetweenSessions reports that every enabled project on this
-// device records without the proxy. A routing table that cannot be
-// read answers false: an unreadable table is its own finding, and a
-// surface that read it as "nothing uses the proxy" would hide one.
+// device records without the proxy. On such a device the resident
+// process lives only while a session runs, which is the healthy state,
+// not a fault: a surface must not read a proxy that is absent between
+// sessions as something to repair. It is false when no project is
+// enabled, because then there is nothing the reading is about, and
+// false when the routing table cannot be read: an unreadable table is
+// its own finding, and a surface that read it as "nothing uses the
+// proxy" would hide one.
 func (m *Machine) proxyIdleBetweenSessions() bool {
 	grants, err := m.routes.All()
 	if err != nil {
 		return false
 	}
-	var projects []report.ProjectStatus
+	enabled := 0
 	for _, g := range grants {
 		if g.Revoked {
 			continue
@@ -183,7 +188,13 @@ func (m *Machine) proxyIdleBetweenSessions() bool {
 		if err != nil {
 			return false
 		}
-		projects = append(projects, st)
+		if !st.Enabled {
+			continue
+		}
+		enabled++
+		if !st.NoProxy {
+			return false
+		}
 	}
-	return allProjectsWithoutProxy(projects)
+	return enabled > 0
 }

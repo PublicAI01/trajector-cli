@@ -97,7 +97,7 @@ func (m *Machine) finishLogin(io IO) error {
 	}
 	userSettings := claudesettings.UserSettingsPath(m.deps.Home)
 	if !claudesettings.HasHook(userSettings, claudesettings.DiscoveryMarker) {
-		if err := claudesettings.InjectUserHook(userSettings, hookCommand(m.deps.ExecPath, "discovery")); err != nil {
+		if err := claudesettings.InjectUserHook(userSettings, hookCommand(m.deps.ExecPath, claudesettings.HookDiscovery)); err != nil {
 			return fmt.Errorf("installing the discovery hint: %w", err)
 		}
 	}

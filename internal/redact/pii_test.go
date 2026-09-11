@@ -7,18 +7,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
 
-// configurePII selects PII categories for the duration of a test and
-// restores the package default afterwards. Tests using it mutate global
-// state and must NOT call t.Parallel().
-func configurePII(t *testing.T, categories ...redact.PIICategory) {
-	t.Helper()
-	redact.ConfigurePII(categories...)
-	t.Cleanup(func() { redact.ConfigurePII(redact.DefaultPIICategories...) })
-}
-
 func TestPII_EmailDetection(t *testing.T) {
-	configurePII(t, redact.PIIEmail)
-
 	masked := []string{
 		"user@example.com",
 		"user+tag@domain.co.uk",
@@ -49,8 +38,6 @@ func TestPII_EmailDetection(t *testing.T) {
 }
 
 func TestPII_PhoneDetection(t *testing.T) {
-	configurePII(t, redact.PIIPhone)
-
 	masked := []string{
 		"555-123-4567",
 		"(555) 123-4567",
@@ -84,25 +71,7 @@ func TestPII_PhoneDetection(t *testing.T) {
 	}
 }
 
-func TestPII_CategoryToggle(t *testing.T) {
-	// Only email is configured: phone numbers must pass through untouched.
-	configurePII(t, redact.PIIEmail)
-
-	got := redactedField(t, "email user@example.com phone 555-123-4567")
-	if !strings.Contains(got, "[REDACTED_EMAIL]") {
-		t.Errorf("expected email to be masked, got %q", got)
-	}
-	if strings.Contains(got, "[REDACTED_PHONE]") {
-		t.Errorf("phone should not be masked when category is not configured, got %q", got)
-	}
-	if !strings.Contains(got, "555-123-4567") {
-		t.Errorf("phone should be preserved when category is not configured, got %q", got)
-	}
-}
-
 func TestPII_MultipleEmails(t *testing.T) {
-	configurePII(t, redact.PIIEmail)
-
 	got := redactedField(t, "a@b.com and c@d.org")
 	want := "[REDACTED_EMAIL] and [REDACTED_EMAIL]"
 	if got != want {
@@ -110,33 +79,20 @@ func TestPII_MultipleEmails(t *testing.T) {
 	}
 }
 
-func TestPII_ConfigureWithNoCategoriesDisablesMasking(t *testing.T) {
-	configurePII(t)
-
-	input := "contact user@example.com and call 555-123-4567"
-	if got := redactedField(t, input); got != input {
-		t.Errorf("PII should not be redacted when narrowed to nothing, got %q", got)
-	}
-}
-
 func TestPII_ReplacementTokenFormat(t *testing.T) {
-	configurePII(t, redact.PIIEmail, redact.PIIPhone)
-
 	if got := redactedField(t, "user@example.com"); got != "[REDACTED_EMAIL]" {
 		t.Errorf("email token = %q, want [REDACTED_EMAIL]", got)
 	}
 	if got := redactedField(t, "call 555-123-4567"); got != "call [REDACTED_PHONE]" {
 		t.Errorf("phone token = %q, want call [REDACTED_PHONE]", got)
 	}
-	// Secrets keep the bare REDACTED placeholder even with PII configured.
+	// Secrets keep the bare REDACTED placeholder beside the PII tokens.
 	if got := redactedField(t, "my key is "+highEntropySecret+" ok"); got != "my key is REDACTED ok" {
 		t.Errorf("secret token = %q, want my key is REDACTED ok", got)
 	}
 }
 
 func TestPII_SecretAndPIICoexist(t *testing.T) {
-	configurePII(t, redact.PIIEmail)
-
 	input := "key=" + highEntropySecret + " and user@example.com"
 	got := redactedField(t, input)
 	if strings.Contains(got, highEntropySecret) {
@@ -154,11 +110,9 @@ func TestPII_SecretAndPIICoexist(t *testing.T) {
 }
 
 // TestPII_JSONLSessionLineMasked drives a realistic session line through
-// JSONLBytes with both categories on: email and phone in a content leaf must
-// be masked with their typed tokens.
+// JSONLBytes: email and phone in a content leaf must be masked with
+// their typed tokens.
 func TestPII_JSONLSessionLineMasked(t *testing.T) {
-	configurePII(t, redact.PIIEmail, redact.PIIPhone)
-
 	input := `{"type":"user","content":"reach me at jane.doe@example.com or 555-123-4567"}`
 	rb, err := redact.JSONLBytes([]byte(input))
 	if err != nil {
@@ -180,8 +134,6 @@ func TestPII_JSONLSessionLineMasked(t *testing.T) {
 }
 
 func TestPII_AllowlistedEmailsPreserved(t *testing.T) {
-	configurePII(t, redact.PIIEmail)
-
 	// These emails appear constantly in coding sessions (git authors, bot
 	// accounts) and are non-sensitive public metadata.
 	allowlisted := []string{
@@ -207,8 +159,6 @@ func TestPII_AllowlistedEmailsPreserved(t *testing.T) {
 }
 
 func TestPII_GitAuthorNoreplyPreserved(t *testing.T) {
-	configurePII(t, redact.PIIEmail)
-
 	// Simulates git log output — noreply addresses should not be redacted.
 	input := "Author: Bot <noreply@github.com>\nCo-Authored-By: User <user@users.noreply.github.com>"
 	if got := redactedString(t, input); got != input {
@@ -217,8 +167,6 @@ func TestPII_GitAuthorNoreplyPreserved(t *testing.T) {
 }
 
 func TestPIIEnabled_FilePathsStillPreserved(t *testing.T) {
-	configurePII(t, redact.PIIEmail, redact.PIIPhone)
-
 	paths := []string{
 		"/tmp/TestE2E_Something3407889464/001/controller.go",
 		"/private/var/folders/v4/31cd3cg52_sfrpb1mbtr7q7r0000gn/T/TestE2E_Something/controller",
@@ -234,8 +182,6 @@ func TestPIIEnabled_FilePathsStillPreserved(t *testing.T) {
 }
 
 func TestPIIEnabled_JSONEscapesStillPreserved(t *testing.T) {
-	configurePII(t, redact.PIIEmail, redact.PIIPhone)
-
 	tests := []string{
 		`controller.go\nmodel.go\nview.go`,
 		`something.go\tanother.go`,
@@ -250,8 +196,6 @@ func TestPIIEnabled_JSONEscapesStillPreserved(t *testing.T) {
 }
 
 func TestPIIEnabled_JSONLPathFieldsStillSkipped(t *testing.T) {
-	configurePII(t, redact.PIIEmail)
-
 	input := `{"file_path":"/private/var/folders/v4/31cd3cg52_sfrpb1mbtr7q7r0000gn/T/test/controller.go","cwd":"/private/var/folders/v4/31cd3cg52_sfrpb1mbtr7q7r0000gn/T/test","content":"normal text here"}`
 	got := redactedString(t, input)
 	if strings.Contains(got, "REDACTED") {
@@ -260,8 +204,6 @@ func TestPIIEnabled_JSONLPathFieldsStillSkipped(t *testing.T) {
 }
 
 func TestPIIEnabled_SecretPatternExcludesSlash(t *testing.T) {
-	configurePII(t, redact.PIIEmail, redact.PIIPhone)
-
 	// This path was being redacted when / was in the entropy-layer pattern.
 	input := "/private/var/folders/v4/31cd3cg52_sfrpb1mbtr7q7r0000gn/T/TestE2E_Something/controller"
 	got := redactedString(t, input)
@@ -271,8 +213,6 @@ func TestPIIEnabled_SecretPatternExcludesSlash(t *testing.T) {
 }
 
 func TestPII_JSONLSkippedFieldWithEmail(t *testing.T) {
-	configurePII(t, redact.PIIEmail)
-
 	// Email in file_path field should NOT be redacted (field is skipped).
 	// Email in content field SHOULD be redacted.
 	input := `{"file_path":"user@example.com/project/file.go","content":"contact admin@test.org"}`

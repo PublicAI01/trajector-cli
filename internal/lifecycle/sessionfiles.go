@@ -134,17 +134,13 @@ func under(dir, path string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// readerSubcommand is the hook subcommand that reads a project's
-// registered files.
-const readerSubcommand = "read"
-
 // SpawnReader starts a detached process that reads projectDir's
 // registered files, and returns as soon as it is started. The hook that
 // calls this is on the session's critical path, so reading happens in a
 // process the session never waits for; the process inherits none of
 // the hook's streams, which keeps the hook's own output empty.
 func (m *Machine) SpawnReader(projectDir string) error {
-	_, err := proxylife.StartDetached(m.deps.ExecPath, []string{"hook", readerSubcommand, projectDir}, "")
+	_, err := proxylife.StartDetached(m.deps.ExecPath, []string{"hook", claudesettings.HookRead, projectDir}, "")
 	return err
 }
 
@@ -154,9 +150,9 @@ func (m *Machine) SpawnReader(projectDir string) error {
 // consumes what the file gained since its cursor, lands the records in
 // the spool, and advances the cursor only once every record is stored.
 // It never blocks a session — the hook released it — and it says
-// nothing: its streams are the null device, and a failure to read one
-// file is left behind so the next file, and the next run, still make
-// progress.
+// nothing: its streams are the null device, it reports no outcome, and
+// a failure to read one file is left behind so the next file, and the
+// next run, still make progress.
 //
 // A project that is not enabled, or whose injection was removed, is
 // nothing to read: the injection shape is what the record must state
@@ -165,25 +161,25 @@ func (m *Machine) SpawnReader(projectDir string) error {
 // way out: it is the one flusher, and it drains whatever the spool
 // holds — the records just written, and any a previous run left behind
 // because no flusher was up to send them.
-func (m *Machine) ReadSessionFiles(projectDir string, io IO) error {
+func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 	st, err := m.Project(projectDir)
 	if err != nil || !st.Enabled {
-		return nil
+		return
 	}
 	injection, ok := injectionValue(claudesettings.InjectionShape(st.SettingsPath()))
 	if !ok {
-		return nil
+		return
 	}
 	defer func() { _ = m.EnsureProxy(projectDir, io) }()
 
 	registry := follow.Open(m.deps.Layout.FollowDir())
 	files, err := registry.Files(st.Hash)
 	if err != nil {
-		return nil
+		return
 	}
 	sp, err := m.spool()
 	if err != nil {
-		return nil
+		return
 	}
 	now := m.deps.Now().UTC().Format(time.RFC3339Nano)
 	readAt := m.deps.Now().UTC().Format(time.RFC3339)
@@ -211,7 +207,7 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) error {
 			// Nothing of this read is stored and the cursor stays: the
 			// same lines are met again by whichever build reads next,
 			// and only one that can mask them may store them.
-			return nil
+			return
 		}
 		full, err := storeRecords(sp, res)
 		if full {
@@ -219,7 +215,7 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) error {
 			// reader. The cursor stays where it was, so this file and
 			// every one after it is read again once space returns; no
 			// record is repeated, because storing is idempotent by id.
-			return nil
+			return
 		}
 		if err != nil {
 			continue
@@ -233,7 +229,6 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) error {
 		res.File.ReadAt = readAt
 		_ = registry.Update(st.Hash, res.File)
 	}
-	return nil
 }
 
 // inspectSegments holds each segment's lines against the shape this

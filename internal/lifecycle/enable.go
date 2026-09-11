@@ -60,8 +60,8 @@ func hookCommand(execPath, subcommand string) string {
 // enable and doctor spell them once.
 func projectHooks(execPath string) claudesettings.HookCommands {
 	return claudesettings.HookCommands{
-		EnsureProxy: hookCommand(execPath, "ensure-proxy"),
-		SessionEnd:  hookCommand(execPath, "session-end"),
+		EnsureProxy: hookCommand(execPath, claudesettings.HookEnsureProxy),
+		SessionEnd:  hookCommand(execPath, claudesettings.HookSessionEnd),
 	}
 }
 

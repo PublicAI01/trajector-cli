@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/batch"
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 func TestStubbedEndpointServesJSON(t *testing.T) {
@@ -91,29 +93,84 @@ func TestRecordsRequests(t *testing.T) {
 	}
 }
 
-func TestRecordIDsBySourceGroupsTheIndexInStreamOrder(t *testing.T) {
-	ix := batch.NewIndexV2("b-1", time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC), "test", batch.Run{})
-	ix.Add(batch.IndexItemV2{RecordID: "msg_1", Source: "proxy"}, 10)
-	ix.Add(batch.IndexItemV2{RecordID: "seg_1", Source: "transcript"}, 10)
-	ix.Add(batch.IndexItemV2{RecordID: "msg_2", Source: "proxy"}, 10)
-	ix.Add(batch.IndexItemV2{RecordID: "meta_1", Source: "transcript"}, 10)
-	data, err := ix.Bytes()
+func TestRecordIDsBySourceGroupsTheIndexBySource(t *testing.T) {
+	at := time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC)
+	seg := envelope.NewSegment("sess-1", "", 0, fixtureCapture(at), "{}\n")
+	snap, err := envelope.NewMetaSnapshot("sess-1", "subagents/agent-x.meta.json", fixtureCapture(at), []byte(`{"agentId":"x"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	groups, err := fakeplatform.RecordIDsBySource(data)
+	segBytes, err := seg.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapBytes, err := snap.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := batch.Contents{
+		Rawcalls: []spool.Rawcall{fixtureRawcall(t, "msg_1", at), fixtureRawcall(t, "msg_2", at.Add(time.Minute))},
+		Records:  []spool.Record{storedRecord(t, seg.RecordID, segBytes), storedRecord(t, snap.RecordID, snapBytes)},
+	}
+	b, refused, err := batch.Build("b-1", at, "test", in, batch.Run{})
+	if err != nil || len(refused) != 0 {
+		t.Fatalf("Build: %v, refused %+v", err, refused)
+	}
+
+	groups, err := fakeplatform.RecordIDsBySource(b.Envelope)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(groups["proxy"], ","); got != "msg_1,msg_2" {
 		t.Errorf("proxy = %q", got)
 	}
-	if got := strings.Join(groups["transcript"], ","); got != "seg_1,meta_1" {
-		t.Errorf("transcript = %q", got)
+	if got, want := strings.Join(groups["transcript"], ","), seg.RecordID+","+snap.RecordID; got != want {
+		t.Errorf("transcript = %q, want %q", got, want)
 	}
 	if len(groups) != 2 {
 		t.Errorf("groups = %v", groups)
 	}
+}
+
+func fixtureCapture(at time.Time) envelope.TranscriptCapture {
+	return envelope.TranscriptCapture{
+		ClientVersion: "test",
+		Timestamp:     at.UTC().Format(time.RFC3339Nano),
+		ProjectIDHash: "hash-p1",
+		Injection:     envelope.InjectionProxy,
+	}
+}
+
+func fixtureRawcall(t *testing.T, id string, at time.Time) spool.Rawcall {
+	t.Helper()
+	env, err := envelope.Record(envelope.Observation{
+		Provider:          "anthropic",
+		Endpoint:          "/v1/messages",
+		HTTPStatus:        200,
+		ClientVersion:     "test",
+		ProjectIDHash:     "hash-p1",
+		At:                at,
+		Upstream:          "https://api.anthropic.com",
+		OfficialUpstream:  "https://api.anthropic.com",
+		Request:           []byte(`{"model":"m"}`),
+		RequestComplete:   true,
+		Response:          []byte(`{"type":"message"}`),
+		ResponseComplete:  true,
+		ContentType:       "application/json",
+		UpstreamRequestID: id,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spool.Rawcall{RequestID: env.RequestID(), Timestamp: at, Size: int64(len(env.Bytes())), Data: env.Bytes()}
+}
+
+func storedRecord(t *testing.T, id string, raw []byte) spool.Record {
+	t.Helper()
+	if len(raw) == 0 {
+		t.Fatalf("record %s has no bytes", id)
+	}
+	return spool.Record{ID: id, SessionID: "sess-1", ProjectIDHash: "hash-p1", Raw: raw}
 }
 
 func TestRecordIDsBySourceRefusesASchemaVersion1Index(t *testing.T) {

@@ -62,9 +62,7 @@ func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
 		`{"type":"user","cwd":"/srv/work/sample","message":{"role":"user","content":"hi"},"someNewPath":"/srv/elsewhere/thing"}`+"\n")
 	e.registerFile(root, main, "")
 
-	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
-		t.Fatal(err)
-	}
+	e.machine().ReadSessionFiles(e.project, discardIO())
 
 	if got := e.storedRecords(); len(got) != 0 {
 		t.Errorf("records = %d, want none stored from lines this build cannot mask", len(got))
@@ -106,9 +104,7 @@ func TestReadSessionFiles_RecordsAlertsWithoutStopping(t *testing.T) {
 			`{"type":"mood-ring","mood":"calm"}`+"\n")
 	e.registerFile(root, main, "")
 
-	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
-		t.Fatal(err)
-	}
+	e.machine().ReadSessionFiles(e.project, discardIO())
 
 	if got := e.storedRecords(); len(got) != 1 {
 		t.Errorf("records = %d, want the segment stored", len(got))
@@ -129,9 +125,7 @@ func TestReadSessionFiles_RecordsAlertsWithoutStopping(t *testing.T) {
 
 	// The same lines read again on a rewrite are counted again: the
 	// registry sums reads, it does not remember lines.
-	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
-		t.Fatal(err)
-	}
+	e.machine().ReadSessionFiles(e.project, discardIO())
 	if got := e.signals(root); got.AssistantLines != 2 {
 		t.Errorf("signals after a run over unchanged files = %+v, want unchanged", got)
 	}
@@ -147,9 +141,7 @@ func TestReadSessionFiles_LinesOfTheExpectedShapeLeaveNoTrace(t *testing.T) {
 		`{"type":"assistant","cwd":"/srv/work/sample","apiBlockIndex":0,"message":{"id":"msg_1","role":"assistant","content":[]}}`+"\n")
 	e.registerFile(root, main, "")
 
-	if err := e.machine().ReadSessionFiles(e.project, discardIO()); err != nil {
-		t.Fatal(err)
-	}
+	e.machine().ReadSessionFiles(e.project, discardIO())
 	if got := e.signals(root); got.Any() {
 		t.Errorf("signals = %+v, want nothing recorded for lines of the expected shape", got)
 	}

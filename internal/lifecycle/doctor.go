@@ -245,7 +245,7 @@ func (m *Machine) doctorDiscoveryHint(f *report.Findings, ts report.TokenStoreSt
 	if claudesettings.HasHook(userSettings, claudesettings.DiscoveryMarker) {
 		return
 	}
-	if err := claudesettings.InjectUserHook(userSettings, hookCommand(m.deps.ExecPath, "discovery")); err != nil {
+	if err := claudesettings.InjectUserHook(userSettings, hookCommand(m.deps.ExecPath, claudesettings.HookDiscovery)); err != nil {
 		f.Problem("the project-discovery hint is missing from %s and could not be re-added: %v", userSettings, err)
 		return
 	}

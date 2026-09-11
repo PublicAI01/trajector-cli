@@ -156,7 +156,11 @@ WSL boundary; doctor points this out.
 - Credential headers are never written to disk.
 - Unredacted data never leaves the machine.
 - An injected base URL implies an active token and all three session
-  hooks; enable rolls back to exactly the prior bytes on any failure.
+  hooks; enable either reaches that state or undoes what it wrote. Files
+  shared with other writers — the routing table, the consent file, the
+  project's .gitignore — are undone entry by entry through their own
+  writers, so a rollback never hands a concurrent writer's work back to
+  the past.
   An injection can also carry no base URL: the three hooks still stand,
   marked `--no-proxy`, and the project's traffic is not routed through
   the proxy.

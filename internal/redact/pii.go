@@ -6,13 +6,13 @@ import (
 	"sync"
 )
 
-// PIICategory identifies a category of personally identifying strings
+// piiCategory identifies a category of personally identifying strings
 // the redaction pass can mask.
-type PIICategory string
+type piiCategory string
 
 const (
-	PIIEmail PIICategory = "email"
-	PIIPhone PIICategory = "phone"
+	piiEmail piiCategory = "email"
+	piiPhone piiCategory = "phone"
 )
 
 // Label constants used in replacement tokens.
@@ -27,32 +27,32 @@ type piiPattern struct {
 	label string // e.g., "EMAIL", "PHONE"
 }
 
-// DefaultPIICategories are the categories every process masks without
+// defaultPIICategories are the categories every process masks without
 // being told to. The redaction pass runs in more than one kind of
 // process, and one of them has no startup step where a switch could be
-// flipped; a default that depends on who calls ConfigurePII first is a
-// default that is off somewhere. Email and phone are the two shapes
-// that can be matched without misfiring on code and prose; street
-// addresses cannot.
-var DefaultPIICategories = []PIICategory{PIIEmail, PIIPhone}
+// flipped; a default that depends on who narrows the categories first
+// is a default that is off somewhere. Email and phone are the two
+// shapes that can be matched without misfiring on code and prose;
+// street addresses cannot.
+var defaultPIICategories = []piiCategory{piiEmail, piiPhone}
 
 var (
-	piiPatterns   = piiPatternsFor(DefaultPIICategories)
+	piiPatterns   = piiPatternsFor(defaultPIICategories)
 	piiPatternsMu sync.RWMutex
 )
 
-// ConfigurePII narrows or widens which PII categories the redaction
+// configurePII narrows or widens which PII categories the redaction
 // pass masks, replacing the default. Matches are replaced with
 // [REDACTED_<CATEGORY>] tokens. Thread-safe; no process needs to call
 // it to get the default.
-func ConfigurePII(categories ...PIICategory) {
+func configurePII(categories ...piiCategory) {
 	patterns := piiPatternsFor(categories)
 	piiPatternsMu.Lock()
 	piiPatterns = patterns
 	piiPatternsMu.Unlock()
 }
 
-func piiPatternsFor(categories []PIICategory) []piiPattern {
+func piiPatternsFor(categories []piiCategory) []piiPattern {
 	patterns := make([]piiPattern, 0, len(categories))
 	for _, c := range categories {
 		for _, bp := range builtinPIIPatterns {
@@ -125,15 +125,15 @@ func isAllowlistedEmail(email string) bool {
 
 // builtinPIIPattern associates a compiled regex with a category and label.
 type builtinPIIPattern struct {
-	category PIICategory
+	category piiCategory
 	label    string
 	regex    *regexp.Regexp
 }
 
 // builtinPIIPatterns is the set of PII detection patterns.
 var builtinPIIPatterns = []builtinPIIPattern{
-	{PIIEmail, labelEmail, emailRegex},
-	{PIIPhone, labelPhone, phoneRegex},
+	{piiEmail, labelEmail, emailRegex},
+	{piiPhone, labelPhone, phoneRegex},
 }
 
 // detectPII returns tagged regions for PII matches in s. Returns nil

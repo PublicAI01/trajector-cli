@@ -251,7 +251,7 @@ var connectionStringRules = []connectionStringRule{
 //  4. Credentialed URIs: URLs containing userinfo passwords
 //  5. Database connection strings: JDBC, keyword DSNs, and semicolon strings
 //  6. Bounded credential key/value pairs: DB_PASSWORD=...
-//  7. PII detection: email and phone patterns (on by default; see ConfigurePII)
+//  7. PII detection: email and phone patterns (on by default)
 //
 // A string is redacted if ANY method flags it.
 func redactString(s string) string {
@@ -357,9 +357,9 @@ func detectLayers(s string, full bool) []taggedRegion {
 	// 6. Bounded credential key/value detection (secrets — always on).
 	regions = append(regions, detectCredentialValues(s)...)
 
-	// 7. PII detection (on by default, narrowed by ConfigurePII, and only
-	// on a full scan: a protected field keeping its PII is a standing
-	// decision of its own, see redactDeterministic).
+	// 7. PII detection (on by default, and only on a full scan: a
+	// protected field keeping its PII is a standing decision of its own,
+	// see redactDeterministic).
 	if full {
 		regions = append(regions, detectPII(getPIIPatterns(), s)...)
 	}

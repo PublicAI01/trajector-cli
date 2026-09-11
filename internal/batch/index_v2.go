@@ -45,9 +45,9 @@ type IndexItemV2 struct {
 	Size           int64  `json:"size"`
 }
 
-// NewIndexV2 starts an empty schema_version 2 envelope for one batch.
-// Records and RecordsSize are filled by Add as records are laid out.
-func NewIndexV2(id string, createdAt time.Time, clientVersion string, run Run) IndexV2 {
+// newIndexV2 starts an empty schema_version 2 envelope for one batch.
+// Records and RecordsSize are filled by add as records are laid out.
+func newIndexV2(id string, createdAt time.Time, clientVersion string, run Run) IndexV2 {
 	return IndexV2{
 		SchemaVersion: schemaVersionV2,
 		BatchID:       id,
@@ -59,9 +59,9 @@ func NewIndexV2(id string, createdAt time.Time, clientVersion string, run Run) I
 	}
 }
 
-// Add appends an item at the current end of the stream, sized to the
+// add appends an item at the current end of the stream, sized to the
 // record's bytes, and grows the stream size to match.
-func (ix *IndexV2) Add(item IndexItemV2, recordSize int64) {
+func (ix *IndexV2) add(item IndexItemV2, recordSize int64) {
 	item.Offset = ix.RecordsSize
 	item.Size = recordSize
 	ix.Records = append(ix.Records, item)
@@ -92,9 +92,9 @@ func ParseIndexV2(data []byte) (IndexV2, error) {
 	return ix, nil
 }
 
-// RawcallItem indexes a rawcall: its record id is its request id, and
+// rawcallItem indexes a rawcall: its record id is its request id, and
 // the item carries where the exchange went.
-func RawcallItem(env envelope.Envelope) IndexItemV2 {
+func rawcallItem(env envelope.Envelope) IndexItemV2 {
 	item := IndexItemV2{
 		RecordID:       env.RequestID(),
 		Source:         envelope.KindRawcall.Source,
@@ -109,13 +109,13 @@ func RawcallItem(env envelope.Envelope) IndexItemV2 {
 	return item
 }
 
-// SegmentItem indexes a transcript segment.
-func SegmentItem(seg envelope.Segment) IndexItemV2 {
+// segmentItem indexes one segment record.
+func segmentItem(seg envelope.Segment) IndexItemV2 {
 	return transcriptItem(seg.RecordID, seg.Capture)
 }
 
-// MetaSnapshotItem indexes a transcript metadata snapshot.
-func MetaSnapshotItem(snap envelope.MetaSnapshot) IndexItemV2 {
+// metaSnapshotItem indexes one metadata snapshot record.
+func metaSnapshotItem(snap envelope.MetaSnapshot) IndexItemV2 {
 	return transcriptItem(snap.RecordID, snap.Capture)
 }
 

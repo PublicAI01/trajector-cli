@@ -756,8 +756,8 @@ func TestInjectProjectRefusesASymlinkedSettingsFile(t *testing.T) {
 	}
 
 	err := InjectProject(link, "http://127.0.0.1:1/t/tok", HookCommands{EnsureProxy: "trajector hook ensure-proxy", SessionEnd: "trajector hook session-end"})
-	if !errors.Is(err, ErrSymlinked) {
-		t.Fatalf("InjectProject = %v, want ErrSymlinked", err)
+	if !errors.Is(err, errSymlinked) {
+		t.Fatalf("InjectProject = %v, want errSymlinked", err)
 	}
 	info, err := os.Lstat(link)
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {

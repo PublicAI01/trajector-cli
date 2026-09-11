@@ -125,9 +125,7 @@ func TestStatusShowsWhenAFileWasLastReadAndWhatIsNotReadYet(t *testing.T) {
 	e.startProxy()
 	path := e.sessionFile("s-1", time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC))
 	e.enable(false)
-	if err := e.machine().ReadSessionFiles(e.project, e.io()); err != nil {
-		t.Fatal(err)
-	}
+	e.machine().ReadSessionFiles(e.project, e.io())
 	e.stdout.Reset()
 
 	out := e.statusOutput()

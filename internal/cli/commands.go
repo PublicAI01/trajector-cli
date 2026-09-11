@@ -134,7 +134,7 @@ func (a *app) hookCmd(args []string) int {
 	}
 	name, rest := args[0], args[1:]
 	switch name {
-	case "ensure-proxy":
+	case claudesettings.HookEnsureProxy:
 		// The argument marks an injection that carries no base URL. The
 		// proxy is brought up either way: with no route to serve it is
 		// still the resident process that uploads what this machine
@@ -152,7 +152,7 @@ func (a *app) hookCmd(args []string) int {
 		err = m.EnsureProxy(cwd, a.io())
 		a.followSession(m, cwd, hook)
 		return a.exit(err)
-	case "session-end":
+	case claudesettings.HookSessionEnd:
 		if len(rest) != 0 {
 			hookUsage(a.stderr)
 			return 2
@@ -164,7 +164,7 @@ func (a *app) hookCmd(args []string) int {
 			a.followSession(m, cwd, hook)
 		}
 		return 0
-	case "discovery":
+	case claudesettings.HookDiscovery:
 		if len(rest) != 0 {
 			hookUsage(a.stderr)
 			return 2
@@ -175,16 +175,17 @@ func (a *app) hookCmd(args []string) int {
 			m.Discovery(cwd, a.io())
 		}
 		return 0
-	case "read":
+	case claudesettings.HookRead:
 		if len(rest) != 1 {
-			fmt.Fprintln(a.stderr, "usage: trajector hook read <project-dir>")
+			fmt.Fprintf(a.stderr, "usage: trajector hook %s <project-dir>\n", claudesettings.HookRead)
 			return 2
 		}
 		m, err := a.machine()
 		if err != nil {
 			return a.fail(err)
 		}
-		return a.exit(m.ReadSessionFiles(rest[0], a.io()))
+		m.ReadSessionFiles(rest[0], a.io())
+		return 0
 	default:
 		fmt.Fprintf(a.stderr, "trajector: unknown hook %q\n", name)
 		hookUsage(a.stderr)
@@ -193,7 +194,9 @@ func (a *app) hookCmd(args []string) int {
 }
 
 func hookUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: trajector hook <ensure-proxy [--no-proxy]|session-end|discovery>")
+	fmt.Fprintf(w, "usage: trajector hook <%s [%s]|%s|%s|%s>\n",
+		claudesettings.HookEnsureProxy, claudesettings.NoProxyMarker,
+		claudesettings.HookSessionEnd, claudesettings.HookDiscovery, claudesettings.HookRead)
 }
 
 // hookInput decodes what the session wrote on stdin. A terminal is not

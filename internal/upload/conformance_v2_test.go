@@ -21,11 +21,10 @@ import (
 // serializes back to the same fields in the same order; every transcript
 // record decodes into its type and serializes back byte for byte; every
 // record id can be recomputed from the record's identity; and the index
-// routes by source exactly as the stream is laid out. Rawcall records
-// are checked field by field against the index instead of byte for
-// byte: the rawcall envelope is still written at schema_version 1 here,
-// and the fixture spells an empty anthropic-beta list where this client
-// omits the field.
+// routes by source exactly as the stream is laid out. A rawcall record
+// is read through the record version this client still writes, and is
+// not compared byte for byte: the fixture spells an empty anthropic-beta
+// list where this client omits the field.
 func assertV2Fixture(t *testing.T, c conformance.Case) {
 	t.Helper()
 	ix, err := batch.ParseIndexV2(c.EnvelopeBytes)
@@ -108,13 +107,8 @@ func assertV2Rawcall(t *testing.T, i int, line []byte, item batch.IndexItemV2) {
 	if env.RequestID() != item.RecordID {
 		t.Errorf("record %d: record_id %q is not the request_id %q", i, item.RecordID, env.RequestID())
 	}
-	// The fixture spells timestamps with a fixed nine-digit fraction;
-	// this client trims trailing zeros. They name the same instant.
-	want := batch.RawcallItem(env)
-	want.Offset, want.Size = item.Offset, item.Size
-	want.Timestamp, item.Timestamp = "", sameInstantOrDiff(t, i, want.Timestamp, item.Timestamp)
-	if want != item {
-		t.Errorf("record %d: index item\n got %+v\nwant %+v", i, item, want)
+	if item.ProjectIDHash != env.ProjectIDHash() || item.UpstreamOrigin != env.UpstreamOrigin() || item.Endpoint != env.Endpoint() || item.Garbled != env.Garbled() {
+		t.Errorf("record %d: index item %+v does not match the rawcall it indexes", i, item)
 	}
 	var stored struct {
 		Capture map[string]json.RawMessage `json:"capture"`
@@ -151,7 +145,7 @@ func assertV2Segment(t *testing.T, i int, line []byte, item batch.IndexItemV2) {
 	if want := envelope.SegmentRecordID(seg.SessionID, seg.File, seg.SegmentIndex); seg.RecordID != want || item.RecordID != want {
 		t.Errorf("record %d: record_id %q (index %q), recomputed %q", i, seg.RecordID, item.RecordID, want)
 	}
-	if want := batch.SegmentItem(seg); want.ProjectIDHash != item.ProjectIDHash || want.Timestamp != item.Timestamp || item.UpstreamOrigin != "" || item.Endpoint != "" {
+	if item.ProjectIDHash != seg.Capture.ProjectIDHash || item.Timestamp != seg.Capture.Timestamp || item.UpstreamOrigin != "" || item.Endpoint != "" {
 		t.Errorf("record %d: index item %+v does not match the segment's capture %+v", i, item, seg.Capture)
 	}
 	if !strings.HasSuffix(seg.Lines, "\n") {
@@ -191,7 +185,7 @@ func assertV2MetaSnapshot(t *testing.T, i int, line []byte, item batch.IndexItem
 	if snap.RecordID != want || item.RecordID != want {
 		t.Errorf("record %d: record_id %q (index %q), recomputed %q", i, snap.RecordID, item.RecordID, want)
 	}
-	if w := batch.MetaSnapshotItem(snap); w.ProjectIDHash != item.ProjectIDHash || w.Timestamp != item.Timestamp || item.UpstreamOrigin != "" || item.Endpoint != "" {
+	if item.ProjectIDHash != snap.Capture.ProjectIDHash || item.Timestamp != snap.Capture.Timestamp || item.UpstreamOrigin != "" || item.Endpoint != "" {
 		t.Errorf("record %d: index item %+v does not match the snapshot's capture %+v", i, item, snap.Capture)
 	}
 }

@@ -29,12 +29,22 @@ const (
 	eventSessionEnd       = "SessionEnd"
 )
 
+// Hook subcommands of the trajector command line. The word is what a
+// settings file carries, what the command line dispatches on, and what
+// its usage text lists, so it is spelled here once.
+const (
+	HookEnsureProxy = "ensure-proxy"
+	HookSessionEnd  = "session-end"
+	HookDiscovery   = "discovery"
+	HookRead        = "read"
+)
+
 // Marker substrings identifying trajector-injected hook commands, so
 // removal never touches a hook the user wrote themselves.
 const (
-	EnsureProxyMarker = "hook ensure-proxy"
-	SessionEndMarker  = "hook session-end"
-	DiscoveryMarker   = "hook discovery"
+	EnsureProxyMarker = "hook " + HookEnsureProxy
+	SessionEndMarker  = "hook " + HookSessionEnd
+	DiscoveryMarker   = "hook " + HookDiscovery
 )
 
 // NoProxyMarker is the argument the ensure-proxy hook command carries
@@ -498,9 +508,9 @@ func parseSettings(path string, data []byte) (map[string]any, error) {
 // instead of being re-marshalled.
 var errUnchanged = errors.New("claudesettings: no change")
 
-// ErrSymlinked reports a settings file that is a symbolic link, which
+// errSymlinked reports a settings file that is a symbolic link, which
 // this package refuses to edit.
-var ErrSymlinked = errors.New("settings file is a symbolic link")
+var errSymlinked = errors.New("settings file is a symbolic link")
 
 // RefuseSymlink stops a write that would replace a symbolic link.
 // Every write here ends in a rename, and a rename installs over the
@@ -514,7 +524,7 @@ func RefuseSymlink(path string) error {
 	if err != nil || info.Mode()&os.ModeSymlink == 0 {
 		return nil
 	}
-	return fmt.Errorf("%w: %s (nothing was written; point it at a real file or remove the link)", ErrSymlinked, path)
+	return fmt.Errorf("%w: %s (nothing was written; point it at a real file or remove the link)", errSymlinked, path)
 }
 
 // edit is a read-modify-write of a file whose other writers are the
