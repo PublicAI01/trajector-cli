@@ -8,29 +8,57 @@ checked against the code in this repository.
 
 Nothing, until you opt a project in. `trajector enable`, run inside a
 project, shows the data agreement and requires an explicit yes. Only after
-that does the project's Claude Code API traffic flow through the local proxy.
+that is anything collected from the project, and it is collected from two
+sources: the project's Claude Code API traffic, which flows through the
+local proxy, and the session files Claude Code writes on your machine for
+that project.
 
-For an enabled project, the proxy records **successful `POST /v1/messages`
-exchanges, verbatim**: the full request (system prompt, tools, messages) and
-the full response (content, thinking signatures, usage), plus the HTTP
-status, timestamps, API version headers, and a **hash** of the project's
-root path. Streamed responses are reassembled into the equivalent
-non-streaming object; when reassembly fails, the raw stream text is kept and
-the record is marked `garbled` instead of being dropped or repaired.
+**From the proxy.** For an enabled project, the proxy records **successful
+`POST /v1/messages` exchanges, verbatim**: the full request (system prompt,
+tools, messages) and the full response (content, thinking signatures,
+usage), plus the HTTP status, timestamps, API version headers, and a
+**hash** of the project's root path. Streamed responses are reassembled into
+the equivalent non-streaming object; when reassembly fails, the raw stream
+text is kept and the record is marked `garbled` instead of being dropped or
+repaired.
+
+**From the session files.** Claude Code writes a file for every session it
+runs in a project. For an enabled project, trajector reads those files and
+records their lines as Claude Code wrote them. The session files contain
+what the proxy cannot see: your tool results, including the contents of the
+files that were read and the changes that were written; your working
+directory and git branch; and the full conversations of subagents.
+
+**Sessions from before you enabled the project.** When you enable a
+project, trajector also collects, once, the session files that project had
+already written before that moment. `trajector enable` tells you how many
+there are and how old the oldest one is. After that, trajector does not scan
+backwards again unless you ask it to.
 
 Records are observed facts and are never rewritten: model identifiers,
 thinking signatures, and usage figures stay exactly as the API produced
-them.
+them, and session lines stay exactly as Claude Code wrote them.
 
 ## What is never collected
 
-- **Projects you did not enable.** Consent is enforced structurally: only
-  requests carrying an enabled project's token are recorded. Everything else
-  is forwarded untouched — recording it is not a code path that exists.
+- **Projects you did not enable.** Consent is enforced structurally, on both
+  sources. On the proxy, only requests carrying an enabled project's token
+  are recorded; everything else is forwarded untouched — recording it is not
+  a code path that exists. For session files, trajector never lists the
+  folder where Claude Code keeps them: the paths it opens are derived from
+  the enabled projects' own paths, so the paths to other projects' session
+  files are never constructed and those files are never opened. Where a
+  derived folder name could also belong to a different path on your machine,
+  trajector leaves that whole folder alone, and `trajector status` says which
+  one and why.
 - **Credentials.** `Authorization`, `x-api-key`, and other credential
   headers are never written to disk, in any file, in any state.
 - **Project paths.** Stored records and uploads identify a project only by a
-  hash of its root path.
+  hash of its root path. In session records, the fields that say where the
+  project lives on disk are masked before upload. Tool results are kept as
+  observed: their text may contain file paths from your machine, and
+  trajector does not rewrite it, because rewriting it would destroy the data
+  itself.
 - **Telemetry.** There is no separate reporting channel. A handful of
   counters (records captured, stream reassembly failures, spool usage) ride
   along inside data uploads you already consented to; no upload, no
@@ -43,18 +71,22 @@ them.
 
 ## What happens on your machine
 
-Recorded calls wait in a local spool, in files and directories readable only
-by your user account (0600/0700), under a bounded disk quota (2 GiB by
-default). A full spool stops recording; it never evicts captured data.
+Recorded calls and recorded session lines wait in a local spool, in files
+and directories readable only by your user account (0600/0700), under a
+bounded disk quota (2 GiB by default). A full spool stops recording; it
+never evicts captured data. trajector only reads the session files Claude
+Code writes; it never writes to them.
 
-Before anything is uploaded, records pass a **local redaction pass** that
-masks secrets — API keys, tokens, passwords, and other credential-shaped
-strings — and personally identifying strings — email addresses and phone
-numbers — while preserving JSON structure, message order, tool-call
-pairing, and thinking signatures. **Unredacted data never leaves your
-machine.** Known limitation: masking applies to values only — a secret
-placed in a JSON key position is not masked, because keys are structure
-and the pass never rewrites them.
+Before anything is uploaded, records from both sources pass the **same local
+redaction pass**. It masks secrets — API keys, tokens, passwords, and other
+credential-shaped strings — and personally identifying strings — email
+addresses and phone numbers — while preserving JSON structure, message
+order, tool-call pairing, and thinking signatures. In session records, the
+fields that say where the project lives on disk are masked first, and the
+lines then pass the same redaction as recorded calls. **Unredacted data
+never leaves your machine.** Known limitation: masking applies to
+values only — a secret placed in a JSON key position is not masked, because
+keys are structure and the pass never rewrites them.
 
 ## Settings we ask you to change
 
@@ -71,7 +103,7 @@ exception, and it is described below.
 A setting qualifies only if all six of these hold:
 
 1. **It costs you nothing.** Your token usage is identical with it on or off.
-2. **It does not degrade your own use of Claude Code.**
+2. **It does not make your own use of Claude Code worse.**
 3. **You can change it back yourself**, at any time, without us.
 4. **Its effect is visible to you** — not something only we can observe.
 5. **Declining costs you nothing.** Recording, compensation, and everything
@@ -137,8 +169,9 @@ follows the same rule: one refusal ends it.
 
 ## What leaves your machine
 
-Redacted records are packed into compressed batches (by default when 10 MiB
-or 24 hours accumulate) and uploaded over HTTPS to the trajector service,
+Redacted records of both kinds — recorded API calls and recorded session
+lines — are packed into compressed batches (by default when 10 MiB or 24
+hours accumulate) and uploaded over HTTPS to the trajector service,
 authenticated by your device pairing token. The upload destination can be
 changed only through `config.json` in your user config directory (field
 `platform_url`, https required off-loopback) — never through an environment
@@ -156,6 +189,12 @@ third-party base URL (a relay you configured yourself) are labelled as
 third-party origin; reward terms are the same regardless of origin.
 
 ## Revoking consent and deleting data
+
+Every deletion below applies to both kinds of records — recorded API calls
+and recorded session lines — in the same way. It reaches trajector's own
+copies only: the session files Claude Code writes on your machine are yours,
+and trajector never modifies or deletes them — not on `disable`, not on
+`uninstall`.
 
 - `trajector disable` (per project): removes the settings injection, revokes
   the project token, and deletes the project's local unuploaded records —
