@@ -11,9 +11,11 @@
 // they steer reading and never leave it. Directories are 0700 and
 // files 0600: the paths alone reveal what the user works on.
 //
-// This package does not read the files it registers. It only records
-// which files are registered, where reading stopped, and, given a fresh
-// observation of a file, how reading must continue.
+// Reading is a function of one registered entry and the file on disk:
+// Read consumes the complete lines a file gained since its cursor and
+// hands back the records to store together with the advanced cursor.
+// The registry decides nothing about content; nothing here writes a
+// file it reads.
 package follow
 
 import (
@@ -60,7 +62,9 @@ type File struct {
 	// is stored rather than derived: nothing on disk can give it back.
 	NextSegment int `json:"next_segment"`
 	// MessageIDs are the message ids already consumed from this file.
-	// It is a set; the array order carries no meaning.
+	// It is a set; the array order carries no meaning. An agent
+	// metadata file has no messages: there it holds the record id of
+	// the last snapshot taken.
 	MessageIDs []string `json:"message_ids"`
 }
 

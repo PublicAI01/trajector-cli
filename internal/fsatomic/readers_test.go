@@ -26,6 +26,9 @@ var plainReadFiles = map[string]bool{
 	"internal/fsatomic/fsatomic.go": true,
 	// /proc/version is provided by the kernel.
 	"internal/report/doctor.go": true,
+	// Session files belong to Claude Code, which writes them plainly;
+	// nothing in this codebase writes them at all.
+	"internal/follow/read.go": true,
 	// This module's own sources sit in the checkout, where nothing in
 	// this codebase writes them.
 	"internal/harness/repotest/repotest.go": true,
