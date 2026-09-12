@@ -6,6 +6,107 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A second source of records: the session files Claude Code writes on
+  your machine. `trajector enable` now installs three session hooks
+  (session start, prompt submit, session end). Each hook registers the
+  session's own files and starts a one-shot reader that appends what
+  the files gained since the last run to the spool and exits — nothing
+  runs permanently and nothing is watched. Files are read only for
+  projects you enabled; a project that was never enabled has no path
+  trajector could even construct. At enable time trajector also finds
+  the project's earlier session files (up to a fixed limit, without
+  listing any other project's directory) and tells you how many it
+  found and how old the oldest is.
+- `trajector enable --no-proxy` records a project from its session files
+  only. The hooks stand, no base URL is injected, and Claude Code's
+  `/remote-control` stays available inside the project. `enable`
+  states which shape it installed, and `status` and `doctor` say which
+  shape a project records in.
+- Before injecting, `enable` judges from the configuration readable on
+  this machine whether Claude Code will load trajector's hooks at all
+  (hooks disabled in a settings layer, managed settings, a workspace
+  not yet trusted, a project on a Windows drive mounted into WSL). It
+  says what it found and what to do; it never guesses past what it can
+  read.
+- Session file contents pass the same redaction as recorded calls, and
+  first have the fields that name the session's directory on disk
+  replaced with a placeholder. Every other path is uploaded as observed;
+  `PRIVACY.md` says so in exactly those terms.
+- Recording pauses device-wide when a build meets session file lines
+  whose shape its redaction does not cover, so nothing unmasked is ever
+  stored. `status` names the reason, `trajector upgrade` tells you the
+  next step while the pause stands, and `trajector doctor` lifts the
+  pause once a different build has read the files.
+- `trajector forget [session-id]` deletes one session's not-yet-uploaded
+  records from this machine — from both spool slots and from any
+  quarantined batch — and reports one total. It defaults to the current
+  session.
+- `trajector status` shows the second source per project: how many files
+  are registered and when they were last read, what is waiting to
+  upload by kind (`rawcall`, `segment`, `snapshot`), what the reader
+  noticed about the files' shape (counts and field names only, never a
+  path or a session id), and how many assistant lines carried no
+  reasoning — with a pointer to `showThinkingSummaries` when that
+  setting is off. `doctor` additionally walks the project's session
+  files and reports sessions that were written without a hook of
+  trajector's noticing them; `doctor bundle` carries the same findings.
+- Uploads now use batch schema version 2, which carries recorded calls,
+  session file segments and metadata snapshots in one batch.
+
+### Changed
+
+- The data agreement covers the second source and its version is bumped.
+  Recording pauses for existing users until the new terms are
+  reconfirmed with `trajector enable`; forwarding is untouched.
+- The word `record` now means any entry the spool stores and a batch
+  carries; `rawcall`, `segment` and `snapshot` are its kinds. Counts in
+  `upload`, `status`, `doctor`, `discard` and `forget` say which they
+  count; a count over mixed kinds says "record(s)".
+- On a second `enable`, an optional setting trajector already turned on
+  is asked as `Keep it on? [Y/n]`. Every question about an optional
+  setting now points the same way: yes means on.
+- `trajector doctor` reads a project's recording shape from the grant
+  written at enable time; the project's settings file is checked
+  against it and repaired when it disagrees, never the other way round.
+- `CLAUDE_CONFIG_DIR` is honoured wherever trajector reads or writes
+  Claude Code's own files: the user-level settings that carry the
+  discovery hook, the managed settings, and `remote-settings.json`.
+  `doctor` removes a hook trajector left in `~/.claude/settings.json`
+  on a machine where Claude Code reads another directory, and says so.
+  The reason `doctor` gives for hooks that will not load names the
+  settings layer that decided it, not a file path.
+- `enable` rolls back through a ledger of every change it made, in
+  reverse order: the routing grant, the consent record, the session
+  file registry, the project's settings file and the `.gitignore` lines
+  it appended. Accepting the agreement and lifting a reconfirmation
+  pause are your answers, not files enable touched, and stand.
+- A session file whose session leaves the project is retired in the
+  registry rather than forgotten, so enabling the project again does
+  not read it from the start or send the same record twice.
+- The reader keeps a small diagnostic log of line shapes this build did
+  not expect. It is bounded (1 MiB, trimmed to its newest half) and no
+  longer grows on shapes the build already knows about.
+
+### Fixed
+
+- A device-wide pause now stops the session file reader as well as the
+  proxy. Before, "Recording is paused everywhere" in `status` was true
+  of recorded calls only.
+- One `doctor` run no longer gives two answers about a project's shape:
+  it could report that the proxy was not needed and then rewrite the
+  base URL into the same project's settings.
+- Counts printed as "rawcall(s)" over batches that also held session
+  records now say "record(s)".
+- A session file line whose object keys are themselves paths can no
+  longer surface a path as a "field name" in `status` or in a
+  diagnostic bundle.
+- A batch left pending by an interrupted upload resumes only the
+  records it named, even when a record in the other slot carries the
+  same id.
+
+
 ## [0.2.1] - 2026-08-31
 
 ### Added
