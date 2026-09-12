@@ -155,7 +155,7 @@ func (a *app) hookCmd(args []string) int {
 			return a.fail(err)
 		}
 		err = m.EnsureProxy(cwd, a.io())
-		a.followSession(m, cwd, hook)
+		m.FollowSession(cwd, hook)
 		return a.exit(err)
 	case claudesettings.HookSessionEnd:
 		if len(rest) != 0 {
@@ -166,7 +166,7 @@ func (a *app) hookCmd(args []string) int {
 		// one thing that lasts past it is a file registered now.
 		hook := a.hookInput()
 		if m, cwd, err := a.prelude(); err == nil {
-			a.followSession(m, cwd, hook)
+			m.FollowSession(cwd, hook)
 		}
 		return 0
 	case claudesettings.HookDiscovery:
@@ -215,14 +215,4 @@ func (a *app) hookInput() lifecycle.HookInput {
 		}
 	}
 	return lifecycle.ReadHookInput(a.stdin)
-}
-
-// followSession registers the session file a hook was told about and
-// starts the process that reads it. Both are silent on failure: the
-// session must not learn what the hook did, and the registry is where
-// the outcome is read afterwards.
-func (a *app) followSession(m *lifecycle.Machine, cwd string, hook lifecycle.HookInput) {
-	if registered, err := m.RegisterSessionFile(cwd, hook); err == nil && registered {
-		_ = m.SpawnReader(cwd)
-	}
 }

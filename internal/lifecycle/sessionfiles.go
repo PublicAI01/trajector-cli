@@ -82,6 +82,20 @@ func (m *Machine) RegisterSessionFile(cwd string, hook HookInput) (registered bo
 	return true, nil
 }
 
+// FollowSession takes the session a hook was told about: it registers
+// the session's file, and starts the reader for the project when that
+// file is now registered. A file that is not registered is nothing to
+// read, and a failure of either step stays here: the session must not
+// learn what the hook did, and the registry is where the outcome is
+// read afterwards.
+func (m *Machine) FollowSession(cwd string, hook HookInput) {
+	registered, err := m.RegisterSessionFile(cwd, hook)
+	if err != nil || !registered {
+		return
+	}
+	_ = m.SpawnReader(cwd)
+}
+
 // registryContents is one project's registry as everything here reads
 // it: which files are registered, what the one search for earlier
 // files could not cover, and what reading noticed about their shape.
