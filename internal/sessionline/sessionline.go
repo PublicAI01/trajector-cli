@@ -81,6 +81,12 @@ type Fields struct {
 	// there, and BlockIndex is then meaningless.
 	BlockIndex    int
 	HasBlockIndex bool
+	// EmptyReasoning says a block of the line's message carries the
+	// reasoning field with an empty string in it. A block without the
+	// field, and a block whose field holds anything at all, both read
+	// as false: what such a field holds is content, and content is
+	// never read here.
+	EmptyReasoning bool
 }
 
 // Fields reads the structural facts out of the line. The line is
@@ -102,7 +108,10 @@ func (l Line) Fields() Fields {
 			Type string `json:"type"`
 		} `json:"attachment"`
 		Message struct {
-			ID string `json:"id"`
+			ID      string `json:"id"`
+			Content []struct {
+				Reasoning emptiness `json:"thinking"`
+			} `json:"content"`
 		} `json:"message"`
 	}
 	// A field of the wrong shape stops that field and no other: the
@@ -123,7 +132,25 @@ func (l Line) Fields() Fields {
 		Sidechain:       doc.Sidechain,
 	}
 	f.BlockIndex, f.HasBlockIndex = doc.BlockIndex.value, doc.BlockIndex.found
+	for _, block := range doc.Message.Content {
+		if block.Reasoning.empty {
+			f.EmptyReasoning = true
+			break
+		}
+	}
 	return f
+}
+
+// emptiness reads a JSON string for one fact about it: that it is
+// there and holds nothing. The text of a string that holds something
+// is never copied out, so a field read this way stays unread. A value
+// of any other shape leaves it unset, which is the reading "absent"
+// has here, and never fails the decode.
+type emptiness struct{ empty bool }
+
+func (e *emptiness) UnmarshalJSON(b []byte) error {
+	e.empty = string(b) == `""`
+	return nil
 }
 
 // wholeNumber reads a JSON number that counts. A value of any other

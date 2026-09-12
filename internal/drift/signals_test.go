@@ -9,15 +9,17 @@ import (
 
 func TestSignalsAddSumsCountsAndMergesNamesWithoutRepeats(t *testing.T) {
 	first := drift.Signals{
-		UnanchoredPathFields:           []string{"$.someNewPath"},
-		AssistantLines:                 3,
-		AssistantLinesWithoutMessageID: 1,
-		NewTopLevelTypes:               []string{"mood-ring"},
+		UnanchoredPathFields:             []string{"$.someNewPath"},
+		AssistantLines:                   3,
+		AssistantLinesWithoutMessageID:   1,
+		AssistantLinesWithEmptyReasoning: 2,
+		NewTopLevelTypes:                 []string{"mood-ring"},
 	}
 	second := drift.Signals{
 		UnanchoredPathFields:                []string{"$.attachment.snapshot.newDir", "$.someNewPath"},
 		IncompleteSegments:                  1,
 		AssistantLines:                      2,
+		AssistantLinesWithEmptyReasoning:    1,
 		AssistantLinesMissingResponseFields: 2,
 		MessagesWithBlockIndexGap:           1,
 		AgentLines:                          4,
@@ -30,6 +32,7 @@ func TestSignalsAddSumsCountsAndMergesNamesWithoutRepeats(t *testing.T) {
 		IncompleteSegments:                  1,
 		AssistantLines:                      5,
 		AssistantLinesWithoutMessageID:      1,
+		AssistantLinesWithEmptyReasoning:    3,
 		AssistantLinesMissingResponseFields: 2,
 		MessagesWithBlockIndexGap:           1,
 		AgentLines:                          4,

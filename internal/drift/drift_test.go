@@ -189,13 +189,25 @@ func TestScan_NewValuesAreListedNotJudged(t *testing.T) {
 	}
 }
 
-func TestScan_KnownValuesAreSilent(t *testing.T) {
+func TestScan_KnownValuesFindNothingButTheEmptyReasoningCount(t *testing.T) {
 	r := scan(t, "known_values.jsonl")
-	if r.Any() {
-		t.Errorf("Signals = %+v, want nothing found in lines of the expected shape", r)
+	want := drift.Signals{AssistantLines: 2, AgentLines: 1, AssistantLinesWithEmptyReasoning: 1}
+	if !reflect.DeepEqual(r, want) {
+		t.Errorf("Signals = %+v, want %+v", r, want)
 	}
-	if r.AssistantLines != 2 || r.AgentLines != 1 {
-		t.Errorf("assistant lines = %d, agent lines = %d; want the lines counted even when nothing is found", r.AssistantLines, r.AgentLines)
+	if r.Stop() || r.Alerts() {
+		t.Errorf("Stop() = %v, Alerts() = %v; want lines of the expected shape to neither stop nor alert", r.Stop(), r.Alerts())
+	}
+}
+
+func TestScan_CountsAssistantLinesWhoseReasoningIsEmpty(t *testing.T) {
+	r := scan(t, "empty_reasoning.jsonl")
+	if r.AssistantLines != 3 || r.AssistantLinesWithEmptyReasoning != 1 {
+		t.Errorf("assistant lines = %d with empty reasoning %d, want 3 and 1: a reasoning field holding text and a line without one are not counted",
+			r.AssistantLines, r.AssistantLinesWithEmptyReasoning)
+	}
+	if !r.Logs() || r.Stop() || r.Alerts() {
+		t.Errorf("Logs() = %v, Stop() = %v, Alerts() = %v; want an empty reasoning field logged and nothing more", r.Logs(), r.Stop(), r.Alerts())
 	}
 }
 

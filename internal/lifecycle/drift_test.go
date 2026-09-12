@@ -196,3 +196,39 @@ func TestStatus_ShowsSignalCounts(t *testing.T) {
 		t.Errorf("status = %q, want the field named while paused for it", out)
 	}
 }
+
+func TestStatus_PairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.T) {
+	const fact = "6 of 9 assistant lines carry no reasoning."
+	const wayOut = optionalKey + " is off for this project; run `trajector enable` to turn it on."
+	for _, tc := range []struct {
+		name    string
+		stdin   string
+		wantWay bool
+	}{
+		{name: "nothing answered, so the setting stays off", stdin: "yes\n", wantWay: true},
+		{name: "accepted, so trajector set it on", stdin: "yes\ny\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.startProxy()
+			e.stdin = tc.stdin
+			if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
+			}
+			e.sandbox.AddSignals(consent.ProjectIDHash(e.canonicalRoot()), proxytest.Signals{
+				AssistantLines:                   9,
+				AssistantLinesWithEmptyReasoning: 6,
+			})
+			e.stdout.Reset()
+
+			out := e.statusOutput()
+
+			if !strings.Contains(out, fact) {
+				t.Errorf("status = %q, want it to contain %q", out, fact)
+			}
+			if got := strings.Contains(out, wayOut); got != tc.wantWay {
+				t.Errorf("status = %q, want the way out present = %v", out, tc.wantWay)
+			}
+		})
+	}
+}

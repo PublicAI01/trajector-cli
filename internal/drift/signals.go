@@ -31,6 +31,12 @@ type Signals struct {
 
 	AssistantLines                 int `json:"assistant_lines,omitempty"`
 	AssistantLinesWithoutMessageID int `json:"assistant_lines_without_message_id,omitempty"`
+	// AssistantLinesWithEmptyReasoning counts the assistant lines that
+	// carry the reasoning field with nothing in it. It belongs to the
+	// log group: a setting of Claude Code's decides whether the field
+	// is filled, so an empty one is a fact about how the session ran
+	// and never a fault of the line.
+	AssistantLinesWithEmptyReasoning int `json:"assistant_lines_with_empty_reasoning,omitempty"`
 	// MessagesWithBlockIndexGap counts the message ids whose block
 	// indexes, within the lines of one scan, repeat or skip a number. A
 	// message may continue past those lines, so only what is decidable
@@ -73,7 +79,8 @@ func (s Signals) Alerts() bool {
 // Logs reports a value seen for the first time, to log and nothing
 // more.
 func (s Signals) Logs() bool {
-	return len(s.NewLaunchSurfaces) > 0 || len(s.NewAttachmentTypes) > 0 ||
+	return s.AssistantLinesWithEmptyReasoning > 0 ||
+		len(s.NewLaunchSurfaces) > 0 || len(s.NewAttachmentTypes) > 0 ||
 		len(s.NewSystemSubtypes) > 0 || len(s.NewTopLevelTypes) > 0
 }
 
@@ -90,6 +97,7 @@ func (s Signals) Add(more Signals) Signals {
 	s.IncompleteSegments += more.IncompleteSegments
 	s.AssistantLines += more.AssistantLines
 	s.AssistantLinesWithoutMessageID += more.AssistantLinesWithoutMessageID
+	s.AssistantLinesWithEmptyReasoning += more.AssistantLinesWithEmptyReasoning
 	s.MessagesWithBlockIndexGap += more.MessagesWithBlockIndexGap
 	s.AssistantLinesMissingResponseFields += more.AssistantLinesMissingResponseFields
 	s.AgentLines += more.AgentLines

@@ -185,8 +185,9 @@ func projectLines(d Diagnosis) []string {
 // paused for a shape this build's redaction does not cover, which
 // fields that were; always, how many lines lacked what a record is
 // later read by. Each line is a count or a field name, never a value
-// from a session file, and none names a next step: the pause carries
-// its own, and the counts have none a user could take.
+// from a session file. Only one count names a next step, and only
+// while a setting readable here would change it; for the others the
+// pause carries its own and the user has none to take.
 func signalLines(d Diagnosis) []string {
 	s := d.SessionFiles.Signals
 	var lines []string
@@ -215,7 +216,27 @@ func signalLines(d Diagnosis) []string {
 		lines = append(lines, fmt.Sprintf("%d of %d agent lines in this project's session files named nothing they were started by.",
 			s.AgentLinesWithoutParent, s.AgentLines))
 	}
+	if s.AssistantLinesWithEmptyReasoning > 0 {
+		lines = append(lines, fmt.Sprintf(emptyReasoningFact, s.AssistantLinesWithEmptyReasoning, s.AssistantLines))
+		if settingOff(d.OptionalSettings, claudesettings.KeyShowThinkingSummaries) {
+			lines = append(lines, emptyReasoningWayOut)
+		}
+	}
 	return lines
+}
+
+// settingOff reports that an optional Claude Code setting is off for
+// this project: either nobody set it, or the user set it to false. A
+// setting the diagnosis says nothing about is not reported off — a
+// sentence that sends the user to a setting reads its state, and never
+// guesses it from the absence of one.
+func settingOff(settings []OptionalSettingStatus, key string) bool {
+	for _, s := range settings {
+		if s.Key == key {
+			return s.State == claudesettings.Unset || s.State == claudesettings.OffByUser
+		}
+	}
+	return false
 }
 
 // hookJudgementLines states the static reading of whether the hooks

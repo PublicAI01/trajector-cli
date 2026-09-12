@@ -21,8 +21,11 @@
 //     started by. Reading goes on; the count is shown and logged.
 //   - Log. A value this build had not seen before, in a field whose
 //     values are an open set: a launch surface, an attachment type, a
-//     system subtype, a top-level line type. Nothing changes; the
-//     value is logged so it is known.
+//     system subtype, a top-level line type. Here too the assistant
+//     lines whose reasoning field holds nothing: a setting of Claude
+//     Code's decides whether that field is filled, so the count says
+//     how the sessions ran and not that a line is wrong. Nothing
+//     changes; the value or the count is logged so it is known.
 //
 // The lists of known values in this package are a snapshot of what
 // Claude Code 2.1.26x wrote. They exist only to tell a new value from
@@ -179,6 +182,9 @@ func (s *scanner) assistant(r *Signals, line sessionline.Line, f sessionline.Fie
 	r.AssistantLines++
 	if f.MessageID == "" {
 		r.AssistantLinesWithoutMessageID++
+	}
+	if f.EmptyReasoning {
+		r.AssistantLinesWithEmptyReasoning++
 	}
 	for _, key := range requiredResponseFields {
 		if !line.MessageHas(key) {

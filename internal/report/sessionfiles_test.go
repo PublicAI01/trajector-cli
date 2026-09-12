@@ -503,13 +503,71 @@ func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
 	}
 }
 
+func TestStatusPairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.T) {
+	const key = claudesettings.KeyShowThinkingSummaries
+	const wayOut = key + " is off for this project; run `trajector enable` to turn it on."
+	for _, tc := range []struct {
+		name     string
+		settings []report.OptionalSettingStatus
+		wantWay  bool
+	}{
+		{
+			name:     "nobody set it",
+			settings: []report.OptionalSettingStatus{{Key: key, State: claudesettings.Unset}},
+			wantWay:  true,
+		},
+		{
+			name:     "the user set it to false",
+			settings: []report.OptionalSettingStatus{{Key: key, State: claudesettings.OffByUser}},
+			wantWay:  true,
+		},
+		{
+			name:     "trajector set it on",
+			settings: []report.OptionalSettingStatus{{Key: key, State: claudesettings.OnByUs}},
+		},
+		{
+			name:     "the user set it on",
+			settings: []report.OptionalSettingStatus{{Key: key, State: claudesettings.OnByUser}},
+		},
+		{
+			name: "no state for the setting at all",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := enabledDevice()
+			d.OptionalSettings = tc.settings
+			d.SessionFiles.Signals = drift.Signals{AssistantLines: 9, AssistantLinesWithEmptyReasoning: 6}
+
+			out := dashboard(d)
+
+			wants(t, "status", out, "6 of 9 assistant lines carry no reasoning.")
+			if tc.wantWay {
+				wants(t, "status", out, wayOut)
+				return
+			}
+			rejects(t, "status", out, wayOut)
+		})
+	}
+}
+
+func TestStatusStatesNoEmptyReasoningCountWhereNoLineCarriesOne(t *testing.T) {
+	d := enabledDevice()
+	d.OptionalSettings = []report.OptionalSettingStatus{
+		{Key: claudesettings.KeyShowThinkingSummaries, State: claudesettings.Unset},
+	}
+	d.SessionFiles.Signals = drift.Signals{AssistantLines: 9}
+
+	rejects(t, "status", dashboard(d), "carry no reasoning", "run `trajector enable` to turn it on")
+}
+
 func TestTheBundleCarriesWhatReadingNoticedWithoutValues(t *testing.T) {
 	d := enabledDevice()
 	d.SessionFiles.Signals = drift.Signals{
-		UnanchoredPathFields:           []string{"$.someNewPath"},
-		AssistantLines:                 4,
-		AssistantLinesWithoutMessageID: 1,
-		NewLaunchSurfaces:              []string{"claude-holodeck"},
+		UnanchoredPathFields:             []string{"$.someNewPath"},
+		AssistantLines:                   4,
+		AssistantLinesWithoutMessageID:   1,
+		AssistantLinesWithEmptyReasoning: 2,
+		NewLaunchSurfaces:                []string{"claude-holodeck"},
 	}
 	got := string(report.DiagnosisJSON(d))
 	wants(t, "diagnosis.json", got,
@@ -517,6 +575,7 @@ func TestTheBundleCarriesWhatReadingNoticedWithoutValues(t *testing.T) {
 		`"$.someNewPath"`,
 		`"assistant_lines": 4`,
 		`"assistant_lines_without_message_id": 1`,
+		`"assistant_lines_with_empty_reasoning": 2`,
 		`"new_launch_surfaces": [`,
 	)
 	rejects(t, "diagnosis.json", got, `"agent_lines"`, `"incomplete_segments"`)

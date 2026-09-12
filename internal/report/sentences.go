@@ -41,6 +41,19 @@ const (
 	// base URL.
 	noProxyShapeFact = "This project records from its session files only, so Remote Control stays available."
 
+	// emptyReasoningFact counts the assistant lines of a project's
+	// session files that carry the reasoning field with nothing in it,
+	// out of the assistant lines counted with them. It is a fact about
+	// the lines and not a fault of them: what fills the field is a
+	// setting of Claude Code's.
+	emptyReasoningFact = "%d of %d assistant lines carry no reasoning."
+	// emptyReasoningWayOut follows that fact only while the setting
+	// that fills the field is off for the project. Where the setting is
+	// on, what left the field empty is not readable on this machine,
+	// and the fact stands with no next step beside it.
+	emptyReasoningWayOut = claudesettings.KeyShowThinkingSummaries +
+		" is off for this project; run `trajector enable` to turn it on."
+
 	// workspaceNotTrusted is doctor's answer when session files of an
 	// enabled project exist that no hook of trajector's reported, and
 	// nothing readable on this machine keeps the hooks from loading:

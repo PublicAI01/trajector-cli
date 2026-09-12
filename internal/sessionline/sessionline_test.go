@@ -185,3 +185,55 @@ func TestParseKeepsALineOfAnySizeAsOneValue(t *testing.T) {
 		t.Errorf("got %d bytes and type %q", len(parsed.Text()), parsed.Fields().Type)
 	}
 }
+
+func TestFieldsReportsAReasoningFieldThatIsThereAndEmpty(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{
+			name: "a reasoning field with nothing in it",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":[{"type":"thinking","thinking":"","signature":"sig"}]}}`,
+			want: true,
+		},
+		{
+			name: "a reasoning field holding text",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":[{"type":"thinking","thinking":"weighing two options","signature":"sig"}]}}`,
+		},
+		{
+			name: "no reasoning field at all",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":[{"type":"text","text":"done"}]}}`,
+		},
+		{
+			name: "a reasoning field of another shape",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":[{"type":"thinking","thinking":null}]}}`,
+		},
+		{
+			name: "an empty one among other blocks",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":[{"type":"text","text":"done"},{"type":"thinking","thinking":""}]}}`,
+			want: true,
+		},
+		{
+			name: "a message whose content is text",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":"done"}}`,
+		},
+		{
+			name: "no message at all",
+			line: `{"type":"assistant"}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			parsed, ok := sessionline.Parse([]byte(tc.line))
+			if !ok {
+				t.Fatal("not a session line")
+			}
+			if got := parsed.Fields().EmptyReasoning; got != tc.want {
+				t.Errorf("EmptyReasoning = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
