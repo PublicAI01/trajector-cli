@@ -92,12 +92,6 @@ func ProjectLocalPath(projectRoot string) string {
 	return filepath.Join(projectRoot, filepath.FromSlash(ProjectLocalRel))
 }
 
-// UserSettingsPath locates the user-scoped settings file that receives
-// the discovery hook.
-func UserSettingsPath(home string) string {
-	return filepath.Join(home, ".claude", "settings.json")
-}
-
 // proxyBaseURL recognizes a base URL injected by trajector: loopback
 // host with a /t/<token> path. Matching stays narrow so removal can
 // never mistake a user's own relay URL for our injection.

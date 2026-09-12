@@ -185,7 +185,7 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 		}
 	}
 
-	if err := claudesettings.RemoveUserHook(claudesettings.UserSettingsPath(m.deps.Home)); err != nil {
+	if err := claudesettings.RemoveUserHook(m.claude().UserSettingsPath()); err != nil {
 		fmt.Fprintf(io.Err, "trajector: warning: could not remove the discovery hint: %v\n", err)
 	}
 	// Gone, not merely asked to go: everything deleted below is

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
-	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // What enable says, in the words the user reads. Each sentence states a
@@ -169,7 +167,7 @@ func (m *Machine) enableProject(projectDir string, shape routing.Shape, io IO) e
 	// The session files this project already has are counted and named
 	// here, before anything is written: the count is part of what the
 	// user is enabling, and reading them is not asked about separately.
-	earlier, err := discover.Walk(st.Root, m.claudeConfigDir())
+	earlier, err := discover.Walk(st.Root, m.claude().ConfigDir)
 	if err != nil {
 		return fmt.Errorf("looking for this project's session files: %w", err)
 	}
@@ -329,9 +327,7 @@ func (m *Machine) injectProject(st report.ProjectStatus, token string, shape rou
 // time it is asked: the configuration it reads is the user's, or their
 // organization's, and changes without notice.
 func (m *Machine) hookPolicy(root string) claudesettings.HookPolicy {
-	host := userdirs.Env{GOOS: runtime.GOOS, Getenv: m.deps.Getenv}
-	managed := claudesettings.ManagedDirs{Policy: userdirs.ClaudeManagedSettingsDir(host)}
-	return claudesettings.JudgeHookPolicy(root, m.deps.Home, m.deps.Getenv, managed)
+	return claudesettings.JudgeHookPolicy(root, m.claude(), m.deps.Getenv)
 }
 
 // confirmHooksWillRun says what the static reading of the hooks means

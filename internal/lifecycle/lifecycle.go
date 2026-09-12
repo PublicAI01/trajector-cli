@@ -16,9 +16,11 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
@@ -47,8 +49,8 @@ type Deps struct {
 	// Releases is the index of published releases upgrade reads.
 	Releases  string
 	ProxyAddr string
-	// Home is the user's home directory, where user-wide Claude Code
-	// settings live.
+	// Home is the user's home directory. Claude Code's own directories
+	// are resolved from it, and from the environment that moves them.
 	Home   string
 	Getenv func(string) string
 	// Now is the record-keeping clock: it answers "what timestamp goes on
@@ -102,6 +104,14 @@ type Machine struct {
 	// how far each is read. It is a store of this device like the ones
 	// above, so it is opened here and never anywhere else.
 	registry *follow.Registry
+}
+
+// claude is where Claude Code keeps its files for this process. It is
+// resolved on every call because a hook runs in the session's
+// environment, which may move those directories, and not in the one
+// this machine was opened in.
+func (m *Machine) claude() claudesettings.Host {
+	return claudesettings.HostFor(runtime.GOOS, m.deps.Home, m.deps.Getenv)
 }
 
 // Open assembles the machine. It is the only place these collaborators

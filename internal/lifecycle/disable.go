@@ -165,7 +165,7 @@ func (m *Machine) removeInjection(root string) (restored, unrestored string, err
 	if upstream == "" || upstream == capture.Anthropic.OfficialUpstream {
 		return "", "", nil
 	}
-	switch _, _, res := claudesettings.ExternalBaseURL(root, m.deps.Home, m.deps.Getenv); res {
+	switch _, _, res := claudesettings.ExternalBaseURL(root, m.claude(), m.deps.Getenv); res {
 	case claudesettings.BaseURLNone:
 	case claudesettings.BaseURLMasked:
 		// Our own value stands in the shell, hiding whatever the user's

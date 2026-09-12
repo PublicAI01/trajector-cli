@@ -59,10 +59,10 @@ func (r upstreamResolution) keepsRecordedUpstream(st report.ProjectStatus) bool 
 // then the official endpoint. enable, doctor, and the session hook all
 // answer from here; the surfaces differ only in presentation.
 func (m *Machine) desiredUpstream(root string) upstreamResolution {
-	if key, found := claudesettings.UnsupportedChannel(root, m.deps.Home, m.deps.Getenv); found {
+	if key, found := claudesettings.UnsupportedChannel(root, m.claude(), m.deps.Getenv); found {
 		return upstreamResolution{unsupportedKey: key}
 	}
-	switch external, source, resolution := claudesettings.ExternalBaseURL(root, m.deps.Home, m.deps.Getenv); resolution {
+	switch external, source, resolution := claudesettings.ExternalBaseURL(root, m.claude(), m.deps.Getenv); resolution {
 	case claudesettings.BaseURLExternal:
 		return upstreamResolution{upstream: external, source: source, external: true}
 	case claudesettings.BaseURLMasked:

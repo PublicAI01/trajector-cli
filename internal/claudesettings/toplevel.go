@@ -7,7 +7,7 @@ import "os"
 type SettingState int
 
 const (
-	// Unset: no layer sets the key. Distinct from OffByUser — the
+	// Unset: no rank sets the key. Distinct from OffByUser — the
 	// behavior is the same, but "never said" and "explicitly turned
 	// off" get opposite suggested answers.
 	Unset SettingState = iota
@@ -19,7 +19,7 @@ const (
 	OffByUser
 )
 
-// SettingStatus pairs the state with the layer the deciding value came
+// SettingStatus pairs the state with the rank the deciding value came
 // from. Source is meaningful only for OnByUser and OffByUser.
 type SettingStatus struct {
 	State  SettingState
@@ -28,38 +28,22 @@ type SettingStatus struct {
 
 // ClassifySetting resolves a top-level boolean key the way Claude Code
 // does — project-local, then project, then user settings; top-level
-// keys have no shell layer — and classifies the outcome. A bare bool
+// keys have no shell rank — and classifies the outcome. A bare bool
 // carries no shape that could mark it as trajector's own writing, so
 // writtenByUs brings that fact in from the caller's records.
-func ClassifySetting(projectRoot, home, key string, writtenByUs bool) SettingStatus {
-	value, source, found := firstTopLevelBool(projectRoot, home, key)
+func ClassifySetting(projectRoot string, host Host, key string, writtenByUs bool) SettingStatus {
+	d, found := host.chain(projectRoot, nil, layerProject|layerUser).
+		decide([]string{key}, topLevelBoolValue, anyValue)
 	switch {
 	case !found:
 		return SettingStatus{State: Unset}
-	case !value:
-		return SettingStatus{State: OffByUser, Source: source}
-	case source == SourceProjectLocal && writtenByUs:
+	case !d.value.(bool):
+		return SettingStatus{State: OffByUser, Source: d.source}
+	case d.source == SourceProjectLocal && writtenByUs:
 		return SettingStatus{State: OnByUs}
 	default:
-		return SettingStatus{State: OnByUser, Source: source}
+		return SettingStatus{State: OnByUser, Source: d.source}
 	}
-}
-
-func firstTopLevelBool(projectRoot, home, key string) (bool, Source, bool) {
-	chain := []struct {
-		path   string
-		source Source
-	}{
-		{ProjectLocalPath(projectRoot), SourceProjectLocal},
-		{projectSharedPath(projectRoot), SourceProject},
-		{UserSettingsPath(home), SourceUser},
-	}
-	for _, link := range chain {
-		if value, found := TopLevelBool(link.path, key); found {
-			return value, link.source, true
-		}
-	}
-	return false, "", false
 }
 
 // TopLevelBool reads a top-level boolean key from the settings file at
@@ -67,12 +51,11 @@ func firstTopLevelBool(projectRoot, home, key string) (bool, Source, bool) {
 // missing or unreadable file reads as absent, as does a value of any
 // other type.
 func TopLevelBool(path, key string) (value, found bool) {
-	root, err := readSettings(path)
-	if err != nil {
+	raw, found := topLevelBoolValue(readRoot(path), key)
+	if !found {
 		return false, false
 	}
-	value, found = root[key].(bool)
-	return value, found
+	return raw.(bool), true
 }
 
 // SetTopLevelBool writes value under the top-level key in the settings

@@ -30,7 +30,7 @@ func (m *Machine) offerOptionalSettings(io IO, st report.ProjectStatus) {
 	}
 	for _, s := range claudesettings.OptionalSettings {
 		d, recorded := decisions[s.Key]
-		status := claudesettings.ClassifySetting(st.Root, m.deps.Home, s.Key, recorded && wroteSetting(d))
+		status := claudesettings.ClassifySetting(st.Root, m.claude(), s.Key, recorded && wroteSetting(d))
 		fmt.Fprintf(io.Out, "\nOptional setting for this project\n\n")
 		switch status.State {
 		case claudesettings.OnByUser:
@@ -95,7 +95,7 @@ func (m *Machine) optionalSettingStatuses(st report.ProjectStatus) []report.Opti
 	statuses := make([]report.OptionalSettingStatus, 0, len(claudesettings.OptionalSettings))
 	for _, s := range claudesettings.OptionalSettings {
 		d, recorded := decisions[s.Key]
-		classified := claudesettings.ClassifySetting(st.Root, m.deps.Home, s.Key, recorded && wroteSetting(d))
+		classified := claudesettings.ClassifySetting(st.Root, m.claude(), s.Key, recorded && wroteSetting(d))
 		statuses = append(statuses, report.OptionalSettingStatus{
 			Key:      s.Key,
 			State:    classified.State,

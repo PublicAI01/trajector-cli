@@ -46,15 +46,6 @@ func ReadHookInput(r io.Reader) HookInput {
 // ever written to it here.
 const cloudPlaceholder = "cloud-transcript.jsonl"
 
-// claudeConfigDir is Claude Code's configuration directory on this
-// machine, which CLAUDE_CONFIG_DIR relocates.
-func (m *Machine) claudeConfigDir() string {
-	if dir := m.deps.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		return dir
-	}
-	return filepath.Join(m.deps.Home, ".claude")
-}
-
 // RegisterSessionFile registers the session file a hook was told about,
 // and the agent files beside it, for reading on the project's behalf.
 // It registers only when the hook ran inside an enabled project and the
@@ -72,7 +63,7 @@ func (m *Machine) RegisterSessionFile(cwd string, hook HookInput) (registered bo
 		return false, nil
 	}
 	path = filepath.Clean(path)
-	if !discover.UnderSessionFiles(m.claudeConfigDir(), path) || filepath.Base(path) == cloudPlaceholder {
+	if !discover.UnderSessionFiles(m.claude().ConfigDir, path) || filepath.Base(path) == cloudPlaceholder {
 		return false, nil
 	}
 	st, err := m.Project(cwd)

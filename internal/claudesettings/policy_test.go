@@ -3,15 +3,16 @@ package claudesettings
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
-// policyHost is a temporary host layout: the user's home, the project,
-// and the organization's managed directory, all under one root.
+// policyHost is a temporary host layout: the user's configuration
+// directory, the project, and the organization's managed directory,
+// all under one root.
 type policyHost struct {
-	root, home, project, managed string
+	root, project string
+	claude        Host
 }
 
 func newPolicyHost(t *testing.T) policyHost {
@@ -19,9 +20,11 @@ func newPolicyHost(t *testing.T) policyHost {
 	root := t.TempDir()
 	return policyHost{
 		root:    root,
-		home:    filepath.Join(root, "home"),
 		project: filepath.Join(root, "project"),
-		managed: filepath.Join(root, "managed"),
+		claude: Host{
+			ConfigDir:  filepath.Join(root, "home", ".claude"),
+			ManagedDir: filepath.Join(root, "managed"),
+		},
 	}
 }
 
@@ -31,7 +34,7 @@ func (h policyHost) judge(getenv func(string) string) HookPolicy {
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
-	return JudgeHookPolicy(h.project, h.home, getenv, ManagedDirs{Policy: h.managed})
+	return JudgeHookPolicy(h.project, h.claude, getenv)
 }
 
 const (
@@ -40,7 +43,6 @@ const (
 	projectFile     = "project/.claude/settings.json"
 	localFile       = "project/.claude/settings.local.json"
 	managedBaseFile = "managed/managed-settings.json"
-	shellEnv        = "shell environment"
 )
 
 func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
@@ -48,36 +50,36 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 		name  string
 		files map[string]string
 		env   map[string]string
-		// wantKey and wantWhere are empty when the hooks run; wantWhere
-		// is a path under the host root or the shell environment.
-		wantKey, wantWhere string
+		// wantKey and wantSource are empty when the hooks run.
+		wantKey    string
+		wantSource Source
 	}{
 		{
 			name: "nothing configured anywhere means the hooks run",
 		},
 		{
-			name:      "delivered settings cache disableAllHooks",
-			files:     map[string]string{remoteFile: `{"disableAllHooks": true}`},
-			wantKey:   "disableAllHooks",
-			wantWhere: remoteFile,
+			name:       "delivered settings cache disableAllHooks",
+			files:      map[string]string{remoteFile: `{"disableAllHooks": true}`},
+			wantKey:    "disableAllHooks",
+			wantSource: SourceManagedDelivered,
 		},
 		{
-			name:      "delivered settings cache allowManagedHooksOnly",
-			files:     map[string]string{remoteFile: `{"allowManagedHooksOnly": true}`},
-			wantKey:   "allowManagedHooksOnly",
-			wantWhere: remoteFile,
+			name:       "delivered settings cache allowManagedHooksOnly",
+			files:      map[string]string{remoteFile: `{"allowManagedHooksOnly": true}`},
+			wantKey:    "allowManagedHooksOnly",
+			wantSource: SourceManagedDelivered,
 		},
 		{
-			name:      "delivered settings cache strictPluginOnlyCustomization true",
-			files:     map[string]string{remoteFile: `{"strictPluginOnlyCustomization": true}`},
-			wantKey:   "strictPluginOnlyCustomization",
-			wantWhere: remoteFile,
+			name:       "delivered settings cache strictPluginOnlyCustomization true",
+			files:      map[string]string{remoteFile: `{"strictPluginOnlyCustomization": true}`},
+			wantKey:    "strictPluginOnlyCustomization",
+			wantSource: SourceManagedDelivered,
 		},
 		{
-			name:      "strictPluginOnlyCustomization listing hooks locks them",
-			files:     map[string]string{remoteFile: `{"strictPluginOnlyCustomization": ["skills", "hooks"]}`},
-			wantKey:   "strictPluginOnlyCustomization",
-			wantWhere: remoteFile,
+			name:       "strictPluginOnlyCustomization listing hooks locks them",
+			files:      map[string]string{remoteFile: `{"strictPluginOnlyCustomization": ["skills", "hooks"]}`},
+			wantKey:    "strictPluginOnlyCustomization",
+			wantSource: SourceManagedDelivered,
 		},
 		{
 			name:  "strictPluginOnlyCustomization listing other areas leaves hooks alone",
@@ -88,16 +90,16 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 			files: map[string]string{remoteFile: `{"disableAllHooks": false, "allowManagedHooksOnly": false}`},
 		},
 		{
-			name:      "managed-settings.json disableAllHooks",
-			files:     map[string]string{managedBaseFile: `{"disableAllHooks": true}`},
-			wantKey:   "disableAllHooks",
-			wantWhere: managedBaseFile,
+			name:       "managed-settings.json disableAllHooks",
+			files:      map[string]string{managedBaseFile: `{"disableAllHooks": true}`},
+			wantKey:    "disableAllHooks",
+			wantSource: SourceManaged,
 		},
 		{
-			name:      "managed-settings.json allowManagedHooksOnly",
-			files:     map[string]string{managedBaseFile: `{"allowManagedHooksOnly": true}`},
-			wantKey:   "allowManagedHooksOnly",
-			wantWhere: managedBaseFile,
+			name:       "managed-settings.json allowManagedHooksOnly",
+			files:      map[string]string{managedBaseFile: `{"allowManagedHooksOnly": true}`},
+			wantKey:    "allowManagedHooksOnly",
+			wantSource: SourceManaged,
 		},
 		{
 			name: "delivered settings cache silent on hooks does not shadow a managed file lock",
@@ -105,8 +107,8 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 				remoteFile:      `{"model": "opus"}`,
 				managedBaseFile: `{"disableAllHooks": true}`,
 			},
-			wantKey:   "disableAllHooks",
-			wantWhere: managedBaseFile,
+			wantKey:    "disableAllHooks",
+			wantSource: SourceManaged,
 		},
 		{
 			name: "delivered settings cache is named before the managed file when both lock",
@@ -114,14 +116,14 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 				remoteFile:      `{"allowManagedHooksOnly": true}`,
 				managedBaseFile: `{"disableAllHooks": true}`,
 			},
-			wantKey:   "allowManagedHooksOnly",
-			wantWhere: remoteFile,
+			wantKey:    "allowManagedHooksOnly",
+			wantSource: SourceManagedDelivered,
 		},
 		{
-			name:      "a drop-in alone decides without a base file",
-			files:     map[string]string{"managed/managed-settings.d/hooks.json": `{"disableAllHooks": true}`},
-			wantKey:   "disableAllHooks",
-			wantWhere: "managed/managed-settings.d/hooks.json",
+			name:       "a drop-in alone decides without a base file",
+			files:      map[string]string{"managed/managed-settings.d/hooks.json": `{"disableAllHooks": true}`},
+			wantKey:    "disableAllHooks",
+			wantSource: SourceManaged,
 		},
 		{
 			name: "a later drop-in overrides an earlier one",
@@ -131,13 +133,13 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 			},
 		},
 		{
-			name: "the later drop-in is the one named",
+			name: "the later drop-in decides",
 			files: map[string]string{
 				"managed/managed-settings.d/10-unlock.json": `{"disableAllHooks": false}`,
 				"managed/managed-settings.d/20-lock.json":   `{"disableAllHooks": true}`,
 			},
-			wantKey:   "disableAllHooks",
-			wantWhere: "managed/managed-settings.d/20-lock.json",
+			wantKey:    "disableAllHooks",
+			wantSource: SourceManaged,
 		},
 		{
 			name: "a drop-in overrides the base file",
@@ -152,8 +154,8 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 				managedBaseFile:                         `{"allowManagedHooksOnly": true}`,
 				"managed/managed-settings.d/other.json": `{"disableAllHooks": false}`,
 			},
-			wantKey:   "allowManagedHooksOnly",
-			wantWhere: managedBaseFile,
+			wantKey:    "allowManagedHooksOnly",
+			wantSource: SourceManaged,
 		},
 		{
 			name: "dot-files and non-json files in the drop-in directory are not read",
@@ -164,22 +166,22 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 			},
 		},
 		{
-			name:      "user settings disableAllHooks",
-			files:     map[string]string{userFile: `{"disableAllHooks": true}`},
-			wantKey:   "disableAllHooks",
-			wantWhere: userFile,
+			name:       "user settings disableAllHooks",
+			files:      map[string]string{userFile: `{"disableAllHooks": true}`},
+			wantKey:    "disableAllHooks",
+			wantSource: SourceUser,
 		},
 		{
-			name:      "project settings disableAllHooks",
-			files:     map[string]string{projectFile: `{"disableAllHooks": true}`},
-			wantKey:   "disableAllHooks",
-			wantWhere: projectFile,
+			name:       "project settings disableAllHooks",
+			files:      map[string]string{projectFile: `{"disableAllHooks": true}`},
+			wantKey:    "disableAllHooks",
+			wantSource: SourceProject,
 		},
 		{
-			name:      "local settings disableAllHooks",
-			files:     map[string]string{localFile: `{"disableAllHooks": true}`},
-			wantKey:   "disableAllHooks",
-			wantWhere: localFile,
+			name:       "local settings disableAllHooks",
+			files:      map[string]string{localFile: `{"disableAllHooks": true}`},
+			wantKey:    "disableAllHooks",
+			wantSource: SourceProjectLocal,
 		},
 		{
 			name: "local false overrides user true",
@@ -194,8 +196,8 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 				projectFile: `{"disableAllHooks": true}`,
 				userFile:    `{"disableAllHooks": true}`,
 			},
-			wantKey:   "disableAllHooks",
-			wantWhere: projectFile,
+			wantKey:    "disableAllHooks",
+			wantSource: SourceProject,
 		},
 		{
 			name: "a managed lock is named before a local lock",
@@ -203,8 +205,8 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 				managedBaseFile: `{"disableAllHooks": true}`,
 				localFile:       `{"disableAllHooks": true}`,
 			},
-			wantKey:   "disableAllHooks",
-			wantWhere: managedBaseFile,
+			wantKey:    "disableAllHooks",
+			wantSource: SourceManaged,
 		},
 		{
 			name: "user settings allowManagedHooksOnly is not honored outside managed settings",
@@ -214,16 +216,16 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 			},
 		},
 		{
-			name:      "safe mode in the shell environment",
-			env:       map[string]string{"CLAUDE_CODE_SAFE_MODE": "1"},
-			wantKey:   "CLAUDE_CODE_SAFE_MODE",
-			wantWhere: shellEnv,
+			name:       "safe mode in the shell environment",
+			env:        map[string]string{"CLAUDE_CODE_SAFE_MODE": "1"},
+			wantKey:    "CLAUDE_CODE_SAFE_MODE",
+			wantSource: SourceShell,
 		},
 		{
-			name:      "safe mode spelled TRUE with spaces",
-			env:       map[string]string{"CLAUDE_CODE_SAFE_MODE": " TRUE "},
-			wantKey:   "CLAUDE_CODE_SAFE_MODE",
-			wantWhere: shellEnv,
+			name:       "safe mode spelled TRUE with spaces",
+			env:        map[string]string{"CLAUDE_CODE_SAFE_MODE": " TRUE "},
+			wantKey:    "CLAUDE_CODE_SAFE_MODE",
+			wantSource: SourceShell,
 		},
 		{
 			name: "safe mode set to 0 is off",
@@ -234,28 +236,28 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 			env:  map[string]string{"CLAUDE_CODE_SAFE_MODE": "enabled"},
 		},
 		{
-			name:      "bare mode in the shell environment",
-			env:       map[string]string{"CLAUDE_CODE_SIMPLE": "yes"},
-			wantKey:   "CLAUDE_CODE_SIMPLE",
-			wantWhere: shellEnv,
+			name:       "bare mode in the shell environment",
+			env:        map[string]string{"CLAUDE_CODE_SIMPLE": "yes"},
+			wantKey:    "CLAUDE_CODE_SIMPLE",
+			wantSource: SourceShell,
 		},
 		{
-			name:      "restricted mode in the shell environment",
-			env:       map[string]string{"CLAUDE_CODE_RESTRICTED": "on"},
-			wantKey:   "CLAUDE_CODE_RESTRICTED",
-			wantWhere: shellEnv,
+			name:       "restricted mode in the shell environment",
+			env:        map[string]string{"CLAUDE_CODE_RESTRICTED": "on"},
+			wantKey:    "CLAUDE_CODE_RESTRICTED",
+			wantSource: SourceShell,
 		},
 		{
-			name:      "safe mode in the user settings env block",
-			files:     map[string]string{userFile: `{"env": {"CLAUDE_CODE_SAFE_MODE": "1"}}`},
-			wantKey:   "CLAUDE_CODE_SAFE_MODE",
-			wantWhere: userFile,
+			name:       "safe mode in the user settings env block",
+			files:      map[string]string{userFile: `{"env": {"CLAUDE_CODE_SAFE_MODE": "1"}}`},
+			wantKey:    "CLAUDE_CODE_SAFE_MODE",
+			wantSource: SourceUser,
 		},
 		{
-			name:      "safe mode in the managed file env block",
-			files:     map[string]string{managedBaseFile: `{"env": {"CLAUDE_CODE_SAFE_MODE": "true"}}`},
-			wantKey:   "CLAUDE_CODE_SAFE_MODE",
-			wantWhere: managedBaseFile,
+			name:       "safe mode in the managed file env block",
+			files:      map[string]string{managedBaseFile: `{"env": {"CLAUDE_CODE_SAFE_MODE": "true"}}`},
+			wantKey:    "CLAUDE_CODE_SAFE_MODE",
+			wantSource: SourceManaged,
 		},
 		{
 			name: "project and local env blocks cannot set safe mode",
@@ -299,8 +301,8 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 				remoteFile: `{`,
 				localFile:  `{"disableAllHooks": true}`,
 			},
-			wantKey:   "disableAllHooks",
-			wantWhere: localFile,
+			wantKey:    "disableAllHooks",
+			wantSource: SourceProjectLocal,
 		},
 	}
 	for _, tt := range tests {
@@ -312,11 +314,7 @@ func TestJudgeHookPolicy_EverySourceAndItsRank(t *testing.T) {
 			got := host.judge(func(key string) string { return tt.env[key] })
 			want := HookPolicy{Runs: tt.wantKey == ""}
 			if tt.wantKey != "" {
-				where := tt.wantWhere
-				if where != shellEnv {
-					where = host.path(where)
-				}
-				want.Reason = tt.wantKey + " in " + where
+				want.Reason = tt.wantKey + " in " + string(tt.wantSource)
 			}
 			if got != want {
 				t.Errorf("JudgeHookPolicy() = %+v, want %+v", got, want)
@@ -334,9 +332,9 @@ func TestJudgeHookPolicy_ManagedDirectoryComesFromTheEnvironment(t *testing.T) {
 	getenv := func(key string) string {
 		return map[string]string{"CLAUDE_CODE_MANAGED_SETTINGS_PATH": replacement}[key]
 	}
-	dir := userdirs.ClaudeManagedSettingsDir(userdirs.Env{GOOS: "linux", Getenv: getenv})
-	got := JudgeHookPolicy(host.project, host.home, getenv, ManagedDirs{Policy: dir})
-	want := HookPolicy{Reason: "disableAllHooks in " + filepath.Join(replacement, "managed-settings.json")}
+	claude := HostFor("linux", filepath.Join(host.root, "home"), getenv)
+	got := JudgeHookPolicy(host.project, claude, getenv)
+	want := HookPolicy{Reason: "disableAllHooks in " + string(SourceManaged)}
 	if got != want {
 		t.Errorf("JudgeHookPolicy() = %+v, want %+v", got, want)
 	}
@@ -344,13 +342,26 @@ func TestJudgeHookPolicy_ManagedDirectoryComesFromTheEnvironment(t *testing.T) {
 
 func TestJudgeHookPolicy_NoManagedDirectoryReadsOnlyTheRest(t *testing.T) {
 	host := newPolicyHost(t)
+	bare := Host{ConfigDir: host.claude.ConfigDir}
 	writeFileAt(t, host.path(managedBaseFile), `{"disableAllHooks": true}`)
-	if got := JudgeHookPolicy(host.project, host.home, os.Getenv, ManagedDirs{}); !got.Runs {
+	if got := JudgeHookPolicy(host.project, bare, os.Getenv); !got.Runs {
 		t.Errorf("JudgeHookPolicy() = %+v, want the managed file left unread", got)
 	}
 	writeFileAt(t, host.path(userFile), `{"disableAllHooks": true}`)
-	if got := JudgeHookPolicy(host.project, host.home, os.Getenv, ManagedDirs{}); got.Runs {
+	if got := JudgeHookPolicy(host.project, bare, os.Getenv); got.Runs {
 		t.Errorf("JudgeHookPolicy() = %+v, want the user file read", got)
+	}
+}
+
+func TestJudgeHookPolicy_ReasonNamesARankAndNeverAFile(t *testing.T) {
+	host := newPolicyHost(t)
+	writeFileAt(t, host.path(managedBaseFile), `{"disableAllHooks": true}`)
+	got := host.judge(nil)
+	if want := "disableAllHooks in " + string(SourceManaged); got.Reason != want {
+		t.Errorf("Reason = %q, want %q", got.Reason, want)
+	}
+	if strings.ContainsRune(got.Reason, filepath.Separator) {
+		t.Errorf("Reason = %q, want no path in it", got.Reason)
 	}
 }
 

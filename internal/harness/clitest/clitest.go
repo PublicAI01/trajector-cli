@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/cli"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
@@ -64,8 +65,7 @@ func New(t *testing.T) *Env {
 	// Claude Code's own configuration is read by the CLI too: its session
 	// files root and the managed settings that decide whether hooks load.
 	// Both point into this test's tree, never at the developer's.
-	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "claude"))
-	t.Setenv("CLAUDE_CODE_MANAGED_SETTINGS_PATH", filepath.Join(home, "managed"))
+	claudesettings.Isolate(t.Setenv, home)
 	// The file token backend keeps tests away from the developer's OS
 	// keyring. The CLI always talks to this test's own fake service: a
 	// call a test did not stub fails loudly and is recorded, instead of

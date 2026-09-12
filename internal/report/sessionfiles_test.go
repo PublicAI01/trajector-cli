@@ -136,7 +136,7 @@ func TestStatusSaysNothingAboutSessionFilesOfAProjectNotEnabled(t *testing.T) {
 }
 
 func TestStatusJudgesTheHooksOfEveryEnabledProject(t *testing.T) {
-	notLoading := &claudesettings.HookPolicy{Reason: "disableAllHooks in /home/dev/.claude/settings.json"}
+	notLoading := &claudesettings.HookPolicy{Reason: "disableAllHooks in user settings.json"}
 	for _, tc := range []struct {
 		name    string
 		shape   func(report.Diagnosis) report.Diagnosis
@@ -156,14 +156,14 @@ func TestStatusJudgesTheHooksOfEveryEnabledProject(t *testing.T) {
 			name:   "hooks will not load beside a base URL",
 			shape:  func(d report.Diagnosis) report.Diagnosis { return d },
 			policy: notLoading,
-			want:   []string{hooksWillNotLoadLine + " (disableAllHooks in /home/dev/.claude/settings.json)", proxyHalfOnlyLine},
+			want:   []string{hooksWillNotLoadLine + " (disableAllHooks in user settings.json)", proxyHalfOnlyLine},
 			reject: []string{nothingRecordedLine},
 		},
 		{
 			name:   "hooks will not load without a base URL",
 			shape:  withoutProxy,
 			policy: notLoading,
-			want:   []string{hooksWillNotLoadLine + " (disableAllHooks in /home/dev/.claude/settings.json)", nothingRecordedLine, "Run trajector enable without --no-proxy"},
+			want:   []string{hooksWillNotLoadLine + " (disableAllHooks in user settings.json)", nothingRecordedLine, "Run trajector enable without --no-proxy"},
 			reject: []string{proxyHalfOnlyLine},
 		},
 	} {
@@ -288,7 +288,7 @@ func TestDoctorPassesWhenEverySessionFileIsRegistered(t *testing.T) {
 }
 
 func TestDoctorExplainsHooksThatWillNotLoadWithoutFailing(t *testing.T) {
-	policy := &claudesettings.HookPolicy{Reason: "disableAllHooks in /home/dev/.claude/settings.json"}
+	policy := &claudesettings.HookPolicy{Reason: "disableAllHooks in user settings.json"}
 	for _, tc := range []struct {
 		name  string
 		shape func(report.Diagnosis) report.Diagnosis
@@ -305,7 +305,7 @@ func TestDoctorExplainsHooksThatWillNotLoadWithoutFailing(t *testing.T) {
 				t.Errorf("problems = %d, want a setting the user or their organization keeps not counted as a fault", problems)
 			}
 			wants(t, "doctor", out,
-				"note: "+hooksWillNotLoadLine+" (disableAllHooks in /home/dev/.claude/settings.json)",
+				"note: "+hooksWillNotLoadLine+" (disableAllHooks in user settings.json)",
 				"Change that setting where it is set, or ask whoever manages it to.",
 				"1 session(s) of this project were written without a hook of trajector's reporting them, which follows from the setting above")
 			wants(t, "doctor", out, tc.want...)
@@ -316,7 +316,7 @@ func TestDoctorExplainsHooksThatWillNotLoadWithoutFailing(t *testing.T) {
 
 func TestNoSurfaceWordsTheHookReadingDifferently(t *testing.T) {
 	loading := &claudesettings.HookPolicy{Runs: true}
-	locked := &claudesettings.HookPolicy{Reason: "disableAllHooks in /home/dev/.claude/settings.json"}
+	locked := &claudesettings.HookPolicy{Reason: "disableAllHooks in user settings.json"}
 	sameShape := func(d report.Diagnosis) report.Diagnosis { return d }
 	for _, tc := range []struct {
 		name   string
@@ -393,7 +393,7 @@ func TestDoctorSaysNothingAboutAProjectNotEnabled(t *testing.T) {
 func TestTheBundleCarriesShapeAndSessionCountsWithoutIdsOrPaths(t *testing.T) {
 	d := withoutProxy(enabledDevice())
 	d.Project.SessionEndInstalled = false
-	d.HookPolicy = &claudesettings.HookPolicy{Reason: "disableAllHooks in /home/dev/.claude/settings.json"}
+	d.HookPolicy = &claudesettings.HookPolicy{Reason: "disableAllHooks in user settings.json"}
 	d.SessionFiles = report.SessionFilesState{
 		Sessions:    4,
 		LastReadAt:  time.Date(2026, 9, 10, 8, 30, 0, 0, time.UTC),
@@ -414,7 +414,7 @@ func TestTheBundleCarriesShapeAndSessionCountsWithoutIdsOrPaths(t *testing.T) {
 		`"no_proxy": true`,
 		`"session_end_installed": false`,
 		`"runs": false`,
-		`"reason": "disableAllHooks in /home/dev/.claude/settings.json"`,
+		`"reason": "disableAllHooks in user settings.json"`,
 		`"sessions": 4`,
 		`"last_read_at": "2026-09-10T08:30:00Z"`,
 		`"bytes_behind": 512`,

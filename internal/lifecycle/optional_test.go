@@ -38,7 +38,7 @@ func settingDecision(t *testing.T, e *env, hash string) (consent.SettingDecision
 
 func writeUserSettings(t *testing.T, e *env, contents string) {
 	t.Helper()
-	path := claudesettings.UserSettingsPath(e.deps.Home)
+	path := e.claude().UserSettingsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestEnableLeavesAUsersOwnTrueAlone(t *testing.T) {
 			},
 			wantSaid: "showThinkingSummaries is already true in your user settings.json.",
 			stillOn: func(t *testing.T, e *env) bool {
-				value, found := claudesettings.TopLevelBool(claudesettings.UserSettingsPath(e.deps.Home), optionalKey)
+				value, found := claudesettings.TopLevelBool(e.claude().UserSettingsPath(), optionalKey)
 				return found && value
 			},
 		},

@@ -221,7 +221,7 @@ func (m *Machine) doctorDiscoveryHint(f *report.Findings, ts report.TokenStoreSt
 	if !ts.Paired {
 		return
 	}
-	userSettings := claudesettings.UserSettingsPath(m.deps.Home)
+	userSettings := m.claude().UserSettingsPath()
 	if claudesettings.HasHook(userSettings, claudesettings.DiscoveryMarker) {
 		return
 	}

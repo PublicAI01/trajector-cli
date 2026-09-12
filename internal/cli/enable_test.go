@@ -64,3 +64,38 @@ func TestEnable_NoProxyFlagInstallsHooksWithoutABaseURL(t *testing.T) {
 		t.Errorf("grant = %+v, want the shape recorded on the grant", grant)
 	}
 }
+
+func TestEnable_HooksThatWillNotLoadNameTheSettingsRankNotAFile(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	p := e.StartProxy()
+	defer p.Stop()
+
+	managed := filepath.Join(e.Home(), "managed", "managed-settings.json")
+	if err := os.MkdirAll(filepath.Dir(managed), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managed, []byte(`{"disableAllHooks": true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := e.InProjectInput("yes\n", "enable")
+	if got.Exit != 0 {
+		t.Fatalf("enable = exit %d\nstdout: %s\nstderr: %s", got.Exit, got.Stdout, got.Stderr)
+	}
+	const opener = "Claude Code will not load trajector's hooks in this project ("
+	_, after, found := strings.Cut(got.Stdout, opener)
+	if !found {
+		t.Fatalf("stdout does not say the hooks will not load:\n%s", got.Stdout)
+	}
+	reason, _, found := strings.Cut(after, ")")
+	if !found {
+		t.Fatalf("the reading of the hooks is not closed off:\n%s", got.Stdout)
+	}
+	if reason != "disableAllHooks in managed settings" {
+		t.Errorf("reason = %q, want the setting and the rank that set it", reason)
+	}
+	if strings.ContainsAny(reason, `/\`) {
+		t.Errorf("reason = %q, want no file path in it", reason)
+	}
+}

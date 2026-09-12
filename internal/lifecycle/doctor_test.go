@@ -408,7 +408,7 @@ func TestDoctorFixesUpstreamDrift(t *testing.T) {
 
 func TestDoctorReinstallsTheDiscoveryHint(t *testing.T) {
 	e := newEnv(t)
-	userSettings := claudesettings.UserSettingsPath(e.deps.Home)
+	userSettings := e.claude().UserSettingsPath()
 	if claudesettings.HasHook(userSettings, claudesettings.DiscoveryMarker) {
 		t.Fatal("precondition: fresh env already has the discovery hook")
 	}

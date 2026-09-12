@@ -419,8 +419,7 @@ func TestIsProxyBaseURLStaysNarrow(t *testing.T) {
 }
 
 func TestUserHookInjectAndRemove(t *testing.T) {
-	home := t.TempDir()
-	path := UserSettingsPath(home)
+	path := hostUnder(t.TempDir()).UserSettingsPath()
 	cmd := `"/usr/local/bin/trajector" hook discovery`
 	if err := InjectUserHook(path, cmd); err != nil {
 		t.Fatal(err)
@@ -484,7 +483,7 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		setup      func(t *testing.T, project, home string)
+		setup      func(t *testing.T, project string, host Host)
 		getenv     func(string) string
 		wantValue  string
 		wantSource Source
@@ -492,13 +491,13 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 	}{
 		{
 			name:   "nothing configured",
-			setup:  func(t *testing.T, project, home string) {},
+			setup:  func(t *testing.T, project string, host Host) {},
 			getenv: shell(""),
 			wantOK: false,
 		},
 		{
 			name:       "shell env only",
-			setup:      func(t *testing.T, project, home string) {},
+			setup:      func(t *testing.T, project string, host Host) {},
 			getenv:     shell("https://relay.example.com"),
 			wantValue:  "https://relay.example.com",
 			wantSource: SourceShell,
@@ -506,8 +505,8 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 		},
 		{
 			name: "user settings beat shell",
-			setup: func(t *testing.T, project, home string) {
-				writeSettings(t, UserSettingsPath(home), envBaseURL, "https://user.example.com")
+			setup: func(t *testing.T, project string, host Host) {
+				writeSettings(t, host.UserSettingsPath(), envBaseURL, "https://user.example.com")
 			},
 			getenv:     shell("https://shell.example.com"),
 			wantValue:  "https://user.example.com",
@@ -516,8 +515,8 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 		},
 		{
 			name: "project settings beat user settings",
-			setup: func(t *testing.T, project, home string) {
-				writeSettings(t, UserSettingsPath(home), envBaseURL, "https://user.example.com")
+			setup: func(t *testing.T, project string, host Host) {
+				writeSettings(t, host.UserSettingsPath(), envBaseURL, "https://user.example.com")
 				writeSettings(t, filepath.Join(project, ".claude", "settings.json"), envBaseURL, "https://project.example.com")
 			},
 			getenv:     shell(""),
@@ -527,7 +526,7 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 		},
 		{
 			name: "project local beats everything",
-			setup: func(t *testing.T, project, home string) {
+			setup: func(t *testing.T, project string, host Host) {
 				writeSettings(t, filepath.Join(project, ".claude", "settings.json"), envBaseURL, "https://project.example.com")
 				writeSettings(t, ProjectLocalPath(project), envBaseURL, "https://local.example.com")
 			},
@@ -539,9 +538,9 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			project, home := t.TempDir(), t.TempDir()
-			tt.setup(t, project, home)
-			value, source, ok := effectiveEnv(project, home, envBaseURL, tt.getenv)
+			project, host := t.TempDir(), hostUnder(t.TempDir())
+			tt.setup(t, project, host)
+			value, source, ok := effectiveEnv(project, host, envBaseURL, tt.getenv)
 			if ok != tt.wantOK || value != tt.wantValue || source != tt.wantSource {
 				t.Errorf("effectiveEnv = %q, %q, %v; want %q, %q, %v", value, source, ok, tt.wantValue, tt.wantSource, tt.wantOK)
 			}
@@ -550,7 +549,7 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 }
 
 func TestExternalBaseURLSkipsOwnInjection(t *testing.T) {
-	project, home := t.TempDir(), t.TempDir()
+	project, host := t.TempDir(), hostUnder(t.TempDir())
 	if err := InjectProject(ProjectLocalPath(project), testBaseURL, testHooks); err != nil {
 		t.Fatal(err)
 	}
@@ -560,13 +559,13 @@ func TestExternalBaseURLSkipsOwnInjection(t *testing.T) {
 		}
 		return ""
 	}
-	value, source, resolution := ExternalBaseURL(project, home, getenv)
+	value, source, resolution := ExternalBaseURL(project, host, getenv)
 	if resolution != BaseURLExternal || value != "https://relay.example.com" || source != SourceShell {
 		t.Errorf("ExternalBaseURL = %q, %q, %v", value, source, resolution)
 	}
 
 	noShell := func(string) string { return "" }
-	if _, _, resolution := ExternalBaseURL(project, home, noShell); resolution != BaseURLNone {
+	if _, _, resolution := ExternalBaseURL(project, host, noShell); resolution != BaseURLNone {
 		t.Errorf("own injection reported as %v, want nothing configured", resolution)
 	}
 }
@@ -578,7 +577,7 @@ func TestOurOwnInjectionInTheEnvironmentHidesTheAnswerRatherThanBeingOne(t *test
 	// user's relay from there — and must say so, because answering
 	// "nothing configured" is how a relay user's traffic ends up at the
 	// official endpoint carrying credentials that endpoint will reject.
-	project, home := t.TempDir(), t.TempDir()
+	project, host := t.TempDir(), hostUnder(t.TempDir())
 	if err := InjectProject(ProjectLocalPath(project), testBaseURL, testHooks); err != nil {
 		t.Fatal(err)
 	}
@@ -588,30 +587,30 @@ func TestOurOwnInjectionInTheEnvironmentHidesTheAnswerRatherThanBeingOne(t *test
 		}
 		return ""
 	}
-	if _, _, resolution := ExternalBaseURL(project, home, inSession); resolution != BaseURLMasked {
+	if _, _, resolution := ExternalBaseURL(project, host, inSession); resolution != BaseURLMasked {
 		t.Errorf("ExternalBaseURL = %v, want the answer reported as hidden", resolution)
 	}
 
 	// A relay the user put in the project's shared settings is still
-	// visible from inside a session: only the shell layer is masked.
+	// visible from inside a session: only the shell rank is masked.
 	if err := os.WriteFile(projectSharedPath(project), []byte(`{"env":{"ANTHROPIC_BASE_URL":"https://relay.example.com"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	value, source, resolution := ExternalBaseURL(project, home, inSession)
+	value, source, resolution := ExternalBaseURL(project, host, inSession)
 	if resolution != BaseURLExternal || value != "https://relay.example.com" || source != SourceProject {
 		t.Errorf("ExternalBaseURL = %q, %q, %v; want the relay in the shared settings", value, source, resolution)
 	}
 }
 
 func TestUnsupportedChannelDetection(t *testing.T) {
-	project, home := t.TempDir(), t.TempDir()
+	project, host := t.TempDir(), hostUnder(t.TempDir())
 	getenv := func(key string) string {
 		if key == "CLAUDE_CODE_USE_BEDROCK" {
 			return "1"
 		}
 		return ""
 	}
-	key, found := UnsupportedChannel(project, home, getenv)
+	key, found := UnsupportedChannel(project, host, getenv)
 	if !found || key != "CLAUDE_CODE_USE_BEDROCK" {
 		t.Errorf("UnsupportedChannel = %q, %v", key, found)
 	}
@@ -621,7 +620,7 @@ func TestUnsupportedChannelDetection(t *testing.T) {
 		}
 		return ""
 	}
-	if _, found := UnsupportedChannel(project, home, off); found {
+	if _, found := UnsupportedChannel(project, host, off); found {
 		t.Error("disabled channel flag reported as unsupported")
 	}
 }

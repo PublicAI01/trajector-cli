@@ -8,6 +8,12 @@ import (
 	"testing"
 )
 
+// hostUnder is a Claude Code host whose every directory is inside dir,
+// so a test never reads the developer's own Claude Code files.
+func hostUnder(dir string) Host {
+	return Host{ConfigDir: filepath.Join(dir, "claude"), ManagedDir: filepath.Join(dir, "managed")}
+}
+
 func writeFileAt(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -86,7 +92,7 @@ func TestClassifySetting_ChainPrecedenceDecidesStateAndSource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			project, home := t.TempDir(), t.TempDir()
+			project, host := t.TempDir(), hostUnder(t.TempDir())
 			if tt.projectLocal != "" {
 				writeFileAt(t, ProjectLocalPath(project), tt.projectLocal)
 			}
@@ -94,9 +100,9 @@ func TestClassifySetting_ChainPrecedenceDecidesStateAndSource(t *testing.T) {
 				writeFileAt(t, projectSharedPath(project), tt.project)
 			}
 			if tt.user != "" {
-				writeFileAt(t, UserSettingsPath(home), tt.user)
+				writeFileAt(t, host.UserSettingsPath(), tt.user)
 			}
-			got := ClassifySetting(project, home, KeyShowThinkingSummaries, tt.writtenByUs)
+			got := ClassifySetting(project, host, KeyShowThinkingSummaries, tt.writtenByUs)
 			if got != tt.want {
 				t.Errorf("ClassifySetting = %+v, want %+v", got, tt.want)
 			}
@@ -105,14 +111,14 @@ func TestClassifySetting_ChainPrecedenceDecidesStateAndSource(t *testing.T) {
 }
 
 func TestClassifySetting_ExplicitFalseIsNotUnset(t *testing.T) {
-	project, home := t.TempDir(), t.TempDir()
-	writeFileAt(t, UserSettingsPath(home), `{"other": true}`)
-	if got := ClassifySetting(project, home, KeyShowThinkingSummaries, false); got.State != Unset {
+	project, host := t.TempDir(), hostUnder(t.TempDir())
+	writeFileAt(t, host.UserSettingsPath(), `{"other": true}`)
+	if got := ClassifySetting(project, host, KeyShowThinkingSummaries, false); got.State != Unset {
 		t.Errorf("absent key classified as %+v, want Unset", got)
 	}
-	writeFileAt(t, UserSettingsPath(home), `{"showThinkingSummaries": false}`)
+	writeFileAt(t, host.UserSettingsPath(), `{"showThinkingSummaries": false}`)
 	want := SettingStatus{State: OffByUser, Source: SourceUser}
-	if got := ClassifySetting(project, home, KeyShowThinkingSummaries, false); got != want {
+	if got := ClassifySetting(project, host, KeyShowThinkingSummaries, false); got != want {
 		t.Errorf("explicit false classified as %+v, want %+v", got, want)
 	}
 }

@@ -58,17 +58,17 @@ func (e *env) sessionFile(sid string, mtime time.Time) string {
 }
 
 // lockHooksInUserSettings writes the one user-scope setting that keeps
-// every hook from loading.
+// every hook from loading, and returns what the reading of it names.
 func (e *env) lockHooksInUserSettings() string {
 	e.t.Helper()
-	path := claudesettings.UserSettingsPath(e.deps.Home)
+	path := e.claude().UserSettingsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		e.t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(`{"disableAllHooks": true}`), 0o600); err != nil {
 		e.t.Fatal(err)
 	}
-	return path
+	return "disableAllHooks in " + string(claudesettings.SourceUser)
 }
 
 // readOnlyDir takes the write permission off a directory the machine is
@@ -338,7 +338,7 @@ func TestEnable_NoProxyWithHooksThatWillNotRunAsksFirst(t *testing.T) {
 			e := newEnv(t)
 			e.startProxy()
 			e.acceptCurrentAgreement()
-			lock := e.lockHooksInUserSettings()
+			reason := e.lockHooksInUserSettings()
 			e.sessionFile("s-1", time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC))
 			consentBefore := e.consentFileContents()
 			e.stdin = tt.stdin
@@ -346,7 +346,7 @@ func TestEnable_NoProxyWithHooksThatWillNotRunAsksFirst(t *testing.T) {
 			e.enable(proxytest.WithoutProxy)
 
 			out := e.stdout.String()
-			assertOrdered(t, out, hooksWillNotLoadLine+" (disableAllHooks in "+lock+")", noProxyNothingLine, enableAnywayPrompt)
+			assertOrdered(t, out, hooksWillNotLoadLine+" ("+reason+")", noProxyNothingLine, enableAnywayPrompt)
 			if strings.Contains(out, proxyHalfOnlyLine) {
 				t.Errorf("the consequence of the other shape was said:\n%s", out)
 			}
@@ -386,13 +386,13 @@ func TestEnable_WithProxyAndDeadHooksSaysSo(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.acceptCurrentAgreement()
-	lock := e.lockHooksInUserSettings()
+	reason := e.lockHooksInUserSettings()
 	e.stdin = ""
 
 	e.enable(proxytest.WithProxy)
 
 	out := e.stdout.String()
-	assertOrdered(t, out, hooksWillNotLoadLine+" (disableAllHooks in "+lock+")", proxyHalfOnlyLine, "Injected ", contributesLine)
+	assertOrdered(t, out, hooksWillNotLoadLine+" ("+reason+")", proxyHalfOnlyLine, "Injected ", contributesLine)
 	for _, m := range []string{noProxyNothingLine, enableAnywayPrompt} {
 		if strings.Contains(out, m) {
 			t.Errorf("unexpected %q:\n%s", m, out)

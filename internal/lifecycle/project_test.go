@@ -474,7 +474,7 @@ func enabledOverAUsersOwnRelay(t *testing.T) *env {
 // names once trajector's own injection is out of the way.
 func ownBaseURL(t *testing.T, e *env) string {
 	t.Helper()
-	value, _, _ := claudesettings.ExternalBaseURL(e.canonicalRoot(), e.deps.Home, e.deps.Getenv)
+	value, _, _ := claudesettings.ExternalBaseURL(e.canonicalRoot(), e.claude(), e.deps.Getenv)
 	return value
 }
 

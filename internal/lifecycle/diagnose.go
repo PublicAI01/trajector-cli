@@ -207,7 +207,7 @@ func (m *Machine) sessionFilesState(st report.ProjectStatus, reading SessionFile
 // alone, and a run that diagnoses must leave the state it diagnosed as
 // it found it.
 func (m *Machine) readProjectTree(state report.SessionFilesState, st report.ProjectStatus, registered []follow.File) report.SessionFilesState {
-	found, err := discover.Walk(st.Root, m.claudeConfigDir())
+	found, err := discover.Walk(st.Root, m.claude().ConfigDir)
 	if err != nil {
 		state.WalkErr = err
 		return state

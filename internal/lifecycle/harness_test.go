@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -247,9 +248,15 @@ func (e *env) consentStore() *consent.Store {
 
 func (e *env) layout() userdirs.Layout { return e.deps.Layout }
 
+// claude locates Claude Code's directories the way the machine under
+// test locates them.
+func (e *env) claude() claudesettings.Host {
+	return claudesettings.HostFor(runtime.GOOS, e.deps.Home, e.deps.Getenv)
+}
+
 func (e *env) userSettingsContents() string {
 	e.t.Helper()
-	data, err := os.ReadFile(claudesettings.UserSettingsPath(e.deps.Home))
+	data, err := os.ReadFile(e.claude().UserSettingsPath())
 	if err != nil {
 		e.t.Fatal(err)
 	}

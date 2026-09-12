@@ -28,7 +28,7 @@ func TestLoginPairsStoresTheTokenAndResumesRecording(t *testing.T) {
 	if reason := e.sandbox.PausedReason(); reason != "" {
 		t.Errorf("pause %q survived login", reason)
 	}
-	if !claudesettings.HasHook(claudesettings.UserSettingsPath(e.deps.Home), claudesettings.DiscoveryMarker) {
+	if !claudesettings.HasHook(e.claude().UserSettingsPath(), claudesettings.DiscoveryMarker) {
 		t.Error("discovery hint not installed")
 	}
 	if !strings.Contains(e.stdout.String(), "example.com/pair") {
@@ -375,7 +375,7 @@ func TestUninstallRemovesEveryInjectionAndKeepsDataByDefault(t *testing.T) {
 	if e.status().InjectedBaseURL != "" {
 		t.Error("project injection survived uninstall")
 	}
-	if claudesettings.HasHook(claudesettings.UserSettingsPath(e.deps.Home), claudesettings.DiscoveryMarker) {
+	if claudesettings.HasHook(e.claude().UserSettingsPath(), claudesettings.DiscoveryMarker) {
 		t.Error("discovery hint survived uninstall")
 	}
 	if !e.machine().Paired() {
