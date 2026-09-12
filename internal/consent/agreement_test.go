@@ -16,7 +16,7 @@ import (
 const (
 	pinnedAgreementVersionSHA256 = "febdcffe80f65f132f958ab62dd154c630d3c2e768c2695482afc6819eae0907"
 	pinnedAgreementTextSHA256    = "c8d12e67d4d1b0766e0829131099af33313c7a231f0b7c2a848d3fafebeed4c9"
-	pinnedPrivacyMarkdownSHA256  = "cef4bf92cbe188def22f45b8f3c26f4796e3841519b23f32d70cf2bc0fa2afac"
+	pinnedPrivacyMarkdownSHA256  = "5fa93513748657528fdf12c3b96b69acd49428af3f0fb53008ff1fbea8342c6a"
 )
 
 const privacyMarkdownPath = "../../PRIVACY.md"

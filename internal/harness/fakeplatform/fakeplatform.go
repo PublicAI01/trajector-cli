@@ -23,7 +23,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
-// Request is one recorded call to the fake service.
+// Request is one HTTP request the fake service received.
 type Request struct {
 	Method string
 	// URL is the full request URI including any query string.

@@ -54,6 +54,6 @@ func (m *Machine) Forget(sessionID string, io IO) error {
 	if err != nil {
 		return fmt.Errorf("deleting session %s: %w", sessionID, err)
 	}
-	fmt.Fprintf(io.Out, "Deleted %d recorded call(s) and %d session record(s).\n", rawcalls, records)
+	fmt.Fprintf(io.Out, "Deleted %d record(s) and %d session record(s).\n", rawcalls, records)
 	return nil
 }

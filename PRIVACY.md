@@ -54,11 +54,12 @@ them, and session lines stay exactly as Claude Code wrote them.
 - **Credentials.** `Authorization`, `x-api-key`, and other credential
   headers are never written to disk, in any file, in any state.
 - **Project paths.** Stored records and uploads identify a project only by a
-  hash of its root path. In session records, the fields that say where the
-  project lives on disk are masked before upload. Tool results are kept as
-  observed: their text may contain file paths from your machine, and
-  trajector does not rewrite it, because rewriting it would destroy the data
-  itself.
+  hash of its root path. In session records, the few fields whose value is
+  the directory the session ran in are masked before upload. Every other path
+  is kept as observed: the environment description Claude Code writes at the
+  start of a session, and your tool results, may hold file paths from your
+  machine, and trajector does not rewrite them, because rewriting them would
+  destroy the data itself.
 - **Telemetry.** There is no separate reporting channel. A handful of
   counters (records captured, stream reassembly failures, spool usage) ride
   along inside data uploads you already consented to; no upload, no
@@ -82,11 +83,16 @@ redaction pass**. It masks secrets — API keys, tokens, passwords, and other
 credential-shaped strings — and personally identifying strings — email
 addresses and phone numbers — while preserving JSON structure, message
 order, tool-call pairing, and thinking signatures. In session records, the
-fields that say where the project lives on disk are masked first, and the
-lines then pass the same redaction as recorded calls. **Unredacted data
-never leaves your machine.** Known limitation: masking applies to
-values only — a secret placed in a JSON key position is not masked, because
-keys are structure and the pass never rewrites them.
+few fields whose value is, by construction, the directory the session ran in
+— `cwd` is the one you will recognize — are replaced with a placeholder
+first, and the lines then pass the same redaction as recorded calls. Every
+other path is uploaded as observed, including the working directory stated
+in the environment description Claude Code writes at the start of a session,
+and any file your messages and tool results name: trajector does not rewrite
+an observation, because rewriting it would destroy the record.
+**Unredacted data never leaves your machine.** Known limitation: masking
+applies to values only — a secret placed in a JSON key position is not
+masked, because keys are structure and the pass never rewrites them.
 
 ## Settings we ask you to change
 

@@ -75,7 +75,7 @@ func TestForget_DeletesBothKindsAndLeavesOtherSessions(t *testing.T) {
 				t.Fatalf("forget: %v\nstdout: %s", err, e.stdout)
 			}
 
-			if !strings.Contains(e.stdout.String(), "Deleted 1 recorded call(s) and 2 session record(s).\n") {
+			if !strings.Contains(e.stdout.String(), "Deleted 1 record(s) and 2 session record(s).\n") {
 				t.Errorf("stdout = %q, want both counts reported", e.stdout)
 			}
 			rawcalls, records := spoolHeld(e)
@@ -108,7 +108,7 @@ func TestForget_UploadedRecordsAreNotAffected(t *testing.T) {
 		t.Fatalf("forget: %v\nstdout: %s", err, e.stdout)
 	}
 
-	if !strings.Contains(e.stdout.String(), "Deleted 0 recorded call(s) and 0 session record(s).\n") {
+	if !strings.Contains(e.stdout.String(), "Deleted 0 record(s) and 0 session record(s).\n") {
 		t.Errorf("stdout = %q, want nothing deleted, and said so", e.stdout)
 	}
 	var uploaded strings.Builder
@@ -133,7 +133,7 @@ func TestForget_PrintsTheAgreedWording(t *testing.T) {
 	if err := e.machine().Forget(sessionOne, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	want := forgetIntroFor(sessionOne) + "Deleted 0 recorded call(s) and 0 session record(s).\n"
+	want := forgetIntroFor(sessionOne) + "Deleted 0 record(s) and 0 session record(s).\n"
 	if got := e.stdout.String(); got != want {
 		t.Errorf("stdout =\n%q\nwant\n%q", got, want)
 	}

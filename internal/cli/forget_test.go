@@ -40,7 +40,7 @@ func TestForget_DefaultsToTheCurrentSession(t *testing.T) {
 	if !strings.Contains(got.Stdout, "Forgetting session "+sessionOne+":") {
 		t.Errorf("stdout = %q, want the current session named", got.Stdout)
 	}
-	if !strings.Contains(got.Stdout, "Deleted 1 recorded call(s) and 1 session record(s).") {
+	if !strings.Contains(got.Stdout, "Deleted 1 record(s) and 1 session record(s).") {
 		t.Errorf("stdout = %q, want both counts reported", got.Stdout)
 	}
 	if held := e.Sandbox().SessionsHeld(); held[sessionOne] != 0 || held[sessionTwo] != 2 {
@@ -130,7 +130,7 @@ func TestForget_PrintsTheAgreedWording(t *testing.T) {
 	want := "Forgetting session " + sessionOne + ": deleting its records that have not been uploaded yet from this machine. " +
 		"Uploaded data is deleted from the Dashboard instead. " +
 		"Recording of this session continues; only what was collected so far is gone.\n" +
-		"Deleted 0 recorded call(s) and 0 session record(s).\n"
+		"Deleted 0 record(s) and 0 session record(s).\n"
 	if got.Exit != 0 || got.Stdout != want || got.Stderr != "" {
 		t.Errorf("got %+v\nwant exit 0, empty stderr, stdout:\n%q", got, want)
 	}
