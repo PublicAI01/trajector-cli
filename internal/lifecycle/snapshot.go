@@ -17,7 +17,8 @@ import (
 // instead: the routing table and the consent store through their stores,
 // the project's .gitignore through claudesettings.RemoveGitIgnored. That
 // last one was in this list until 2026-08-27, which made a rolled-back
-// enable rewrite a file it may never have touched.
+// enable rewrite a file it may never have touched. Both kinds of undo go
+// on the same ledger, which replays them in reverse.
 type fileSnapshot struct {
 	path    string
 	data    []byte

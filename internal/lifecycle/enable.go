@@ -65,12 +65,24 @@ func projectHooks(execPath string) claudesettings.HookCommands {
 }
 
 // enableProject drives the enable state machine to completion or rolls
-// back. It is idempotent and transactional: it either reaches the fully
-// injected, self-checked state or restores every file it touched. The
-// invariant it protects: a project with an injected base URL always has
-// its token in the routing table and all three session hooks present —
-// a half-enabled project routing traffic at a dead port must be
-// impossible.
+// back. It is idempotent and transactional: every change it makes goes
+// on a ledger with the way to take it back, and a failure replays the
+// ledger in reverse. Five artifacts are on it — the routing grant, the
+// project's consent record, its session file registry, the
+// project-local settings file, and the .gitignore lines this install
+// appended — so enable either reaches the fully injected, self-checked
+// state or leaves all five as it found them.
+//
+// Two writes stand outside the ledger, both made before the first
+// change to any of the five: accepting the data agreement, and
+// resuming capture that was paused for reconfirmation. They are the
+// answer the user gave about this device, not an edit enable made to
+// this project, and a failure in this project does not withdraw it.
+//
+// The invariant it protects: a project with an injected base URL always
+// has its token in the routing table and all three session hooks
+// present — a half-enabled project routing traffic at a dead port must
+// be impossible.
 //
 // Everything the user is told before the install — the agreement, a
 // hook configuration that will not load, a base URL of their own, the
@@ -172,60 +184,54 @@ func (m *Machine) enableProject(projectDir string, shape routing.Shape, io IO) e
 	// line — to the rollback. .gitignore was snapshotted whole until
 	// 2026-08-27; see RemoveGitIgnored for what that cost. Only the
 	// project-local settings file, which is this tool's own, is
-	// snapshotted whole.
-	snap, err := takeSnapshots(st.SettingsPath())
-	if err != nil {
-		return err
-	}
-	grants, err := m.routes.SnapshotGrants(st.Root)
-	if err != nil {
-		return err
-	}
-	decision, err := m.consent.SnapshotProject(st.Hash)
+	// snapshotted whole. All three are read before the first change, so
+	// an enable that must refuse — a symbolic link where the settings
+	// file belongs — refuses with nothing to take back.
+	prior, err := m.readBeforeChanging(st)
 	if err != nil {
 		return err
 	}
 
-	var undo enableUndo
-	if err := m.installAndVerify(io, st, upstream, shape, earlier, &undo); err != nil {
-		restoreErr := errors.Join(
-			snap.restore(),
-			claudesettings.RemoveGitIgnored(st.Root, undo.ignoreRules),
-			m.routes.RestoreGrants(grants),
-			m.consent.RestoreProject(decision),
-			m.unregisterIfRegisteredHere(st.Hash, undo),
-		)
-		if restoreErr != nil {
-			return fmt.Errorf("%w (rollback incomplete: %v)", err, restoreErr)
+	var ledger enableLedger
+	if err := m.installAndVerify(io, st, upstream, shape, earlier, prior, &ledger); err != nil {
+		if undoErr := ledger.undo(); undoErr != nil {
+			return fmt.Errorf("%w (rollback incomplete: %v)", err, undoErr)
 		}
 		return fmt.Errorf("%w (all changes rolled back)", err)
 	}
 	return nil
 }
 
-// enableUndo records what an install changed outside the files enable
-// snapshots whole, so a rollback can undo exactly that. It is filled in
-// as the install proceeds rather than returned from it: an install that
-// fails midway has already made some of these changes, and a value
-// threaded through every error return is one an error return can drop.
-type enableUndo struct {
-	// ignoreRules are the .gitignore lines this install appended, in the
-	// order it appended them.
-	ignoreRules []string
-	// registeredHere reports that this install created the project's
-	// session file registry. A registry that already stood — from an
-	// earlier enable, or from a session's own hooks — is not this
-	// install's to take back.
-	registeredHere bool
+// priorState is what enable read of the artifacts it is about to
+// change. Each value carries the whole of what one undo needs, so an
+// undo recorded on the ledger stands on its own.
+type priorState struct {
+	settings snapshots
+	grants   routing.GrantSnapshot
+	decision consent.ProjectSnapshot
 }
 
-func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream string, shape routing.Shape, earlier discover.Result, undo *enableUndo) error {
+func (m *Machine) readBeforeChanging(st report.ProjectStatus) (priorState, error) {
+	var prior priorState
+	var err error
+	if prior.settings, err = takeSnapshots(st.SettingsPath()); err != nil {
+		return prior, err
+	}
+	if prior.grants, err = m.routes.SnapshotGrants(st.Root); err != nil {
+		return prior, err
+	}
+	prior.decision, err = m.consent.SnapshotProject(st.Hash)
+	return prior, err
+}
+
+func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream string, shape routing.Shape, earlier discover.Result, prior priorState, ledger *enableLedger) error {
 	token, err := projectToken(st)
 	if err != nil {
 		return err
 	}
 	settingsPath := st.SettingsPath()
 	now := m.now()
+	ledger.record(func() error { return m.routes.RestoreGrants(prior.grants) })
 	if err := m.routes.Grant(routing.Grant{
 		Token:         token,
 		ProjectIDHash: st.Hash,
@@ -236,13 +242,15 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 	}); err != nil {
 		return fmt.Errorf("updating routing table: %w", err)
 	}
+	ledger.record(func() error { return m.consent.RestoreProject(prior.decision) })
 	if err := m.consent.SetProjectState(st.Hash, st.Root, consent.StateGranted, now); err != nil {
 		return fmt.Errorf("recording project consent: %w", err)
 	}
-	if err := m.registerEarlierSessions(st.Hash, earlier, undo); err != nil {
+	if err := m.registerEarlierSessions(st.Hash, earlier, ledger); err != nil {
 		return fmt.Errorf("registering this project's session files: %w", err)
 	}
 	m.offerOptionalSettings(io, st)
+	ledger.record(prior.settings.restore)
 	restored, unrestored, err := m.injectProject(st, token, shape)
 	if err != nil {
 		return fmt.Errorf("injecting %s: %w", settingsPath, err)
@@ -259,6 +267,7 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		fmt.Fprintf(io.Out, "Injected %s (base URL and session hooks)\n", settingsPath)
 	}
 
+	var appended []string
 	symlinked := false
 	for _, rule := range projectIgnoreRules {
 		action, err := claudesettings.EnsureGitIgnored(st.Root, rule)
@@ -267,15 +276,14 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		}
 		switch action {
 		case claudesettings.IgnoreAppended:
-			// Recorded on the undo before anything else can fail, so a
-			// rollback takes back every line that actually landed.
-			undo.ignoreRules = append(undo.ignoreRules, rule)
+			appended = append(appended, rule)
+			ledger.record(func() error { return claudesettings.RemoveGitIgnored(st.Root, []string{rule}) })
 		case claudesettings.IgnoreSymlinked:
 			symlinked = true
 		}
 	}
-	if len(undo.ignoreRules) > 0 {
-		fmt.Fprintf(io.Out, "Added %s to .gitignore\n", strings.Join(undo.ignoreRules, ", "))
+	if len(appended) > 0 {
+		fmt.Fprintf(io.Out, "Added %s to .gitignore\n", strings.Join(appended, ", "))
 	}
 	if symlinked {
 		fmt.Fprintf(io.Err, "WARNING: .gitignore is a symbolic link and was left alone; add %s to your git ignores so the injected settings and diagnostic bundles are never committed.\n", strings.Join(projectIgnoreRules, ", "))
@@ -356,24 +364,19 @@ func (m *Machine) confirmHooksWillRun(io IO, root string, shape routing.Shape) (
 }
 
 // registerEarlierSessions puts the session files found before the
-// install into the project's registry, noting on the undo whether the
-// registry is this install's own creation.
-func (m *Machine) registerEarlierSessions(projectIDHash string, found discover.Result, undo *enableUndo) error {
+// install into the project's registry. The registry goes on the ledger
+// only when this install is the one creating it: a registry that
+// already stood — from an earlier enable, or from a session's own
+// hooks — is not this install's to take back.
+func (m *Machine) registerEarlierSessions(projectIDHash string, found discover.Result, ledger *enableLedger) error {
 	projects, err := m.registry.Projects()
 	if err != nil {
 		return err
 	}
-	undo.registeredHere = !slices.Contains(projects, projectIDHash)
-	return discover.Register(m.registry, projectIDHash, found)
-}
-
-// unregisterIfRegisteredHere takes back the registry a failed install
-// created, and leaves one that stood before it alone.
-func (m *Machine) unregisterIfRegisteredHere(projectIDHash string, undo enableUndo) error {
-	if !undo.registeredHere {
-		return nil
+	if !slices.Contains(projects, projectIDHash) {
+		ledger.record(func() error { return m.registry.Unregister(projectIDHash) })
 	}
-	return m.registry.Unregister(projectIDHash)
+	return discover.Register(m.registry, projectIDHash, found)
 }
 
 // confirmAgreement shows the agreement and records the explicit

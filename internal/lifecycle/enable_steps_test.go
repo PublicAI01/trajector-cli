@@ -71,6 +71,17 @@ func (e *env) lockHooksInUserSettings() string {
 	return path
 }
 
+// readOnlyDir takes the write permission off a directory the machine is
+// about to write into, and puts it back when the test ends so the
+// temporary tree can be removed.
+func (e *env) readOnlyDir(dir string) {
+	e.t.Helper()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		e.t.Fatal(err)
+	}
+	e.t.Cleanup(func() { os.Chmod(dir, 0o755) })
+}
+
 func (e *env) acceptCurrentAgreement() {
 	e.t.Helper()
 	if err := e.consentStore().AcceptAgreement(consent.AgreementVersion, "2026-08-01T00:00:00Z"); err != nil {
@@ -526,6 +537,79 @@ func TestEnable_RollbackUnregistersWhatItRegistered(t *testing.T) {
 				t.Errorf("registry survived rollback: %v", got)
 			case tt.registered && (len(got) == 0 || got[0] != earlier):
 				t.Errorf("registry after rollback = %v, want %q kept", got, earlier)
+			}
+		})
+	}
+}
+
+func TestEnable_RollsBackEveryChangeWhereverItFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permissions do not bind root")
+	}
+	const ignoreBefore = "build/\n"
+	tests := []struct {
+		name    string
+		prepare func(e *env)
+		wantErr string
+	}{
+		{
+			name: "the settings file cannot be written",
+			prepare: func(e *env) {
+				e.readOnlyDir(filepath.Dir(e.settingsPath()))
+			},
+			wantErr: "injecting ",
+		},
+		{
+			name: "the ignore lines cannot be written",
+			prepare: func(e *env) {
+				e.readOnlyDir(e.canonicalRoot())
+			},
+			wantErr: "ensuring .gitignore covers",
+		},
+		{
+			name:    "the self-check finds a foreign port",
+			prepare: func(e *env) { e.occupyPort() },
+			wantErr: "self-check failed",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.gitRepo()
+			e.sandbox.Pause(proxytest.PauseConsentReconfirm)
+			e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
+			ignorePath := filepath.Join(e.canonicalRoot(), ".gitignore")
+			if err := os.WriteFile(ignorePath, []byte(ignoreBefore), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(e.settingsPath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tt.prepare(e)
+
+			err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
+
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) || !strings.Contains(err.Error(), "all changes rolled back") {
+				t.Fatalf("err = %v, want %q and every change taken back", err, tt.wantErr)
+			}
+			if st := e.status(); st.Enabled || st.Injected || st.ConsentState != "" {
+				t.Errorf("status = %+v, want nothing recorded for the project", st)
+			}
+			if _, err := os.Stat(e.settingsPath()); !os.IsNotExist(err) {
+				t.Error("the settings injection survived the rollback")
+			}
+			if got := e.registeredPaths(e.canonicalRoot()); len(got) != 0 {
+				t.Errorf("registered session files survived the rollback: %v", got)
+			}
+			if got, err := os.ReadFile(ignorePath); err != nil || string(got) != ignoreBefore {
+				t.Errorf(".gitignore = %q, %v, want %q", got, err, ignoreBefore)
+			}
+			version, _, err := e.consentStore().AcceptedVersion()
+			if err != nil || version != consent.AgreementVersion {
+				t.Errorf("accepted agreement version = %q, %v, want %q kept", version, err, consent.AgreementVersion)
+			}
+			if reason := e.sandbox.PausedReason(); reason != "" {
+				t.Errorf("capture is paused for %q after the rollback", reason)
 			}
 		})
 	}
