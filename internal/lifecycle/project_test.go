@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
@@ -53,10 +52,10 @@ func TestEnableInjectsRoutesAndSelfChecks(t *testing.T) {
 	if !st.Consistent() {
 		t.Error("status does not read as consistent after enable")
 	}
-	if st.AgreementVersion != consent.AgreementVersion {
+	if st.AgreementVersion != proxytest.AgreementVersion {
 		t.Errorf("accepted agreement = %q", st.AgreementVersion)
 	}
-	if st.ConsentState != consent.StateGranted {
+	if st.ConsentState != proxytest.Granted {
 		t.Errorf("project consent = %q", st.ConsentState)
 	}
 
@@ -116,10 +115,7 @@ func TestEnableDeclinedLeavesNoTrace(t *testing.T) {
 func TestEnableSkipsPromptWhenAlreadyAccepted(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	consents := e.consentStore()
-	if err := consents.AcceptAgreement(consent.AgreementVersion, "2026-08-01T00:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
 	e.stdin = ""
 
 	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
@@ -133,10 +129,7 @@ func TestEnableSkipsPromptWhenAlreadyAccepted(t *testing.T) {
 func TestEnableStaleAgreementRepromptsAndResumesCapture(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	consents := e.consentStore()
-	if err := consents.AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z")
 	e.sandbox.Pause(proxytest.PauseConsentReconfirm)
 
 	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
@@ -145,8 +138,8 @@ func TestEnableStaleAgreementRepromptsAndResumesCapture(t *testing.T) {
 	if !strings.Contains(e.stdout.String(), "agreement changed") {
 		t.Errorf("stdout = %q", e.stdout)
 	}
-	version, _, _ := consents.AcceptedVersion()
-	if version != consent.AgreementVersion {
+	version, _ := e.sandbox.AcceptedAgreement()
+	if version != proxytest.AgreementVersion {
 		t.Errorf("accepted version = %q", version)
 	}
 	if reason := e.sandbox.PausedReason(); reason != "" {
@@ -206,7 +199,7 @@ func TestEnableRollsBackWhenPortIsForeign(t *testing.T) {
 	if st.ConsentState != "" {
 		t.Error("project consent record survived rollback")
 	}
-	if st.AgreementVersion != consent.AgreementVersion {
+	if st.AgreementVersion != proxytest.AgreementVersion {
 		t.Error("agreement acceptance must survive rollback: the user did accept it")
 	}
 }
@@ -284,7 +277,7 @@ func TestDisableRemovesInjectionRevokesAndDeletesProjectData(t *testing.T) {
 	if known, recording := e.sandbox.Recording(route.Token); !known || recording {
 		t.Error("revoked token must stay resolvable for forwarding, with recording off")
 	}
-	if after.ConsentState != consent.StateDenied {
+	if after.ConsentState != proxytest.Denied {
 		t.Errorf("consent state = %q, want denied", after.ConsentState)
 	}
 

@@ -16,7 +16,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
@@ -176,11 +175,7 @@ func (e *env) obstruct(dir string) {
 
 func (e *env) canonicalRoot() string {
 	e.t.Helper()
-	root, err := consent.CanonicalRoot(e.project)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return root
+	return proxytest.CanonicalRoot(e.t, e.project)
 }
 
 func (e *env) settingsPath() string {
@@ -240,10 +235,6 @@ func (e *env) status() report.ProjectStatus {
 		e.t.Fatal(err)
 	}
 	return st
-}
-
-func (e *env) consentStore() *consent.Store {
-	return consent.Open(e.deps.Layout.ConsentFile())
 }
 
 func (e *env) layout() userdirs.Layout { return e.deps.Layout }

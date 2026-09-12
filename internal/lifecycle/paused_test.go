@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
@@ -25,9 +24,7 @@ func TestEnableExplainsWhyRecordingIsPaused(t *testing.T) {
 			e.startProxy()
 			// Accepting the current agreement first keeps enable from
 			// lifting the pause on its way through.
-			if err := e.consentStore().AcceptAgreement(consent.AgreementVersion, "2026-08-01T00:00:00Z"); err != nil {
-				t.Fatal(err)
-			}
+			e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
 			e.sandbox.Pause(tt.reason)
 
 			err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())

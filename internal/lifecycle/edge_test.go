@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
@@ -374,10 +373,7 @@ func TestEnableFailsWhenAcceptanceCannotBeRecorded(t *testing.T) {
 func TestEnableRollsBackWhenRoutingTableUnwritable(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	consents := e.consentStore()
-	if err := consents.AcceptAgreement(consent.AgreementVersion, "2026-08-01T00:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
 	readOnly(t, filepath.Dir(e.layout().ConsentFile()))
 
 	err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
@@ -392,10 +388,7 @@ func TestEnableRollsBackWhenRoutingTableUnwritable(t *testing.T) {
 func TestEnableFailsOnMalformedRoutingTable(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	consents := e.consentStore()
-	if err := consents.AcceptAgreement(consent.AgreementVersion, "2026-08-01T00:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
 	tablePath := e.layout().RoutingTable()
 	if err := os.WriteFile(tablePath, []byte("{"), 0o600); err != nil {
 		t.Fatal(err)

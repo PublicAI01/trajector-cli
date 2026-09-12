@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
@@ -21,7 +20,7 @@ const (
 // surface can be shown to have left it alone.
 func (e *env) registryBytes() string {
 	e.t.Helper()
-	data, err := os.ReadFile(filepath.Join(e.layout().FollowDir(), consent.ProjectIDHash(e.canonicalRoot())+".json"))
+	data, err := os.ReadFile(filepath.Join(e.layout().FollowDir(), proxytest.ProjectIDHash(e.canonicalRoot())+".json"))
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -185,7 +184,7 @@ func TestStatusAndDoctorTakeAnIdleProxyAsNormalWhereNoProjectUsesIt(t *testing.T
 		root := e.canonicalRoot()
 		e.sandbox.GrantProject(proxytest.Grant{
 			Token:         "tok-proj",
-			ProjectIDHash: consent.ProjectIDHash(root),
+			ProjectIDHash: proxytest.ProjectIDHash(root),
 			RootPath:      root,
 			Upstream:      "https://api.anthropic.com",
 			Shape:         proxytest.WithoutProxy,

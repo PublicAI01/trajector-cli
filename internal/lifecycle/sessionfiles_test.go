@@ -11,7 +11,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/cli"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
@@ -51,7 +50,7 @@ func (e *env) enableRoot(root string) {
 	e.t.Helper()
 	e.sandbox.GrantProject(proxytest.Grant{
 		Token:         "tok-proj",
-		ProjectIDHash: consent.ProjectIDHash(root),
+		ProjectIDHash: proxytest.ProjectIDHash(root),
 		RootPath:      root,
 		Upstream:      "https://api.anthropic.com",
 	})
@@ -65,7 +64,7 @@ func (e *env) sessionFilesRoot() string {
 
 func (e *env) registeredPaths(root string) []string {
 	e.t.Helper()
-	return e.sandbox.RegisteredPaths(consent.ProjectIDHash(root))
+	return e.sandbox.RegisteredPaths(proxytest.ProjectIDHash(root))
 }
 
 func TestRegisterSessionFile(t *testing.T) {
@@ -325,13 +324,13 @@ func (e *env) putSessionFile(rel, content string) string {
 // subpath, standing in for what a hook records.
 func (e *env) registerFile(root, path, subpath string) {
 	e.t.Helper()
-	e.sandbox.RegisterSessionFile(consent.ProjectIDHash(root), path, subpath)
+	e.sandbox.RegisterSessionFile(proxytest.ProjectIDHash(root), path, subpath)
 }
 
 // registeredFiles returns root's registered entries, cursors included.
 func (e *env) registeredFiles(root string) []proxytest.RegisteredFile {
 	e.t.Helper()
-	return e.sandbox.RegisteredFiles(consent.ProjectIDHash(root))
+	return e.sandbox.RegisteredFiles(proxytest.ProjectIDHash(root))
 }
 
 // storedRecords lists the segments and snapshots in this device's spool.
@@ -495,7 +494,7 @@ func TestReadSessionFiles_FillsCaptureFromTheShapeTheGrantRecords(t *testing.T) 
 			root := e.canonicalRoot()
 			e.sandbox.GrantProject(proxytest.Grant{
 				Token:         "tok-proj",
-				ProjectIDHash: consent.ProjectIDHash(root),
+				ProjectIDHash: proxytest.ProjectIDHash(root),
 				RootPath:      root,
 				Upstream:      "https://api.anthropic.com",
 				Shape:         tt.shape,
@@ -519,7 +518,7 @@ func TestReadSessionFiles_FillsCaptureFromTheShapeTheGrantRecords(t *testing.T) 
 			if seg.Capture.ProjectSubpath != "service/api" {
 				t.Errorf("project subpath = %q, want the one registration recorded", seg.Capture.ProjectSubpath)
 			}
-			if seg.Capture.ProjectIDHash != consent.ProjectIDHash(root) {
+			if seg.Capture.ProjectIDHash != proxytest.ProjectIDHash(root) {
 				t.Errorf("project id hash = %q, want the enabled project's", seg.Capture.ProjectIDHash)
 			}
 		})
@@ -558,7 +557,7 @@ func TestReadSessionFiles_KilledReaderIsIdempotentOnRerun(t *testing.T) {
 	// the cursor leaves the entry as it was: rewind it to that state.
 	f := e.registeredFiles(root)[0]
 	f.Offset, f.Size, f.Inode, f.NextSegment, f.MessageIDs = 0, 0, 0, 0, nil
-	e.sandbox.PutRegisteredFile(consent.ProjectIDHash(root), f)
+	e.sandbox.PutRegisteredFile(proxytest.ProjectIDHash(root), f)
 
 	e.machine().ReadSessionFiles(e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 1 {

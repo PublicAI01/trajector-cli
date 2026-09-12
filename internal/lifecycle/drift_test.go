@@ -4,14 +4,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 // signals is what the registry accumulated about root's session files.
 func (e *env) signals(root string) proxytest.Signals {
 	e.t.Helper()
-	return e.sandbox.Signals(consent.ProjectIDHash(root))
+	return e.sandbox.Signals(proxytest.ProjectIDHash(root))
 }
 
 func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
@@ -43,7 +42,7 @@ func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
 		t.Errorf("signals = %+v, want the field name recorded", s)
 	}
 	log := e.sandbox.ReaderLog()
-	if len(log) != 1 || !log[0].Stop || log[0].ProjectIDHash != consent.ProjectIDHash(root) {
+	if len(log) != 1 || !log[0].Stop || log[0].ProjectIDHash != proxytest.ProjectIDHash(root) {
 		t.Fatalf("reader log = %+v, want one stop entry for the project", log)
 	}
 	raw := e.sandbox.ReaderLogText()
@@ -164,13 +163,13 @@ func TestStatus_ShowsSignalCounts(t *testing.T) {
 	root := e.canonicalRoot()
 	e.sandbox.GrantProject(proxytest.Grant{
 		Token:         "tok-proj",
-		ProjectIDHash: consent.ProjectIDHash(root),
+		ProjectIDHash: proxytest.ProjectIDHash(root),
 		RootPath:      root,
 		Upstream:      "https://api.anthropic.com",
 		Shape:         proxytest.WithoutProxy,
 	})
 	e.injectWithoutBaseURL()
-	e.sandbox.AddSignals(consent.ProjectIDHash(root), proxytest.Signals{
+	e.sandbox.AddSignals(proxytest.ProjectIDHash(root), proxytest.Signals{
 		AssistantLines:                      7,
 		AssistantLinesWithoutMessageID:      2,
 		AssistantLinesMissingResponseFields: 3,
@@ -215,7 +214,7 @@ func TestStatus_PairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.
 			if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
-			e.sandbox.AddSignals(consent.ProjectIDHash(e.canonicalRoot()), proxytest.Signals{
+			e.sandbox.AddSignals(proxytest.ProjectIDHash(e.canonicalRoot()), proxytest.Signals{
 				AssistantLines:                   9,
 				AssistantLinesWithEmptyReasoning: 6,
 			})

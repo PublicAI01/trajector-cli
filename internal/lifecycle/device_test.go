@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
@@ -336,7 +335,7 @@ func TestPurgeOnANeverEnabledProjectStillRequestsDeletion(t *testing.T) {
 	if err := json.Unmarshal(last.Body, &body); err != nil {
 		t.Fatal(err)
 	}
-	if want := consent.ProjectIDHash(e.canonicalRoot()); body["project_id_hash"] != want {
+	if want := proxytest.ProjectIDHash(e.canonicalRoot()); body["project_id_hash"] != want {
 		t.Errorf("deletion hash = %q, want %q", body["project_id_hash"], want)
 	}
 }

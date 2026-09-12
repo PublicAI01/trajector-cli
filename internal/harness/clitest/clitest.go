@@ -19,7 +19,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/cli"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
@@ -143,14 +142,17 @@ func (e *Env) At(at time.Time) {
 	e.t.Setenv(cli.NowEnv, at.UTC().Format(time.RFC3339))
 }
 
+// ProjectRoot is the project directory in the form every derivation of
+// a project identity uses.
+func (e *Env) ProjectRoot() string {
+	e.t.Helper()
+	return proxytest.CanonicalRoot(e.t, e.project)
+}
+
 // ProjectHash is this project's identifier in stored records.
 func (e *Env) ProjectHash() string {
 	e.t.Helper()
-	root, err := consent.CanonicalRoot(e.project)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return consent.ProjectIDHash(root)
+	return proxytest.ProjectIDHash(e.ProjectRoot())
 }
 
 // Layout is where this environment keeps its trajector files, resolved

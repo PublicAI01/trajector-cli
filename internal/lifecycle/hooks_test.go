@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
@@ -28,7 +27,7 @@ func TestDiscoveryIsSilentForAnEnabledProject(t *testing.T) {
 	e := newEnv(t)
 	e.sandbox.GrantProject(proxytest.Grant{
 		Token:         "tok-proj",
-		ProjectIDHash: consent.ProjectIDHash(e.canonicalRoot()),
+		ProjectIDHash: proxytest.ProjectIDHash(e.canonicalRoot()),
 		RootPath:      e.canonicalRoot(),
 		Upstream:      "https://api.anthropic.com",
 	})
@@ -48,7 +47,7 @@ func TestDiscoveryMarkerNeverStoresThePath(t *testing.T) {
 	if strings.Contains(stored, root) {
 		t.Errorf("consent file leaks the project path: %s", stored)
 	}
-	if !strings.Contains(stored, consent.ProjectIDHash(root)) {
+	if !strings.Contains(stored, proxytest.ProjectIDHash(root)) {
 		t.Errorf("consent file lacks the project hash: %s", stored)
 	}
 }
@@ -56,9 +55,7 @@ func TestDiscoveryMarkerNeverStoresThePath(t *testing.T) {
 func TestEnsureProxyPausesRecordingOnAStaleAgreement(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.consentStore().AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z")
 
 	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
 		t.Fatalf("ensure-proxy: %v", err)
@@ -154,9 +151,7 @@ func TestEnsureProxyRefusesAForeignPortHolder(t *testing.T) {
 func TestEnsureProxyPausesRecordingWhenConsentCannotBeRead(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.consentStore().AcceptAgreement(consent.AgreementVersion, "2026-01-01T00:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
+	e.acceptCurrentAgreement()
 	// Truncated mid-write is what a crash or an OOM kill leaves behind.
 	if err := os.WriteFile(e.deps.Layout.ConsentFile(), []byte(`{"agreement":{"vers`), 0o600); err != nil {
 		t.Fatal(err)

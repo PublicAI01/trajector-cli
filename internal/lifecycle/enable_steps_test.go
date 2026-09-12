@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
@@ -84,9 +83,7 @@ func (e *env) readOnlyDir(dir string) {
 
 func (e *env) acceptCurrentAgreement() {
 	e.t.Helper()
-	if err := e.consentStore().AcceptAgreement(consent.AgreementVersion, "2026-08-01T00:00:00Z"); err != nil {
-		e.t.Fatal(err)
-	}
+	e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
 }
 
 func (e *env) enable(shape proxytest.Shape) {
@@ -132,9 +129,7 @@ func TestEnable_StepsAppearInOrder(t *testing.T) {
 		{
 			name: "every conditional step",
 			prepare: func(e *env) {
-				if err := e.consentStore().AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z"); err != nil {
-					t.Fatal(err)
-				}
+				e.sandbox.AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z")
 				e.lockHooksInUserSettings()
 				e.environ["ANTHROPIC_BASE_URL"] = "https://relay.example.com"
 				e.sessionFile("s-old", oldest)
@@ -143,7 +138,7 @@ func TestEnable_StepsAppearInOrder(t *testing.T) {
 			stdin: "yes\n",
 			want: []string{
 				"The data agreement changed since you last accepted it.",
-				consent.AgreementText,
+				proxytest.AgreementText,
 				deviceWideTermsLine,
 				agreementPrompt,
 				hooksWillNotLoadLine,
@@ -266,7 +261,7 @@ func TestEnable_AcceptsTermsForTheDevice(t *testing.T) {
 
 	e.enable(proxytest.WithProxy)
 
-	assertOrdered(t, e.stdout.String(), consent.AgreementText, deviceWideTermsLine, agreementPrompt)
+	assertOrdered(t, e.stdout.String(), proxytest.AgreementText, deviceWideTermsLine, agreementPrompt)
 }
 
 func hookCommands(t *testing.T, settingsPath string) map[string][]string {
@@ -604,9 +599,8 @@ func TestEnable_RollsBackEveryChangeWhereverItFails(t *testing.T) {
 			if got, err := os.ReadFile(ignorePath); err != nil || string(got) != ignoreBefore {
 				t.Errorf(".gitignore = %q, %v, want %q", got, err, ignoreBefore)
 			}
-			version, _, err := e.consentStore().AcceptedVersion()
-			if err != nil || version != consent.AgreementVersion {
-				t.Errorf("accepted agreement version = %q, %v, want %q kept", version, err, consent.AgreementVersion)
+			if version, _ := e.sandbox.AcceptedAgreement(); version != proxytest.AgreementVersion {
+				t.Errorf("accepted agreement version = %q, want %q kept", version, proxytest.AgreementVersion)
 			}
 			if reason := e.sandbox.PausedReason(); reason != "" {
 				t.Errorf("capture is paused for %q after the rollback", reason)

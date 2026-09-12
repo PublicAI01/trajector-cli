@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
@@ -35,14 +34,10 @@ func newHookEnv(t *testing.T) *hookEnv {
 // enabled grants the project, as a completed enable would.
 func (h *hookEnv) enabled() {
 	h.t.Helper()
-	root, err := consent.CanonicalRoot(h.Project())
-	if err != nil {
-		h.t.Fatal(err)
-	}
 	h.Sandbox().GrantProject(proxytest.Grant{
 		Token:         "tok-proj",
 		ProjectIDHash: h.ProjectHash(),
-		RootPath:      root,
+		RootPath:      h.ProjectRoot(),
 		Upstream:      "https://api.anthropic.com",
 	})
 }
@@ -182,9 +177,7 @@ func TestHook_MalformedStdinStillEnsuresProxy(t *testing.T) {
 			h.StartProxy()
 			// A stale agreement is what ensure-proxy acts on without a
 			// project: the pause it records proves the hook ran to its end.
-			if err := consent.Open(h.Layout().ConsentFile()).AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z"); err != nil {
-				t.Fatal(err)
-			}
+			h.Sandbox().AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z")
 
 			got := h.InProjectInput(tt.input, "hook", "ensure-proxy")
 			if got.Exit != 0 || got.Stdout != "" {

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
@@ -26,13 +25,9 @@ func settingValue(t *testing.T, path string) (value, found bool) {
 	return claudesettings.TopLevelBool(path, optionalKey)
 }
 
-func settingDecision(t *testing.T, e *env, hash string) (consent.SettingDecision, bool) {
+func settingDecision(t *testing.T, e *env, hash string) (proxytest.SettingDecision, bool) {
 	t.Helper()
-	decisions, err := e.consentStore().SettingDecisions(hash)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d, ok := decisions[optionalKey]
+	d, ok := e.sandbox.SettingDecisions(hash)[optionalKey]
 	return d, ok
 }
 
@@ -86,7 +81,7 @@ func TestEnableAsksAndWritesTheOptionalSettingOnYes(t *testing.T) {
 		t.Errorf("setting = %v, %v after yes, want true", value, found)
 	}
 	d, ok := settingDecision(t, e, e.status().Hash)
-	if !ok || d.Answer != consent.AnswerAccepted || d.Prior != consent.PriorAbsent {
+	if !ok || d.Answer != proxytest.AnswerAccepted || d.Prior != proxytest.PriorAbsent {
 		t.Errorf("decision = %+v, %v, want accepted with an absent prior", d, ok)
 	}
 }
@@ -98,7 +93,7 @@ func TestEnableEmptyInputTakesTheStatedDefault(t *testing.T) {
 		wantPrompt string
 		wantSaid   string
 		wantOn     bool
-		wantAnswer consent.SettingAnswer
+		wantAnswer proxytest.SettingAnswer
 	}{
 		{
 			name:       "an unset setting suggests yes",
@@ -106,7 +101,7 @@ func TestEnableEmptyInputTakesTheStatedDefault(t *testing.T) {
 			wantPrompt: "Turn it on? [Y/n]",
 			wantSaid:   "Optional setting for this project",
 			wantOn:     true,
-			wantAnswer: consent.AnswerAccepted,
+			wantAnswer: proxytest.AnswerAccepted,
 		},
 		{
 			name: "a setting the user turned off suggests no",
@@ -116,7 +111,7 @@ func TestEnableEmptyInputTakesTheStatedDefault(t *testing.T) {
 			wantPrompt: "Turn it on for this project? [y/N]",
 			wantSaid:   "You have showThinkingSummaries set to false in your user settings.json.",
 			wantOn:     false,
-			wantAnswer: consent.AnswerDeclined,
+			wantAnswer: proxytest.AnswerDeclined,
 		},
 	}
 	for _, tc := range cases {
@@ -156,7 +151,7 @@ func TestEnableDeclineIsRecordedAndRerunStillAsks(t *testing.T) {
 	if value, found := settingValue(t, e.settingsPath()); found {
 		t.Errorf("declining still wrote the setting: %v", value)
 	}
-	if d, ok := settingDecision(t, e, e.status().Hash); !ok || d.Answer != consent.AnswerDeclined {
+	if d, ok := settingDecision(t, e, e.status().Hash); !ok || d.Answer != proxytest.AnswerDeclined {
 		t.Errorf("decision = %+v, %v, want declined", d, ok)
 	}
 
@@ -269,7 +264,7 @@ func TestEnableAcceptWhenAlreadyTrueRecordsNoWriteOfOurs(t *testing.T) {
 		t.Fatalf("rerun: %v\nstdout: %s", err, e.stdout)
 	}
 	d, ok := settingDecision(t, e, e.status().Hash)
-	if !ok || d.Answer != consent.AnswerAccepted || d.Prior != consent.PriorTrue {
+	if !ok || d.Answer != proxytest.AnswerAccepted || d.Prior != proxytest.PriorTrue {
 		t.Errorf("decision = %+v, %v, want accepted with a true prior", d, ok)
 	}
 
@@ -344,7 +339,7 @@ func TestEnableSecondRunKeepsAnOptionalSettingOnByDefault(t *testing.T) {
 			if value, found := settingValue(t, e.settingsPath()); !found || !value {
 				t.Errorf("an answer that keeps it on turned the setting off: %v, %v", value, found)
 			}
-			if d, ok := settingDecision(t, e, e.status().Hash); !ok || d.Prior != consent.PriorAbsent {
+			if d, ok := settingDecision(t, e, e.status().Hash); !ok || d.Prior != proxytest.PriorAbsent {
 				t.Errorf("decision = %+v, %v, want the original record kept", d, ok)
 			}
 		})
@@ -516,15 +511,10 @@ func TestDisableLeavesAHandEditedValueAlone(t *testing.T) {
 func TestDisableKeepsTheRecordWhenRestoreFails(t *testing.T) {
 	e := newEnv(t)
 	hash := e.status().Hash
-	consents := e.consentStore()
-	if err := consents.SetProjectState(hash, e.canonicalRoot(), consent.StateGranted, "2026-08-02T00:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
-	if err := consents.SetSettingDecision(hash, optionalKey, consent.SettingDecision{
-		Answer: consent.AnswerAccepted, Prior: consent.PriorAbsent, DecidedAt: "2026-08-02T00:00:00Z",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.DecideProject(hash, e.canonicalRoot(), proxytest.Granted, "2026-08-02T00:00:00Z")
+	e.sandbox.DecideSetting(hash, optionalKey, proxytest.SettingDecision{
+		Answer: proxytest.AnswerAccepted, Prior: proxytest.PriorAbsent, DecidedAt: "2026-08-02T00:00:00Z",
+	})
 	writeProjectLocalSettings(t, e, "{ not json")
 
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
@@ -533,7 +523,7 @@ func TestDisableKeepsTheRecordWhenRestoreFails(t *testing.T) {
 	if !strings.Contains(e.stderr.String(), "could not set showThinkingSummaries back") {
 		t.Errorf("stderr misses the restore failure:\n%s", e.stderr)
 	}
-	if d, ok := settingDecision(t, e, hash); !ok || d.Answer != consent.AnswerAccepted {
+	if d, ok := settingDecision(t, e, hash); !ok || d.Answer != proxytest.AnswerAccepted {
 		t.Errorf("decision = %+v, %v; a failed restore must keep its record", d, ok)
 	}
 
@@ -581,7 +571,7 @@ func TestDisableLeavesDeclinedRecordsInPlace(t *testing.T) {
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if d, ok := settingDecision(t, e, e.status().Hash); !ok || d.Answer != consent.AnswerDeclined {
+	if d, ok := settingDecision(t, e, e.status().Hash); !ok || d.Answer != proxytest.AnswerDeclined {
 		t.Errorf("decision = %+v, %v; one refusal must survive disable", d, ok)
 	}
 }
@@ -598,11 +588,7 @@ func TestUninstallRestoresSettingsAcrossRoots(t *testing.T) {
 	if err := e.machine().Enable(second, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatalf("enable second project: %v", err)
 	}
-	secondRoot, err := consent.CanonicalRoot(second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondSettings := claudesettings.ProjectLocalPath(secondRoot)
+	secondSettings := claudesettings.ProjectLocalPath(proxytest.CanonicalRoot(t, second))
 	if value, found := settingValue(t, secondSettings); !found || !value {
 		t.Fatalf("test setup: second project setting = %v, %v, want true", value, found)
 	}
