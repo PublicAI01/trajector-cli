@@ -151,7 +151,7 @@ func EarlierSessionLines(found discover.Result) []string {
 		lines = append(lines, fmt.Sprintf("%d earlier session record(s) will be collected once; the oldest is from %s.",
 			len(found.Sessions), oldest.Format("2006-01-02")))
 	}
-	if found.Truncated {
+	if found.Gaps.Truncated {
 		lines = append(lines, treeLimitExceeded())
 	}
 	return lines

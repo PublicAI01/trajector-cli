@@ -411,7 +411,7 @@ func TestReadSessionFiles_FullSpoolLeavesTheCursorAlone(t *testing.T) {
 	}
 }
 
-func TestReadSessionFiles_RemovesVanishedAndStoppedEntries(t *testing.T) {
+func TestReadSessionFiles_StopsReadingVanishedAndRelocatedFiles(t *testing.T) {
 	root := "" // filled per case from the enabled project
 	tests := []struct {
 		name    string
@@ -442,7 +442,7 @@ func TestReadSessionFiles_RemovesVanishedAndStoppedEntries(t *testing.T) {
 
 			e.machine().ReadSessionFiles(e.project, discardIO())
 			if got := e.registeredFiles(root); len(got) != 0 {
-				t.Errorf("registry = %+v, want the retired entry removed", got)
+				t.Errorf("registry = %+v, want nothing left to read", got)
 			}
 		})
 	}

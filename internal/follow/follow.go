@@ -6,8 +6,8 @@
 //
 // A registry is one JSON object: {"version":1,"files":[...]}, each
 // element carrying path, inode, size, offset, next_segment, and
-// message_ids, and optionally read_at and subpath. The path is the
-// entry's identity. Inode, size, and offset describe the file as it
+// message_ids, and optionally read_at, subpath, and retired. The path
+// is the entry's identity. Inode, size, and offset describe the file as it
 // was last observed locally: they steer reading and never leave it.
 // An optional "gaps" object records what the one-time search for the
 // project's earlier files could not cover, so a later reading of the
@@ -21,9 +21,10 @@
 //
 // Reading is a function of one registered entry and the file on disk:
 // Read consumes the complete lines a file gained since its cursor and
-// hands back the records to store together with the advanced cursor.
-// The registry decides nothing about content; nothing here writes a
-// file it reads.
+// hands back the records to store together with the advanced cursor,
+// and a Reader holds the whole rule around it — read, hand the records
+// to a store, advance or retire the entry, persist. The registry
+// decides nothing about content; nothing here writes a file it reads.
 package follow
 
 import (
@@ -60,75 +61,6 @@ type Registry struct{ dir string }
 // The directory is created, owner-only, by the first registration.
 func Open(dir string) *Registry { return &Registry{dir: dir} }
 
-// File is one registered file and its cursor.
-type File struct {
-	Path  string `json:"path"`
-	Inode uint64 `json:"inode"`
-	Size  int64  `json:"size"`
-	// Offset is the byte position reading stopped at.
-	Offset int64 `json:"offset"`
-	// NextSegment only grows. It survives a Rewrite of the file, so it
-	// is stored rather than derived: nothing on disk can give it back.
-	NextSegment int `json:"next_segment"`
-	// Subpath is where the session ran relative to the project root,
-	// with forward slashes. It is absent, never empty, for a session
-	// that ran at the root and for a file the backfill walk found,
-	// which carries no such position.
-	Subpath string `json:"subpath,omitempty"`
-	// MessageIDs are the message ids already consumed from this file.
-	// It is a set; the array order carries no meaning. An agent
-	// metadata file has no messages: there it holds the record id of
-	// the last snapshot taken.
-	MessageIDs []string `json:"message_ids"`
-	// ReadAt is when the file was last read, in RFC 3339, and absent
-	// for a file never read. The reader writes it with the cursor; the
-	// registry only keeps it.
-	ReadAt string `json:"read_at,omitempty"`
-}
-
-// MainSession reports whether f is a session's own file rather than
-// an agent file kept beside it under subagents/. Counting sessions
-// means counting these.
-func (f File) MainSession() bool {
-	_, file := identify(f.Path)
-	return file == "" && strings.HasSuffix(f.Path, linesExt)
-}
-
-// Ambiguity is a directory whose session files were not registered
-// because Claude Code stores them under a name that at least one
-// other real directory shares, so they cannot be attributed to one
-// working directory.
-type Ambiguity struct {
-	// Dir is the directory under the project root that was skipped.
-	Dir string `json:"dir"`
-	// Name is the stored name Dir shares with the other directories.
-	Name string `json:"name"`
-	// Matches lists every real directory that stores under Name,
-	// sorted. Dir is among them when it was found.
-	Matches []string `json:"matches"`
-}
-
-// Gaps is what the search for a project's earlier session files
-// could not cover. It is recorded with the registry so the outcome
-// of the one search that ran can be shown afterwards without running
-// another.
-type Gaps struct {
-	// Truncated reports that the project's directory tree was larger
-	// than the search visits, so directories past its limit were not
-	// looked at.
-	Truncated bool `json:"truncated,omitempty"`
-	// Ambiguous lists the directories skipped for a shared name.
-	Ambiguous []Ambiguity `json:"ambiguous,omitempty"`
-	// Unreadable lists the directories whose entries could not be
-	// listed; directories below them were not looked at.
-	Unreadable []string `json:"unreadable,omitempty"`
-}
-
-// Any reports whether anything was left uncovered.
-func (g Gaps) Any() bool {
-	return g.Truncated || len(g.Ambiguous) > 0 || len(g.Unreadable) > 0
-}
-
 type registry struct {
 	Version int            `json:"version"`
 	Files   []File         `json:"files"`
@@ -146,8 +78,10 @@ func (r *Registry) Register(projectIDHash, path string) error {
 // cursor, recording where the session ran relative to the project root.
 // Registering a path that is already registered changes nothing, its
 // subpath included: the first registration of a session's file is the
-// one that knows where it ran. The path must be absolute: it is the
-// entry's identity across processes with different working directories.
+// one that knows where it ran. A retired entry is registered already,
+// so registering its path again does not read the file over. The path
+// must be absolute: it is the entry's identity across processes with
+// different working directories.
 func (r *Registry) RegisterUnder(projectIDHash, path, subpath string) error {
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("follow: path %q is not absolute", path)
@@ -251,14 +185,21 @@ func (r *Registry) Signals(projectIDHash string) (drift.Signals, error) {
 	return *reg.Signals, nil
 }
 
-// Files lists projectIDHash's registered files, ordered by path. A
-// project with no registry has no files.
+// Files lists the files projectIDHash still reads, ordered by path. A
+// project with no registry has no files. A retired entry is not
+// listed: nothing is left to read of it, and it is kept only so that
+// registering its path again does not read the file over.
 func (r *Registry) Files(projectIDHash string) ([]File, error) {
 	reg, err := r.read(projectIDHash)
 	if err != nil {
 		return nil, err
 	}
-	files := append([]File{}, reg.Files...)
+	files := []File{}
+	for _, f := range reg.Files {
+		if f.Retired == "" {
+			files = append(files, f)
+		}
+	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, nil
 }
@@ -285,6 +226,17 @@ func (r *Registry) Update(projectIDHash string, f File) error {
 	})
 }
 
+// Retire records why reading of f.Path stopped for good and keeps the
+// entry, with the cursor it reached. It is how the registry answers
+// later for a decision the reader made once: the entry is no longer
+// listed, and registering the same path again leaves it as it is,
+// rather than reading the file from its start a second time. A path
+// that is not registered is refused, as an update to it is.
+func (r *Registry) Retire(projectIDHash string, f File, why Retirement) error {
+	f.Retired = why
+	return r.Update(projectIDHash, f)
+}
+
 // Unregister removes projectIDHash's registry, cursors included. A
 // project that has no registry is already unregistered.
 func (r *Registry) Unregister(projectIDHash string) error {
@@ -301,8 +253,8 @@ func (r *Registry) Unregister(projectIDHash string) error {
 // Remove drops one file's entry from projectIDHash's registry, leaving
 // the project's other entries in place. A path that is not registered,
 // or a project with no registry, is already in the wanted state. It is
-// how a caller retires a file whose cursor can no longer advance: one
-// that vanished, or one whose session left the consented directory.
+// how a caller drops a file that is gone for good: nothing is left to
+// read of it, and no search of the project finds it again.
 func (r *Registry) Remove(projectIDHash, path string) error {
 	if err := checkProjectIDHash(projectIDHash); err != nil {
 		return err

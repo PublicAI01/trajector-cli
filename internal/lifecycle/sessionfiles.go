@@ -2,21 +2,15 @@ package lifecycle
 
 import (
 	"encoding/json"
-	"errors"
 	"io"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/drift"
-	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
-	"github.com/PublicAI01/trajector-cli/internal/proxylife"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
-	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 // HookInput is what Claude Code writes on a hook's stdin: which session
@@ -61,12 +55,6 @@ func (m *Machine) claudeConfigDir() string {
 	return filepath.Join(m.deps.Home, ".claude")
 }
 
-// sessionFilesRoot is the directory Claude Code keeps session files
-// under.
-func (m *Machine) sessionFilesRoot() string {
-	return filepath.Join(m.claudeConfigDir(), discover.ProjectsDir)
-}
-
 // RegisterSessionFile registers the session file a hook was told about,
 // and the agent files beside it, for reading on the project's behalf.
 // It registers only when the hook ran inside an enabled project and the
@@ -84,7 +72,7 @@ func (m *Machine) RegisterSessionFile(cwd string, hook HookInput) (registered bo
 		return false, nil
 	}
 	path = filepath.Clean(path)
-	if !under(m.sessionFilesRoot(), path) || filepath.Base(path) == cloudPlaceholder {
+	if !discover.UnderSessionFiles(m.claudeConfigDir(), path) || filepath.Base(path) == cloudPlaceholder {
 		return false, nil
 	}
 	st, err := m.Project(cwd)
@@ -155,187 +143,4 @@ func projectSubpath(root, cwd string) string {
 		return ""
 	}
 	return filepath.ToSlash(rel)
-}
-
-// under reports whether path lies strictly inside dir, by name alone.
-func under(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-	if err != nil {
-		return false
-	}
-	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// SpawnReader starts a detached process that reads projectDir's
-// registered files, and returns as soon as it is started. The hook that
-// calls this is on the session's critical path, so reading happens in a
-// process the session never waits for; the process inherits none of
-// the hook's streams, which keeps the hook's own output empty.
-func (m *Machine) SpawnReader(projectDir string) error {
-	_, err := proxylife.StartDetached(m.deps.ExecPath, []string{"hook", claudesettings.HookRead, projectDir}, "")
-	return err
-}
-
-// ReadSessionFiles reads the files registered for a project once, on
-// behalf of the session that just ran, and exits. It is the body of the
-// detached process a session hook starts: for each registered file it
-// consumes what the file gained since its cursor, lands the records in
-// the spool, and advances the cursor only once every record is stored.
-// It never blocks a session — the hook released it — and it says
-// nothing: its streams are the null device, it reports no outcome, and
-// a failure to read one file is left behind so the next file, and the
-// next run, still make progress.
-//
-// A project that is not enabled, or whose injection was removed, is
-// nothing to read: no injection stands, so no session of Claude Code's
-// ran under one. Past that the resident process is brought up on the
-// way out, whatever the run itself does: it is the one flusher, and it
-// drains whatever the spool holds — the records just written, and any
-// a previous run left behind because no flusher was up to send them.
-//
-// A project the routing table does not clear is nothing to read
-// either: this asks the table the same question the proxy asks before
-// it records, so a device-wide pause stops both recording paths and
-// not only the one the proxy is on. It stops neither forwarding nor
-// the flusher, which is why it leaves the way out alone. What each
-// record states about this client is the shape the grant records,
-// never a reading of the settings file, so a hand-edited file cannot
-// make two runs disagree about one project.
-func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
-	st, err := m.Project(projectDir)
-	if err != nil || !st.Enabled || !st.Injected {
-		return
-	}
-	injection := injectionValue(st.Shape)
-	defer func() { _ = m.EnsureProxy(projectDir, io) }()
-
-	verdict, err := m.routes.Resolve(st.Token)
-	if err != nil || !verdict.Records() {
-		return
-	}
-
-	sp, err := m.spool()
-	if err != nil {
-		return
-	}
-	now := m.deps.Now().UTC().Format(time.RFC3339Nano)
-	readAt := m.deps.Now().UTC().Format(time.RFC3339)
-
-	for _, f := range m.sessionFiles(st.Hash).Files {
-		capture := envelope.TranscriptCapture{
-			ClientVersion:  m.deps.Version,
-			Timestamp:      now,
-			ProjectIDHash:  st.Hash,
-			ProjectSubpath: f.Subpath,
-			Injection:      injection,
-		}
-		res, err := follow.Read(f, capture, follow.ReadOptions{Root: st.Root})
-		if err != nil {
-			// A file that could not be read this time — a metadata file
-			// caught mid-write, say — keeps its cursor and is tried again
-			// next run. Reading the rest of the project goes on.
-			continue
-		}
-		stop, err := m.inspectSegments(st.Hash, res.Segments)
-		if err != nil {
-			continue
-		}
-		if stop {
-			// Nothing of this read is stored and the cursor stays: the
-			// same lines are met again by whichever build reads next,
-			// and only one that can mask them may store them.
-			return
-		}
-		full, err := storeRecords(sp, res)
-		if full {
-			// The spool is full: it dropped nothing, and neither does the
-			// reader. The cursor stays where it was, so this file and
-			// every one after it is read again once space returns; no
-			// record is repeated, because storing is idempotent by id.
-			return
-		}
-		if err != nil {
-			continue
-		}
-		if res.Reaction == follow.Vanished || res.Stopped {
-			_ = m.registry.Remove(st.Hash, f.Path)
-			continue
-		}
-		// The cursor carries when it was last moved, so status can say
-		// when a file was last read without a clock of its own.
-		res.File.ReadAt = readAt
-		_ = m.registry.Update(st.Hash, res.File)
-	}
-}
-
-// inspectSegments holds each segment's lines against the shape this
-// build masks and reads by, before anything is stored, and keeps what
-// it noticed with the project's registry and in the reader log. Lines
-// this build cannot mask stop the run and pause recording device-wide
-// until a different build reads them; everything else is counted and
-// reading goes on. This is the one place a line's fields are read
-// before the spool, so it is where the shape is checked; the reader
-// itself interprets nothing, and what a finding is called is stated
-// where the scan happens, not here. A registry or a log that cannot be
-// written is let go: what was noticed is worth keeping and never worth
-// stopping a read for.
-func (m *Machine) inspectSegments(projectIDHash string, segments []envelope.Segment) (stop bool, err error) {
-	for _, seg := range segments {
-		found, err := drift.Scan([]byte(seg.Lines))
-		if err != nil {
-			return false, err
-		}
-		if !found.Any() {
-			continue
-		}
-		_ = m.registry.AddSignals(projectIDHash, found)
-		_ = drift.AppendLog(m.deps.Layout.ReaderLog(), m.now(), projectIDHash, found)
-		if found.Stop() {
-			_ = m.routes.PauseByBuild(routing.PauseRedactionDrift, m.deps.Version)
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// storeRecords writes a read result's records to the spool. full
-// reports that the spool refused a record for want of room, the one
-// outcome that must stop the whole run rather than advance a cursor
-// past records that were never stored. One pass answers for every
-// record a read produced, so that outcome is decided once and not once
-// per kind.
-func storeRecords(sp *spool.Spool, res follow.ReadResult) (full bool, err error) {
-	for _, write := range recordWrites(sp, res) {
-		if err := write(); err != nil {
-			if errors.Is(err, spool.ErrQuotaExceeded) {
-				return true, nil
-			}
-			return false, err
-		}
-	}
-	return false, nil
-}
-
-// recordWrites is the writes one read result asks of the spool, in the
-// order it asks for them. It is the one place that pairs a record with
-// the spool method its own kind names.
-func recordWrites(sp *spool.Spool, res follow.ReadResult) []func() error {
-	writes := make([]func() error, 0, len(res.Segments)+len(res.Snapshots))
-	for _, seg := range res.Segments {
-		writes = append(writes, func() error { return sp.WriteSegment(seg) })
-	}
-	for _, snap := range res.Snapshots {
-		writes = append(writes, func() error { return sp.WriteMetaSnapshot(snap) })
-	}
-	return writes
-}
-
-// injectionValue names, for a record, what this client did with the
-// project's traffic: forwarded it, or only read the files it left. It
-// is the wire spelling of the shape the grant records.
-func injectionValue(shape routing.Shape) string {
-	if shape == routing.WithoutProxy {
-		return envelope.InjectionTailOnly
-	}
-	return envelope.InjectionProxy
 }

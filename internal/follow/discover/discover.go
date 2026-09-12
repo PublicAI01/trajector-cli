@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf16"
 
@@ -43,10 +44,25 @@ const Limit = 50_000
 // nameLimit is the longest name Claude Code writes unhashed.
 const nameLimit = 200
 
-// ProjectsDir is the directory under Claude Code's configuration
+// projectsDir is the directory under Claude Code's configuration
 // directory that holds one directory per working directory Claude Code
 // has run in.
-const ProjectsDir = "projects"
+const projectsDir = "projects"
+
+// UnderSessionFiles reports whether path lies strictly inside the
+// directory Claude Code keeps session files under, given its
+// configuration directory. It decides by name alone: nothing is
+// opened, and neither path need exist. A path outside that directory
+// names a file no Claude Code of this configuration wrote, so this is
+// what a caller handed a path from elsewhere asks before it acts on
+// it.
+func UnderSessionFiles(configDir, path string) bool {
+	rel, err := filepath.Rel(filepath.Join(configDir, projectsDir), path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
 
 // Ambiguity is a directory whose encoded name is shared with at least
 // one other real directory. Its sessions cannot be attributed to one
@@ -71,16 +87,12 @@ type Result struct {
 	Oldest time.Time
 	// visited counts the directories the walk looked at.
 	visited int
-	// Truncated reports that the tree holds more than Limit directories
-	// and the walk stopped at Limit. Everything found before that point
-	// is kept.
-	Truncated bool
-	// Ambiguous lists the directories that were skipped because their
-	// encoded name is shared.
-	Ambiguous []Ambiguity
-	// Unreadable lists the directories whose entries could not be
-	// listed. Sessions of directories below them were not looked for.
-	Unreadable []string
+	// Gaps is what this walk could not cover, in the one form the
+	// registry keeps and every surface states: the tree held more
+	// directories than Limit, a directory's encoded name is shared, or
+	// a directory's entries could not be listed. Everything found
+	// before a gap is kept.
+	Gaps follow.Gaps
 }
 
 // Encode maps a project directory to the name Claude Code stores its
@@ -153,7 +165,7 @@ func walk(root, configDir string, limit int) (Result, error) {
 		return Result{}, fmt.Errorf("discover: config dir %q is not absolute", configDir)
 	}
 	root = filepath.Clean(root)
-	projects := filepath.Join(configDir, ProjectsDir)
+	projects := filepath.Join(configDir, projectsDir)
 
 	var res Result
 	err := filepath.WalkDir(root, func(dir string, d fs.DirEntry, err error) error {
@@ -161,7 +173,7 @@ func walk(root, configDir string, limit int) (Result, error) {
 			if dir == root {
 				return err
 			}
-			res.Unreadable = append(res.Unreadable, dir)
+			res.Gaps.Unreadable = append(res.Gaps.Unreadable, dir)
 			return nil
 		}
 		if !d.IsDir() {
@@ -171,7 +183,7 @@ func walk(root, configDir string, limit int) (Result, error) {
 			return filepath.SkipDir
 		}
 		if res.visited == limit {
-			res.Truncated = true
+			res.Gaps.Truncated = true
 			return filepath.SkipAll
 		}
 		res.visited++
@@ -184,7 +196,7 @@ func walk(root, configDir string, limit int) (Result, error) {
 		if !hashed {
 			matches := trie(name)
 			if len(matches) != 1 || matches[0] != dir {
-				res.Ambiguous = append(res.Ambiguous, Ambiguity{Dir: dir, Name: name, Matches: matches})
+				res.Gaps.Ambiguous = append(res.Gaps.Ambiguous, Ambiguity{Dir: dir, Name: name, Matches: matches})
 				return nil
 			}
 		}
@@ -247,10 +259,5 @@ func Register(r *follow.Registry, projectIDHash string, res Result) error {
 			return err
 		}
 	}
-	return r.SetGaps(projectIDHash, res.Gaps())
-}
-
-// Gaps is what the walk could not cover, in the registry's own terms.
-func (r Result) Gaps() follow.Gaps {
-	return follow.Gaps{Truncated: r.Truncated, Ambiguous: r.Ambiguous, Unreadable: r.Unreadable}
+	return r.SetGaps(projectIDHash, res.Gaps)
 }

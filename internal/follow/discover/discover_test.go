@@ -199,7 +199,7 @@ func TestWalk_EmptyProjectDirectoryIsNotAnError(t *testing.T) {
 
 	res := mustWalk(t, tr)
 
-	if len(res.Files) != 0 || len(res.Sessions) != 0 || !res.Oldest.IsZero() || len(res.Ambiguous) != 0 {
+	if len(res.Files) != 0 || len(res.Sessions) != 0 || !res.Oldest.IsZero() || res.Gaps.Any() {
 		t.Errorf("Walk = %+v, want an empty result", res)
 	}
 }
@@ -232,8 +232,8 @@ func TestWalk_TruncatesAtLimit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if res.visited != c.visited || res.Truncated != c.truncated {
-				t.Errorf("visited, Truncated = %d, %v; want %d, %v", res.visited, res.Truncated, c.visited, c.truncated)
+			if res.visited != c.visited || res.Gaps.Truncated != c.truncated {
+				t.Errorf("visited, Truncated = %d, %v; want %d, %v", res.visited, res.Gaps.Truncated, c.visited, c.truncated)
 			}
 			if c.files != nil && !slices.Equal(res.Files, c.files) {
 				t.Errorf("Files = %v, want %v", res.Files, c.files)
@@ -265,8 +265,8 @@ func TestWalk_AmbiguousNameFailsClosed(t *testing.T) {
 		{Dir: nested, Name: name, Matches: []string{joined, nested}},
 		{Dir: joined, Name: name, Matches: []string{joined, nested}},
 	}
-	if !reflect.DeepEqual(res.Ambiguous, want) {
-		t.Errorf("Ambiguous = %+v\nwant %+v", res.Ambiguous, want)
+	if !reflect.DeepEqual(res.Gaps.Ambiguous, want) {
+		t.Errorf("Ambiguous = %+v\nwant %+v", res.Gaps.Ambiguous, want)
 	}
 }
 
@@ -301,7 +301,7 @@ func TestWalk_NeverListsTheProjectsDirectory(t *testing.T) {
 
 		res := mustWalk(t, tr)
 
-		if len(res.Files) != 0 || len(res.Unreadable) != 0 {
+		if len(res.Files) != 0 || len(res.Gaps.Unreadable) != 0 {
 			t.Errorf("Walk = %+v, want nothing found and nothing unreadable", res)
 		}
 	})
@@ -346,8 +346,8 @@ func TestWalk_ReportsDirectoriesItCouldNotList(t *testing.T) {
 
 	res := mustWalk(t, tr)
 
-	if !slices.Equal(res.Unreadable, []string{closed}) {
-		t.Errorf("Unreadable = %v, want %v", res.Unreadable, []string{closed})
+	if !slices.Equal(res.Gaps.Unreadable, []string{closed}) {
+		t.Errorf("Unreadable = %v, want %v", res.Gaps.Unreadable, []string{closed})
 	}
 	if len(res.Sessions) != 1 {
 		t.Errorf("Sessions = %v, want the closed directory's own session", res.Sessions)
@@ -403,11 +403,11 @@ func TestRegister(t *testing.T) {
 
 func TestRegister_RecordsWhatTheWalkCouldNotCover(t *testing.T) {
 	r := follow.Open(t.TempDir())
-	res := Result{
+	res := Result{Gaps: follow.Gaps{
 		Truncated:  true,
 		Ambiguous:  []Ambiguity{{Dir: "/p/a-b", Name: "-p-a-b", Matches: []string{"/p/a-b", "/p/a_b"}}},
 		Unreadable: []string{"/p/locked"},
-	}
+	}}
 
 	if err := Register(r, "hash", res); err != nil {
 		t.Fatal(err)
@@ -417,7 +417,31 @@ func TestRegister_RecordsWhatTheWalkCouldNotCover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(gaps, res.Gaps()) {
-		t.Errorf("Gaps = %+v, want %+v", gaps, res.Gaps())
+	if !reflect.DeepEqual(gaps, res.Gaps) {
+		t.Errorf("Gaps = %+v, want %+v", gaps, res.Gaps)
+	}
+}
+
+func TestUnderSessionFiles(t *testing.T) {
+	configDir := filepath.Join(string(filepath.Separator), "home", "u", ".claude")
+	projects := filepath.Join(configDir, "projects")
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"a session file Claude Code wrote", filepath.Join(projects, "-home-u-proj", "sid.jsonl"), true},
+		{"an agent file beside it", filepath.Join(projects, "-home-u-proj", "sid", "subagents", "agent-a.jsonl"), true},
+		{"the directory itself", projects, false},
+		{"a file beside that directory", filepath.Join(configDir, "settings.json"), false},
+		{"a path outside the configuration directory", filepath.Join(string(filepath.Separator), "tmp", "sid.jsonl"), false},
+		{"a path of no fixed place", "sid.jsonl", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := UnderSessionFiles(configDir, c.path); got != c.want {
+				t.Errorf("UnderSessionFiles(%q) = %v, want %v", c.path, got, c.want)
+			}
+		})
 	}
 }

@@ -102,21 +102,3 @@ func TestRegistry_UpdateKeepsWhenAFileWasRead(t *testing.T) {
 		t.Errorf("registry file = %s, want no read_at on a file never read", raw)
 	}
 }
-
-func TestFile_MainSession(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		path string
-		want bool
-	}{
-		{"a session's own file", "/p/-home-u-proj/sid-1.jsonl", true},
-		{"an agent file beside it", "/p/-home-u-proj/sid-1/subagents/agent-a.jsonl", false},
-		{"an agent metadata file", "/p/-home-u-proj/sid-1/subagents/agent-a.meta.json", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := (follow.File{Path: tc.path}).MainSession(); got != tc.want {
-				t.Errorf("MainSession(%s) = %v, want %v", tc.path, got, tc.want)
-			}
-		})
-	}
-}

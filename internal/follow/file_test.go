@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
@@ -145,5 +146,45 @@ func TestStatFile(t *testing.T) {
 		if _, err := follow.StatFile(filepath.Join(present, "under-a-file")); err == nil {
 			t.Error("StatFile(path under a file) = nil error, want the failure surfaced")
 		}
+	}
+}
+
+func TestFile_MainSession(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"a session's own file", "/p/-home-u-proj/sid-1.jsonl", true},
+		{"an agent file beside it", "/p/-home-u-proj/sid-1/subagents/agent-a.jsonl", false},
+		{"an agent metadata file", "/p/-home-u-proj/sid-1/subagents/agent-a.meta.json", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := (follow.File{Path: tc.path}).MainSession(); got != tc.want {
+				t.Errorf("MainSession(%s) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFile_LastRead(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		readAt string
+		want   bool
+	}{
+		{"a file read once", "2026-09-10T08:30:00Z", true},
+		{"a file never read", "", false},
+		{"a time in no form this layout writes", "Thursday", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			at, ok := (follow.File{ReadAt: tc.readAt}).LastRead()
+			if ok != tc.want {
+				t.Fatalf("LastRead(%q) = %v, %v; want ok = %v", tc.readAt, at, ok, tc.want)
+			}
+			if ok && !at.Equal(time.Date(2026, 9, 10, 8, 30, 0, 0, time.UTC)) {
+				t.Errorf("LastRead(%q) = %v, want the time the cursor carries", tc.readAt, at)
+			}
+		})
 	}
 }

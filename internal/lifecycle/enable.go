@@ -368,6 +368,10 @@ func (m *Machine) confirmHooksWillRun(io IO, root string, shape routing.Shape) (
 // only when this install is the one creating it: a registry that
 // already stood — from an earlier enable, or from a session's own
 // hooks — is not this install's to take back.
+//
+// A file the reader retired keeps its entry and stays retired: enable
+// finds it again, because it is still on disk, but running enable a
+// second time is not an answer to why its reading stopped.
 func (m *Machine) registerEarlierSessions(projectIDHash string, found discover.Result, ledger *enableLedger) error {
 	projects, err := m.registry.Projects()
 	if err != nil {

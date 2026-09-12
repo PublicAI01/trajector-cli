@@ -184,7 +184,7 @@ func (m *Machine) sessionFilesState(st report.ProjectStatus, reading SessionFile
 		if f.MainSession() {
 			state.Sessions++
 		}
-		if at, err := time.Parse(time.RFC3339, f.ReadAt); err == nil && at.After(state.LastReadAt) {
+		if at, ok := f.LastRead(); ok && at.After(state.LastReadAt) {
 			state.LastReadAt = at
 		}
 		if s, err := follow.StatFile(f.Path); err == nil {
@@ -217,7 +217,7 @@ func (m *Machine) readProjectTree(state report.SessionFilesState, st report.Proj
 		held[f.Path] = true
 	}
 	state.Walked = true
-	state.Gaps = found.Gaps()
+	state.Gaps = found.Gaps
 	for _, path := range found.Sessions {
 		if !held[path] {
 			state.Unregistered++

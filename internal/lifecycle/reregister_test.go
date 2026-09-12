@@ -45,7 +45,7 @@ func sentRecordIDs(t *testing.T, e *env) [][]string {
 	return sent
 }
 
-func TestEnableAfterASessionLeftTheProjectRegistersTheFileAgainAndSendsItsSegmentTwice(t *testing.T) {
+func TestEnableAfterASessionLeftTheProjectLeavesItRetiredAndSendsItsSegmentOnce(t *testing.T) {
 	e := newEnv(t)
 	e.service.StubFunc("POST", "/v1/batches", ackBatch(nil))
 	servedProxy(t, e)
@@ -73,27 +73,20 @@ func TestEnableAfterASessionLeftTheProjectRegistersTheFileAgainAndSendsItsSegmen
 	}
 
 	e.enable(proxytest.WithProxy)
-	files := e.registeredFiles(root)
-	if len(files) != 1 || files[0].Path != path {
-		t.Fatalf("registry after the second enable = %+v, want the retired file registered again", files)
-	}
-	if f := files[0]; f.Offset != 0 || f.NextSegment != 0 || f.Size != 0 || f.Inode != 0 || len(f.MessageIDs) != 0 {
-		t.Fatalf("cursor of the file registered again = %+v, want a zero cursor", f)
+	if got := e.registeredFiles(root); len(got) != 0 {
+		t.Fatalf("registry after the second enable = %+v, want the retired file left alone", got)
 	}
 
 	m.ReadSessionFiles(e.project, discardIO())
-	if got := e.storedRecords(); len(got) != 1 {
-		t.Fatalf("records after reading the file registered again = %d, want the segment stored once more", len(got))
+	if got := e.storedRecords(); len(got) != 0 {
+		t.Fatalf("records after the second enable = %d, want nothing read of the retired file", len(got))
 	}
 	if err := m.Upload(true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
 	sent := sentRecordIDs(t, e)
-	if len(sent) != 2 {
-		t.Fatalf("uploaded batches = %+v, want two", sent)
-	}
-	if len(sent[0]) != 1 || len(sent[1]) != 1 || sent[0][0] != sent[1][0] {
-		t.Fatalf("uploaded batches carried %+v, want one record id, the same one, in both", sent)
+	if len(sent) != 1 || len(sent[0]) != 1 {
+		t.Fatalf("uploaded batches = %+v, want the one batch with the one record", sent)
 	}
 }
