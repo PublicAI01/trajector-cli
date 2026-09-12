@@ -26,10 +26,16 @@ valid token — disabled projects, revoked tokens, bare paths — is forwarded
 untouched and never recorded. Privacy does not depend on a filter being
 correct; unauthorized capture has no code path.
 
+Reading a project's session files asks the routing table the same question
+before it stores anything, so both recording paths pass one gate: a
+device-wide pause — a withdrawn agreement, a line shape this build cannot
+mask — stops the reader as well as the proxy. Forwarding is never gated.
+
 Enable is transactional: settings injection, routing grant, consent record,
 and a `.gitignore` check either all land, verified by an end-to-end
 self-check against the live proxy (no upstream call, nothing billed), or
-every touched file is restored byte-for-byte.
+enable undoes what it wrote, entry by entry, through the writer that owns
+each file.
 
 ## Forwarding is sacred
 
@@ -65,7 +71,10 @@ process to read them: it appends what the files gained since last time
 to the spool and exits. It is not a daemon and watches nothing — each
 run reads from where the last left off, so a run killed before it
 advances a cursor simply reads the same bytes again, and the spool
-absorbs the repeat by record id.
+absorbs the repeat by record id. A file whose session moves to a
+directory consent does not cover is retired: the registry keeps the
+entry and enabling the project again does not read that file from its
+start, so its lines are never stored and sent a second time.
 
 ## Capture
 

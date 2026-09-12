@@ -117,13 +117,16 @@ deleting the binary alone leaves the settings injections behind.
 | `internal/lifecycle` | Device and project consent, and the composition root a command is assembled from: pairing, enable, disable, uninstall, session hooks, and the diagnosis every surface reads |
 | `internal/proxyserve` | What a serving proxy process is assembled from: the spool, the routing table, and its resident uploader |
 | `internal/report` | The device's state as one value, and the three ways it is shown: status, doctor, and the diagnostic bundle |
-| `internal/routing` | Which token routes where, and whether this exchange may be recorded |
+| `internal/routing` | Which token routes where, the shape a project records in, and whether recording may happen at all |
 | `internal/consent` | The durable record of what the user agreed to |
 | `internal/capture` | Which calls are eligible, and reassembly of streamed responses |
-| `internal/envelope` | What a stored rawcall is: written, classified, and read back |
+| `internal/envelope` | What a stored record is: written, classified, and read back |
 | `internal/spool` | The bounded on-disk store between capture and upload |
+| `internal/follow` | Which session files an enabled project reads, how far each has been read, and the one-time search for the files it already had |
+| `internal/sessionline` | What one line of a session file is, and the facts the format states in it |
+| `internal/drift` | What the lines no longer match about the shape this build was written against |
 | `internal/redact` | Masking secrets on this machine before anything is uploaded |
-| `internal/batch` | A set of rawcalls prepared for one upload |
+| `internal/batch` | A set of records prepared for one upload |
 | `internal/upload` | Draining the spool to the service in acknowledged batches |
 | `internal/claudesettings` | Reading and writing Claude Code's own settings files |
 | `internal/userdirs` | Where trajector's files live on this machine |
