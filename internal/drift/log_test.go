@@ -1,6 +1,7 @@
 package drift_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,5 +98,64 @@ func TestLogRefusesALineItDidNotWrite(t *testing.T) {
 	}
 	if _, err := drift.ReadLog(path); err == nil || !strings.Contains(err.Error(), "line 1") {
 		t.Errorf("ReadLog = %v, want an error naming line 1", err)
+	}
+}
+
+func TestLogPastItsSizeLimitKeepsItsNewestEntriesAndGrowsNoFurther(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "reader.log")
+	newValue := strings.Repeat("mood-ring-", 40)
+	found := drift.Signals{AssistantLines: 4, NewTopLevelTypes: []string{newValue}}
+	appended := 0
+	add := func() int64 {
+		t.Helper()
+		if err := drift.AppendLog(path, "2026-09-11T08:00:00Z", fmt.Sprintf("hash-%06d", appended), found); err != nil {
+			t.Fatal(err)
+		}
+		appended++
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.Size()
+	}
+
+	entrySize := add()
+	peak, size := entrySize, entrySize
+	for {
+		size = add()
+		if size < peak {
+			break
+		}
+		peak = size
+		if appended > 20000 {
+			t.Fatalf("log = %d bytes after %d entries, want it rewritten before it grows this far", size, appended)
+		}
+	}
+	shrunkTo, grown := size, appended
+	for i := 0; i < grown; i++ {
+		if got := add(); got > peak+entrySize {
+			t.Fatalf("log = %d bytes after %d entries, want it near the %d bytes it was rewritten at", got, appended, peak)
+		}
+	}
+
+	entries, err := drift.ReadLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) < 2 {
+		t.Fatalf("entries = %d, want a rewrite to keep a tail of them", len(entries))
+	}
+	last := entries[len(entries)-1]
+	if last.ProjectIDHash != fmt.Sprintf("hash-%06d", appended-1) {
+		t.Errorf("last entry = %+v, want the newest one appended", last)
+	}
+	if last.AssistantLines != 4 || strings.Join(last.NewTopLevelTypes, ",") != newValue {
+		t.Errorf("last entry = %+v, want it whole", last)
+	}
+	if entries[0].ProjectIDHash == "hash-000000" {
+		t.Errorf("first entry = %+v, want the oldest entries dropped", entries[0])
+	}
+	if shrunkTo >= peak {
+		t.Errorf("log = %d bytes after the rewrite, want it below the %d bytes it reached", shrunkTo, peak)
 	}
 }

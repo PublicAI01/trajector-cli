@@ -92,6 +92,31 @@ func TestReadSessionFiles_RecordsAlertsWithoutStopping(t *testing.T) {
 	}
 }
 
+func TestReadSessionFiles_CountsLinesCarryingNoReasoningWithoutLoggingThem(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl",
+		`{"type":"assistant","cwd":"/srv/work/sample","apiBlockIndex":0,"message":{"id":"msg_1","role":"assistant","content":[{"type":"thinking","thinking":""}]}}`+"\n"+
+			`{"type":"assistant","cwd":"/srv/work/sample","apiBlockIndex":0,"message":{"id":"msg_2","role":"assistant","content":[{"type":"thinking","thinking":""}]}}`+"\n")
+	e.registerFile(root, main, "")
+
+	e.machine().ReadSessionFiles(e.project, discardIO())
+
+	if got := e.storedRecords(); len(got) != 1 {
+		t.Errorf("records = %d, want the segment stored", len(got))
+	}
+	s := e.signals(root)
+	if s.AssistantLines != 2 || s.AssistantLinesWithEmptyReasoning != 2 {
+		t.Errorf("signals = %+v, want both lines counted", s)
+	}
+	if got := e.sandbox.ReaderLogText(); got != "" {
+		t.Errorf("reader log = %q, want no line for a shape this build expects to meet", got)
+	}
+}
+
 func TestReadSessionFiles_LinesOfTheExpectedShapeLeaveNoTrace(t *testing.T) {
 	e := newEnv(t)
 	e.aProxylessTarget()

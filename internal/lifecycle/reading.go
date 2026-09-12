@@ -117,10 +117,10 @@ func (m *Machine) storeRead(projectIDHash string, sp *spool.Spool, res follow.Re
 
 // inspectSegments holds each segment's lines against the shape this
 // build masks and reads by, before anything is stored, and keeps what
-// it noticed with the project's registry and in the reader log. Lines
-// this build cannot mask hold the run and pause recording device-wide
-// until a different build reads them; everything else is counted and
-// reading goes on. This is the one place a line's fields are read
+// it noticed with the project's registry, and in the reader log the
+// part of it the scan calls unexpected. Lines this build cannot mask
+// hold the run and pause recording device-wide until a different build
+// reads them; everything else is counted and reading goes on. This is the one place a line's fields are read
 // before the spool, so it is where the shape is checked; the reader
 // itself interprets nothing, and what a finding is called is stated
 // where the scan happens, not here. A registry or a log that cannot be
@@ -136,7 +136,9 @@ func (m *Machine) inspectSegments(projectIDHash string, segments []envelope.Segm
 			continue
 		}
 		_ = m.registry.AddSignals(projectIDHash, found)
-		_ = drift.AppendLog(m.deps.Layout.ReaderLog(), m.now(), projectIDHash, found)
+		if found.Unexpected() {
+			_ = drift.AppendLog(m.deps.Layout.ReaderLog(), m.now(), projectIDHash, found)
+		}
 		if found.Stop() {
 			_ = m.routes.PauseByBuild(routing.PauseRedactionDrift, m.deps.Version)
 			return true, nil

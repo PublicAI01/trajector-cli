@@ -64,3 +64,44 @@ func TestSignalsCountingLinesIsNotAFinding(t *testing.T) {
 		t.Errorf("Signals = %+v, want lines counted beside nothing found to report nothing", counted)
 	}
 }
+
+func TestSignalsCallAShapeThisBuildExpectsToMeetExpected(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		s    drift.Signals
+		want bool
+	}{
+		{
+			name: "assistant lines whose reasoning field holds nothing",
+			s:    drift.Signals{AssistantLines: 9, AssistantLinesWithEmptyReasoning: 6},
+		},
+		{
+			name: "a value outside this build's lists",
+			s:    drift.Signals{AssistantLines: 9, AssistantLinesWithEmptyReasoning: 6, NewTopLevelTypes: []string{"mood-ring"}},
+			want: true,
+		},
+		{
+			name: "an assistant line without a message id",
+			s:    drift.Signals{AssistantLines: 9, AssistantLinesWithEmptyReasoning: 6, AssistantLinesWithoutMessageID: 1},
+			want: true,
+		},
+		{
+			name: "a field this build cannot mask",
+			s:    drift.Signals{AssistantLinesWithEmptyReasoning: 6, UnanchoredPathFields: []string{"$.someNewPath"}},
+			want: true,
+		},
+		{
+			name: "nothing found",
+			s:    drift.Signals{AssistantLines: 9},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.s.Unexpected(); got != tc.want {
+				t.Errorf("Unexpected() = %v, want %v", got, tc.want)
+			}
+			if !tc.s.Any() && tc.s.AssistantLinesWithEmptyReasoning > 0 {
+				t.Errorf("Any() = false for %+v, want the count still a finding a store keeps", tc.s)
+			}
+		})
+	}
+}

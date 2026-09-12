@@ -79,15 +79,29 @@ func (s Signals) Alerts() bool {
 // Logs reports a value seen for the first time, to log and nothing
 // more.
 func (s Signals) Logs() bool {
-	return s.AssistantLinesWithEmptyReasoning > 0 ||
-		len(s.NewLaunchSurfaces) > 0 || len(s.NewAttachmentTypes) > 0 ||
-		len(s.NewSystemSubtypes) > 0 || len(s.NewTopLevelTypes) > 0
+	return s.AssistantLinesWithEmptyReasoning > 0 || s.newValues()
 }
 
 // Any reports whether anything was found at all. Lines counted beside
 // nothing found are not a finding: what a store keeps is what some
 // scan found, and the lines it was out of.
 func (s Signals) Any() bool { return s.Stop() || s.Alerts() || s.Logs() }
+
+// Unexpected reports a finding of a shape this build did not expect to
+// meet. It is the one rule for what the log of what reading noticed
+// keeps: a store still sums every count, and a surface still prints
+// them, but a count of a shape this build knows it meets on most
+// sessions tells a later reader of the log nothing. Today that is the
+// count of assistant lines whose reasoning field holds nothing, which
+// a setting of Claude Code's decides. A count added to the log group
+// answers the same question here: is it a shape this build expects?
+func (s Signals) Unexpected() bool { return s.Stop() || s.Alerts() || s.newValues() }
+
+// newValues reports a value outside this build's known lists.
+func (s Signals) newValues() bool {
+	return len(s.NewLaunchSurfaces) > 0 || len(s.NewAttachmentTypes) > 0 ||
+		len(s.NewSystemSubtypes) > 0 || len(s.NewTopLevelTypes) > 0
+}
 
 // Add reports what s and more found together: counts summed, name
 // lists merged without repeats. It is the whole arithmetic of keeping
