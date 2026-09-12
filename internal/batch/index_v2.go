@@ -94,10 +94,10 @@ func ParseIndexV2(data []byte) (IndexV2, error) {
 
 // rawcallItem indexes a rawcall: its record id is its request id, and
 // the item carries where the exchange went.
-func rawcallItem(env envelope.Envelope) IndexItemV2 {
+func rawcallItem(kind envelope.Kind, env envelope.Envelope) IndexItemV2 {
 	item := IndexItemV2{
 		RecordID:       env.RequestID(),
-		Source:         envelope.KindRawcall.Source,
+		Source:         kind.Source,
 		ProjectIDHash:  env.ProjectIDHash(),
 		UpstreamOrigin: env.UpstreamOrigin(),
 		Endpoint:       env.Endpoint(),
@@ -110,19 +110,22 @@ func rawcallItem(env envelope.Envelope) IndexItemV2 {
 }
 
 // segmentItem indexes one segment record.
-func segmentItem(seg envelope.Segment) IndexItemV2 {
-	return transcriptItem(seg.RecordID, seg.Capture)
+func segmentItem(kind envelope.Kind, seg envelope.Segment) IndexItemV2 {
+	return sessionRecordItem(kind, seg.RecordID, seg.Capture)
 }
 
 // metaSnapshotItem indexes one metadata snapshot record.
-func metaSnapshotItem(snap envelope.MetaSnapshot) IndexItemV2 {
-	return transcriptItem(snap.RecordID, snap.Capture)
+func metaSnapshotItem(kind envelope.Kind, snap envelope.MetaSnapshot) IndexItemV2 {
+	return sessionRecordItem(kind, snap.RecordID, snap.Capture)
 }
 
-func transcriptItem(recordID string, capture envelope.TranscriptCapture) IndexItemV2 {
+// sessionRecordItem indexes one record read from a session file. The
+// source is the record's own declaration, so a receiver routes every
+// kind of record by what that kind says it is.
+func sessionRecordItem(kind envelope.Kind, recordID string, capture envelope.TranscriptCapture) IndexItemV2 {
 	return IndexItemV2{
 		RecordID:      recordID,
-		Source:        envelope.KindSegment.Source,
+		Source:        kind.Source,
 		ProjectIDHash: capture.ProjectIDHash,
 		Timestamp:     capture.Timestamp,
 	}

@@ -44,15 +44,14 @@ type SpoolState struct {
 	OldestRecord time.Time
 }
 
-// recordsWaiting counts by kind the records the spool still holds,
-// which is what has not been uploaded yet.
-func (s SpoolState) recordsWaiting() (rawcalls, segments, snapshots int) {
+// recordsWaiting counts the records the spool still holds, which is
+// what has not been uploaded yet.
+func (s SpoolState) recordsWaiting() spool.Count {
+	var waiting spool.Count
 	for _, day := range s.Days {
-		rawcalls += day.Rawcalls
-		segments += day.Segments
-		snapshots += day.Snapshots
+		waiting.Plus(day.Count)
 	}
-	return rawcalls, segments, snapshots
+	return waiting
 }
 
 // SessionFilesState is what the registry of an enabled project's

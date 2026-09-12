@@ -108,9 +108,10 @@ func TestRecordIDsBySourceGroupsTheIndexBySource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := batch.Contents{
-		Rawcalls:       []spool.Rawcall{fixtureRawcall(t, "msg_1", at), fixtureRawcall(t, "msg_2", at.Add(time.Minute))},
-		SessionRecords: []spool.Record{storedRecord(t, seg.RecordID, segBytes), storedRecord(t, snap.RecordID, snapBytes)},
+	in := spool.Entries{
+		fixtureRawcall(t, "msg_1", at), fixtureRawcall(t, "msg_2", at.Add(time.Minute)),
+		storedRecord(t, envelope.KindSegment, seg.RecordID, segBytes),
+		storedRecord(t, envelope.KindMetaSnapshot, snap.RecordID, snapBytes),
 	}
 	b, refused, err := batch.Build("b-1", at, "test", in, batch.Run{})
 	if err != nil || len(refused) != 0 {
@@ -141,7 +142,7 @@ func fixtureCapture(at time.Time) envelope.TranscriptCapture {
 	}
 }
 
-func fixtureRawcall(t *testing.T, id string, at time.Time) spool.Rawcall {
+func fixtureRawcall(t *testing.T, id string, at time.Time) spool.Entry {
 	t.Helper()
 	env, err := envelope.Record(envelope.Observation{
 		Provider:          "anthropic",
@@ -162,15 +163,15 @@ func fixtureRawcall(t *testing.T, id string, at time.Time) spool.Rawcall {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return spool.Rawcall{RequestID: env.RequestID(), Timestamp: at, Size: int64(len(env.Bytes())), Data: env.Bytes()}
+	return spool.Entry{Kind: envelope.KindRawcall, ID: env.RequestID(), Timestamp: at, Raw: env.Bytes()}
 }
 
-func storedRecord(t *testing.T, id string, raw []byte) spool.Record {
+func storedRecord(t *testing.T, kind envelope.Kind, id string, raw []byte) spool.Entry {
 	t.Helper()
 	if len(raw) == 0 {
 		t.Fatalf("record %s has no bytes", id)
 	}
-	return spool.Record{ID: id, SessionID: "sess-1", ProjectIDHash: "hash-p1", Raw: raw}
+	return spool.Entry{Kind: kind, ID: id, Raw: raw}
 }
 
 func TestRecordIDsBySourceRefusesASchemaVersion1Index(t *testing.T) {

@@ -239,8 +239,8 @@ func TestStatusShowsHowFarBehindUploadingTheRecordsAre(t *testing.T) {
 	wants(t, "status", dashboard(d), "Records waiting to upload: none.")
 
 	d.Spool.Days = []spool.DaySummary{
-		{Day: "20260909", Segments: 2, Snapshots: 1},
-		{Day: "20260910", Segments: 3},
+		{Day: "20260909", Count: spool.Count{Segments: 2, Snapshots: 1}},
+		{Day: "20260910", Count: spool.Count{Segments: 3}},
 	}
 	d.Spool.OldestRecord = time.Date(2026, 9, 9, 7, 0, 0, 0, time.UTC)
 	wants(t, "status", dashboard(d), "Records waiting to upload: 5 segment(s), 1 snapshot(s); the oldest is from 2026-09-09T07:00:00Z.")
@@ -394,7 +394,7 @@ func TestTheBundleCarriesShapeAndSessionCountsWithoutIdsOrPaths(t *testing.T) {
 			Unreadable: []string{"/home/dev/sample-project/locked"},
 		},
 	}
-	d.Spool.Days = []spool.DaySummary{{Day: "20260910", Segments: 2}}
+	d.Spool.Days = []spool.DaySummary{{Day: "20260910", Count: spool.Count{Segments: 2}}}
 	d.Spool.OldestRecord = time.Date(2026, 9, 10, 7, 0, 0, 0, time.UTC)
 
 	got := string(report.DiagnosisJSON(d))

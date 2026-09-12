@@ -141,7 +141,7 @@ func TestStatusWarnsAboutRejectedBatches(t *testing.T) {
 
 func TestStatusCountsWaitingRawcallsOnADeviceThatRecordsOnlyThroughTheProxy(t *testing.T) {
 	d := device()
-	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Rawcalls: 2}, {Day: "20260910", Rawcalls: 1}}
+	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{Rawcalls: 2}}, {Day: "20260910", Count: spool.Count{Rawcalls: 1}}}
 	d.Spool.OldestRecord = time.Date(2026, 9, 9, 7, 0, 0, 0, time.UTC)
 	out := dashboard(d)
 
@@ -151,7 +151,7 @@ func TestStatusCountsWaitingRawcallsOnADeviceThatRecordsOnlyThroughTheProxy(t *t
 
 func TestStatusCountsEveryKindWaitingOnADeviceThatRecordsBothWays(t *testing.T) {
 	d := device()
-	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Rawcalls: 2, Segments: 3, Snapshots: 1}}
+	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{Rawcalls: 2, Segments: 3, Snapshots: 1}}}
 	out := dashboard(d)
 
 	wants(t, "status", out, "Records waiting to upload: 2 rawcall(s), 3 segment(s), 1 snapshot(s).")

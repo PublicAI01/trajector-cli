@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
@@ -106,18 +105,13 @@ func readReason(path string) Rejection {
 // rerunning after a partial move overwrites the same files. Writes go
 // through fsatomic so a concurrent reader — requeue or withdrawal in
 // another process — never observes a half-written record.
-func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, contents batch.Contents) error {
+func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, entries spool.Entries) error {
 	dir := filepath.Join(rejectedDir, rej.BatchID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	for _, rc := range contents.Rawcalls {
-		if err := fsatomic.WriteFile(filepath.Join(dir, rc.RequestID+".json"), rc.Data, 0o600); err != nil {
-			return err
-		}
-	}
-	for _, r := range contents.SessionRecords {
-		if err := fsatomic.WriteFile(filepath.Join(dir, r.ID+".json"), r.Raw, 0o600); err != nil {
+	for _, e := range entries {
+		if err := fsatomic.WriteFile(filepath.Join(dir, e.ID+".json"), e.Raw, 0o600); err != nil {
 			return err
 		}
 	}
@@ -128,7 +122,7 @@ func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, contents bat
 	if err := fsatomic.WriteFile(filepath.Join(dir, reasonName), append(reason, '\n'), 0o600); err != nil {
 		return err
 	}
-	return deleteFromSpool(sp, contents)
+	return sp.DeleteEntries(entries)
 }
 
 // PurgeRejected deletes a project's records of every kind from the

@@ -83,16 +83,9 @@ func (m *Machine) Diagnose(dir string) (report.Diagnosis, error) {
 }
 
 // oldestWaiting is when the oldest record still in the spool was
-// captured, across both slots: status reports one wait, so it is the
-// wait of whichever slot has waited longest.
+// captured, of whichever kind that is: status reports one wait.
 func oldestWaiting(sp *spool.Spool) time.Time {
-	oldest := time.Time{}
-	if at, ok := sp.Oldest(); ok {
-		oldest = at
-	}
-	if at, ok := sp.OldestRecord(); ok && (oldest.IsZero() || at.Before(oldest)) {
-		oldest = at
-	}
+	oldest, _ := sp.OldestEntry()
 	return oldest
 }
 

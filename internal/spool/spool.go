@@ -429,18 +429,50 @@ func (s *Spool) rewriteIndexFileLocked(path string, drop func(line []byte) bool)
 	return nil
 }
 
+// Count is how many stored records of each kind a spool holds, or one
+// day of it. One value counts every kind, so nothing that reports what
+// is waiting has to know how many kinds there are, and Add is the one
+// place that decides which counter a kind belongs to.
+type Count struct {
+	Rawcalls  int `json:"rawcalls"`
+	Segments  int `json:"segments"`
+	Snapshots int `json:"snapshots"`
+}
+
+// Add counts one record of the kind it declares. A kind this client
+// does not store is counted in no field, so a count never claims a
+// record it cannot name.
+func (c *Count) Add(kind envelope.Kind) {
+	switch kind {
+	case envelope.KindRawcall:
+		c.Rawcalls++
+	case envelope.KindSegment:
+		c.Segments++
+	case envelope.KindMetaSnapshot:
+		c.Snapshots++
+	}
+}
+
+// Plus adds another count into this one.
+func (c *Count) Plus(other Count) {
+	c.Rawcalls += other.Rawcalls
+	c.Segments += other.Segments
+	c.Snapshots += other.Snapshots
+}
+
+// Total counts the records of every kind.
+func (c Count) Total() int { return c.Rawcalls + c.Segments + c.Snapshots }
+
 // DaySummary reports one day of the spool: counts and sizes only, never
-// file names — ids belong to the records, not to diagnostics. Rawcalls
-// and Bytes describe the rawcall slot's day directory; Segments,
-// Snapshots and RecordBytes describe the same day in the record slot.
-// A day appears when either slot holds it.
+// file names — ids belong to the records, not to diagnostics. The
+// count's Rawcalls and Bytes describe the rawcall slot's day directory;
+// its Segments and Snapshots, with RecordBytes, describe the same day
+// in the record slot. A day appears when either slot holds it.
 type DaySummary struct {
-	Day         string `json:"day"`
-	Rawcalls    int    `json:"rawcalls"`
-	Bytes       int64  `json:"bytes"`
-	Segments    int    `json:"segments"`
-	Snapshots   int    `json:"snapshots"`
-	RecordBytes int64  `json:"record_bytes"`
+	Day string `json:"day"`
+	Count
+	Bytes       int64 `json:"bytes"`
+	RecordBytes int64 `json:"record_bytes"`
 }
 
 // Summary walks the day directories of both slots and reports each
@@ -476,7 +508,7 @@ func (s *Spool) Summary() ([]DaySummary, error) {
 				d.Bytes += info.Size()
 			}
 			if filepath.Ext(f.Name()) == ".json" {
-				d.Rawcalls++
+				d.Add(envelope.KindRawcall)
 			}
 		}
 	}
@@ -530,12 +562,7 @@ func summarizeRecordDay(dayDir string, d *DaySummary) error {
 		if err != nil {
 			return err
 		}
-		switch r.Kind {
-		case envelope.KindSegment.RecordKind:
-			d.Segments++
-		case envelope.KindMetaSnapshot.RecordKind:
-			d.Snapshots++
-		}
+		d.Add(recordKind(r.Kind))
 	}
 	return nil
 }

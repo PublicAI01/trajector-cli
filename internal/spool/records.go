@@ -287,6 +287,15 @@ func describeRecord(id string, data []byte) Record {
 // an index entry with no file is ignored and a file the index never
 // mentioned is visited anyway.
 func (s *Spool) EachRecord(visit func(Record) error) error {
+	return s.EachRecordWhere(func(string) bool { return true }, visit)
+}
+
+// EachRecordWhere is EachRecord restricted to the records whose id
+// matches. Only a matching record's bytes are read: the id is the file
+// name, so selecting on it costs a directory listing rather than a read
+// of every record on the machine — the same reason DeleteWhere matches
+// on the id alone.
+func (s *Spool) EachRecordWhere(match func(recordID string) bool, visit func(Record) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	days, err := s.recordDays()
@@ -303,6 +312,9 @@ func (s *Spool) EachRecord(visit func(Record) error) error {
 			return err
 		}
 		for _, f := range files {
+			if !match(f.id) {
+				continue
+			}
 			data, err := fsatomic.ReadFile(f.path)
 			if err != nil {
 				return err

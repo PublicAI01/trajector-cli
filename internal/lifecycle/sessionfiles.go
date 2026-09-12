@@ -298,21 +298,15 @@ func (m *Machine) inspectSegments(projectIDHash string, segments []envelope.Segm
 	return false, nil
 }
 
-// storeRecords writes a read result's segments and snapshots to the
-// spool. full reports that the spool refused a record for want of room,
-// the one outcome that must stop the whole run rather than advance a
-// cursor past records that were never stored.
+// storeRecords writes a read result's records to the spool. full
+// reports that the spool refused a record for want of room, the one
+// outcome that must stop the whole run rather than advance a cursor
+// past records that were never stored. One pass answers for every
+// record a read produced, so that outcome is decided once and not once
+// per kind.
 func storeRecords(sp *spool.Spool, res follow.ReadResult) (full bool, err error) {
-	for _, seg := range res.Segments {
-		if err := sp.WriteSegment(seg); err != nil {
-			if errors.Is(err, spool.ErrQuotaExceeded) {
-				return true, nil
-			}
-			return false, err
-		}
-	}
-	for _, snap := range res.Snapshots {
-		if err := sp.WriteMetaSnapshot(snap); err != nil {
+	for _, write := range recordWrites(sp, res) {
+		if err := write(); err != nil {
 			if errors.Is(err, spool.ErrQuotaExceeded) {
 				return true, nil
 			}
@@ -320,6 +314,20 @@ func storeRecords(sp *spool.Spool, res follow.ReadResult) (full bool, err error)
 		}
 	}
 	return false, nil
+}
+
+// recordWrites is the writes one read result asks of the spool, in the
+// order it asks for them. It is the one place that pairs a record with
+// the spool method its own kind names.
+func recordWrites(sp *spool.Spool, res follow.ReadResult) []func() error {
+	writes := make([]func() error, 0, len(res.Segments)+len(res.Snapshots))
+	for _, seg := range res.Segments {
+		writes = append(writes, func() error { return sp.WriteSegment(seg) })
+	}
+	for _, snap := range res.Snapshots {
+		writes = append(writes, func() error { return sp.WriteMetaSnapshot(snap) })
+	}
+	return writes
 }
 
 // injectionValue names, for a record, what this client did with the

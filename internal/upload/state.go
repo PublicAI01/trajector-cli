@@ -10,6 +10,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 // The uploader's bookkeeping files. All of them hold only ids,
@@ -33,15 +34,49 @@ func BookkeepingFiles() []string {
 
 // pending is a batch that was offered to the service and not yet
 // acknowledged. It pins the batch id to its records so a retry reuses
-// the id and can never be ingested twice. RecordIDs names the records
-// by their spool ids, across both slots. RequestIDs is the same list
-// under the key an earlier build wrote, when a batch could carry only
-// rawcalls: it is read so a batch that build left pending keeps its id
-// through an upgrade, and never written.
+// the id and can never be ingested twice.
+//
+// Records names each record by its spool id and by the kind that says
+// which slot holds it. RecordIDs and RequestIDs are the lists earlier
+// builds wrote under those keys — ids alone, when a batch could carry
+// rawcalls only, and when it could carry both but named no kind. They
+// are read so a batch such a build left pending keeps its id through
+// an upgrade, and neither is written again.
 type pending struct {
-	BatchID    string   `json:"batch_id"`
-	RecordIDs  []string `json:"record_ids,omitempty"`
-	RequestIDs []string `json:"request_ids,omitempty"`
+	BatchID    string         `json:"batch_id"`
+	Records    []pendingEntry `json:"records,omitempty"`
+	RecordIDs  []string       `json:"record_ids,omitempty"`
+	RequestIDs []string       `json:"request_ids,omitempty"`
+}
+
+// pendingEntry names one record of a pending batch: its spool id and
+// what the record declares itself to be, spelled the way the record
+// envelopes spell it. The kind is written whole, although only the
+// source is matched on, because this file is copied into a diagnostic
+// archive: a reader of it must be able to tell what a pending batch
+// held without the spool beside it. An entry read from a file an
+// earlier build wrote carries no kind at all.
+type pendingEntry struct {
+	ID         string `json:"id"`
+	Source     string `json:"source,omitempty"`
+	RecordKind string `json:"record_kind,omitempty"`
+}
+
+// holds reports whether a record still in the spool is the one this
+// entry named. The source is what the match turns on, because the
+// source is what names the slot: a record whose day index was lost
+// still reads back with its slot's source even when its own kind
+// cannot be read. An entry that names no source at all comes from a
+// file an earlier build wrote and matches an id in either slot, which
+// is what those builds did.
+func (p pendingEntry) holds(e spool.Entry) bool {
+	switch {
+	case p.ID != e.ID:
+		return false
+	case p.Source == "":
+		return true
+	}
+	return p.Source == e.Kind.Source
 }
 
 // Receipt is the last acknowledged upload.
@@ -253,8 +288,10 @@ func loadPending(dir string) (pending, bool, error) {
 		// close: the caller owns the recovery and its warning.
 		return pending{}, false, &errUnreadablePending{raw: data}
 	}
-	p.RecordIDs = append(p.RecordIDs, p.RequestIDs...)
-	p.RequestIDs = nil
+	for _, id := range append(p.RecordIDs, p.RequestIDs...) {
+		p.Records = append(p.Records, pendingEntry{ID: id})
+	}
+	p.RecordIDs, p.RequestIDs = nil, nil
 	return p, true, nil
 }
 

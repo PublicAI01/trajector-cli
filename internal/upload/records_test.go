@@ -511,6 +511,52 @@ func TestFlush_PendingBatchResendsBothKindsUnderTheSameID(t *testing.T) {
 	}
 }
 
+func TestFlush_AResumedBatchResendsOnlyTheSlotItNamed(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", rejectStub(503, "down"))
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	seg := f.storeSegment(t, sessionX, "", 0, f.now, "{}\n")
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("first flush against a failing service did not error")
+	}
+	f.storeRawcall(t, seg.RecordID, f.now)
+
+	res, err := f.newUploader(t).Flush(true)
+	if err != nil || res.Outcome != upload.Uploaded || res.Batches != 2 {
+		t.Fatalf("flush = %+v, %v; want the pending batch resent and the rawcall sent under an id of its own", res, err)
+	}
+	reqs := f.server.Requests()
+	if len(reqs) != 3 {
+		t.Fatalf("service saw %d requests, want the failed attempt, the resend, and the rawcall's own batch", len(reqs))
+	}
+	pinned := uploadedIndex(t, reqs[0]).BatchID
+	if got := uploadedIndex(t, reqs[1]).BatchID; got != pinned {
+		t.Errorf("resend used batch id %q, the first attempt %q; they must match", got, pinned)
+	}
+	if got := recordIDsBySource(t, reqs[1]); len(got) != 1 || strings.Join(got["transcript"], ",") != seg.RecordID {
+		t.Errorf("the resend carried %v, want only the record the pending batch named", got)
+	}
+	if got := uploadedIndex(t, reqs[2]).BatchID; got == pinned {
+		t.Errorf("the rawcall rode under batch id %q, which the earlier attempt already offered", got)
+	}
+	if got := recordIDsBySource(t, reqs[2]); len(got) != 1 || strings.Join(got["proxy"], ",") != seg.RecordID {
+		t.Errorf("the later batch carried %v, want the rawcall spelled like the record", got)
+	}
+	if usage := f.spool.Usage(); usage != 0 {
+		t.Errorf("spool holds %d bytes after both batches were acknowledged", usage)
+	}
+}
+
+func recordIDsBySource(t *testing.T, r fakeplatform.Request) map[string][]string {
+	t.Helper()
+	groups, err := fakeplatform.RecordIDsBySource(mustPart(t, r, "batch"))
+	if err != nil {
+		t.Fatalf("reading the uploaded index: %v", err)
+	}
+	return groups
+}
+
 func TestFlush_APendingFileFromAnEarlierBuildKeepsItsID(t *testing.T) {
 	f := newFixture(t)
 	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))

@@ -292,8 +292,8 @@ func ambiguityLine(a follow.Ambiguity) string {
 // device where the resident process lives only while a session is
 // open, the wait ends with the next session, not on a schedule.
 func recordsWaitingLine(s SpoolState) string {
-	rawcalls, segments, snapshots := s.recordsWaiting()
-	if rawcalls+segments+snapshots == 0 {
+	waiting := s.recordsWaiting()
+	if waiting.Total() == 0 {
 		return "Records waiting to upload: none."
 	}
 	var kinds []string
@@ -302,9 +302,9 @@ func recordsWaitingLine(s SpoolState) string {
 			kinds = append(kinds, fmt.Sprintf("%d %s", n, noun))
 		}
 	}
-	count(rawcalls, "rawcall(s)")
-	count(segments, "segment(s)")
-	count(snapshots, "snapshot(s)")
+	count(waiting.Rawcalls, "rawcall(s)")
+	count(waiting.Segments, "segment(s)")
+	count(waiting.Snapshots, "snapshot(s)")
 	line := "Records waiting to upload: " + strings.Join(kinds, ", ")
 	if !s.OldestRecord.IsZero() {
 		line += fmt.Sprintf("; the oldest is from %s", s.OldestRecord.UTC().Format(time.RFC3339))

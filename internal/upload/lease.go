@@ -3,7 +3,6 @@ package upload
 import (
 	"fmt"
 
-	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
@@ -32,12 +31,19 @@ type lease struct {
 // pair before anything is sent. Without the persisted lease a lost
 // acknowledgement could be re-uploaded under a fresh id and ingested
 // twice; better not to start.
-func openLease(dir string, contents batch.Contents) (lease, error) {
+func openLease(dir string, entries spool.Entries) (lease, error) {
 	id, err := newBatchID()
 	if err != nil {
 		return lease{}, err
 	}
-	l := lease{dir: dir, p: pending{BatchID: id, RecordIDs: contents.IDs()}}
+	// The pending record names each record with the slot that holds it,
+	// so what the lease pinned stays one record and never an id two
+	// slots could both answer to.
+	records := make([]pendingEntry, 0, len(entries))
+	for _, e := range entries {
+		records = append(records, pendingEntry{ID: e.ID, Source: e.Kind.Source, RecordKind: e.Kind.RecordKind})
+	}
+	l := lease{dir: dir, p: pending{BatchID: id, Records: records}}
 	if err := savePending(dir, l.p); err != nil {
 		return lease{}, fmt.Errorf("recording the batch before sending it: %w", err)
 	}
@@ -53,12 +59,34 @@ func resumeLease(dir string) (lease, bool, error) {
 
 func (l lease) id() string { return l.p.BatchID }
 
-func (l lease) recordIDs() []string { return l.p.RecordIDs }
+// ids is the set of spool ids this lease named. It is the half of
+// wants that a stored record can be matched on without reading it, so a
+// reader can narrow to this lease's records before paying for their
+// bytes; an id spelled the same in both slots passes here and is
+// settled by wants.
+func (l lease) ids() map[string]bool {
+	ids := make(map[string]bool, len(l.p.Records))
+	for _, p := range l.p.Records {
+		ids[p.ID] = true
+	}
+	return ids
+}
+
+// wants reports whether a record still in the spool is one this lease
+// named.
+func (l lease) wants(e spool.Entry) bool {
+	for _, p := range l.p.Records {
+		if p.holds(e) {
+			return true
+		}
+	}
+	return false
+}
 
 // settle ends the lease on the service's acknowledgement — the only
 // transition that deletes records.
-func (l lease) settle(sp *spool.Spool, acked batch.Contents) error {
-	if err := deleteFromSpool(sp, acked); err != nil {
+func (l lease) settle(sp *spool.Spool, acked spool.Entries) error {
+	if err := sp.DeleteEntries(acked); err != nil {
 		// The batch is acknowledged but its records are still on disk.
 		// The lease must survive so the next flush retries under the same
 		// id and the service ignores the duplicate.
@@ -81,8 +109,8 @@ func (l lease) release() error { return l.clear() }
 // means nothing moved and the lease stands, so the next flush meets the
 // same refusal under the same id; true with an error means the records
 // are quarantined but the id is still pinned.
-func (l lease) quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, contents batch.Contents) (moved bool, err error) {
-	if err := quarantine(rejectedDir, sp, rej, contents); err != nil {
+func (l lease) quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, entries spool.Entries) (moved bool, err error) {
+	if err := quarantine(rejectedDir, sp, rej, entries); err != nil {
 		return false, err
 	}
 	return true, l.clear()

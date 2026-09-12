@@ -23,7 +23,11 @@ const fakeSignature = "EqQBCkgIBBgCIkDunT5RmZFPqBWEcTbEK4DZWWL9zGnDx0M0vGRnHkV6w
 
 var buildTime = time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC)
 
-func storedRawcall(t *testing.T, id, sessionKey, projectHash, requestBody, responseBody string, at time.Time) spool.Rawcall {
+// unattributed is the kind of a record the second slot holds whose own
+// bytes name no kind: the slot is known, the content is not.
+var unattributed = envelope.Kind{Source: envelope.KindSegment.Source}
+
+func storedRawcall(t *testing.T, id, sessionKey, projectHash, requestBody, responseBody string, at time.Time) spool.Entry {
 	t.Helper()
 	env, err := envelope.Record(envelope.Observation{
 		Provider:          "anthropic",
@@ -44,37 +48,45 @@ func storedRawcall(t *testing.T, id, sessionKey, projectHash, requestBody, respo
 	if err != nil {
 		t.Fatalf("recording fixture rawcall: %v", err)
 	}
-	return spool.Rawcall{
-		RequestID:  env.RequestID(),
+	return spool.Entry{
+		Kind:       envelope.KindRawcall,
+		ID:         env.RequestID(),
 		SessionKey: sessionKey,
 		Timestamp:  at,
-		Size:       int64(len(env.Bytes())),
-		Data:       env.Bytes(),
+		Raw:        env.Bytes(),
 	}
 }
 
-func simpleRawcall(t *testing.T, id, sessionKey string, at time.Time) spool.Rawcall {
+func simpleRawcall(t *testing.T, id, sessionKey string, at time.Time) spool.Entry {
 	t.Helper()
 	return storedRawcall(t, id, sessionKey, "hash-p1",
 		`{"model":"m","messages":[{"role":"user","content":"hello"}]}`,
 		`{"id":"`+id+`","type":"message"}`, at)
 }
 
-func rawcalls(rcs ...spool.Rawcall) batch.Contents {
-	return batch.Contents{Rawcalls: rcs}
+func rawcalls(rcs ...spool.Entry) spool.Entries {
+	return spool.Entries(rcs)
 }
 
-func storedSegment(t *testing.T, sessionID, file string, index int, at time.Time, lines string) spool.Record {
+func packedIDs(b batch.Batch) []string {
+	var ids []string
+	for _, e := range b.Packed {
+		ids = append(ids, e.ID)
+	}
+	return ids
+}
+
+func storedSegment(t *testing.T, sessionID, file string, index int, at time.Time, lines string) spool.Entry {
 	t.Helper()
 	seg := envelope.NewSegment(sessionID, file, index, transcriptCapture(at), lines)
 	data, err := seg.Bytes()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return spool.Record{ID: seg.RecordID, Kind: seg.RecordKind, SessionID: sessionID, ProjectIDHash: "hash-p1", Timestamp: at, Raw: data}
+	return spool.Entry{Kind: envelope.KindSegment, ID: seg.RecordID, Timestamp: at, Raw: data}
 }
 
-func storedSnapshot(t *testing.T, sessionID, file string, at time.Time, content string) spool.Record {
+func storedSnapshot(t *testing.T, sessionID, file string, at time.Time, content string) spool.Entry {
 	t.Helper()
 	snap, err := envelope.NewMetaSnapshot(sessionID, file, transcriptCapture(at), []byte(content))
 	if err != nil {
@@ -84,7 +96,7 @@ func storedSnapshot(t *testing.T, sessionID, file string, at time.Time, content 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return spool.Record{ID: snap.RecordID, Kind: snap.RecordKind, SessionID: sessionID, ProjectIDHash: "hash-p1", Timestamp: at, Raw: data}
+	return spool.Entry{Kind: envelope.KindMetaSnapshot, ID: snap.RecordID, Timestamp: at, Raw: data}
 }
 
 func decompress(t *testing.T, data []byte) []byte {
@@ -152,8 +164,8 @@ func TestBuildRecordsRoundTripThroughTheIndex(t *testing.T) {
 	if int64(len(stream)) != ix.RecordsSize {
 		t.Fatalf("decompressed %d bytes, envelope says %d", len(stream), ix.RecordsSize)
 	}
-	if len(ix.Records) != in.Len() {
-		t.Fatalf("index has %d records, want %d", len(ix.Records), in.Len())
+	if len(ix.Records) != len(in) {
+		t.Fatalf("index has %d records, want %d", len(ix.Records), len(in))
 	}
 	for _, r := range ix.Records {
 		record := stream[r.Offset : r.Offset+r.Size]
@@ -233,7 +245,7 @@ func TestBuildEnvelopeCarriesIdentityIndexAndRunMetadata(t *testing.T) {
 	if ix.Run != run {
 		t.Fatalf("run metadata = %+v, want %+v", ix.Run, run)
 	}
-	if ids := b.Packed.IDs(); len(ids) != 1 || ids[0] != rc.RequestID {
+	if ids := packedIDs(b); len(ids) != 1 || ids[0] != rc.ID {
 		t.Fatalf("packed ids = %v", ids)
 	}
 }
@@ -241,10 +253,7 @@ func TestBuildEnvelopeCarriesIdentityIndexAndRunMetadata(t *testing.T) {
 func TestBuild_WritesSchemaVersionTwo(t *testing.T) {
 	segment := storedSegment(t, "sess-1", "", 0, buildTime, `{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
 	snapshot := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime, `{"agentId":"x"}`)
-	in := batch.Contents{
-		Rawcalls:       []spool.Rawcall{simpleRawcall(t, "req-1", "session-a", buildTime)},
-		SessionRecords: []spool.Record{segment, snapshot},
-	}
+	in := spool.Entries{simpleRawcall(t, "req-1", "session-a", buildTime), segment, snapshot}
 	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
@@ -301,7 +310,7 @@ func TestBuild_WritesSchemaVersionTwo(t *testing.T) {
 			t.Errorf("record %d: unknown kind %+v", i, kind)
 		}
 	}
-	if got := b.Packed.IDs(); strings.Join(got, ",") != "req-1,"+segment.ID+","+snapshot.ID {
+	if got := packedIDs(b); strings.Join(got, ",") != "req-1,"+segment.ID+","+snapshot.ID {
 		t.Errorf("packed ids = %v", got)
 	}
 }
@@ -321,10 +330,7 @@ func TestBuild_OrdersRawcallsFirstThenRecordsBySessionFileAndIndex(t *testing.T)
 	other := storedSegment(t, "sess-a", "", 0, later, "{}\n")
 	rc := simpleRawcall(t, "req-z", "session-z", later)
 
-	in := batch.Contents{
-		Rawcalls:       []spool.Rawcall{rc},
-		SessionRecords: []spool.Record{meta, seg2, other, sub, seg0, seg1},
-	}
+	in := spool.Entries{rc, meta, seg2, other, sub, seg0, seg1}
 	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -333,7 +339,7 @@ func TestBuild_OrdersRawcallsFirstThenRecordsBySessionFileAndIndex(t *testing.T)
 	if got := indexedIDs(t, b); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("record order:\n got %v\nwant %v", got, want)
 	}
-	if got := b.Packed.IDs(); strings.Join(got, ",") != strings.Join(want, ",") {
+	if got := packedIDs(b); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("packed order:\n got %v\nwant %v", got, want)
 	}
 }
@@ -342,7 +348,7 @@ func TestBuild_MasksSegmentsAndSnapshotsBeforePacking(t *testing.T) {
 	segment := storedSegment(t, "sess-1", "", 0, buildTime,
 		`{"type":"user","cwd":"/home/dev/proj","message":{"role":"user","content":"key `+fakeSecret+`"}}`+"\n")
 	snapshot := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime, `{"agentId":"x","note":"`+fakeSecret+`"}`)
-	in := batch.Contents{SessionRecords: []spool.Record{segment, snapshot}}
+	in := spool.Entries{segment, snapshot}
 	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
@@ -368,14 +374,14 @@ func TestBuild_MasksSegmentsAndSnapshotsBeforePacking(t *testing.T) {
 	if err != nil || snap.RecordID != want || snapItem.RecordID != want {
 		t.Errorf("snapshot id %q, index %q, recomputed from the packed content %q (%v)", snap.RecordID, snapItem.RecordID, want, err)
 	}
-	if ids := b.Packed.IDs(); len(ids) != 2 || ids[1] != snapshot.ID {
+	if ids := packedIDs(b); len(ids) != 2 || ids[1] != snapshot.ID {
 		t.Errorf("packed ids = %v, want the spool's own id %s for the snapshot", ids, snapshot.ID)
 	}
 }
 
 func TestBuild_SegmentSignatureSurvivesPacking(t *testing.T) {
 	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"` + fakeSignature + `"}]}}` + "\n"
-	in := batch.Contents{SessionRecords: []spool.Record{storedSegment(t, "sess-1", "", 0, buildTime, line)}}
+	in := spool.Entries{storedSegment(t, "sess-1", "", 0, buildTime, line)}
 	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -401,29 +407,29 @@ func TestBuild_RefusesRecordsItCannotReadOrMask(t *testing.T) {
 	}
 	cases := []struct {
 		name string
-		rec  spool.Record
+		rec  spool.Entry
 		want error
 	}{
-		{"bytes that are not a record", spool.Record{ID: "rec-torn", Timestamp: buildTime, Raw: []byte("not a record")}, nil},
-		{"a record of a kind no batch carries", spool.Record{ID: foreign.RecordID, Timestamp: buildTime, Raw: foreignData}, nil},
+		{"bytes that are not a record", spool.Entry{Kind: unattributed, ID: "rec-torn", Timestamp: buildTime, Raw: []byte("not a record")}, nil},
+		{"a record of a kind no batch carries", spool.Entry{Kind: unattributed, ID: foreign.RecordID, Timestamp: buildTime, Raw: foreignData}, nil},
 		{"a segment whose last line is cut", cut, redact.ErrIncompleteLine},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			in := batch.Contents{SessionRecords: []spool.Record{tc.rec, good}}
+			in := spool.Entries{tc.rec, good}
 			b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
-			if ids := b.Packed.IDs(); len(ids) != 1 || ids[0] != good.ID {
+			if ids := packedIDs(b); len(ids) != 1 || ids[0] != good.ID {
 				t.Fatalf("packed = %v, want only the readable record", ids)
 			}
 			if len(refused) != 1 {
 				t.Fatalf("refused = %+v, want the one record", refused)
 			}
 			r := refused[0]
-			if r.ID() != tc.rec.ID || !bytes.Equal(r.Record.Raw, tc.rec.Raw) || r.Rawcall.RequestID != "" {
-				t.Errorf("refusal = %+v, want the record carried whole in its own slot", r)
+			if r.ID() != tc.rec.ID || !bytes.Equal(r.Entry.Raw, tc.rec.Raw) || r.Entry.Kind != tc.rec.Kind {
+				t.Errorf("refusal = %+v, want the record carried whole with the slot it came from", r)
 			}
 			if r.Err == nil || (tc.want != nil && !errors.Is(r.Err, tc.want)) {
 				t.Errorf("refusal error = %v, want %v", r.Err, tc.want)
@@ -433,15 +439,15 @@ func TestBuild_RefusesRecordsItCannotReadOrMask(t *testing.T) {
 }
 
 func TestBuildPacksTheRestAndReturnsEveryRefusalAtOnce(t *testing.T) {
-	brokenOne := spool.Rawcall{RequestID: "req-broken-1", Timestamp: buildTime, Data: []byte("not a rawcall at all")}
-	brokenTwo := spool.Rawcall{RequestID: "req-broken-2", Timestamp: buildTime.Add(time.Second), Data: []byte("{}")}
+	brokenOne := spool.Entry{Kind: envelope.KindRawcall, ID: "req-broken-1", Timestamp: buildTime, Raw: []byte("not a rawcall at all")}
+	brokenTwo := spool.Entry{Kind: envelope.KindRawcall, ID: "req-broken-2", Timestamp: buildTime.Add(time.Second), Raw: []byte("{}")}
 	good := simpleRawcall(t, "req-good", "session-a", buildTime)
 
 	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(good, brokenOne, brokenTwo), batch.Run{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	if ids := b.Packed.IDs(); len(ids) != 1 || ids[0] != good.RequestID {
+	if ids := packedIDs(b); len(ids) != 1 || ids[0] != good.ID {
 		t.Fatalf("packed = %v, want only the readable record packed", ids)
 	}
 	if len(refused) != 2 {
@@ -453,8 +459,8 @@ func TestBuildPacksTheRestAndReturnsEveryRefusalAtOnce(t *testing.T) {
 		if r.Err == nil {
 			t.Errorf("refusal of %s carries no cause", r.ID())
 		}
-		if len(r.Rawcall.Data) == 0 || r.Record.ID != "" {
-			t.Errorf("refusal of %s does not carry the rawcall whole in its own slot", r.ID())
+		if len(r.Entry.Raw) == 0 || r.Entry.Kind != envelope.KindRawcall {
+			t.Errorf("refusal of %s does not carry the rawcall whole with the slot it came from", r.ID())
 		}
 	}
 	if !names["req-broken-1"] || !names["req-broken-2"] {
@@ -463,12 +469,12 @@ func TestBuildPacksTheRestAndReturnsEveryRefusalAtOnce(t *testing.T) {
 }
 
 func TestBuildOfOnlyUnpackableRecordsReturnsNoBatchAndNoError(t *testing.T) {
-	broken := spool.Rawcall{RequestID: "req-broken", Timestamp: buildTime, Data: []byte("not a rawcall at all")}
+	broken := spool.Entry{Kind: envelope.KindRawcall, ID: "req-broken", Timestamp: buildTime, Raw: []byte("not a rawcall at all")}
 	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(broken), batch.Run{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	if b.Packed.Len() != 0 || b.Envelope != nil {
+	if len(b.Packed) != 0 || b.Envelope != nil {
 		t.Fatalf("batch = %+v, want none when nothing packs", b)
 	}
 	if len(refused) != 1 || refused[0].ID() != "req-broken" {
@@ -477,7 +483,7 @@ func TestBuildOfOnlyUnpackableRecordsReturnsNoBatchAndNoError(t *testing.T) {
 }
 
 func TestBuildRefusesAnEmptyBatch(t *testing.T) {
-	if _, _, err := batch.Build("batch-1", buildTime, "test", batch.Contents{}, batch.Run{}); err == nil {
+	if _, _, err := batch.Build("batch-1", buildTime, "test", spool.Entries{}, batch.Run{}); err == nil {
 		t.Fatal("expected an error for an empty batch")
 	}
 }
@@ -490,24 +496,24 @@ func TestBuildRefusesAMissingID(t *testing.T) {
 }
 
 func TestBuildSessionAdjacencySurvivesALostIndex(t *testing.T) {
-	sessioned := func(id, session string, at time.Time) spool.Rawcall {
+	sessioned := func(id, session string, at time.Time) spool.Entry {
 		return storedRawcall(t, id, session, "hash-p1",
 			`{"model":"m","metadata":{"user_id":"`+session+`"},"messages":[{"role":"user","content":"hello"}]}`,
 			`{"id":"`+id+`","type":"message"}`, at)
 	}
-	indexed := []spool.Rawcall{
+	indexed := []spool.Entry{
 		sessioned("req-a1", "session-a", buildTime),
 		sessioned("req-b1", "session-b", buildTime.Add(1*time.Second)),
 		sessioned("req-a2", "session-a", buildTime.Add(2*time.Second)),
 		sessioned("req-b2", "session-b", buildTime.Add(3*time.Second)),
 	}
-	unindexed := make([]spool.Rawcall, len(indexed))
+	unindexed := make([]spool.Entry, len(indexed))
 	copy(unindexed, indexed)
 	for i := range unindexed {
 		unindexed[i].SessionKey = ""
 	}
 
-	order := func(rcs []spool.Rawcall) string {
+	order := func(rcs []spool.Entry) string {
 		b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(rcs...), batch.Run{})
 		if err != nil {
 			t.Fatalf("Build: %v", err)

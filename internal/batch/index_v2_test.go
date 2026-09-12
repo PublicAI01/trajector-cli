@@ -25,10 +25,7 @@ func TestTheEnvelopeSerializesEveryContractFieldInOrder(t *testing.T) {
 	seg := storedSegment(t, "sess-1", "", 0, buildTime, "{}\n")
 	snap := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime.Add(time.Minute), `{"agentId":"x"}`)
 
-	b, refused, err := batch.Build("batch-42", buildTime, "1.2.3", batch.Contents{
-		Rawcalls:       []spool.Rawcall{rc},
-		SessionRecords: []spool.Record{seg, snap},
-	}, batch.Run{RecordedToday: 3})
+	b, refused, err := batch.Build("batch-42", buildTime, "1.2.3", spool.Entries{rc, seg, snap}, batch.Run{RecordedToday: 3})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
 	}
@@ -66,15 +63,15 @@ func TestTheEnvelopeSerializesEveryContractFieldInOrder(t *testing.T) {
 	}
 }
 
-func TestTranscriptItemsCarryNoUpstreamFields(t *testing.T) {
+func TestSessionRecordItemsCarryNoUpstreamFields(t *testing.T) {
 	seg := storedSegment(t, "sess-1", "", 0, buildTime, "{}\n")
-	b, refused, err := batch.Build("batch-1", buildTime, "test", batch.Contents{SessionRecords: []spool.Record{seg}}, batch.Run{})
+	b, refused, err := batch.Build("batch-1", buildTime, "test", spool.Entries{seg}, batch.Run{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
 	}
 	for _, field := range []string{"upstream_origin", "endpoint", "garbled"} {
 		if strings.Contains(string(b.Envelope), field) {
-			t.Errorf("the envelope of a transcript-only batch carries %q: %s", field, b.Envelope)
+			t.Errorf("the envelope of a batch of session records carries %q: %s", field, b.Envelope)
 		}
 	}
 }
