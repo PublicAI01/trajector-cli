@@ -127,10 +127,70 @@ func quarantine(rejectedDir string, sp *spool.Spool, rej Rejection, entries spoo
 
 // PurgeRejected deletes a project's records of every kind from the
 // rejected store, for consent withdrawal: rejected records are still
-// local unuploaded data and withdrawal must reach them too. Batch
-// directories left empty of records are removed with their reason
-// files.
+// local unuploaded data and withdrawal must reach them too.
 func PurgeRejected(rejectedDir, projectIDHash string) (int, error) {
+	return purgeRejected(rejectedDir, func(data []byte) bool {
+		hash, ok := envelope.ProjectIDHashOf(data)
+		return ok && hash == projectIDHash
+	})
+}
+
+// PurgeRejectedSession deletes one coding session's records of every
+// kind from the rejected store, so forgetting a session reaches the
+// records a rejection set aside as well as those still in the spool. A
+// quarantined record that no longer says which session it belongs to
+// stays: deletion here is addressed by id, exactly as it is in the
+// spool, and an unattributable record is not this session's to delete.
+func PurgeRejectedSession(rejectedDir, sessionID string) (int, error) {
+	if sessionID == "" {
+		return 0, errors.New("upload: no session id to delete by")
+	}
+	return purgeRejected(rejectedDir, func(data []byte) bool {
+		id, ok := sessionOf(data)
+		return ok && id == sessionID
+	})
+}
+
+// sessionOf reads which coding session a quarantined record belongs
+// to, from the record itself: a rawcall carries its session inside the
+// request it wrapped, a segment and a snapshot each state theirs. Only
+// the record's own declaration decides which parser reads it, as a
+// requeue does — the reason file describes the batch, never a record.
+func sessionOf(data []byte) (string, bool) {
+	kind, err := envelope.KindOf(data)
+	if err != nil {
+		return "", false
+	}
+	switch kind {
+	case envelope.KindRawcall:
+		env, err := envelope.Parse(data)
+		if err != nil {
+			return "", false
+		}
+		return spool.SessionIDFromUserID(env.SessionKey())
+	case envelope.KindSegment:
+		seg, err := envelope.ParseSegment(data)
+		if err != nil {
+			return "", false
+		}
+		return seg.SessionID, seg.SessionID != ""
+	case envelope.KindMetaSnapshot:
+		snap, err := envelope.ParseMetaSnapshot(data)
+		if err != nil {
+			return "", false
+		}
+		return snap.SessionID, snap.SessionID != ""
+	}
+	return "", false
+}
+
+// purgeRejected deletes from every quarantined batch the records the
+// caller selects by their bytes, and reports how many left. A batch
+// directory with no record behind it is removed whole, reason file
+// included: a reason with nothing left to explain is not a quarantine.
+// Deleting never rewrites reason.json, so a batch that keeps records
+// keeps the count it was set aside with, which is what it was sent as.
+func purgeRejected(rejectedDir string, deletable func(data []byte) bool) (int, error) {
 	// Before the walk, whose ".json" filter cannot see a strand.
 	sweepStaleTemps(rejectedDir)
 	batches, err := os.ReadDir(rejectedDir)
@@ -161,8 +221,7 @@ func PurgeRejected(rejectedDir, projectIDHash string) (int, error) {
 			if err != nil {
 				return deleted, err
 			}
-			hash, ok := envelope.ProjectIDHashOf(data)
-			if !ok || hash != projectIDHash {
+			if !deletable(data) {
 				remaining++
 				continue
 			}

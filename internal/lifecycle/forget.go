@@ -3,6 +3,8 @@ package lifecycle
 import (
 	"errors"
 	"fmt"
+
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 // SessionIDEnv is the variable Claude Code sets in every process a
@@ -27,20 +29,22 @@ const forgetIntro = "Forgetting session %s: deleting its records that have not b
 	"Recording of this session continues; only what was collected so far is gone.\n"
 
 // Forget deletes what this machine still holds for one coding session
-// and has not uploaded, on both sides at once: the session's recorded
-// API calls, and the records read from its session file — including
-// those of its sub-agents, which carry the same session id. Acknowledged
-// uploads are no longer in the spool, so they are out of reach here by
-// construction; the session file itself is never touched; and the
-// reader's position is already past what is deleted, so recording
-// carries on without re-reading it.
+// and has not uploaded, wherever it waits: the session's recorded API
+// calls and the records read from its session file — including those
+// of its sub-agents, which carry the same session id — in both spool
+// slots, and the same records in every quarantined batch, which are
+// unuploaded local data as well. Acknowledged uploads are no longer in
+// the spool, so they are out of reach here by construction; the session
+// file itself is never touched; and the reader's position is already
+// past what is deleted, so recording carries on without re-reading it.
 //
 // Records pinned by an upload in progress are deleted like any other,
 // exactly as a project's withdrawal deletes them: the uploader sends
 // whatever of a pinned batch is still on disk and releases the batch
-// when nothing is. A batch the service stored whose acknowledgement has
-// not arrived yet is uploaded data, and is deleted where uploaded data
-// is.
+// when nothing is. The batch in flight is never cancelled here: it is
+// left to the acknowledgement it waits for. A batch the service stored
+// whose acknowledgement has not arrived yet is uploaded data, and is
+// deleted where uploaded data is.
 func (m *Machine) Forget(sessionID string, io IO) error {
 	if sessionID == "" {
 		return errors.New("no session id to forget")
@@ -54,6 +58,13 @@ func (m *Machine) Forget(sessionID string, io IO) error {
 	if err != nil {
 		return fmt.Errorf("deleting session %s: %w", sessionID, err)
 	}
-	fmt.Fprintf(io.Out, "Deleted %d record(s) and %d session record(s).\n", rawcalls, records)
+	quarantined, err := upload.PurgeRejectedSession(m.deps.Layout.RejectedDir(), sessionID)
+	if err != nil {
+		return fmt.Errorf("deleting session %s from the quarantined batches: %w", sessionID, err)
+	}
+	// One count, because the user asked one question: how much of this
+	// session is gone. Which store held a record is how this machine
+	// keeps records, not something the user chose.
+	fmt.Fprintf(io.Out, "Deleted %d record(s) of session %s.\n", rawcalls+records+quarantined, sessionID)
 	return nil
 }

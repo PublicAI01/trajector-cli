@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
@@ -272,4 +274,26 @@ func (s *Sandbox) QuarantinedRecords() int {
 		records += b.Records
 	}
 	return records
+}
+
+// QuarantinedRecordIDs lists the ids of the records one quarantined
+// batch still holds, in order and with the reason file left out, for a
+// test that must see which records a deletion kept rather than only how
+// many.
+func (s *Sandbox) QuarantinedRecordIDs(batchID string) []string {
+	s.t.Helper()
+	files, err := os.ReadDir(filepath.Join(s.layout.RejectedDir(), batchID))
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, f := range files {
+		name := f.Name()
+		if f.IsDir() || name == reasonFile || filepath.Ext(name) != ".json" {
+			continue
+		}
+		ids = append(ids, strings.TrimSuffix(name, ".json"))
+	}
+	sort.Strings(ids)
+	return ids
 }

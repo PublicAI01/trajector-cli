@@ -40,8 +40,8 @@ func TestForget_DefaultsToTheCurrentSession(t *testing.T) {
 	if !strings.Contains(got.Stdout, "Forgetting session "+sessionOne+":") {
 		t.Errorf("stdout = %q, want the current session named", got.Stdout)
 	}
-	if !strings.Contains(got.Stdout, "Deleted 1 record(s) and 1 session record(s).") {
-		t.Errorf("stdout = %q, want both counts reported", got.Stdout)
+	if !strings.Contains(got.Stdout, "Deleted 2 record(s) of session "+sessionOne+".") {
+		t.Errorf("stdout = %q, want one count across every store", got.Stdout)
 	}
 	if held := e.Sandbox().SessionsHeld(); held[sessionOne] != 0 || held[sessionTwo] != 2 {
 		t.Errorf("spool holds %v, want nothing of the current session and everything of the other", held)
@@ -130,8 +130,51 @@ func TestForget_PrintsTheAgreedWording(t *testing.T) {
 	want := "Forgetting session " + sessionOne + ": deleting its records that have not been uploaded yet from this machine. " +
 		"Uploaded data is deleted from the Dashboard instead. " +
 		"Recording of this session continues; only what was collected so far is gone.\n" +
-		"Deleted 0 record(s) and 0 session record(s).\n"
+		"Deleted 0 record(s) of session " + sessionOne + ".\n"
 	if got.Exit != 0 || got.Stdout != want || got.Stderr != "" {
 		t.Errorf("got %+v\nwant exit 0, empty stderr, stdout:\n%q", got, want)
+	}
+}
+
+// quarantinedRawcallOf is one rawcall of a session as a rejected batch
+// holds it.
+func quarantinedRawcallOf(t *testing.T, sessionID string) []byte {
+	t.Helper()
+	return proxytest.Rawcall(t, "req-rejected-"+sessionID[9:13], "hash-project",
+		time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC), func(o *proxytest.Observation) {
+			o.Request = proxytest.RequestBodyOfSession(t, sessionID)
+		})
+}
+
+func TestForget_ReachesTheRecordsAQuarantinedBatchHolds(t *testing.T) {
+	e := clitest.New(t)
+	t.Setenv(lifecycle.SessionIDEnv, "")
+	e.Sandbox().QuarantineBatch(proxytest.Rejection{BatchID: "b-mixed"}, map[string][]byte{
+		"req-rejected-1111": quarantinedRawcallOf(t, sessionOne),
+		"req-rejected-2222": quarantinedRawcallOf(t, sessionTwo),
+	})
+
+	first := e.Run("forget", sessionOne)
+
+	if first.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", first.Exit, first.Stderr)
+	}
+	if !strings.Contains(first.Stdout, "Deleted 1 record(s) of session "+sessionOne+".") {
+		t.Errorf("stdout = %q, want the quarantined record counted", first.Stdout)
+	}
+	if ids := e.Sandbox().QuarantinedRecordIDs("b-mixed"); strings.Join(ids, ",") != "req-rejected-2222" {
+		t.Errorf("batch holds %v, want only the other session's record", ids)
+	}
+
+	second := e.Run("forget", sessionTwo)
+
+	if second.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", second.Exit, second.Stderr)
+	}
+	if !strings.Contains(second.Stdout, "Deleted 1 record(s) of session "+sessionTwo+".") {
+		t.Errorf("stdout = %q, want the last quarantined record counted", second.Stdout)
+	}
+	if batches := e.Sandbox().QuarantinedBatches(); len(batches) != 0 {
+		t.Errorf("quarantine holds %+v, want the emptied batch gone whole", batches)
 	}
 }

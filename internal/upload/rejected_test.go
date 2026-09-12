@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -298,5 +299,193 @@ func TestAReasonFileCannotDrawItsOwnLineWhenTheQuarantineIsListed(t *testing.T) 
 	}
 	if !strings.Contains(got, "400 Bad Request") {
 		t.Errorf("details = %q, want the recorded reason still readable", got)
+	}
+}
+
+// rawcallBytesOfSession builds rawcall bytes whose request names a
+// coding session the way a client names the session it runs in.
+func rawcallBytesOfSession(t *testing.T, requestID, sessionID string) []byte {
+	t.Helper()
+	env, err := envelope.Record(envelope.Observation{
+		Provider: "anthropic", Endpoint: "/v1/messages", HTTPStatus: 200,
+		ProjectIDHash: "hash-project", At: time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC),
+		Request:          []byte(`{"model":"claude-fable-5","metadata":{"user_id":"account_session_` + sessionID + `"}}`),
+		RequestComplete:  true,
+		Response:         []byte(`{"id":"` + requestID + `"}`),
+		ResponseComplete: true,
+		ContentType:      "application/json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env.Bytes()
+}
+
+func segmentBytesOfSession(t *testing.T, sessionID string) (recordID string, data []byte) {
+	t.Helper()
+	seg := envelope.NewSegment(sessionID, "", 0, recordCapture(time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC), "hash-project"),
+		`{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
+	data, err := seg.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return seg.RecordID, data
+}
+
+func snapshotBytesOfSession(t *testing.T, sessionID string) (recordID string, data []byte) {
+	t.Helper()
+	snap, err := envelope.NewMetaSnapshot(sessionID, "subagents/agent-0000.meta.json",
+		recordCapture(time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC), "hash-project"), []byte(`{"agentId":"0000"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = snap.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snap.RecordID, data
+}
+
+// heldByBatch lists the record ids each quarantined batch still holds.
+func heldByBatch(t *testing.T, rejectedDir string) map[string][]string {
+	t.Helper()
+	batches, err := os.ReadDir(rejectedDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := map[string][]string{}
+	for _, b := range batches {
+		files, err := os.ReadDir(filepath.Join(rejectedDir, b.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			if name := f.Name(); name != "reason.json" && filepath.Ext(name) == ".json" {
+				held[b.Name()] = append(held[b.Name()], strings.TrimSuffix(name, ".json"))
+			}
+		}
+		sort.Strings(held[b.Name()])
+	}
+	return held
+}
+
+func TestPurgeRejectedSessionKeepsTheOtherSessionsAndTheReason(t *testing.T) {
+	rejectedDir := t.TempDir()
+	seedBatch(t, rejectedDir, "b-mixed", map[string][]byte{
+		"req-x1": rawcallBytesOfSession(t, "req-x1", sessionX),
+		"req-x2": rawcallBytesOfSession(t, "req-x2", sessionX),
+		"req-y1": rawcallBytesOfSession(t, "req-y1", sessionY),
+	})
+	reasonPath := filepath.Join(rejectedDir, "b-mixed", "reason.json")
+	reasonBefore, err := os.ReadFile(reasonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := upload.PurgeRejectedSession(rejectedDir, sessionX)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want the session's two records", deleted)
+	}
+	if held := heldByBatch(t, rejectedDir); len(held) != 1 || strings.Join(held["b-mixed"], ",") != "req-y1" {
+		t.Errorf("batches hold %v, want only the other session's record", held)
+	}
+	reasonAfter, err := os.ReadFile(reasonPath)
+	if err != nil {
+		t.Fatalf("the reason of a batch that still holds records was removed: %v", err)
+	}
+	if string(reasonAfter) != string(reasonBefore) {
+		t.Errorf("reason.json = %q, want it untouched (%q)", reasonAfter, reasonBefore)
+	}
+}
+
+func TestPurgeRejectedSessionRemovesABatchItEmpties(t *testing.T) {
+	rejectedDir := t.TempDir()
+	seedBatch(t, rejectedDir, "b-one-session", map[string][]byte{
+		"req-x1": rawcallBytesOfSession(t, "req-x1", sessionX),
+	})
+	seedBatch(t, rejectedDir, "b-other-session", map[string][]byte{
+		"req-y1": rawcallBytesOfSession(t, "req-y1", sessionY),
+	})
+
+	deleted, err := upload.PurgeRejectedSession(rejectedDir, sessionX)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("deleted = %d, want the one record", deleted)
+	}
+	if _, err := os.Stat(filepath.Join(rejectedDir, "b-one-session")); !os.IsNotExist(err) {
+		t.Errorf("the emptied batch directory was kept (stat: %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(rejectedDir, "b-other-session", "reason.json")); err != nil {
+		t.Errorf("a batch that still holds records lost its reason: %v", err)
+	}
+}
+
+func TestPurgeRejectedSessionReachesEveryRecordKind(t *testing.T) {
+	rejectedDir := t.TempDir()
+	segmentID, segment := segmentBytesOfSession(t, sessionX)
+	snapshotID, snapshot := snapshotBytesOfSession(t, sessionX)
+	otherSegmentID, otherSegment := segmentBytesOfSession(t, sessionY)
+	seedBatch(t, rejectedDir, "b-mixed", map[string][]byte{
+		"req-x1":       rawcallBytesOfSession(t, "req-x1", sessionX),
+		segmentID:      segment,
+		snapshotID:     snapshot,
+		otherSegmentID: otherSegment,
+	})
+
+	deleted, err := upload.PurgeRejectedSession(rejectedDir, sessionX)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if deleted != 3 {
+		t.Errorf("deleted = %d, want the rawcall, the segment and the snapshot", deleted)
+	}
+	if held := heldByBatch(t, rejectedDir); strings.Join(held["b-mixed"], ",") != otherSegmentID {
+		t.Errorf("batch holds %v, want only the other session's segment %s", held, otherSegmentID)
+	}
+}
+
+func TestPurgeRejectedSessionKeepsARecordThatNamesNoSession(t *testing.T) {
+	rejectedDir := t.TempDir()
+	seedBatch(t, rejectedDir, "b-mixed", map[string][]byte{
+		"req-anonymous": rawcallBytes(t, "req-anonymous"),
+		"req-torn":      []byte(`{"schema_version":"1"`),
+		"req-x1":        rawcallBytesOfSession(t, "req-x1", sessionX),
+	})
+
+	deleted, err := upload.PurgeRejectedSession(rejectedDir, sessionX)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("deleted = %d, want only the record that names the session", deleted)
+	}
+	if held := heldByBatch(t, rejectedDir); strings.Join(held["b-mixed"], ",") != "req-anonymous,req-torn" {
+		t.Errorf("batch holds %v, want every record that names no session", held)
+	}
+}
+
+func TestPurgeRejectedSessionRefusesAnEmptyID(t *testing.T) {
+	rejectedDir := t.TempDir()
+	seedBatch(t, rejectedDir, "b-mixed", map[string][]byte{
+		"req-anonymous": rawcallBytes(t, "req-anonymous"),
+	})
+
+	if _, err := upload.PurgeRejectedSession(rejectedDir, ""); err == nil {
+		t.Fatal("purging with no session id was accepted")
+	}
+	if n := rejectedRecords(t, rejectedDir); n != 1 {
+		t.Errorf("%d record(s) left, want the seeded one untouched", n)
+	}
+}
+
+func TestPurgeRejectedSessionOnAMissingDirDeletesNothing(t *testing.T) {
+	deleted, err := upload.PurgeRejectedSession(filepath.Join(t.TempDir(), "never-created"), sessionX)
+	if deleted != 0 || err != nil {
+		t.Errorf("got %d, %v; want 0, nil", deleted, err)
 	}
 }

@@ -75,8 +75,8 @@ func TestForget_DeletesBothKindsAndLeavesOtherSessions(t *testing.T) {
 				t.Fatalf("forget: %v\nstdout: %s", err, e.stdout)
 			}
 
-			if !strings.Contains(e.stdout.String(), "Deleted 1 record(s) and 2 session record(s).\n") {
-				t.Errorf("stdout = %q, want both counts reported", e.stdout)
+			if !strings.Contains(e.stdout.String(), "Deleted 3 record(s) of session "+tt.forget+".\n") {
+				t.Errorf("stdout = %q, want one count across every store", e.stdout)
 			}
 			rawcalls, records := spoolHeld(e)
 			if want := []string{requestIDOf(tt.other)}; strings.Join(rawcalls, ",") != strings.Join(want, ",") {
@@ -108,7 +108,7 @@ func TestForget_UploadedRecordsAreNotAffected(t *testing.T) {
 		t.Fatalf("forget: %v\nstdout: %s", err, e.stdout)
 	}
 
-	if !strings.Contains(e.stdout.String(), "Deleted 0 record(s) and 0 session record(s).\n") {
+	if !strings.Contains(e.stdout.String(), "Deleted 0 record(s) of session "+sessionOne+".\n") {
 		t.Errorf("stdout = %q, want nothing deleted, and said so", e.stdout)
 	}
 	var uploaded strings.Builder
@@ -133,7 +133,7 @@ func TestForget_PrintsTheAgreedWording(t *testing.T) {
 	if err := e.machine().Forget(sessionOne, e.io()); err != nil {
 		t.Fatal(err)
 	}
-	want := forgetIntroFor(sessionOne) + "Deleted 0 record(s) and 0 session record(s).\n"
+	want := forgetIntroFor(sessionOne) + "Deleted 0 record(s) of session " + sessionOne + ".\n"
 	if got := e.stdout.String(); got != want {
 		t.Errorf("stdout =\n%q\nwant\n%q", got, want)
 	}
@@ -164,5 +164,53 @@ func TestForget_RefusesAnEmptyIDBeforeSayingAnything(t *testing.T) {
 	}
 	if rawcalls, _ := spoolHeld(e); len(rawcalls) != 1 {
 		t.Errorf("rawcalls left = %v, want the one seeded untouched", rawcalls)
+	}
+}
+
+// quarantinedRawcallOf is one rawcall of a session as a rejected batch
+// holds it.
+func quarantinedRawcallOf(e *env, requestID, sessionID string) []byte {
+	e.t.Helper()
+	return proxytest.Rawcall(e.t, requestID, "hash-project", e.deps.Now(), func(o *proxytest.Observation) {
+		o.Request = proxytest.RequestBodyOfSession(e.t, sessionID)
+	})
+}
+
+func TestForget_ReachesTheQuarantinedBatchesAndCountsEveryStoreOnce(t *testing.T) {
+	e := newEnv(t)
+	seedSessionRawcall(e, requestIDOf(sessionOne), sessionOne)
+	seedSessionRecords(e, sessionOne)
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-mixed"}, map[string][]byte{
+		"req-rejected-one": quarantinedRawcallOf(e, "req-rejected-one", sessionOne),
+		"req-rejected-two": quarantinedRawcallOf(e, "req-rejected-two", sessionTwo),
+	})
+
+	if err := e.machine().Forget(sessionOne, e.io()); err != nil {
+		t.Fatalf("forget: %v\nstdout: %s", err, e.stdout)
+	}
+
+	if !strings.Contains(e.stdout.String(), "Deleted 4 record(s) of session "+sessionOne+".\n") {
+		t.Errorf("stdout = %q, want the spool and the quarantine counted in one total", e.stdout)
+	}
+	if ids := e.sandbox.QuarantinedRecordIDs("b-mixed"); strings.Join(ids, ",") != "req-rejected-two" {
+		t.Errorf("batch holds %v, want only the other session's record", ids)
+	}
+}
+
+func TestForget_RemovesAQuarantinedBatchItEmpties(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.QuarantineBatch(proxytest.Rejection{BatchID: "b-one-session"}, map[string][]byte{
+		"req-rejected-one": quarantinedRawcallOf(e, "req-rejected-one", sessionOne),
+	})
+
+	if err := e.machine().Forget(sessionOne, e.io()); err != nil {
+		t.Fatalf("forget: %v\nstdout: %s", err, e.stdout)
+	}
+
+	if !strings.Contains(e.stdout.String(), "Deleted 1 record(s) of session "+sessionOne+".\n") {
+		t.Errorf("stdout = %q, want the quarantined record counted", e.stdout)
+	}
+	if batches := e.sandbox.QuarantinedBatches(); len(batches) != 0 {
+		t.Errorf("quarantine holds %+v, want the emptied batch gone whole", batches)
 	}
 }
