@@ -1,11 +1,13 @@
 package redact
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/sessionline"
 )
 
 // ErrIncompleteLine is returned when a segment's last line does not end
@@ -152,12 +154,19 @@ func RedactSegment(seg envelope.Segment) (envelope.Segment, error) {
 	}
 	var stripped strings.Builder
 	stripped.Grow(len(seg.Lines))
-	rest := seg.Lines
-	for rest != "" {
-		nl := strings.IndexByte(rest, '\n')
+	rest := []byte(seg.Lines)
+	for len(rest) > 0 {
+		nl := bytes.IndexByte(rest, '\n')
 		line := rest[:nl]
 		rest = rest[nl+1:]
-		stripped.WriteString(stripAnchoredPaths(line))
+		// A line that is not one of a session file names no anchored
+		// field: its bytes go on as they are, and the pass below is
+		// what masks them.
+		if parsed, ok := sessionline.Parse(line); ok {
+			stripped.WriteString(stripAnchoredPaths(parsed))
+		} else {
+			stripped.Write(line)
+		}
 		stripped.WriteByte('\n')
 	}
 	redacted, err := JSONLBytes([]byte(stripped.String()))
@@ -197,12 +206,9 @@ func RedactMetaSnapshot(snap envelope.MetaSnapshot) (envelope.MetaSnapshot, erro
 // decoding and re-encoding the line: a round trip would reorder keys,
 // escape HTML, and reformat numbers, and any of those breaks a
 // signature carried on the same line. Hits arrive in text order, so the
-// rebuild needs no sorting. A line that is not valid JSON is returned
-// unchanged.
-func stripAnchoredPaths(line string) string {
-	if !json.Valid([]byte(line)) {
-		return line
-	}
+// rebuild needs no sorting.
+func stripAnchoredPaths(parsed sessionline.Line) string {
+	line := parsed.Text()
 	type hit struct {
 		entry int
 		region
@@ -259,13 +265,8 @@ func stripAnchoredPaths(line string) string {
 // an array is not looked at either. A whole value is an absolute path
 // when it starts with "/" and holds no whitespace, or has the form of a
 // Windows drive root such as "C:\" or "C:/".
-//
-// The line must be valid JSON.
-func AbsolutePathFields(line []byte) ([]string, error) {
-	if !json.Valid(line) {
-		return nil, errors.New("redact: line is not valid JSON")
-	}
-	s := string(line)
+func AbsolutePathFields(line sessionline.Line) []string {
+	s := line.Text()
 	listed := append(append([]pathField{}, anchoredPaths...), acknowledgedPaths...)
 	guardsHeld := make([]bool, len(listed))
 	var candidates []keyPath
@@ -298,7 +299,7 @@ func AbsolutePathFields(line []byte) ([]string, error) {
 		seen[name] = true
 		found = append(found, name)
 	}
-	return found, nil
+	return found
 }
 
 func isProbedLayer(path []string) bool {

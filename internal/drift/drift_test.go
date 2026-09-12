@@ -206,7 +206,7 @@ func TestScan_IgnoresFreeText(t *testing.T) {
 	}
 }
 
-func TestScan_RefusesALineThatIsNotAJSONObject(t *testing.T) {
+func TestScan_RefusesALineThatIsNotOneOfASessionFile(t *testing.T) {
 	for _, line := range []string{`"a string"`, `[1,2]`, `{"cwd":"/srv/wo`, `null`} {
 		_, err := drift.Scan([]byte(line + "\n"))
 		if err == nil || !strings.Contains(err.Error(), "line 1") {

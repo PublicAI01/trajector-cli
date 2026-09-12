@@ -53,40 +53,33 @@ package drift
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"sort"
 
 	"github.com/PublicAI01/trajector-cli/internal/redact"
+	"github.com/PublicAI01/trajector-cli/internal/sessionline"
 )
 
-// The top-level keys a scan reads. launchSurfaceKey is the key under
-// which Claude Code records how it was started.
+// The line kinds a scan treats apart from the rest.
 const (
-	typeKey          = "type"
-	subtypeKey       = "subtype"
-	messageKey       = "message"
-	attachmentKey    = "attachment"
-	blockIndexKey    = "apiBlockIndex"
-	sidechainKey     = "isSidechain"
-	launchSurfaceKey = "entrypoint"
-
 	typeAssistant  = "assistant"
 	typeSystem     = "system"
 	typeAttachment = "attachment"
 )
 
-// agentParentKeys are the fields by which an agent's lines are attached
-// to what started the agent, any one of which is enough: agentId
-// names the agent, and is what its metadata file and the tool result
-// in the file that started it both carry; toolUseId names the tool use
-// that started it; parentAgentId names the agent that started a nested
-// one; parentSessionId is a forked agent's reference to the session it
+// parented reports whether an agent line names what started the agent.
+// Any one of the four references is enough: AgentID names the agent,
+// and is what its metadata file and the tool result in the file that
+// started it both carry; ToolUseID names the tool use that started it;
+// ParentAgentID names the agent that started a nested one;
+// ParentSessionID is a forked agent's reference to the session it
 // forked from. Today only the first appears on the lines themselves
 // and the others in the metadata file beside them; all four are
-// accepted so that a key moving onto the lines does not read as a
-// line without a parent.
-var agentParentKeys = []string{"agentId", "toolUseId", "parentAgentId", "parentSessionId"}
+// accepted so that a reference moving onto the lines does not read as
+// a line without a parent.
+func parented(f sessionline.Fields) bool {
+	return f.AgentID != "" || f.ToolUseID != "" || f.ParentAgentID != "" || f.ParentSessionID != ""
+}
 
 // requiredResponseFields lists the fields every assistant line must
 // carry under message for the record to stand on its own. The list is
@@ -95,8 +88,9 @@ var requiredResponseFields []string
 
 // Scan reads the structured fields of the complete lines in lines and
 // reports what does not match the shape this build expects. It never
-// reads free text. Every line must be a JSON object, as a reader
-// guarantees; a line that is not is an error, not a finding.
+// reads free text. A line that is not one of a session file is an
+// error, not a finding: a reader hands over no such line, so one here
+// says the input did not come from a reader.
 func Scan(lines []byte) (Signals, error) {
 	var r Signals
 	if !bytes.HasSuffix(lines, []byte("\n")) {
@@ -143,83 +137,60 @@ type scanner struct {
 	types       map[string]bool
 }
 
-func (s *scanner) line(r *Signals, line []byte) error {
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(line, &top); err != nil || top == nil {
-		return fmt.Errorf("not a JSON object")
+func (s *scanner) line(r *Signals, raw []byte) error {
+	line, ok := sessionline.Parse(raw)
+	if !ok {
+		return fmt.Errorf("not a session line")
 	}
-	fields, err := redact.AbsolutePathFields(line)
-	if err != nil {
-		return err
-	}
-	for _, f := range fields {
-		s.paths[f] = true
+	for _, name := range redact.AbsolutePathFields(line) {
+		s.paths[name] = true
 	}
 
-	typ := stringField(top[typeKey])
-	if typ != "" && !knownTopLevelTypes[typ] {
-		s.types[typ] = true
+	f := line.Fields()
+	if f.Type != "" && !knownTopLevelTypes[f.Type] {
+		s.types[f.Type] = true
 	}
-	if v, ok := top[launchSurfaceKey]; ok {
-		if surface := stringField(v); surface != "" && !knownLaunchSurfaces[surface] {
-			s.launch[surface] = true
-		}
+	if f.LaunchSurface != "" && !knownLaunchSurfaces[f.LaunchSurface] {
+		s.launch[f.LaunchSurface] = true
 	}
-	switch typ {
+	switch f.Type {
 	case typeAssistant:
-		s.assistant(r, top)
+		s.assistant(r, line, f)
 	case typeSystem:
-		if sub := stringField(top[subtypeKey]); sub != "" && !knownSystemSubtypes[sub] {
-			s.subtypes[sub] = true
+		if f.Subtype != "" && !knownSystemSubtypes[f.Subtype] {
+			s.subtypes[f.Subtype] = true
 		}
 	case typeAttachment:
-		var att struct {
-			Type string `json:"type"`
-		}
-		decode(top[attachmentKey], &att)
-		if att.Type != "" && !knownAttachmentTypes[att.Type] {
-			s.attachments[att.Type] = true
+		if f.AttachmentType != "" && !knownAttachmentTypes[f.AttachmentType] {
+			s.attachments[f.AttachmentType] = true
 		}
 	}
 
-	var sidechain bool
-	decode(top[sidechainKey], &sidechain)
-	if sidechain || stringField(top["agentId"]) != "" {
+	if f.Sidechain || f.AgentID != "" {
 		r.AgentLines++
-		parented := false
-		for _, key := range agentParentKeys {
-			if stringField(top[key]) != "" {
-				parented = true
-				break
-			}
-		}
-		if !parented {
+		if !parented(f) {
 			r.AgentLinesWithoutParent++
 		}
 	}
 	return nil
 }
 
-func (s *scanner) assistant(r *Signals, top map[string]json.RawMessage) {
+func (s *scanner) assistant(r *Signals, line sessionline.Line, f sessionline.Fields) {
 	r.AssistantLines++
-	var message map[string]json.RawMessage
-	decode(top[messageKey], &message)
-	id := stringField(message["id"])
-	if id == "" {
+	if f.MessageID == "" {
 		r.AssistantLinesWithoutMessageID++
 	}
 	for _, key := range requiredResponseFields {
-		if _, ok := message[key]; !ok {
+		if !line.MessageHas(key) {
 			r.AssistantLinesMissingResponseFields++
 			break
 		}
 	}
-	if id == "" {
+	if f.MessageID == "" {
 		return
 	}
-	var index int
-	if raw, ok := top[blockIndexKey]; ok && json.Unmarshal(raw, &index) == nil {
-		s.blockIndex[id] = append(s.blockIndex[id], index)
+	if f.HasBlockIndex {
+		s.blockIndex[f.MessageID] = append(s.blockIndex[f.MessageID], f.BlockIndex)
 	}
 }
 
@@ -237,18 +208,6 @@ func countGaps(byMessage map[string][]int) int {
 		}
 	}
 	return gaps
-}
-
-func stringField(raw json.RawMessage) string {
-	var s string
-	decode(raw, &s)
-	return s
-}
-
-func decode(raw json.RawMessage, v any) {
-	if raw != nil {
-		_ = json.Unmarshal(raw, v)
-	}
 }
 
 func sorted(set map[string]bool) []string {

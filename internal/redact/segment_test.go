@@ -11,7 +11,17 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/redact"
+	"github.com/PublicAI01/trajector-cli/internal/sessionline"
 )
+
+func parsedLine(t *testing.T, line string) sessionline.Line {
+	t.Helper()
+	parsed, ok := sessionline.Parse([]byte(line))
+	if !ok {
+		t.Fatalf("not a session line: %s", line)
+	}
+	return parsed
+}
 
 const (
 	fixtureSessionID = "0f1e2d3c-4b5a-4968-8776-655443322110"
@@ -245,6 +255,28 @@ func TestRedactSegment_OtherBytesUnchanged(t *testing.T) {
 	}
 }
 
+func TestRedactSegment_KeepsALineThatIsNotASessionLine(t *testing.T) {
+	t.Parallel()
+	lines := `{"type":"user","cwd":"` + fixtureProject + `"}` + "\n" +
+		`plain text, no object here` + "\n" +
+		`["x"]` + "\n"
+
+	got := strings.Split(strings.TrimSuffix(redactSegmentLines(t, lines), "\n"), "\n")
+
+	if len(got) != 3 {
+		t.Fatalf("lines = %d, want 3: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], `"cwd":`+pathToken) {
+		t.Errorf("anchored path not stripped: %s", got[0])
+	}
+	if got[1] != `plain text, no object here` {
+		t.Errorf("got %q, want the bytes as they were", got[1])
+	}
+	if got[2] != `["x"]` {
+		t.Errorf("got %q, want the bytes as they were", got[2])
+	}
+}
+
 func TestRedactSegment_EnvelopeFieldsAreNotScanned(t *testing.T) {
 	t.Parallel()
 	secretLike := highEntropySecret
@@ -334,10 +366,7 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 	t.Run("fixture lines report nothing", func(t *testing.T) {
 		t.Parallel()
 		for i, line := range fixtureLines(t, "segment_lines.jsonl") {
-			got, err := redact.AbsolutePathFields([]byte(line))
-			if err != nil {
-				t.Fatalf("line %d: %v", i, err)
-			}
+			got := redact.AbsolutePathFields(parsedLine(t, line))
 			if len(got) != 0 {
 				t.Errorf("line %d: unexpected absolute path fields %v", i, got)
 			}
@@ -345,10 +374,7 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 	})
 	t.Run("a new root field is reported", func(t *testing.T) {
 		t.Parallel()
-		got, err := redact.AbsolutePathFields(readFixture(t, "drift_line.jsonl"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		got := redact.AbsolutePathFields(parsedLine(t, string(readFixture(t, "drift_line.jsonl"))))
 		if len(got) != 1 || got[0] != "$.someNewPath" {
 			t.Errorf("got %v, want [$.someNewPath]", got)
 		}
@@ -409,10 +435,7 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := redact.AbsolutePathFields([]byte(tc.line))
-			if err != nil {
-				t.Fatal(err)
-			}
+			got := redact.AbsolutePathFields(parsedLine(t, tc.line))
 			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
@@ -472,10 +495,7 @@ func TestAbsolutePathFields_NamesNoKeyThatCouldBeAPath(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := redact.AbsolutePathFields([]byte(tc.line))
-			if err != nil {
-				t.Fatal(err)
-			}
+			got := redact.AbsolutePathFields(parsedLine(t, tc.line))
 			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
@@ -493,10 +513,7 @@ func TestAbsolutePathFields_NamesNoPathFromLinesTheReaderNeverKeeps(t *testing.T
 		}
 	}
 	for i, line := range lines {
-		got, err := redact.AbsolutePathFields([]byte(line))
-		if err != nil {
-			t.Fatalf("line %d: %v", i, err)
-		}
+		got := redact.AbsolutePathFields(parsedLine(t, line))
 		for _, name := range got {
 			if strings.ContainsAny(name, `/\: `) {
 				t.Errorf("line %d: name %q carries a path", i, name)
@@ -505,13 +522,6 @@ func TestAbsolutePathFields_NamesNoPathFromLinesTheReaderNeverKeeps(t *testing.T
 				t.Errorf("line %d: name %q carries a value from the line", i, name)
 			}
 		}
-	}
-}
-
-func TestAbsolutePathFields_RefusesALineThatIsNotJSON(t *testing.T) {
-	t.Parallel()
-	if _, err := redact.AbsolutePathFields([]byte(`{"cwd":"/srv/wo`)); err == nil {
-		t.Fatal("expected an error")
 	}
 }
 

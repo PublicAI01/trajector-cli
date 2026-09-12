@@ -3,7 +3,6 @@ package follow
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/sessionline"
 )
 
 // SubagentsDir is the directory beside a session's main file, under a
@@ -74,11 +74,12 @@ type ReadResult struct {
 // writes the file it reads.
 //
 // Only lines that end in a newline are consumed; a line still being
-// written waits for the next read. A line that is not a JSON object is
-// consumed and dropped. A rewritten file is read again from its start,
-// and lines whose message id was consumed before are not sent again:
-// the copy sent first stands. Lines are stored byte for byte; nothing in
-// them is interpreted beyond the three fields that steer reading.
+// written waits for the next read. A line that is not one of a session
+// file is consumed and dropped. A rewritten file is read again from its
+// start, and lines whose message id was consumed before are not sent
+// again: the copy sent first stands. Lines are stored byte for byte;
+// nothing in them is interpreted beyond the three fields that steer
+// reading.
 func Read(f File, capture envelope.TranscriptCapture, opts ReadOptions) (ReadResult, error) {
 	st, err := StatFile(f.Path)
 	if err != nil {
@@ -149,12 +150,16 @@ func readLines(res ReadResult, st Stat, capture envelope.TranscriptCapture, opts
 		if line == nil {
 			continue
 		}
-		fields, ok := parseLine(line)
-		if !ok || droppedTypes[fields.typ] {
+		parsed, ok := sessionline.Parse(line)
+		if !ok {
 			continue
 		}
-		if fields.typ == typeRelocated {
-			if !authorized(fields.relocatedCwd) {
+		fields := parsed.Fields()
+		if droppedTypes[fields.Type] {
+			continue
+		}
+		if fields.Type == typeRelocated {
+			if !authorized(fields.RelocatedCwd) {
 				res.Stopped = true
 				break
 			}
@@ -165,13 +170,13 @@ func readLines(res ReadResult, st Stat, capture envelope.TranscriptCapture, opts
 				continue
 			}
 		}
-		if fields.messageID != "" {
-			if skipConsumed && consumedBefore[fields.messageID] {
+		if fields.MessageID != "" {
+			if skipConsumed && consumedBefore[fields.MessageID] {
 				continue
 			}
-			if !consumedBefore[fields.messageID] && !addedSet[fields.messageID] {
-				added = append(added, fields.messageID)
-				addedSet[fields.messageID] = true
+			if !consumedBefore[fields.MessageID] && !addedSet[fields.MessageID] {
+				added = append(added, fields.MessageID)
+				addedSet[fields.MessageID] = true
 			}
 		}
 		kept.Write(line)
@@ -262,38 +267,6 @@ func IsSessionFile(name string) bool {
 // SubagentsDir: its lines, or the metadata beside them.
 func IsAgentFile(name string) bool {
 	return strings.HasPrefix(name, agentPrefix) && (strings.HasSuffix(name, linesExt) || strings.HasSuffix(name, metaExt))
-}
-
-// lineFields are the only parts of a line reading looks at.
-type lineFields struct {
-	typ          string
-	messageID    string
-	relocatedCwd string
-}
-
-// parseLine reports false for a line that is not a JSON object. Fields
-// of the wrong shape are treated as absent rather than making the line
-// malformed: the line still enters the segment as it is.
-func parseLine(line []byte) (lineFields, bool) {
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(line, &top); err != nil || top == nil {
-		return lineFields{}, false
-	}
-	var fields lineFields
-	decodeField(top["type"], &fields.typ)
-	decodeField(top["relocatedCwd"], &fields.relocatedCwd)
-	var message struct {
-		ID string `json:"id"`
-	}
-	decodeField(top["message"], &message)
-	fields.messageID = message.ID
-	return fields, true
-}
-
-func decodeField(raw json.RawMessage, v any) {
-	if raw != nil {
-		_ = json.Unmarshal(raw, v)
-	}
 }
 
 // lineScanner yields complete lines, newline included, from a reader
