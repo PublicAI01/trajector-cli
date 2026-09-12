@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 )
 
 // newUpgradeEnv is a device on a published release, with an installed
@@ -164,5 +166,57 @@ func TestUpgradeOfABuildThatIsNotAPublishedRelease(t *testing.T) {
 	}
 	if got := e.installedBinary(); got != "the 0.1.0 binary" {
 		t.Errorf("installed binary is %q", got)
+	}
+}
+
+func TestUpgradeUnderARedactionDriftPauseNamesTheSecondStep(t *testing.T) {
+	e, releases := newUpgradeEnv(t)
+	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
+	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
+
+	if err := e.machine().Upgrade(e.io()); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+
+	out := e.stdout.String()
+	if !strings.Contains(out, "Upgraded trajector 0.1.0 -> 0.2.0.") {
+		t.Fatalf("upgrade did not replace the binary:\n%s", out)
+	}
+	if !strings.Contains(out, report.RecordingPausedUntilDoctor) {
+		t.Errorf("upgrade did not name the step that resumes recording:\n%s", out)
+	}
+	// The new binary is not evidence that it reads the session files;
+	// only doctor reads them, so the pause stands until it runs.
+	if got := e.sandbox.PausedReason(); got != proxytest.PauseRedactionDrift {
+		t.Errorf("PausedReason = %q, want the pause left standing", got)
+	}
+}
+
+func TestUpgradeWithRecordingNotPausedNamesNoFurtherStep(t *testing.T) {
+	e, releases := newUpgradeEnv(t)
+	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
+
+	if err := e.machine().Upgrade(e.io()); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+
+	if out := e.stdout.String(); strings.Contains(out, report.RecordingPausedUntilDoctor) {
+		t.Errorf("upgrade sent a recording device to doctor:\n%s", out)
+	}
+}
+
+func TestUpgradeThatInstallsNothingNamesNoFurtherStep(t *testing.T) {
+	e, releases := newUpgradeEnv(t)
+	releases.Publish(t, "0.1.0", []byte("the 0.1.0 binary"))
+	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
+
+	if err := e.machine().Upgrade(e.io()); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+
+	// Nothing about this build changed, so doctor would reach the
+	// judgement that paused recording in the first place.
+	if out := e.stdout.String(); strings.Contains(out, report.RecordingPausedUntilDoctor) {
+		t.Errorf("a machine already on the newest release was sent to doctor:\n%s", out)
 	}
 }

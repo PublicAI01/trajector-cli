@@ -8,6 +8,8 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 )
 
 func TestUpgradeTakesNoArguments(t *testing.T) {
@@ -42,6 +44,28 @@ func TestUpgradeOfABuildFromACheckoutInstallsNothing(t *testing.T) {
 	}
 	if downloads := releases.Downloads(); len(downloads) != 0 {
 		t.Errorf("upgrade downloaded %v from a build it will not replace", downloads)
+	}
+}
+
+func TestUpgradeOfABuildFromACheckoutNamesNoStepForAPausedDevice(t *testing.T) {
+	e := clitest.New(t)
+	releases := fakereleases.New(t)
+	releases.Publish(t, "9.9.9", []byte("a much newer binary"))
+	e.SetReleasesURL(releases.IndexURL())
+	e.Sandbox().PauseByBuild(proxytest.PauseRedactionDrift, "9.9.8")
+
+	got := e.Run("upgrade")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	// The step that resumes recording follows a build that changed. This
+	// one did not, so doctor would reach the judgement that paused
+	// recording in the first place.
+	if strings.Contains(got.Stdout, report.RecordingPausedUntilDoctor) {
+		t.Errorf("stdout = %q, want no step that changes nothing", got.Stdout)
+	}
+	if got := e.Sandbox().PausedReason(); got != proxytest.PauseRedactionDrift {
+		t.Errorf("PausedReason = %q, want the pause left standing", got)
 	}
 }
 

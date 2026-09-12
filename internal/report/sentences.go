@@ -52,6 +52,13 @@ const (
 	// search for a project's session files cannot find by design.
 	spellingVariantsNotice = "Sessions started under another spelling of this project's path, or under a directory name Claude Code was told to use instead, are stored under names this device does not compute and are not collected."
 
+	// RecordingPausedUntilDoctor is what a device still owes its user
+	// after a build that cannot read the session files is replaced: a
+	// newer binary does not resume recording by itself, and doctor is
+	// the command that reads the files and decides whether this build
+	// covers them.
+	RecordingPausedUntilDoctor = "Recording is paused until you run `trajector doctor`, which checks that this build can read your session files."
+
 	// windowsSideClaudeFact names the one arrangement across a WSL
 	// boundary that records nothing, and windowsSideWayOut what makes
 	// it record.

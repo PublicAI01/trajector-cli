@@ -3,6 +3,8 @@ package lifecycle
 import (
 	"fmt"
 
+	"github.com/PublicAI01/trajector-cli/internal/report"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 )
 
@@ -42,6 +44,7 @@ func (m *Machine) Upgrade(io IO) error {
 		// The proxy this build started keeps serving until something
 		// replaces it; the takeover rule then prefers the newer release.
 		fmt.Fprintln(io.Out, "A proxy from the previous build may still be running; the next session replaces it.")
+		m.sayDriftPauseStands(io)
 	default:
 		// Every outcome owes the user a sentence. An outcome no case
 		// above answers is a gap in this switch, and saying nothing at
@@ -49,4 +52,19 @@ func (m *Machine) Upgrade(io IO) error {
 		return fmt.Errorf("upgrade finished in a state this build cannot describe (%d)", out.Kind)
 	}
 	return nil
+}
+
+// sayDriftPauseStands names the second step for a device that upgraded
+// while a redaction-drift pause stands: a newer build does not resume
+// recording by itself, and only doctor reads the session files and
+// decides whether this build covers them. The pause is read here, never
+// lifted. A routing table this build cannot read leaves the line out:
+// the upgrade is already done, and a failure to add a hint to it must
+// not report the upgrade as failed.
+func (m *Machine) sayDriftPauseStands(io IO) {
+	paused, err := m.routes.PausedReason()
+	if err != nil || paused != routing.PauseRedactionDrift {
+		return
+	}
+	fmt.Fprintln(io.Out, report.RecordingPausedUntilDoctor)
 }
