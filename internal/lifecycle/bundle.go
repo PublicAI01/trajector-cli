@@ -39,7 +39,10 @@ var doctorBundleIgnoreRules = []string{
 // being diagnosed, so nothing is repaired on the way — that is
 // doctor's job.
 func (m *Machine) DoctorBundle(projectDir string, io IO) (string, error) {
-	d, err := m.Diagnose(projectDir)
+	// The bundle takes the second reading too: the question doctor
+	// reports — sessions written without a hook — is one whoever reads
+	// the archive must be able to answer from it.
+	d, err := m.Diagnose(projectDir, FromTree)
 	if err != nil {
 		return "", err
 	}

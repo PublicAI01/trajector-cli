@@ -60,8 +60,12 @@ type Result struct {
 	// main <sid>.jsonl files and the agent-*.jsonl and agent-*.meta.json
 	// files under <sid>/subagents/.
 	Files []string
-	// Sessions counts the main <sid>.jsonl files.
-	Sessions int
+	// Sessions are the absolute paths of the main <sid>.jsonl files,
+	// the subset of Files that is a session's own file. The walk knows
+	// which file is which as it reads the directory, so a caller that
+	// holds what was found against a registry asks here rather than
+	// deciding it again from a path.
+	Sessions []string
 	// Oldest is the modification time of the oldest main session file,
 	// or the zero time when none was found.
 	Oldest time.Time
@@ -205,7 +209,7 @@ func collect(hit string, res *Result) error {
 				return err
 			}
 			res.Files = append(res.Files, p)
-			res.Sessions++
+			res.Sessions = append(res.Sessions, p)
 			if res.Oldest.IsZero() || info.ModTime().Before(res.Oldest) {
 				res.Oldest = info.ModTime()
 			}

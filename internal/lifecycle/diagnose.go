@@ -6,6 +6,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
+	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -13,11 +14,30 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
+// SessionFileReading says how much a diagnosis pays to learn about the
+// current project's session files.
+type SessionFileReading int
+
+const (
+	// FromRegistry reads the registry alone: the files it holds, and
+	// what it recorded about the search that ran when the project was
+	// enabled. Every surface can afford this reading.
+	FromRegistry SessionFileReading = iota
+	// FromTree adds a second, more expensive reading: a walk of the
+	// project's directory tree as it stands now. It finds the session
+	// files no hook of trajector's ever reported, and what it could not
+	// cover supersedes the registry's older record of the same. Only a
+	// caller that acts on the difference asks for it.
+	FromTree
+)
+
 // Diagnose resolves the device's full state, the one value status,
 // doctor, and the bundle each render. Stores that fail to open or read
 // surface inside the value where a surface can present them; only the
-// project resolution itself can fail the call.
-func (m *Machine) Diagnose(dir string) (report.Diagnosis, error) {
+// project resolution itself can fail the call. The reading decides how
+// the session files are learned about, and the value says which one it
+// carries, so a surface never has to ask again.
+func (m *Machine) Diagnose(dir string, reading SessionFileReading) (report.Diagnosis, error) {
 	d := report.Diagnosis{Version: m.deps.Version}
 	st, err := m.Project(dir)
 	if err != nil {
@@ -31,7 +51,7 @@ func (m *Machine) Diagnose(dir string) (report.Diagnosis, error) {
 		// and a cached reading would report a state that no longer is.
 		policy := m.hookPolicy(st.Root)
 		d.HookPolicy = &policy
-		d.SessionFiles = m.sessionFilesState(st.Hash)
+		d.SessionFiles = m.sessionFilesState(st, reading)
 	}
 	d.ProxyIdleBetweenSessions = m.proxyIdleBetweenSessions()
 
@@ -154,10 +174,11 @@ func injectionAgrees(st report.ProjectStatus, onFile routing.Shape) bool {
 }
 
 // sessionFilesState turns the project's registry into counts and
-// sizes: it stats the registered files to measure what is not read
-// yet and opens none of them.
-func (m *Machine) sessionFilesState(projectIDHash string) report.SessionFilesState {
-	registered := m.sessionFiles(projectIDHash)
+// sizes: it stats the registered files to measure what is not read yet
+// and opens none of them. The registry is opened once here, whichever
+// reading was asked for, so one run can never hold two accounts of it.
+func (m *Machine) sessionFilesState(st report.ProjectStatus, reading SessionFileReading) report.SessionFilesState {
+	registered := m.sessionFiles(st.Hash)
 	state := report.SessionFilesState{Err: registered.Err, Gaps: registered.Gaps, Signals: registered.Signals}
 	for _, f := range registered.Files {
 		if f.MainSession() {
@@ -166,8 +187,40 @@ func (m *Machine) sessionFilesState(projectIDHash string) report.SessionFilesSta
 		if at, err := time.Parse(time.RFC3339, f.ReadAt); err == nil && at.After(state.LastReadAt) {
 			state.LastReadAt = at
 		}
-		if st, err := follow.StatFile(f.Path); err == nil {
-			state.BytesBehind += f.Behind(st)
+		if s, err := follow.StatFile(f.Path); err == nil {
+			state.BytesBehind += f.Behind(s)
+		}
+	}
+	// A registry that could not be read leaves the walk nothing to be
+	// held against, and a project Claude Code opens from the Windows
+	// side keeps its session files on that side, where this process
+	// cannot reach; the diagnosis already says so.
+	if reading == FromRegistry || state.Err != nil || st.WindowsSideClaude {
+		return state
+	}
+	return m.readProjectTree(state, st, registered.Files)
+}
+
+// readProjectTree takes the second reading: it walks the project's tree
+// once and holds what it found against the files the registry holds.
+// It registers nothing — registering is enable's and the session hooks'
+// alone, and a run that diagnoses must leave the state it diagnosed as
+// it found it.
+func (m *Machine) readProjectTree(state report.SessionFilesState, st report.ProjectStatus, registered []follow.File) report.SessionFilesState {
+	found, err := discover.Walk(st.Root, m.claudeConfigDir())
+	if err != nil {
+		state.WalkErr = err
+		return state
+	}
+	held := make(map[string]bool, len(registered))
+	for _, f := range registered {
+		held[f.Path] = true
+	}
+	state.Walked = true
+	state.Gaps = found.Gaps()
+	for _, path := range found.Sessions {
+		if !held[path] {
+			state.Unregistered++
 		}
 	}
 	return state

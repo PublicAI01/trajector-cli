@@ -143,12 +143,14 @@ func TestWalk_FindsSessionsUnderEveryDirectory(t *testing.T) {
 
 	want := Result{
 		Files:    []string{rootSession, subSession, cjkSession},
-		Sessions: 3,
+		Sessions: []string{rootSession, subSession, cjkSession},
 		Oldest:   t0,
 		visited:  7,
 	}
 	slices.Sort(want.Files)
+	slices.Sort(want.Sessions)
 	slices.Sort(res.Files)
+	slices.Sort(res.Sessions)
 	if !res.Oldest.Equal(want.Oldest) {
 		t.Errorf("Oldest = %v, want %v", res.Oldest, want.Oldest)
 	}
@@ -197,7 +199,7 @@ func TestWalk_EmptyProjectDirectoryIsNotAnError(t *testing.T) {
 
 	res := mustWalk(t, tr)
 
-	if len(res.Files) != 0 || res.Sessions != 0 || !res.Oldest.IsZero() || len(res.Ambiguous) != 0 {
+	if len(res.Files) != 0 || len(res.Sessions) != 0 || !res.Oldest.IsZero() || len(res.Ambiguous) != 0 {
 		t.Errorf("Walk = %+v, want an empty result", res)
 	}
 }
@@ -325,8 +327,8 @@ func TestWalk_CollectsSubagentFiles(t *testing.T) {
 	if !slices.Equal(res.Files, want) {
 		t.Errorf("Files = %v, want %v", res.Files, want)
 	}
-	if res.Sessions != 1 {
-		t.Errorf("Sessions = %d, want 1: agent files are not sessions", res.Sessions)
+	if !slices.Equal(res.Sessions, []string{main}) {
+		t.Errorf("Sessions = %v, want %v: agent files are not sessions", res.Sessions, []string{main})
 	}
 }
 
@@ -347,8 +349,8 @@ func TestWalk_ReportsDirectoriesItCouldNotList(t *testing.T) {
 	if !slices.Equal(res.Unreadable, []string{closed}) {
 		t.Errorf("Unreadable = %v, want %v", res.Unreadable, []string{closed})
 	}
-	if res.Sessions != 1 {
-		t.Errorf("Sessions = %d, want the closed directory's own session", res.Sessions)
+	if len(res.Sessions) != 1 {
+		t.Errorf("Sessions = %v, want the closed directory's own session", res.Sessions)
 	}
 }
 

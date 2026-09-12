@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
@@ -141,31 +140,14 @@ func doctorPause(f *Findings, st ProjectStatus) {
 	f.Problem("recording is paused everywhere: %s", st.PauseReason.Explain())
 }
 
-// Discovery is what a doctor run found by looking for the current
-// project's session files on disk and holding them against the
-// registry. Only doctor looks: the search walks the project's
-// directory tree, which status never pays for, and it registers
-// nothing — registering is enable's and the session hooks' alone.
-type Discovery struct {
-	// Err, when non-nil, means the search could not run; every other
-	// field is then zero.
-	Err error
-	// Unregistered counts the sessions whose files exist but which no
-	// hook of trajector's ever reported: the one sign that the hooks
-	// did not run for them.
-	Unregistered int
-	// Gaps is what this search could not cover.
-	Gaps follow.Gaps
-}
-
-// DoctorProject reports what a diagnosis and a search of the current
-// project's session files establish about it, and the next step where
-// there is one: an arrangement across a WSL boundary that records
-// nothing, the static reading of whether the hooks load, sessions the
-// hooks never reported, and the directories the search could not
-// cover. It says nothing about Remote Control: that is a choice made
-// at enable time and shown by status, not a fault.
-func DoctorProject(f *Findings, d Diagnosis, disc Discovery) {
+// DoctorProject reports what a diagnosis establishes about the current
+// project, and the next step where there is one: an arrangement across
+// a WSL boundary that records nothing, the static reading of whether
+// the hooks load, sessions the hooks never reported, and the
+// directories the search could not cover. It says nothing about Remote
+// Control: that is a choice made at enable time and shown by status,
+// not a fault.
+func DoctorProject(f *Findings, d Diagnosis) {
 	st := d.Project
 	if !st.Enabled {
 		return
@@ -175,7 +157,7 @@ func DoctorProject(f *Findings, d Diagnosis, disc Discovery) {
 		f.Detail("%s", windowsSideWayOut)
 	}
 	doctorHookPolicy(f, d)
-	doctorDiscovery(f, d, disc)
+	doctorSessionFiles(f, d)
 }
 
 // doctorHookPolicy states the static reading of whether the hooks
@@ -196,35 +178,38 @@ func doctorHookPolicy(f *Findings, d Diagnosis) {
 	f.Detail("%s", outlook.follows())
 }
 
-// doctorDiscovery holds the session files found on disk against the
-// registry. Files no hook reported are the one observation that says
-// the hooks did not run: when nothing readable explains why, the
-// unrecorded cause left is the workspace-trust dialog, and that is
-// the next step. Everything the search could not cover is stated as
-// it is, never counted as a fault.
-func doctorDiscovery(f *Findings, d Diagnosis, disc Discovery) {
-	if err := d.SessionFiles.Err; err != nil {
-		f.Problem("the session file registry could not be read: %v", err)
+// doctorSessionFiles reports the second reading of the project's
+// session files: the ones it found that the registry does not hold are
+// the one observation that says the hooks did not run, and when
+// nothing readable explains why, the unrecorded cause left is the
+// workspace-trust dialog, which is the next step. Everything the
+// reading could not cover is stated as it is, never counted as a
+// fault. A diagnosis that took no second reading says nothing here:
+// the registry's own account is status's to print, not a finding.
+func doctorSessionFiles(f *Findings, d Diagnosis) {
+	s := d.SessionFiles
+	if s.Err != nil {
+		f.Problem("the session file registry could not be read: %v", s.Err)
 		return
 	}
-	if disc.Err != nil {
-		f.Problem("could not look for this project's session files: %v", disc.Err)
+	if s.WalkErr != nil {
+		f.Problem("could not look for this project's session files: %v", s.WalkErr)
+		return
+	}
+	if !s.Walked {
 		return
 	}
 	switch {
-	case d.Project.WindowsSideClaude:
-		// Nothing was looked for: the files are on the other side, and
-		// the arrangement is already reported above with its way out.
-	case disc.Unregistered == 0:
-		f.OK("every session file of this project is registered (%d session(s))", d.SessionFiles.Sessions)
+	case s.Unregistered == 0:
+		f.OK("every session file of this project is registered (%d session(s))", s.Sessions)
 	case d.HookPolicy != nil && !d.HookPolicy.Runs:
-		f.note("%d session(s) of this project were written without a hook of trajector's reporting them, which follows from the setting above", disc.Unregistered)
+		f.note("%d session(s) of this project were written without a hook of trajector's reporting them, which follows from the setting above", s.Unregistered)
 	default:
 		f.Problem("%s", workspaceNotTrusted)
-		f.Detail("%d session(s) of this project were written without a hook of trajector's reporting them, and nothing readable", disc.Unregistered)
+		f.Detail("%d session(s) of this project were written without a hook of trajector's reporting them, and nothing readable", s.Unregistered)
 		f.Detail("on this device keeps the hooks from loading. Claude Code runs them only once the workspace is trusted.")
 	}
-	for _, line := range gapLines(disc.Gaps) {
+	for _, line := range gapLines(s.Gaps) {
 		f.note("%s", line)
 	}
 }

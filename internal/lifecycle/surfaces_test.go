@@ -291,6 +291,31 @@ func TestDoctorBundleCarriesSessionCountsWithoutIdsOrPaths(t *testing.T) {
 	}
 }
 
+func TestDoctorBundleCarriesTheSessionsNoHookReported(t *testing.T) {
+	e := newEnv(t)
+	locked := e.enabledWithOneSessionAndOneUnreported()
+
+	t.Chdir(t.TempDir())
+	path, err := e.machine().DoctorBundle(e.project, e.io())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := readBundle(t, path)
+	diagnosis := entries["diagnosis.json"]
+	for _, want := range []string{`"walked": true`, `"unregistered": 1`, `"unreadable": 1`} {
+		if !strings.Contains(diagnosis, want) {
+			t.Errorf("diagnosis.json = %s, want it to contain %q", diagnosis, want)
+		}
+	}
+	for name, data := range entries {
+		for _, unwanted := range []string{sessionMarker, locked, ".jsonl"} {
+			if strings.Contains(data, unwanted) {
+				t.Errorf("bundle entry %s contains %q", name, unwanted)
+			}
+		}
+	}
+}
+
 func TestStatusAndDoctorReportARegistryTheyCannotRead(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()

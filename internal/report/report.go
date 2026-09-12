@@ -54,13 +54,15 @@ func (s SpoolState) recordsWaiting() spool.Count {
 	return waiting
 }
 
-// SessionFilesState is what the registry of an enabled project's
-// session files says, resolved in one read and without opening any
-// session file: how many sessions are registered, when one was last
-// read, how far reading is behind the files, and what the search for
-// the project's earlier files could not cover. It carries counts and
-// sizes only — never a session id or a session file's path — because
-// status prints it and the bundle serializes it.
+// SessionFilesState is what an enabled project's session files are
+// known to be, resolved in one read of the registry and without
+// opening any session file: how many sessions are registered, when one
+// was last read, how far reading is behind the files, and what the
+// search for the project's earlier files could not cover. A caller
+// that pays for the second reading also learns what the registry never
+// held. It carries counts and sizes only — never a session id or a
+// session file's path — because status prints it and the bundle
+// serializes it.
 type SessionFilesState struct {
 	// Err, when non-nil, means the registry could not be read; every
 	// other field is then zero.
@@ -74,13 +76,27 @@ type SessionFilesState struct {
 	// BytesBehind is how much of the registered files lies past their
 	// cursors: what a reader has yet to consume.
 	BytesBehind int64
-	// Gaps is what the search for earlier files left uncovered, as
-	// recorded with the registry when the search ran.
+	// Gaps is what the search for earlier files left uncovered: the
+	// second reading's own account when Walked, and otherwise what the
+	// registry recorded when the search at enable ran.
 	Gaps follow.Gaps
 	// Signals is what reading the files noticed about their shape, as
 	// the registry accumulated it: counts and field names, never a
 	// value.
 	Signals drift.Signals
+	// Walked says where Gaps and Unregistered come from. It is true
+	// when this run paid for the second reading — a walk of the
+	// project's directory tree as it stands — which supersedes what
+	// the registry recorded about the older search.
+	Walked bool
+	// WalkErr, when non-nil, is why the second reading could not run.
+	// Walked is then false and the registry's record still stands.
+	WalkErr error
+	// Unregistered counts the sessions whose files the second reading
+	// found and the registry does not hold: the one observation that
+	// says no hook of trajector's reported them. It is zero when
+	// nothing walked.
+	Unregistered int
 }
 
 // full reports a spool that refuses writes because usage reached the

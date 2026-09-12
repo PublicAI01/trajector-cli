@@ -93,6 +93,18 @@ type sessionFilesWire struct {
 	Unreadable  int       `json:"unreadable"`
 	// Signals is counts and field names, the registry's own form.
 	Signals drift.Signals `json:"signals,omitzero"`
+	// Walked says whether the run that wrote this bundle paid for the
+	// second reading of the project's tree. The three gap counts above
+	// are that reading's when it is true, and the registry's record of
+	// the older search when it is false.
+	Walked bool `json:"walked"`
+	// WalkErr is why the second reading could not run, when it was
+	// asked for and failed.
+	WalkErr string `json:"walk_err,omitempty"`
+	// Unregistered counts the sessions the second reading found that
+	// the registry does not hold. It is a count, like everything here:
+	// naming one would name what the user worked on.
+	Unregistered int `json:"unregistered"`
 }
 
 type proxyWire struct {
@@ -171,14 +183,17 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			WindowsSide:      d.Project.WindowsSideClaude,
 			HookPolicy:       hookPolicyValue(d),
 			SessionFiles: sessionFilesWire{
-				Err:         errString(d.SessionFiles.Err),
-				Sessions:    d.SessionFiles.Sessions,
-				LastReadAt:  d.SessionFiles.LastReadAt,
-				BytesBehind: d.SessionFiles.BytesBehind,
-				Truncated:   d.SessionFiles.Gaps.Truncated,
-				Ambiguous:   len(d.SessionFiles.Gaps.Ambiguous),
-				Unreadable:  len(d.SessionFiles.Gaps.Unreadable),
-				Signals:     d.SessionFiles.Signals,
+				Err:          errString(d.SessionFiles.Err),
+				Sessions:     d.SessionFiles.Sessions,
+				LastReadAt:   d.SessionFiles.LastReadAt,
+				BytesBehind:  d.SessionFiles.BytesBehind,
+				Truncated:    d.SessionFiles.Gaps.Truncated,
+				Ambiguous:    len(d.SessionFiles.Gaps.Ambiguous),
+				Unreadable:   len(d.SessionFiles.Gaps.Unreadable),
+				Signals:      d.SessionFiles.Signals,
+				Walked:       d.SessionFiles.Walked,
+				WalkErr:      errString(d.SessionFiles.WalkErr),
+				Unregistered: d.SessionFiles.Unregistered,
 			},
 		},
 		Proxy: proxy,

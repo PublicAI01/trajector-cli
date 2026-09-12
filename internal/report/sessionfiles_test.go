@@ -16,13 +16,22 @@ import (
 )
 
 // doctorProjectText is what doctor prints about the current project
-// from a diagnosis and a search of its session files.
-func doctorProjectText(d report.Diagnosis, disc report.Discovery) (int, string) {
+// from a diagnosis.
+func doctorProjectText(d report.Diagnosis) (int, string) {
 	f := &report.Findings{}
-	report.DoctorProject(f, d, disc)
+	report.DoctorProject(f, d)
 	var b bytes.Buffer
 	f.Render(&b)
 	return f.Problems(), b.String()
+}
+
+// walked is a diagnosis whose session files were read from the
+// project's tree, with the sessions that reading found and the
+// registry does not hold.
+func walked(d report.Diagnosis, unregistered int) report.Diagnosis {
+	d.SessionFiles.Walked = true
+	d.SessionFiles.Unregistered = unregistered
+	return d
 }
 
 // enabledDevice is a paired device whose current project contributes
@@ -259,7 +268,7 @@ func TestStatusDoesNotCallAnIdleProxyAFaultWhereNoProjectUsesIt(t *testing.T) {
 
 func TestDoctorSendsAnUntrustedWorkspaceToTheDialog(t *testing.T) {
 	d := enabledDevice()
-	problems, out := doctorProjectText(d, report.Discovery{Unregistered: 2})
+	problems, out := doctorProjectText(walked(d, 2))
 	if problems != 1 {
 		t.Errorf("problems = %d, want the untrusted workspace counted once", problems)
 	}
@@ -270,7 +279,7 @@ func TestDoctorSendsAnUntrustedWorkspaceToTheDialog(t *testing.T) {
 func TestDoctorPassesWhenEverySessionFileIsRegistered(t *testing.T) {
 	d := enabledDevice()
 	d.SessionFiles.Sessions = 3
-	problems, out := doctorProjectText(d, report.Discovery{})
+	problems, out := doctorProjectText(walked(d, 0))
 	if problems != 0 {
 		t.Errorf("problems = %d, want none", problems)
 	}
@@ -291,7 +300,7 @@ func TestDoctorExplainsHooksThatWillNotLoadWithoutFailing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			d := tc.shape(enabledDevice())
 			d.HookPolicy = policy
-			problems, out := doctorProjectText(d, report.Discovery{Unregistered: 1})
+			problems, out := doctorProjectText(walked(d, 1))
 			if problems != 0 {
 				t.Errorf("problems = %d, want a setting the user or their organization keeps not counted as a fault", problems)
 			}
@@ -324,7 +333,7 @@ func TestNoSurfaceWordsTheHookReadingDifferently(t *testing.T) {
 			d.HookPolicy = tc.policy
 			outlook := report.ExplainHooks(*tc.policy, d.Project.Shape)
 			wants(t, "status", dashboard(d), outlook.Lines()...)
-			_, out := doctorProjectText(d, report.Discovery{})
+			_, out := doctorProjectText(walked(d, 0))
 			wants(t, "doctor", out, outlook.Judgement)
 		})
 	}
@@ -334,7 +343,7 @@ func TestDoctorReportsClaudeOnTheWindowsSideWithAWayOut(t *testing.T) {
 	d := enabledDevice()
 	d.Project.Root = "/mnt/c/Users/dev/sample-project"
 	d.Project.WindowsSideClaude = true
-	problems, out := doctorProjectText(d, report.Discovery{Unregistered: 3})
+	problems, out := doctorProjectText(d)
 	if problems != 1 {
 		t.Errorf("problems = %d, want the arrangement counted once and the unreported sessions not counted again", problems)
 	}
@@ -346,12 +355,12 @@ func TestDoctorReportsClaudeOnTheWindowsSideWithAWayOut(t *testing.T) {
 
 func TestDoctorStatesWhatTheSearchCouldNotCover(t *testing.T) {
 	d := enabledDevice()
-	disc := report.Discovery{Gaps: follow.Gaps{
+	d.SessionFiles.Gaps = follow.Gaps{
 		Truncated:  true,
 		Ambiguous:  []follow.Ambiguity{{Dir: "/home/dev/sample-project/a-b", Name: "n", Matches: []string{"/home/dev/sample-project/a-b", "/home/dev/sample-project/a_b"}}},
 		Unreadable: []string{"/home/dev/sample-project/locked"},
-	}}
-	problems, out := doctorProjectText(d, disc)
+	}
+	problems, out := doctorProjectText(walked(d, 0))
 	if problems != 0 {
 		t.Errorf("problems = %d, want what the search could not cover stated, not counted", problems)
 	}
@@ -363,18 +372,19 @@ func TestDoctorStatesWhatTheSearchCouldNotCover(t *testing.T) {
 
 func TestDoctorReportsASearchOrARegistryItCouldNotRead(t *testing.T) {
 	d := enabledDevice()
-	_, out := doctorProjectText(d, report.Discovery{Err: errors.New("root is not absolute")})
+	d.SessionFiles.WalkErr = errors.New("root is not absolute")
+	_, out := doctorProjectText(d)
 	wants(t, "doctor", out, "problem: could not look for this project's session files: root is not absolute")
 
-	d.SessionFiles.Err = errors.New("permission denied")
-	_, out = doctorProjectText(d, report.Discovery{})
+	d.SessionFiles = report.SessionFilesState{Err: errors.New("permission denied")}
+	_, out = doctorProjectText(d)
 	wants(t, "doctor", out, "problem: the session file registry could not be read: permission denied")
 }
 
 func TestDoctorSaysNothingAboutAProjectNotEnabled(t *testing.T) {
 	d := device()
 	d.HookPolicy = &claudesettings.HookPolicy{Runs: true}
-	_, out := doctorProjectText(d, report.Discovery{Unregistered: 5})
+	_, out := doctorProjectText(walked(d, 5))
 	if out != "" {
 		t.Errorf("doctor = %q, want nothing about a project that is not enabled", out)
 	}
@@ -393,6 +403,8 @@ func TestTheBundleCarriesShapeAndSessionCountsWithoutIdsOrPaths(t *testing.T) {
 			Ambiguous:  []follow.Ambiguity{{Dir: "/home/dev/sample-project/a-b", Name: "n", Matches: []string{"/home/dev/sample-project/a-b"}}},
 			Unreadable: []string{"/home/dev/sample-project/locked"},
 		},
+		Walked:       true,
+		Unregistered: 2,
 	}
 	d.Spool.Days = []spool.DaySummary{{Day: "20260910", Count: spool.Count{Segments: 2}}}
 	d.Spool.OldestRecord = time.Date(2026, 9, 10, 7, 0, 0, 0, time.UTC)
@@ -409,6 +421,8 @@ func TestTheBundleCarriesShapeAndSessionCountsWithoutIdsOrPaths(t *testing.T) {
 		`"truncated": true`,
 		`"ambiguous": 1`,
 		`"unreadable": 1`,
+		`"walked": true`,
+		`"unregistered": 2`,
 		`"oldest_record_at": "2026-09-10T07:00:00Z"`,
 		`"segments": 2`,
 	)
