@@ -108,6 +108,18 @@ func DoctorDevice(f *Findings, d Diagnosis) {
 	doctorPause(f, d.Project)
 }
 
+// DoctorStaleDiscoveryHook states what a doctor run did about a hook
+// trajector left where Claude Code does not read it. It is written
+// only for a diagnosis that found one, and err is what removing it
+// returned: nil means the file no longer carries it.
+func DoctorStaleDiscoveryHook(f *Findings, err error) {
+	if err != nil {
+		f.Problem("%s, and it could not be removed: %v", staleDiscoveryHookFact, err)
+		return
+	}
+	f.Fixed("%s", staleDiscoveryHookRemoved)
+}
+
 // DoctorData reports the captured data on this machine: the spool that
 // holds it, the quarantine it may be waiting in, every reason it is not
 // moving, and anything else the service last said.

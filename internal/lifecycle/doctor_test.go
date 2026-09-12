@@ -536,3 +536,87 @@ func TestDoctorNamesBothRefusalsWhenBothStand(t *testing.T) {
 		}
 	}
 }
+
+// movedConfigDir points this device's Claude Code configuration
+// directory somewhere other than the default one, as the environment
+// variable does on a user's machine.
+func (e *env) movedConfigDir() {
+	e.t.Helper()
+	e.environ[claudesettings.ConfigDirEnv] = filepath.Join(e.deps.Home, "elsewhere")
+}
+
+// hookInDefaultConfigDir writes the settings file of the default
+// configuration directory with a discovery hook of trajector's beside
+// a hook and a setting of the user's own, and returns its path.
+func (e *env) hookInDefaultConfigDir() string {
+	e.t.Helper()
+	path := filepath.Join(e.deps.Home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	content := `{
+  "env": {"MY_OWN_KEY": "kept"},
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "/old/path/trajector hook discovery"}]},
+      {"hooks": [{"type": "command", "command": "echo the user's own hook"}]}
+    ]
+  }
+}
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+	return path
+}
+
+func TestDoctorRemovesTheDiscoveryHookLeftWhereClaudeCodeNoLongerReads(t *testing.T) {
+	e := newEnv(t)
+	e.movedConfigDir()
+	path := e.hookInDefaultConfigDir()
+
+	problems, out := e.doctor()
+	if problems != 0 {
+		t.Fatalf("problems = %d, want the hook removed without a problem, output:\n%s", problems, out)
+	}
+	if !strings.Contains(out, "removed a trajector hook left in ~/.claude/settings.json") {
+		t.Errorf("doctor = %q, want the removal reported", out)
+	}
+	if claudesettings.HasHook(path, claudesettings.DiscoveryMarker) {
+		t.Error("the hook Claude Code does not read survived doctor")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"echo the user's own hook", "MY_OWN_KEY"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("settings file = %s, want it to keep %q", data, want)
+		}
+	}
+
+	e.stdout.Reset()
+	problems, out = e.doctor()
+	if problems != 0 {
+		t.Fatalf("problems = %d on the second run, output:\n%s", problems, out)
+	}
+	if strings.Contains(out, "~/.claude/settings.json") {
+		t.Errorf("doctor = %q, want nothing left to say about the file on the second run", out)
+	}
+}
+
+func TestDoctorLeavesTheDiscoveryHookWhereNothingMovesTheConfigDir(t *testing.T) {
+	e := newEnv(t)
+	path := e.hookInDefaultConfigDir()
+
+	problems, out := e.doctor()
+	if problems != 0 {
+		t.Fatalf("problems = %d, output:\n%s", problems, out)
+	}
+	if strings.Contains(out, "~/.claude/settings.json") {
+		t.Errorf("doctor = %q, want no finding about a directory nothing moved", out)
+	}
+	if !claudesettings.HasHook(path, claudesettings.DiscoveryMarker) {
+		t.Error("doctor removed the discovery hook Claude Code reads")
+	}
+}

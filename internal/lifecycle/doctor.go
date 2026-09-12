@@ -56,6 +56,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 		return 0, err
 	}
 	m.doctorDiscoveryHint(f, d.TokenStore)
+	m.doctorStaleDiscoveryHook(f, d)
 	report.DoctorProject(f, d)
 	report.DoctorData(f, d)
 	report.DoctorEnvironment(f)
@@ -230,6 +231,24 @@ func (m *Machine) doctorDiscoveryHint(f *report.Findings, ts report.TokenStoreSt
 		return
 	}
 	f.Fixed("re-added the project-discovery hint to %s", userSettings)
+}
+
+// doctorStaleDiscoveryHook takes out the discovery hook an earlier
+// build of trajector wrote into the settings file of the default
+// configuration directory, on a device that names another one. It is
+// trajector's own hook and nothing else, so it goes out through the
+// removal disable and uninstall use: the walk drops the entries
+// carrying trajector's marker and leaves the rest of the file as the
+// user wrote it.
+func (m *Machine) doctorStaleDiscoveryHook(f *report.Findings, d report.Diagnosis) {
+	if !d.StaleDiscoveryHook {
+		return
+	}
+	path, moved := m.claude().UnreadUserSettingsPath()
+	if !moved {
+		return
+	}
+	report.DoctorStaleDiscoveryHook(f, claudesettings.RemoveUserHook(path))
 }
 
 // doctorSelfcheck closes an enabled project's diagnosis by asking the

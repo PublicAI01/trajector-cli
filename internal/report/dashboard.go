@@ -36,6 +36,9 @@ func Dashboard(w io.Writer, d Diagnosis) {
 	if st.PauseReason != "" {
 		fmt.Fprintf(w, "  Recording is paused everywhere: %s.\n", st.PauseReason.Explain())
 	}
+	if d.StaleDiscoveryHook {
+		fmt.Fprintf(w, "  WARNING: %s. Run `trajector doctor` to remove it.\n", staleDiscoveryHookFact)
+	}
 
 	fmt.Fprintf(w, "\nProject %s\n", st.Root)
 	switch {

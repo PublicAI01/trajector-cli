@@ -64,6 +64,16 @@ const (
 	// it record.
 	windowsSideClaudeFact = "this project is on a Windows drive mounted into WSL, so Claude Code runs on the Windows side there and its hooks cannot reach this trajector; nothing is recorded from it"
 	windowsSideWayOut     = "Run both on the same side: open the project from inside WSL with a Claude Code installed there, or run trajector on the side Claude Code runs on."
+
+	// staleDiscoveryHookFact names a hook trajector wrote into the
+	// settings file of the default configuration directory of a device
+	// that now names another one: nothing reads it there, so it never
+	// runs. staleDiscoveryHookRemoved says the same about a hook this
+	// run took out. The well-known spelling of the default directory is
+	// the whole of the path either sentence carries, so neither states
+	// a path of the user's.
+	staleDiscoveryHookFact    = "a trajector hook is left in ~/.claude/settings.json and never runs; Claude Code reads the directory " + claudesettings.ConfigDirEnv + " names instead"
+	staleDiscoveryHookRemoved = "removed a trajector hook left in ~/.claude/settings.json; Claude Code reads the directory " + claudesettings.ConfigDirEnv + " names instead"
 )
 
 // HookOutlook is what a static reading of Claude Code's configuration

@@ -88,3 +88,24 @@ func TestIsolate_PointsEveryClaudeDirectoryInsideTheTree(t *testing.T) {
 		}
 	}
 }
+
+func TestHostFor_TheDefaultDirectoryIsUnreadOnlyWhereTheEnvironmentMovesIt(t *testing.T) {
+	none := func(string) string { return "" }
+	if _, moved := HostFor("linux", "/home/u", none).UnreadUserSettingsPath(); moved {
+		t.Error("UnreadUserSettingsPath() reports a file Claude Code does not read where nothing moved the directory")
+	}
+
+	host := HostFor("linux", "/home/u", func(key string) string {
+		return map[string]string{ConfigDirEnv: "/elsewhere/claude"}[key]
+	})
+	path, moved := host.UnreadUserSettingsPath()
+	if !moved {
+		t.Fatal("UnreadUserSettingsPath() reports nothing where the environment moved the directory")
+	}
+	if want := filepath.Join("/home/u", ".claude", "settings.json"); path != want {
+		t.Errorf("UnreadUserSettingsPath() = %q, want %q", path, want)
+	}
+	if path == host.UserSettingsPath() {
+		t.Error("UnreadUserSettingsPath() names the file Claude Code reads")
+	}
+}

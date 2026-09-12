@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -57,5 +58,25 @@ func TestStatusCountsWaitingRawcallsWhereNoSessionFileWasRead(t *testing.T) {
 	}
 	if strings.Contains(got.Stdout, "waiting to upload: none") {
 		t.Errorf("stdout = %q, want the wait reported by what is in the spool", got.Stdout)
+	}
+}
+
+func TestStatusWarnsAboutTheHookLeftInTheDirectoryClaudeCodeNoLongerReads(t *testing.T) {
+	e := clitest.New(t)
+	path := hookInDefaultClaudeDir(t, e)
+
+	got := e.InProject("status")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stdout, "a trajector hook is left in ~/.claude/settings.json and never runs") {
+		t.Errorf("stdout = %q, want the warning", got.Stdout)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "hook discovery") {
+		t.Errorf("settings file = %s, want status to have removed nothing", data)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
@@ -334,5 +335,24 @@ func TestStatusAndDoctorReportARegistryTheyCannotRead(t *testing.T) {
 	problems, out := e.doctor()
 	if problems == 0 || !strings.Contains(out, "problem: the session file registry could not be read") {
 		t.Errorf("problems = %d, doctor = %q; want the unreadable registry counted", problems, out)
+	}
+}
+
+func TestStatusReportsTheDiscoveryHookClaudeCodeNoLongerReadsAndRemovesNothing(t *testing.T) {
+	e := newEnv(t)
+	e.movedConfigDir()
+	path := e.hookInDefaultConfigDir()
+
+	out := e.statusOutput()
+	for _, want := range []string{
+		"a trajector hook is left in ~/.claude/settings.json and never runs",
+		"Run `trajector doctor` to remove it.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want it to contain %q", out, want)
+		}
+	}
+	if !claudesettings.HasHook(path, claudesettings.DiscoveryMarker) {
+		t.Error("status removed the hook instead of reporting it")
 	}
 }

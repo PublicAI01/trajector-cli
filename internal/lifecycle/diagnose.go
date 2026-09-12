@@ -97,6 +97,10 @@ func (m *Machine) Diagnose(dir string, reading SessionFileReading) (report.Diagn
 		d.Standings = append(d.Standings, upload.Standing{Reason: upload.QuarantineOnly})
 	}
 
+	if path, moved := m.claude().UnreadUserSettingsPath(); moved {
+		d.StaleDiscoveryHook = claudesettings.HasHook(path, claudesettings.DiscoveryMarker)
+	}
+
 	_, paired, err := m.tokens.DeviceToken()
 	d.TokenStore = report.TokenStoreState{Paired: paired, Err: err}
 	return d, nil

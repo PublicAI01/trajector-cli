@@ -11,7 +11,10 @@ import (
 // read here and nowhere else, so every path this program builds for
 // Claude Code is the one Claude Code itself reads.
 const (
-	envConfigDir       = "CLAUDE_CONFIG_DIR"
+	// ConfigDirEnv is exported because a sentence about a file left in
+	// the directory this variable moves has to name the variable, and
+	// the name is spelled here.
+	ConfigDirEnv       = "CLAUDE_CONFIG_DIR"
 	envManagedSettings = "CLAUDE_CODE_MANAGED_SETTINGS_PATH"
 )
 
@@ -41,6 +44,13 @@ type Host struct {
 	// managed-settings.d/ drop-in directory beside it. Empty means this
 	// host has no managed settings to read.
 	ManagedDir string
+	// DefaultConfigDir is where the configuration directory is when
+	// nothing moves it. It differs from ConfigDir only on a host that
+	// names another directory, and it is carried beside ConfigDir
+	// because a file trajector wrote into the default directory before
+	// the move is now read by nobody: only a host holding both can say
+	// that.
+	DefaultConfigDir string
 }
 
 // HostFor resolves the Claude Code directories of the machine this
@@ -48,17 +58,25 @@ type Host struct {
 // getenv reads the process environment.
 func HostFor(goos, home string, getenv func(string) string) Host {
 	return Host{
-		ConfigDir:  configDir(home, getenv),
-		ManagedDir: managedSettingsDir(goos, getenv),
+		ConfigDir:        configDir(home, getenv),
+		ManagedDir:       managedSettingsDir(goos, getenv),
+		DefaultConfigDir: defaultConfigDir(home),
 	}
 }
 
 // configDir is Claude Code's configuration directory, which
 // CLAUDE_CONFIG_DIR relocates whole.
 func configDir(home string, getenv func(string) string) string {
-	if dir := getenv(envConfigDir); dir != "" {
+	if dir := getenv(ConfigDirEnv); dir != "" {
 		return dir
 	}
+	return defaultConfigDir(home)
+}
+
+// defaultConfigDir is the configuration directory of a host where
+// nothing moves it. It is the well-known location, so it is also what
+// a sentence about it spells as ~/.claude.
+func defaultConfigDir(home string) string {
 	return filepath.Join(home, ".claude")
 }
 
@@ -86,6 +104,18 @@ func (h Host) UserSettingsPath() string {
 	return filepath.Join(h.ConfigDir, userSettingsName)
 }
 
+// UnreadUserSettingsPath locates a user settings file that Claude Code
+// does not read: the one in the default configuration directory of a
+// host whose configuration directory is elsewhere. It reports false
+// where the two are the same directory, because there the file is the
+// one Claude Code reads.
+func (h Host) UnreadUserSettingsPath() (string, bool) {
+	if h.DefaultConfigDir == "" || h.DefaultConfigDir == h.ConfigDir {
+		return "", false
+	}
+	return filepath.Join(h.DefaultConfigDir, userSettingsName), true
+}
+
 // deliveredSettingsPath locates the cache of the settings an
 // organization delivers through Claude Code's own service.
 func (h Host) deliveredSettingsPath() string {
@@ -108,7 +138,7 @@ func (h Host) managedSettingsFiles() []string {
 // process never reads or writes the developer's own Claude Code files.
 // set is the test's own setenv.
 func Isolate(set func(key, value string), home string) {
-	set(envConfigDir, filepath.Join(home, "claude"))
+	set(ConfigDirEnv, filepath.Join(home, "claude"))
 	set(envManagedSettings, filepath.Join(home, "managed"))
 }
 

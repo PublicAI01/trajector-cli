@@ -162,6 +162,14 @@ type Diagnosis struct {
 	// send the user to fix half the problem. Empty means uploads flow.
 	Standings  []upload.Standing
 	TokenStore TokenStoreState
+	// StaleDiscoveryHook reports a discovery hook of trajector's that
+	// stands in the settings file of the default Claude Code
+	// configuration directory while this device names another
+	// directory. Claude Code reads only the directory it is pointed at,
+	// so such a hook never runs. It is false wherever nothing moves the
+	// directory, because there the default file is the one Claude Code
+	// reads.
+	StaleDiscoveryHook bool
 	// Selfcheck is the live proxy's own answer for this project's
 	// token. It is non-nil only when the project is enabled, our proxy
 	// holds the port, and the proxy answered.
