@@ -941,6 +941,34 @@ func TestBoundedCredentialValueRedaction(t *testing.T) {
 			input: "DB_PASSWORD=secret123",
 			want:  "DB_PASSWORD=REDACTED",
 		},
+		// `,` `;` and `&` are legal password bytes. Until 2026-09-13 the
+		// value pattern treated each of them as the end of the value, so
+		// only the head of the password was masked and the tail went out
+		// in the clear — the "masked, but not all of it" failure, which is
+		// worse than no rule at all because the record then reads as
+		// redacted.
+		{
+			name:  "comma inside the password",
+			input: "DB_PASSWORD=Xk7q,mQ2vR",
+			want:  "DB_PASSWORD=REDACTED",
+		},
+		{
+			name:  "semicolon inside the password",
+			input: "MYSQL_PASSWORD=Xk7q;mQ2vR",
+			want:  "MYSQL_PASSWORD=REDACTED",
+		},
+		{
+			name:  "ampersand inside the password",
+			input: "PGPASSWORD=Xk7q&mQ2vR",
+			want:  "PGPASSWORD=REDACTED",
+		},
+		// A separator followed by another assignment really is a
+		// separator, and what follows it is not the user's password.
+		{
+			name:  "query string separator still ends the value",
+			input: "db_password=secret123&retries=3",
+			want:  "db_password=REDACTED&retries=3",
+		},
 		{
 			name:  "postgres password env var",
 			input: "PGPASSWORD='secret123'",

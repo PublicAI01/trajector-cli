@@ -1172,3 +1172,39 @@ func TestPurgeRejectedRemovesOnlyThatProject(t *testing.T) {
 		t.Errorf("emptied batch directory was kept: %v", entries)
 	}
 }
+
+// TestAnUnauthorizedUploadPausesAutomaticFlushes pins the fix for the
+// unpaced 401 retry: a device token revoked or expired server-side used
+// to fall through to the default arm, which sets no pause at all, so
+// periodicFlush re-assembled, re-compressed and re-POSTed the whole
+// batch every minute for the life of the process. Every other lasting
+// failure persists a pause; this one did not.
+func TestAnUnauthorizedUploadPausesAutomaticFlushes(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+	if f.spool.Usage() == 0 {
+		t.Fatal("a credential refusal touched the data")
+	}
+	if n := rejectedRecords(t, f.rejected); n != 0 {
+		t.Fatal("a credential refusal quarantined valid data")
+	}
+	before := f.uploadCount()
+
+	// The next automatic flush must take the pause rather than re-offer
+	// the same batch a minute later.
+	res, err := f.uploader.Flush(false)
+	if err != nil {
+		t.Fatalf("automatic flush after a 401 = %v", err)
+	}
+	if got := f.uploadCount(); got != before {
+		t.Errorf("automatic flush made %d more attempts, want 0: a 401 must persist a pause", got-before)
+	}
+	if res.Standing.Reason != upload.SignedOut {
+		t.Errorf("standing = %q, want %q so status and doctor name the credential", res.Standing.Reason, upload.SignedOut)
+	}
+}

@@ -63,7 +63,22 @@ var (
 	// credentialValuePattern requires the prefix to start at a non-alphanumeric
 	// boundary, so APP_DB_PASSWORD matches via the leading `_` but mydbpassword
 	// does not.
-	credentialValuePattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9])(` + dbPasswordKeyShape + `)\s*=\s*("[^"]*"|'[^']*'|[^\s,;&]+)`)
+	//
+	// The unquoted value runs to whitespace. Until 2026-09-13 it stopped at
+	// the first `,`, `;` or `&` as well — a character class borrowed from
+	// query-string parsing, while this rule also fires on bare env-var
+	// assignments where all three are legal password bytes. Only the
+	// matched span becomes a region, so DB_PASSWORD=Xk7q,mQ2vR was masked
+	// to REDACTED,mQ2vR and the rest of the password went out in the clear.
+	// Deciding which of the three is a separator is assignmentTail's job,
+	// which needs to see what follows and so cannot be done here.
+	credentialValuePattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9])(` + dbPasswordKeyShape + `)\s*=\s*("[^"]*"|'[^']*'|[^\s]+)`)
+
+	// assignmentTail matches a separator that genuinely separates: one
+	// followed by another key=value pair, as in a query string or a
+	// semicolon-delimited connection string. A separator with anything
+	// else after it is a byte of the password.
+	assignmentTail = regexp.MustCompile(`[,;&][A-Za-z_][A-Za-z0-9_. -]*=`)
 
 	keywordHostPattern      = regexp.MustCompile(`(?i)(?:^|\s)host=`)
 	keywordUserPattern      = regexp.MustCompile(`(?i)(?:^|\s)user=`)
@@ -447,11 +462,27 @@ func detectCredentialValues(s string) []taggedRegion {
 			continue
 		}
 		start, end := unquoteRange(s, loc[4], loc[5])
+		if start == loc[4] {
+			// Unquoted, so where the value ends is a judgement rather than
+			// something the text states. Quotes state it, and are left alone.
+			end = boundedValueEnd(s, start, end)
+		}
 		if hasNonPlaceholderPasswordValue(s[start:end]) {
 			regions = append(regions, taggedRegion{region: region{start, end}})
 		}
 	}
 	return regions
+}
+
+// boundedValueEnd shortens an unquoted credential value at the first
+// separator that is followed by another assignment. Erring long is the
+// safe direction here: too much masked costs context in an uploaded
+// record, too little puts the tail of a password on the wire.
+func boundedValueEnd(s string, start, end int) int {
+	if loc := assignmentTail.FindStringIndex(s[start:end]); loc != nil {
+		return start + loc[0]
+	}
+	return end
 }
 
 func unquoteRange(s string, start, end int) (int, int) {

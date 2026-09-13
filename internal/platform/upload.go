@@ -357,6 +357,16 @@ func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, bu
 // retryAfter reads a Retry-After value in either of its two forms:
 // delta-seconds or an HTTP date. Absent or unreadable reads as zero —
 // no requested pause.
+// Unauthorized reports whether err is the service refusing this
+// device's credential. It is a predicate rather than a distinct error
+// type because a 401 needs no detail carried with it: the status is the
+// whole message, and the caller's response to it is a pause, not a
+// sentence built from the body.
+func Unauthorized(err error) bool {
+	var status *StatusError
+	return errors.As(err, &status) && status.StatusCode == http.StatusUnauthorized
+}
+
 func retryAfter(value string) time.Duration {
 	if value == "" {
 		return 0

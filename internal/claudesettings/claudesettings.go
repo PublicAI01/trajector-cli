@@ -327,7 +327,19 @@ func childObject(root map[string]any, key string) (map[string]any, error) {
 }
 
 func readSettings(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
+	// fsatomic.ReadFile, not os.ReadFile: editFile replaces this path by
+	// rename, and fsatomic states the rule without qualification — a plain
+	// read crossing that rename fails on Windows with a sharing violation,
+	// and the plain reader's own handle in turn blocks the rename. Every
+	// caller here (InjectedBaseURL, HasHook, TopLevelBool, fileEnv)
+	// swallows that error into "not injected" / "no hook", so the failure
+	// surfaces as doctor reporting an injection problem that does not
+	// exist and rewriting a settings file that was already correct. The
+	// injected hooks run trajector on every prompt, so two processes
+	// touching these files at once is the normal case, not a corner.
+	// project.go moved .gitignore across for this reason on 2026-08-27;
+	// the settings files were missed. 2026-09-13.
+	data, err := fsatomic.ReadFile(path)
 	if os.IsNotExist(err) {
 		return map[string]any{}, nil
 	}

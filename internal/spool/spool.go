@@ -144,22 +144,50 @@ func (s *Spool) sweepStaleTempsLocked() {
 	}
 }
 
+// skipVanished turns "this entry is already gone" into "keep walking".
+//
+// A record or a whole day directory disappearing while a walk is in
+// flight is ordinary, not damage: `trajector disable` deletes a
+// project's records from another process, and the uploader's own
+// DeleteWhere runs against a live spool. What is already gone
+// contributes zero bytes, so the walk skips it and keeps counting.
+//
+// Until 2026-09-13 both of these returned the error instead, which
+// aborted the whole walk; the partial total was then handed back with a
+// nil error, because the os.IsNotExist tolerance that stood here — meant
+// only for a spool root that does not exist yet — swallowed the abort.
+// rederiveLocked took that truncated figure as authority and stamped the
+// signature with it, so the undercount stuck until the next signature
+// change and the quota stopped binding. A missing root still reads as
+// "nothing stored yet": WalkDir reports it through this same callback.
+func skipVanished(err error) error {
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 // walkUsage derives total spool size from disk, the authority the
 // in-memory figure must always converge on.
 func walkUsage(dir string) (int64, error) {
 	var usage int64
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
+		if err != nil {
+			return skipVanished(err)
 		}
+		if d.IsDir() {
+			return nil
+		}
+		// DirEntry.Info lstats lazily, so a file listed a moment ago and
+		// deleted since fails here rather than above.
 		info, err := d.Info()
 		if err != nil {
-			return err
+			return skipVanished(err)
 		}
 		usage += info.Size()
 		return nil
 	})
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil {
 		return 0, err
 	}
 	return usage, nil

@@ -9,9 +9,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -84,6 +87,24 @@ func TestMain(m *testing.M) {
 		"sleep": func([]string) int {
 			time.Sleep(time.Minute)
 			return 0
+		},
+		// Stands in for the serving proxy, whose whole shutdown path —
+		// final upload flush, request drain, record-queue drain — hangs
+		// off a catchable signal. It records that it was asked to stop
+		// rather than killed, then exits cleanly the way the real child
+		// does once it has drained.
+		"graceful-stop": func([]string) int {
+			stopping := make(chan os.Signal, 1)
+			signal.Notify(stopping, os.Interrupt, syscall.SIGTERM)
+			select {
+			case <-stopping:
+				if err := os.WriteFile(os.Getenv(markerEnv), nil, 0o600); err != nil {
+					return 3
+				}
+				return 0
+			case <-time.After(time.Minute):
+				return 4
+			}
 		},
 		"crash-until-marker": func([]string) int {
 			marker := os.Getenv(markerEnv)
@@ -883,6 +904,32 @@ func TestSuperviseStopsWhenContextEnds(t *testing.T) {
 	}
 	if time.Since(start) > 10*time.Second {
 		t.Error("the watchdog kept the child long after cancellation")
+	}
+}
+
+// TestSuperviseAsksTheChildToStopBeforeKillingIt pins the fix for the
+// watchdog's SIGKILL-on-cancel. exec.CommandContext kills by default,
+// and the child is where every graceful-exit guarantee lives: the
+// uploader's final flush, the drain of in-flight requests, and the
+// record queue's finished-but-unwritten captures. An ordinary reboot or
+// logout TERMs the watchdog, so this path is the normal way the proxy
+// stops, not a corner.
+func TestSuperviseAsksTheChildToStopBeforeKillingIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows has no catchable termination signal to send")
+	}
+	marker := filepath.Join(t.TempDir(), "asked-to-stop")
+	t.Setenv(markerEnv, marker)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+	}()
+	if err := superviseWith(t, "graceful-stop").Supervise(ctx, 0, os.Stdout, os.Stderr); err == nil {
+		t.Error("Supervise = nil, want the context error")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Error("the child was killed outright: it never saw a signal it could act on, so its drain and final flush never ran")
 	}
 }
 

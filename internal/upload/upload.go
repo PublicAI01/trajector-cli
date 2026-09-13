@@ -658,6 +658,19 @@ func (u *Uploader) settleFailure(l lease, rawcalls []spool.Rawcall, err error) (
 		}
 		u.noteAuthorizationRequired(unauthorized.AuthorizeURL, unauthorized.Message)
 		return PauseUploadsAuthorize, fmt.Errorf("upload: batch %s: %w", id, err)
+	case platform.Unauthorized(err):
+		// The service does not accept this device's credential — revoked
+		// server-side, or expired. Nothing about that clears on its own
+		// within a minute, and until 2026-09-13 this fell through to the
+		// default arm, which sets no pause at all: periodicFlush
+		// re-assembled, re-compressed and re-POSTed the whole batch every
+		// minute for the life of the process. It was the only failure
+		// class that was both lasting and unpaced. The pause is reported
+		// as signed out because that is what it is from the service's side
+		// and `trajector login` is what ends it; the batch id stays
+		// pinned, so nothing is re-ingested when it does.
+		u.noteBackoff(SignedOut, u.deps.Now().Add(unauthorizedPause))
+		return RetrySameID, fmt.Errorf("upload: batch %s: %w; automatic flushes wait %s", id, err, unauthorizedPause)
 	case errors.As(err, &limited):
 		// RetryAfter arrives already capped at platform.MaxRetryAfter. A
 		// rate limit that names no pause still demanded one: without a
@@ -742,6 +755,11 @@ const maxTimeoutBackoff = 15 * time.Minute
 // load, short enough to resume promptly once the limit lifts. A service
 // wanting a different pause names one.
 const defaultRateLimitPause = 5 * time.Minute
+
+// unauthorizedPause is how long automatic flushes hold off after the
+// service refused this device's credential. It is long because the
+// remedy is a person running `trajector login`, not time passing.
+const unauthorizedPause = 15 * time.Minute
 
 // timeoutBackoff is how long automatic flushes hold off after the nth
 // consecutive timed-out attempt: doubling from a minute, so a

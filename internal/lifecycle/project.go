@@ -230,7 +230,21 @@ func (m *Machine) EnsureProxy(projectDir string, io IO) error {
 // force; forwarding is untouched.
 func (m *Machine) pauseIfAgreementStale(io IO) {
 	accepted, _, err := m.consent.AcceptedVersion()
-	if err != nil || accepted == "" || accepted == consent.AgreementVersion {
+	if err != nil {
+		// "Cannot tell whether consent matches the terms in force" is not
+		// "it does". A consent store that will not parse — truncated by a
+		// crash, hand-edited — took the same silent return as a current
+		// agreement until 2026-09-13, and every enabled project kept
+		// recording under terms nobody could show the user had accepted.
+		// This is the only consent-side check the recording decision
+		// depends on, so it fails closed, the way routing's own loader
+		// does for a table it cannot read.
+		if perr := m.routes.Pause(routing.PauseConsentReconfirm); perr == nil {
+			fmt.Fprintf(io.Err, "trajector: your accepted data agreement could not be read (%v); recording is paused until you reconfirm with `trajector enable`\n", err)
+		}
+		return
+	}
+	if accepted == "" || accepted == consent.AgreementVersion {
 		return
 	}
 	if err := m.routes.Pause(routing.PauseConsentReconfirm); err == nil {

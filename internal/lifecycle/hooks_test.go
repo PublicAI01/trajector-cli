@@ -1,6 +1,7 @@
 package lifecycle_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -142,5 +143,32 @@ func TestEnsureProxyRefusesAForeignPortHolder(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not the trajector proxy") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// TestEnsureProxyPausesRecordingWhenConsentCannotBeRead pins the fix for
+// the fail-open agreement gate: a consent store that will not parse used
+// to take the same silent return as "your agreement is current", so
+// every enabled project kept recording under terms that could no longer
+// be shown to have been accepted.
+func TestEnsureProxyPausesRecordingWhenConsentCannotBeRead(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.consentStore().AcceptAgreement(consent.AgreementVersion, "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	// Truncated mid-write is what a crash or an OOM kill leaves behind.
+	if err := os.WriteFile(e.deps.Layout.ConsentFile(), []byte(`{"agreement":{"vers`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+		t.Fatalf("ensure-proxy: %v", err)
+	}
+	if reason := e.sandbox.PausedReason(); reason != proxytest.PauseConsentReconfirm {
+		t.Errorf("pause = %q, want recording paused; an unreadable consent store must not read as a current agreement", reason)
+	}
+	if !strings.Contains(e.stderr.String(), "could not be read") {
+		t.Errorf("stderr = %q, want the unreadable consent store explained", e.stderr)
 	}
 }

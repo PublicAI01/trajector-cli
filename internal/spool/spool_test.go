@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -513,5 +514,75 @@ func TestSummaryOfAnEmptySpoolIsEmpty(t *testing.T) {
 	days, err := s.Summary()
 	if err != nil || len(days) != 0 {
 		t.Fatalf("Summary = %+v, %v; want empty and no error", days, err)
+	}
+}
+
+// TestUsageSurvivesRecordsDeletedMidWalk pins the fix for the silent
+// undercount: a record vanishing while the usage walk is in flight used
+// to abort the walk, and the partial total was handed back as if it were
+// the whole spool. Deleting records under a live spool is the normal
+// case — `trajector disable` and the uploader's own DeleteWhere both do
+// it from outside the handle doing the walking — so what this test races
+// is ordinary operation, not a corner.
+//
+// The churn day sorts before the keeper day, so any walk that aborts in
+// the churn directory reports less than the keepers alone are worth.
+func TestUsageSurvivesRecordsDeletedMidWalk(t *testing.T) {
+	dir := t.TempDir()
+	churnDir := filepath.Join(dir, "20250101")
+	keeperDir := filepath.Join(dir, "20260101")
+	for _, d := range []string{churnDir, keeperDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const (
+		churnFiles  = 400
+		keeperFiles = 40
+		recordSize  = 512
+	)
+	body := make([]byte, recordSize)
+	var keeperTotal int64
+	for i := range keeperFiles {
+		name := filepath.Join(keeperDir, fmt.Sprintf("keep_%04d.json", i))
+		if err := os.WriteFile(name, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		keeperTotal += recordSize
+	}
+	churn := make([]string, churnFiles)
+	for i := range churn {
+		churn[i] = filepath.Join(churnDir, fmt.Sprintf("msg_%04d.json", i))
+	}
+
+	writeChurn := func() {
+		for _, name := range churn {
+			if err := os.WriteFile(name, body, 0o600); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}
+
+	for round := 0; round < 40; round++ {
+		writeChurn()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for _, name := range churn {
+				os.Remove(name)
+			}
+		}()
+		// Open walks the tree for its opening figure, so each round is a
+		// fresh walk racing the deleter.
+		s, err := spool.Open(dir, 0)
+		<-done
+		if err != nil {
+			t.Fatalf("round %d: Open: %v", round, err)
+		}
+		if got := s.Usage(); got < keeperTotal {
+			t.Fatalf("round %d: Usage() = %d, want at least %d (the keepers, which no one deleted); the walk was cut short by a record that vanished and reported the partial total as the whole spool",
+				round, got, keeperTotal)
+		}
 	}
 }
