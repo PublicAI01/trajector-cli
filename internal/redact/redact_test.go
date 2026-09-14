@@ -1872,3 +1872,38 @@ func TestDatabaseURLPasswordWithPercent(t *testing.T) {
 		}
 	}
 }
+
+// TestJSONLBytes_CredentialKeyInsideAnEmbeddedJSONString pins the
+// spelling the key-name rule was blind to until 2026-09-14.
+//
+// A rawcall carries JSON inside JSON constantly: a tool_result's
+// content, an MCP answer, a Read of a .json config file all arrive as a
+// *string* holding a JSON document, and collectJSONLReplacements does
+// not re-parse a string — so isCredentialJSONSecretKey never sees those
+// keys. The text-side rule was the only cover left, and it demanded an
+// `=`, which no JSON document writes. The same bytes were therefore
+// masked whole as real JSON and shipped in the clear as a string.
+//
+// The password is deliberately low entropy (2.78, well under the 4.5
+// threshold): a random-looking one is caught by layer 1 and would prove
+// nothing about the rule under test.
+func TestJSONLBytes_CredentialKeyInsideAnEmbeddedJSONString(t *testing.T) {
+	t.Parallel()
+	const password = "hunter2hunter"
+	const embedded = `{"db_password": "` + password + `", "host": "db.internal"}`
+
+	got := redactedField(t, embedded)
+	if strings.Contains(got, password) {
+		t.Errorf("a value under a db_password key left unmasked inside an embedded JSON string: %s", got)
+	}
+	if !strings.Contains(got, "db.internal") {
+		t.Errorf("masking swallowed the document around the credential: %s", got)
+	}
+
+	// The two spellings of one value must not disagree: the structured
+	// form has always been masked, and that is what the string form is
+	// being held to.
+	if structured := redactedString(t, embedded); strings.Contains(structured, password) {
+		t.Errorf("structured spelling regressed: %s", structured)
+	}
+}

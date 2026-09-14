@@ -72,7 +72,22 @@ var (
 	// to REDACTED,mQ2vR and the rest of the password went out in the clear.
 	// Deciding which of the three is a separator is assignmentTail's job,
 	// which needs to see what follows and so cannot be done here.
-	credentialValuePattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9])(` + dbPasswordKeyShape + `)\s*=\s*("[^"]*"|'[^']*'|[^\s]+)`)
+	//
+	// The separator is `=` or `:`, and the key may close with a quote.
+	// Until 2026-09-14 only `=` was recognized, which left this rule —
+	// the one that masks a value for what its key is called rather than
+	// for how random it looks — blind to the spelling that dominates this
+	// traffic. A rawcall carries JSON inside JSON constantly: a
+	// tool_result's `content`, an MCP answer, a `Read` of a .json config
+	// all arrive as a *string* holding a JSON document, and
+	// collectJSONLReplacements does not re-parse a string, so
+	// isCredentialJSONSecretKey never sees those keys either. The result
+	// was that {"db_password":"hunter2hunter"} was masked whole when it
+	// was real JSON and shipped in the clear when it was the same bytes
+	// inside a string: entropy 2.78 is under every threshold, and layers
+	// 4-6 all demanded an `=`. Same shape as the 2026-09-04 fix on the
+	// structured side, one spelling over.
+	credentialValuePattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9])(` + dbPasswordKeyShape + `)["']?\s*[=:]\s*("[^"]*"|'[^']*'|[^\s]+)`)
 
 	// assignmentTail matches a separator that genuinely separates: one
 	// followed by another key=value pair, as in a query string or a

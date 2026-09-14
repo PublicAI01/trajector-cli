@@ -423,13 +423,15 @@ func (u *Uploader) resendPending(token string, res *Result, deadline time.Time) 
 	for _, id := range l.requestIDs() {
 		wanted[id] = true
 	}
+	// EachWhere, not Each: this looks for one batch's records and must not
+	// pay to reread the whole spool to find them. See EachWhere.
 	var rawcalls []spool.Rawcall
-	err = u.deps.Spool.Each(func(r spool.Rawcall) error {
-		if wanted[r.RequestID] {
+	err = u.deps.Spool.EachWhere(
+		func(id string) bool { return wanted[id] },
+		func(r spool.Rawcall) error {
 			rawcalls = append(rawcalls, r)
-		}
-		return nil
-	})
+			return nil
+		})
 	if err != nil {
 		return fmt.Errorf("upload: reading the spool: %w", err)
 	}

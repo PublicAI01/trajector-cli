@@ -83,6 +83,26 @@ func (s *Spool) days() ([]string, error) {
 // index never mentioned is visited anyway. Rawcall files are the source
 // of truth, so a lost or corrupt index costs metadata, never records.
 func (s *Spool) Each(visit func(Rawcall) error) error {
+	return s.EachWhere(func(string) bool { return true }, visit)
+}
+
+// EachWhere is Each restricted to the records whose request id matches.
+// Only a matching record's bytes are read: the id is the file name, so
+// selecting on it costs a directory listing rather than a read of every
+// rawcall on the machine — the same reason DeleteWhere matches on the id
+// alone.
+//
+// resendPending is why this exists, and it used Each until 2026-09-14.
+// It looks for at most one batch's worth of records, so every automatic
+// flush that met a standing pending lease re-read the whole spool: up to
+// the entire quota, once a minute, for as long as the lease stood. That
+// is not a corner — an offline machine fails its uploads with a network
+// error, which sets no pause at all, so the lease stands and the cadence
+// keeps its full minute rate. The same scan also made Uploader.Close's
+// budget unenforceable, since the deadline is first consulted after it,
+// and let one unreadable rawcall anywhere in the spool block the resend
+// of every pending batch for good.
+func (s *Spool) EachWhere(match func(requestID string) bool, visit func(Rawcall) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	days, err := s.days()
@@ -99,6 +119,9 @@ func (s *Spool) Each(visit func(Rawcall) error) error {
 			return err
 		}
 		for _, f := range files {
+			if !match(f.id) {
+				continue
+			}
 			data, err := fsatomic.ReadFile(f.path)
 			if err != nil {
 				return err

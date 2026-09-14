@@ -214,6 +214,25 @@ func (s *Server) rewrite(pr *httputil.ProxyRequest) {
 	target := *d.upstream
 	target.Path = strings.TrimSuffix(d.upstream.Path, "/") + d.restPath
 	target.RawQuery = pr.In.URL.RawQuery
+	// A recorded upstream may carry userinfo: `https://user:pass@relay` is
+	// a base URL Claude Code accepts, enable grants, and every surface
+	// that writes one down masks precisely because it is a credential.
+	// Turning userinfo into an Authorization header is http.Client's job,
+	// and a ReverseProxy calls Transport.RoundTrip directly, so nothing
+	// did it here — the relay credential was dropped and the relay
+	// answered 401 to every request the moment trajector stood in the
+	// path. Sent as the header the client would otherwise have sent, and
+	// only when the client sent none of its own, which is the rule
+	// http.Client applies. The userinfo then leaves the outbound URL, so
+	// no proxy log line or transport error can quote the password.
+	// 2026-09-14.
+	if user := target.User; user != nil {
+		target.User = nil
+		if pr.Out.Header.Get("Authorization") == "" {
+			password, _ := user.Password()
+			pr.Out.SetBasicAuth(user.Username(), password)
+		}
+	}
 	pr.Out.URL = &target
 	pr.Out.Host = ""
 	// Every forwarded request drops Accept-Encoding, recorded or not, so
