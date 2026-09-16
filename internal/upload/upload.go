@@ -673,6 +673,17 @@ func (u *Uploader) settleFailure(l lease, rawcalls []spool.Rawcall, err error) (
 		// pinned, so nothing is re-ingested when it does.
 		u.noteBackoff(SignedOut, u.deps.Now().Add(unauthorizedPause))
 		return RetrySameID, fmt.Errorf("upload: batch %s: %w; automatic flushes wait %s", id, err, unauthorizedPause)
+	case platform.Forbidden(err):
+		// Access refused outright. Like the 401 above this says nothing
+		// about the batch, so nothing is quarantined and the id stays
+		// pinned; unlike it, the remedy is not necessarily this device's
+		// pairing — a proxy or gateway in front of the service answers the
+		// same way — so it carries its own reason rather than borrowing
+		// the signed-out one. The pause is the unauthorized one because
+		// the remedy is the same shape: a person, not time passing.
+		// 2026-09-16.
+		u.noteBackoff(AccessRefused, u.deps.Now().Add(unauthorizedPause))
+		return RetrySameID, fmt.Errorf("upload: batch %s: %w; automatic flushes wait %s", id, err, unauthorizedPause)
 	case errors.As(err, &limited):
 		// RetryAfter arrives already capped at platform.MaxRetryAfter. A
 		// rate limit that names no pause still demanded one: without a

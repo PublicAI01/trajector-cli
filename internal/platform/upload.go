@@ -345,7 +345,18 @@ func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, bu
 		// condition as the client's own deadline firing; one error class
 		// covers both.
 		return &UploadTimeoutError{BatchBytes: bodyBytes, Budget: budget, cause: status}
-	case resp.StatusCode == http.StatusUnauthorized:
+	case resp.StatusCode == http.StatusUnauthorized,
+		// 403 joined 401 on 2026-09-16, for the reason 401 was lifted out
+		// on 2026-09-13: the arm below reads a status as a verdict on the
+		// batch, and neither of these is one. A forbidden answer is about
+		// who is asking, not about what they sent — a descoped credential,
+		// or a proxy or gateway in front of the service, which answers 403
+		// as readily as the service itself. Read as a rejection it
+		// quarantined the batch, and since that arm sets no pause the
+		// cadence took the next batch a minute later and quarantined it
+		// too, walking the whole spool into a store the tool describes as
+		// not retried automatically.
+		resp.StatusCode == http.StatusForbidden:
 		return status
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		return &BatchRejectedError{Status: resp.Status, Details: trimDetails(body), status: status}
@@ -365,6 +376,15 @@ func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, bu
 func Unauthorized(err error) bool {
 	var status *StatusError
 	return errors.As(err, &status) && status.StatusCode == http.StatusUnauthorized
+}
+
+// Forbidden reports whether err is the service, or something answering
+// in front of it, refusing this client access outright. Like
+// Unauthorized it is a predicate rather than an error type: the status
+// is the whole message and the caller's response to it is a pause.
+func Forbidden(err error) bool {
+	var status *StatusError
+	return errors.As(err, &status) && status.StatusCode == http.StatusForbidden
 }
 
 func retryAfter(value string) time.Duration {

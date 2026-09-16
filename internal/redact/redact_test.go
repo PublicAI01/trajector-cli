@@ -1907,3 +1907,34 @@ func TestJSONLBytes_CredentialKeyInsideAnEmbeddedJSONString(t *testing.T) {
 		t.Errorf("structured spelling regressed: %s", structured)
 	}
 }
+
+// TestJSONLBytes_CredentialInArrayIsRedactedToo pins the 2026-09-16
+// fix. An array has no field names, so its elements are walked with an
+// empty key and the key-name credential layer can never reach them. A
+// low-entropy password matches no format layer either — "hunter2hunter"
+// scores about 2.78 bits per character against a 4.5 threshold — so
+// nothing at all recognized the array copy, and a record went out with
+// "password":"REDACTED" beside "argv":[...,"hunter2hunter"]. That reads
+// as redacted, which is the worse half: nobody looks at it again.
+func TestJSONLBytes_CredentialInArrayIsRedactedToo(t *testing.T) {
+	t.Parallel()
+	const password = "hunter2hunter"
+	input := `{"db":{"password":"` + password + `","host":"db.internal","user":"svc"},` +
+		`"argv":["psql","-d","app","` + password + `"]}`
+
+	result := redactedString(t, input)
+	if strings.Contains(result, password) {
+		t.Fatalf("the password survived somewhere in %s", result)
+	}
+	for _, preserved := range []string{
+		`"password":"REDACTED"`,
+		`"host":"db.internal"`,
+		`"user":"svc"`,
+		`"psql"`,
+		`"app"`,
+	} {
+		if !strings.Contains(result, preserved) {
+			t.Fatalf("expected %q to be preserved, got: %s", preserved, result)
+		}
+	}
+}

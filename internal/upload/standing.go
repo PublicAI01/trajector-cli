@@ -46,6 +46,11 @@ const (
 	// QuarantineOnly: the spool holds nothing to send and every rawcall
 	// left on this machine is waiting in quarantine.
 	QuarantineOnly Reason = "quarantine_only"
+	// AccessRefused: the service — or something answering in front of it,
+	// a proxy or a gateway — refused this client access to the upload
+	// endpoint. It is not SignedOut because the pairing may be perfectly
+	// good, and not a rejection because it says nothing about the batch.
+	AccessRefused Reason = "access_refused"
 )
 
 // Standing is one reason uploads are held back, with everything the
@@ -121,6 +126,8 @@ func (s Standing) Explain() string {
 		return fmt.Sprintf("Uploads are paused until %s: the last attempt ran out of time.", s.pauseUntil())
 	case QuarantineOnly:
 		return "Uploads have nothing to send: every rawcall left on this machine is quarantined."
+	case AccessRefused:
+		return fmt.Sprintf("Uploads are paused until %s: the upload endpoint refused this client access. Captured data is kept.", s.pauseUntil())
 	default:
 		return string(s.Reason)
 	}
@@ -157,6 +164,12 @@ func (s Standing) Remedy() string {
 		return "Complete your data authorization at " + s.AuthorizeURL + " — then uploads resume."
 	case RateLimited, TimedOut:
 		return "Uploads resume automatically; `trajector upload --force` offers them now."
+	case AccessRefused:
+		// No local setting produces this, so nothing here names a command
+		// that would clear it; a forced retry is still offered, because a
+		// refusal from something in front of the service can end without
+		// anything on this machine changing.
+		return "If this persists, check whether a proxy or firewall sits between this machine and the service; `trajector upload --force` retries now."
 	default:
 		return ""
 	}

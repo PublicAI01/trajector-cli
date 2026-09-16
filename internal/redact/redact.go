@@ -223,6 +223,12 @@ type jsonReplacement struct {
 	// meaning that policy leaves the value alone.
 	redacted      string
 	deterministic string
+	// elementOnly marks a verdict that applies only to a token with no
+	// owning key — an array element. It carries a value-level judgement
+	// that could not have been reached from the token itself, so it must
+	// never reach a field that was judged on its own key. See the
+	// elementCredential note in collectJSONLReplacements.
+	elementOnly bool
 }
 
 type connectionStringRule struct {
@@ -715,10 +721,20 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 	// did and what array elements (collected with an empty key) rely on.
 	keyed := make(map[string]map[string]encodedReplacement)
 	unkeyed := make(map[string]encodedReplacement, len(repls))
+	// elementCredential holds the verdicts that may reach only a token
+	// with no owning key. They are kept out of unkeyed because unkeyed is
+	// also the fallback for an object value no keyed replacement claims,
+	// and a value-level credential reading must never overrule a field
+	// that was judged on its own key. 2026-09-16.
+	elementCredential := make(map[string]encodedReplacement)
 	for _, r := range repls {
 		enc, err := encodeReplacement(r)
 		if err != nil {
 			return "", err
+		}
+		if r.elementOnly {
+			elementCredential[r.original] = enc
+			continue
 		}
 		if r.key == "" {
 			unkeyed[r.original] = enc
@@ -833,6 +849,11 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 				replJSON, found := "", false
 				if inObject {
 					replJSON, found = keyed[stack[len(stack)-1].key][value].forPolicy(policy)
+				} else {
+					// No owning key, so this token was never judged on one:
+					// the credential reading some other occurrence's key
+					// established is the only judgement there is.
+					replJSON, found = elementCredential[value].forPolicy(policy)
 				}
 				if !found {
 					replJSON, found = unkeyed[value].forPolicy(policy)
@@ -951,6 +972,59 @@ func isSingleJSONValue(dec *json.Decoder) bool {
 func collectJSONLReplacements(v any) []jsonReplacement {
 	seen := make(map[string]int)
 	var repls []jsonReplacement
+	// elementCredential collects the values some key named a credential.
+	// An array has no field names, so its elements are walked with an
+	// empty key (see the []any arm below) and isCredentialJSONSecretKey
+	// can never reach them: until 2026-09-16 the same secret in
+	// {"db":{"password":"hunter2hunter",…}} and in
+	// {"argv":[…,"hunter2hunter"]} was masked in the first place and
+	// shipped verbatim in the second, since a low-entropy password
+	// matches no format layer and sits far under the entropy threshold.
+	// A record that reads as redacted while still carrying the credential
+	// is the worse of the two failures — nobody looks at it again.
+	//
+	// The verdict reaches array elements and nothing else. A field with a
+	// key of its own was judged on that key, and a sibling note holding
+	// the same text is prose, not a second copy of the credential;
+	// masking it would overrule a judgement this pass already made. An
+	// element has no such judgement to overrule.
+	elementCredential := map[string]bool{}
+	// record files one reading of one value under the key it was seen
+	// with. Every collection point goes through here so the dedup rule
+	// below is stated once.
+	record := func(key, val, redacted, deterministic string, credential bool) {
+		if redacted == val && deterministic == val {
+			return
+		}
+		seenKey := key + "\x00" + val
+		if idx, ok := seen[seenKey]; ok {
+			// The same key and value can sit in a credential-shaped
+			// object ({"password":…,"host":…,"user":…}) and an ordinary
+			// one at once, and the credentialContext half of the verdict
+			// below belongs to the enclosing object, not to the pair. Go
+			// randomizes map iteration, so before 2026-09-04 whichever
+			// occurrence walk reached first won and the other was
+			// dropped here — the same document redacted to "REDACTED" on
+			// one run and "REDACTED/tail" on the next.
+			//
+			// applyJSONReplacements is keyed by (key, original) and can
+			// hold exactly one verdict for the pair, so the dedup cannot
+			// be made finer; it has to be made decidable. The credential
+			// reading wins, whichever occurrence arrived first.
+			if credential {
+				repls[idx].redacted = redactedPlaceholder
+				repls[idx].deterministic = redactedPlaceholder
+			}
+			return
+		}
+		seen[seenKey] = len(repls)
+		repls = append(repls, jsonReplacement{
+			key:           key,
+			original:      val,
+			redacted:      redacted,
+			deterministic: deterministic,
+		})
+	}
 	var walk func(key string, credentialContext bool, v any)
 	walk = func(key string, credentialContext bool, v any) {
 		switch val := v.(type) {
@@ -988,39 +1062,21 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 			if credentialKey {
 				redacted, deterministic = redactedPlaceholder, redactedPlaceholder
 			}
-			if redacted != val || deterministic != val {
-				seenKey := key + "\x00" + val
-				if idx, ok := seen[seenKey]; ok {
-					// The same key and value can sit in a credential-shaped
-					// object ({"password":…,"host":…,"user":…}) and an ordinary
-					// one at once, and the credentialContext half of the verdict
-					// above belongs to the enclosing object, not to the pair. Go
-					// randomizes map iteration, so before 2026-09-04 whichever
-					// occurrence walk reached first won and the other was
-					// dropped here — the same document redacted to "REDACTED" on
-					// one run and "REDACTED/tail" on the next.
-					//
-					// applyJSONReplacements is keyed by (key, original) and can
-					// hold exactly one verdict for the pair, so the dedup cannot
-					// be made finer; it has to be made decidable. The credential
-					// reading wins, whichever occurrence arrived first.
-					if credentialKey {
-						repls[idx].redacted = redactedPlaceholder
-						repls[idx].deterministic = redactedPlaceholder
-					}
-				} else {
-					seen[seenKey] = len(repls)
-					repls = append(repls, jsonReplacement{
-						key:           key,
-						original:      val,
-						redacted:      redacted,
-						deterministic: deterministic,
-					})
-				}
+			record(key, val, redacted, deterministic, credentialKey)
+			if credentialKey && key != "" {
+				elementCredential[val] = true
 			}
 		}
 	}
 	walk("", false, v)
+	for val := range elementCredential {
+		repls = append(repls, jsonReplacement{
+			original:      val,
+			redacted:      redactedPlaceholder,
+			deterministic: redactedPlaceholder,
+			elementOnly:   true,
+		})
+	}
 	return repls
 }
 

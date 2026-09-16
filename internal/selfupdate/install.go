@@ -2,10 +2,19 @@ package selfupdate
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
+
+// stageBinary writes the downloaded binary to its staged sibling and
+// flushes it to stable storage before returning. It is a variable only
+// so a test can observe that the staging goes through the flushing
+// writer; production always uses fsatomic.WriteFile.
+var stageBinary func(path string, data []byte, perm fs.FileMode) error = fsatomic.WriteFile
 
 // Sibling-name markers. Every transient file this package creates next
 // to the installed binary spells the binary's own name first and one of
@@ -42,16 +51,26 @@ func install(execPath string, binary []byte) error {
 	if err != nil {
 		return fmt.Errorf("selfupdate: cannot write to %s: %w", dir, err)
 	}
+	// CreateTemp only reserves the name here; the content goes through
+	// fsatomic below. Reserving by creating rather than by checking
+	// whether a name is free is the same rule reserveAside states: two
+	// upgrades running at once must not pick one name between them.
 	staged := f.Name()
-	_, err = f.Write(binary)
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
+	err = f.Close()
 	if err == nil {
-		// The mode is applied explicitly rather than left to the
-		// creation mask, so the installed binary is runnable no matter
-		// what umask the upgrade ran under.
-		err = os.Chmod(staged, executablePerm)
+		// Through fsatomic, not a plain write: it flushes the content to
+		// stable storage before the rename that installs it. Writing
+		// straight to the staged file flushed nothing, and
+		// replaceExecutable's rename only orders a directory entry — so a
+		// crash inside the writeback window left execPath naming blocks
+		// that were never written, while that same rename had already
+		// unlinked the previous binary. The file read back empty with
+		// mode 0755 on it and there was no trajector left to retry the
+		// upgrade with, which is the one thing this package promises
+		// cannot happen. The mode is passed rather than left to the
+		// creation mask, so the install is runnable whatever umask the
+		// upgrade ran under. 2026-09-16.
+		err = stageBinary(staged, binary, executablePerm)
 	}
 	if err != nil {
 		os.Remove(staged)

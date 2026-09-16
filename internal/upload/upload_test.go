@@ -1208,3 +1208,39 @@ func TestAnUnauthorizedUploadPausesAutomaticFlushes(t *testing.T) {
 		t.Errorf("standing = %q, want %q so status and doctor name the credential", res.Standing.Reason, upload.SignedOut)
 	}
 }
+
+// TestAForbiddenUploadKeepsTheBatchAndPauses pins the 2026-09-16 fix.
+// Every 4xx except the ones with an arm of their own was read as "the
+// service will never take this batch" and quarantined. 403 is not a
+// verdict on the batch — a descoped credential, or a proxy or gateway
+// answering in front of the service, produces it — and the quarantine
+// arm sets no pause, so the flush cadence took the next batch a minute
+// later and quarantined that one too, walking the whole spool into a
+// store the tool describes as not retried automatically.
+func TestAForbiddenUploadKeepsTheBatchAndPauses(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+	if n := rejectedRecords(t, f.rejected); n != 0 {
+		t.Fatalf("a refused-access answer quarantined %d valid rawcall(s)", n)
+	}
+	if f.spool.Usage() == 0 {
+		t.Fatal("the batch left the spool over a refusal that said nothing about it")
+	}
+	before := f.uploadCount()
+
+	res, err := f.uploader.Flush(false)
+	if err != nil {
+		t.Fatalf("automatic flush after a 403 = %v", err)
+	}
+	if got := f.uploadCount(); got != before {
+		t.Errorf("automatic flush made %d more attempts, want 0: a 403 must persist a pause", got-before)
+	}
+	if res.Standing.Reason != upload.AccessRefused {
+		t.Errorf("standing = %q, want %q: the pairing may be fine, so this must not read as signed out", res.Standing.Reason, upload.AccessRefused)
+	}
+}
