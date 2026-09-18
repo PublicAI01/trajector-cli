@@ -41,17 +41,21 @@ const (
 	// base URL.
 	noProxyShapeFact = "This project records from its session files only, so Remote Control stays available."
 
+	// RewardsDoc is where the rates a contribution is rewarded at are
+	// published. A surface states the rule and sends the user here for
+	// the figures: the rates change without a new build, so a number
+	// frozen into a binary would be read as a promise.
+	RewardsDoc = "https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/rewards"
+
 	// UnwitnessedReward is what a call no proxy of this device handled
 	// is worth, said wherever a project is stated to be contributing:
 	// the user reads it before anything of theirs is uploaded, not
-	// after. It states the rule and no figure — what the rates are is
-	// the service's to say and changes without a new build, and a
-	// number frozen into a binary would be read as a promise.
+	// after.
 	UnwitnessedReward = "Calls the local proxy did not witness are rewarded at a lower rate than witnessed ones. " +
 		"A call is witnessed when the proxy handled its request and its response on this machine, so the sessions this project had before you enabled it, " +
 		"and any session that runs while the proxy does not, are not witnessed. " +
 		"The tokens are counted in full either way; only the amount is reduced. " +
-		"The rates themselves are set by the service, not by this build."
+		"The current rates are published at " + RewardsDoc + "."
 
 	// emptyReasoningFact counts the assistant lines of a project's
 	// session files that carry the reasoning field with nothing in it,

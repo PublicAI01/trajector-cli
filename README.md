@@ -35,9 +35,11 @@ project had before you enabled it, and any session that runs while the proxy
 does not — a project enabled with `--no-proxy` records from its session
 files alone — are not witnessed. Calls the proxy did not witness are
 rewarded at a lower rate than witnessed ones; the tokens are counted in full
-either way, and only the amount is reduced. The rates themselves are set by
-the service, not by the client, and `trajector enable` says the same thing
-before anything of yours is recorded.
+either way, and only the amount is reduced. The current rates are published
+at
+[docs.publicai.io](https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/rewards)
+rather than fixed by the client, and `trajector enable` says the same thing,
+with the same link, before anything of yours is recorded.
 
 Design commitments:
 

@@ -219,8 +219,10 @@ its response on your machine, so the sessions a project had before you
 enabled it, and any session that runs while the proxy does not, are not
 witnessed. Calls the proxy did not witness are rewarded at a lower rate than
 witnessed ones; the tokens are counted in full either way, and only the
-amount is reduced. The rates themselves are set by the service and are not
-fixed by the client, so this page states the rule and no figure.
+amount is reduced. This page states the rule and no figure: the current
+rates are published at
+[docs.publicai.io](https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/rewards)
+and are not fixed by the client.
 
 ## Revoking consent and deleting data
 

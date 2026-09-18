@@ -58,9 +58,10 @@ All notable changes to trajector are documented here. The format follows
   so the sessions a project had before it was enabled, and any session
   that runs while the proxy does not, are rewarded at a lower rate than
   witnessed ones. The tokens are counted in full either way. The data
-  agreement, `PRIVACY.md` and the README say the same. The rates
-  themselves are the service's to set, so the client states the rule
-  and no figure.
+  agreement, `PRIVACY.md` and the README say the same. The client
+  states the rule and no figure: the current rates are published at
+  <https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/rewards>,
+  and the agreement carries no address of its own.
 - Uploads now use batch schema version 2, which carries recorded calls,
   session file segments and metadata snapshots in one batch.
 - A third source of records: the state of an enabled project's git

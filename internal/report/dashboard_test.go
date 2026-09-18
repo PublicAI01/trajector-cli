@@ -51,6 +51,20 @@ func TestStatusShowsAnEnabledProjectAndRunningProxy(t *testing.T) {
 	rejects(t, "status", out, "third-party")
 }
 
+// The client states the rule and no figure, so the sentence is only
+// useful if it also says where the figures are. A contributing project
+// carries both.
+func TestStatusSendsTheUserToWhereTheRatesArePublished(t *testing.T) {
+	d := device()
+	d.Project = contributing()
+	out := dashboard(d)
+
+	wants(t, "status", out,
+		"Calls the local proxy did not witness are rewarded at a lower rate",
+		"The current rates are published at "+report.RewardsDoc+".",
+	)
+}
+
 func TestStatusLabelsAThirdPartyUpstream(t *testing.T) {
 	d := device()
 	d.Project = contributing()
