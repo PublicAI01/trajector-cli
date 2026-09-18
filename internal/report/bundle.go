@@ -64,6 +64,7 @@ type projectWire struct {
 	Token            maskedToken `json:"token"`
 	HooksInstalled   bool        `json:"hooks_installed"`
 	SessionEndOK     bool        `json:"session_end_installed"`
+	GitSnapshotOK    bool        `json:"git_snapshot_installed"`
 	AgreementVersion string      `json:"agreement_version"`
 	ConsentState     string      `json:"consent_state"`
 	PauseReason      string      `json:"pause_reason"`
@@ -176,6 +177,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			Token:            maskedToken(d.Project.Token),
 			HooksInstalled:   d.Project.HookInstalled,
 			SessionEndOK:     d.Project.SessionEndInstalled,
+			GitSnapshotOK:    d.Project.GitSnapshotInstalled,
 			AgreementVersion: d.Project.AgreementVersion,
 			ConsentState:     string(d.Project.ConsentState),
 			PauseReason:      string(d.Project.PauseReason),

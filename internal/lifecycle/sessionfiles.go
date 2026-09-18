@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"path/filepath"
@@ -14,12 +15,50 @@ import (
 )
 
 // HookInput is what Claude Code writes on a hook's stdin: which session
-// is running, the file it records to, and where. Every other key is
-// ignored, and a hook handed no such input gets the zero value.
+// is running, the file it records to, where it runs, which event it is,
+// and — for a hook that runs after a tool — what the tool was given and
+// what it answered. Every other key is ignored, and a hook handed no
+// such input gets the zero value.
+//
+// The two tool members stay raw. Their shape is the tool's, not this
+// client's, so a tool that answers with something other than an object
+// must cost the caller nothing: decoding them into named fields here
+// would make one such answer discard the whole input.
 type HookInput struct {
-	SessionID   string `json:"session_id"`
-	SessionPath string `json:"transcript_path"`
-	Cwd         string `json:"cwd"`
+	SessionID    string          `json:"session_id"`
+	SessionPath  string          `json:"transcript_path"`
+	Cwd          string          `json:"cwd"`
+	HookEvent    string          `json:"hook_event_name"`
+	ToolInput    json.RawMessage `json:"tool_input"`
+	ToolResponse json.RawMessage `json:"tool_response"`
+}
+
+// Command is the shell command the tool was given, empty when the input
+// named none.
+func (in HookInput) Command() string {
+	var v struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(in.ToolInput, &v) != nil {
+		return ""
+	}
+	return v.Command
+}
+
+// ReportedCommit reports whether the tool's own answer stated that it
+// made a commit. Only the presence of the statement is read: the short
+// identifier it carries is not the one a record names, and reading it
+// further would be a judgement about what the tool did.
+func (in HookInput) ReportedCommit() bool {
+	var v struct {
+		GitOperation struct {
+			Commit json.RawMessage `json:"commit"`
+		} `json:"gitOperation"`
+	}
+	if json.Unmarshal(in.ToolResponse, &v) != nil {
+		return false
+	}
+	return len(v.GitOperation.Commit) > 0 && !bytes.Equal(v.GitOperation.Commit, []byte("null"))
 }
 
 // maxHookInput bounds how much of stdin a hook reads. Hook input is a
@@ -46,7 +85,7 @@ func ReadHookInput(r io.Reader) HookInput {
 // ever written to it here.
 const cloudPlaceholder = "cloud-transcript.jsonl"
 
-// RegisterSessionFile registers the session file a hook was told about,
+// registerSessionFile registers the session file a hook was told about,
 // and the agent files beside it, for reading on the project's behalf.
 // It registers only when the hook ran inside an enabled project and the
 // path names a file Claude Code writes on this machine: under the
@@ -57,7 +96,7 @@ const cloudPlaceholder = "cloud-transcript.jsonl"
 // not learn what the hook did, and the registry is where the outcome
 // is read afterwards. Registering is idempotent, so every hook of a
 // session may call it.
-func (m *Machine) RegisterSessionFile(cwd string, hook HookInput) (registered bool, err error) {
+func (m *Machine) registerSessionFile(cwd string, hook HookInput) (registered bool, err error) {
 	path := hook.SessionPath
 	if path == "" || claudesettings.WindowsSideClaude("", path) || !filepath.IsAbs(path) {
 		return false, nil
@@ -82,18 +121,18 @@ func (m *Machine) RegisterSessionFile(cwd string, hook HookInput) (registered bo
 	return true, nil
 }
 
-// FollowSession takes the session a hook was told about: it registers
+// followSession takes the session a hook was told about: it registers
 // the session's file, and starts the reader for the project when that
 // file is now registered. A file that is not registered is nothing to
 // read, and a failure of either step stays here: the session must not
 // learn what the hook did, and the registry is where the outcome is
 // read afterwards.
-func (m *Machine) FollowSession(cwd string, hook HookInput) {
-	registered, err := m.RegisterSessionFile(cwd, hook)
+func (m *Machine) followSession(cwd string, hook HookInput) {
+	registered, err := m.registerSessionFile(cwd, hook)
 	if err != nil || !registered {
 		return
 	}
-	_ = m.SpawnReader(cwd)
+	_ = m.spawnReader(cwd)
 }
 
 // registryContents is one project's registry as everything here reads
@@ -136,16 +175,29 @@ func (m *Machine) sessionFiles(projectIDHash string) registryContents {
 // A session directory outside the root, or a working directory that
 // cannot be resolved, has no position and yields "".
 func projectSubpath(root, cwd string) string {
-	if cwd == "" {
-		return ""
+	subpath, _ := projectPosition(root, cwd)
+	return subpath
+}
+
+// projectPosition reports where dir sits relative to the project root,
+// with forward slashes and "" at the root itself, and false when dir is
+// outside the root or cannot be resolved. The two answers are kept
+// apart because "at the root" and "not in the project" are the same
+// empty string and opposite decisions.
+func projectPosition(root, dir string) (string, bool) {
+	if dir == "" {
+		return "", false
 	}
-	canonical, err := consent.CanonicalRoot(cwd)
+	canonical, err := consent.CanonicalRoot(dir)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	rel, err := filepath.Rel(root, canonical)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return ""
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
 	}
-	return filepath.ToSlash(rel)
+	if rel == "." {
+		return "", true
+	}
+	return filepath.ToSlash(rel), true
 }

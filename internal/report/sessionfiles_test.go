@@ -196,13 +196,20 @@ func TestStatusSaysWhatEachShapeCosts(t *testing.T) {
 	})
 }
 
-func TestStatusNamesAMissingSessionEndHookWhileStillContributing(t *testing.T) {
-	d := enabledDevice()
-	d.Project.SessionEndInstalled = false
-	out := dashboard(d)
-	wants(t, "status", out, "Contributing",
-		"The session-end hook is missing from /home/dev/sample-project/.claude/settings.local.json; run `trajector doctor` to add it.")
-	rejects(t, "status", out, "disagree")
+func TestStatusNamesAMissingSessionHookWhileStillContributing(t *testing.T) {
+	for name, drop := range map[string]func(*report.ProjectStatus){
+		"the hook that runs when a session ends":    func(p *report.ProjectStatus) { p.SessionEndInstalled = false },
+		"the hook that runs after a shell tool use": func(p *report.ProjectStatus) { p.GitSnapshotInstalled = false },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := enabledDevice()
+			drop(&d.Project)
+			out := dashboard(d)
+			wants(t, "status", out, "Contributing",
+				"A session hook is missing from /home/dev/sample-project/.claude/settings.local.json; run `trajector doctor` to add it.")
+			rejects(t, "status", out, "disagree")
+		})
+	}
 }
 
 func TestStatusReportsClaudeOnTheWindowsSideAsAFact(t *testing.T) {

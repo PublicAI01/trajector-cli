@@ -288,18 +288,19 @@ func TestStatusShowsNoOptionalSettingLineOutsideAContributingProject(t *testing.
 // contributing is a project in the fully healthy enabled state.
 func contributing() report.ProjectStatus {
 	return report.ProjectStatus{
-		Root:                "/home/dev/sample-project",
-		Hash:                "hash-p1",
-		Enabled:             true,
-		Token:               "tok-1",
-		Upstream:            "https://api.anthropic.com",
-		Shape:               routing.WithProxy,
-		InjectedBaseURL:     "http://127.0.0.1:41100/t/tok-1",
-		InjectedToken:       "tok-1",
-		Injected:            true,
-		InjectionAgrees:     true,
-		HookInstalled:       true,
-		SessionEndInstalled: true,
+		Root:                 "/home/dev/sample-project",
+		Hash:                 "hash-p1",
+		Enabled:              true,
+		Token:                "tok-1",
+		Upstream:             "https://api.anthropic.com",
+		Shape:                routing.WithProxy,
+		InjectedBaseURL:      "http://127.0.0.1:41100/t/tok-1",
+		InjectedToken:        "tok-1",
+		Injected:             true,
+		InjectionAgrees:      true,
+		HookInstalled:        true,
+		SessionEndInstalled:  true,
+		GitSnapshotInstalled: true,
 	}
 }
 

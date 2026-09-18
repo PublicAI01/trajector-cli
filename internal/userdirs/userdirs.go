@@ -27,6 +27,7 @@ const (
 	adminTokenName   = "admin_token"
 	uploadDirName    = "upload"
 	followDirName    = "follow"
+	gitHeadsName     = "git-heads.json"
 )
 
 // Env is the machine a Layout is resolved against.
@@ -92,6 +93,11 @@ func (l Layout) UploadDir() string { return filepath.Join(l.data, uploadDirName)
 // FollowDir holds, per enabled project, the registry of files trajector
 // reads for it and how far each has been read.
 func (l Layout) FollowDir() string { return filepath.Join(l.data, followDirName) }
+
+// GitHeadsFile holds, per enabled project, the commit this device last
+// observed for it. Like a reading cursor it steers what is observed
+// next and is never uploaded.
+func (l Layout) GitHeadsFile() string { return filepath.Join(l.data, gitHeadsName) }
 
 // RejectedDir holds rawcalls of batches the service rejected as
 // unacceptable, moved out of the spool so one bad batch cannot block

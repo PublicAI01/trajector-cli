@@ -23,6 +23,7 @@ const testBaseURL = "http://127.0.0.1:41100/t/tok-abc123"
 var testHooks = HookCommands{
 	EnsureProxy: `"/usr/local/bin/trajector" hook ensure-proxy`,
 	SessionEnd:  `"/usr/local/bin/trajector" hook session-end`,
+	GitSnapshot: `"/usr/local/bin/trajector" hook git-snapshot`,
 }
 
 func readJSON(t *testing.T, path string) map[string]any {
@@ -38,7 +39,7 @@ func readJSON(t *testing.T, path string) map[string]any {
 	return root
 }
 
-func TestInjectProjectCreatesFileWithEnvAndAllThreeHooks(t *testing.T) {
+func TestInjectProjectCreatesFileWithEnvAndEverySessionHook(t *testing.T) {
 	root := t.TempDir()
 	path := ProjectLocalPath(root)
 	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
@@ -51,13 +52,14 @@ func TestInjectProjectCreatesFileWithEnvAndAllThreeHooks(t *testing.T) {
 		t.Errorf("env = %v", env)
 	}
 	if got, want := hookCommandsByEvent(t, path), map[string][]string{
-		eventSessionStart:     {testHooks.EnsureProxy},
-		eventUserPromptSubmit: {testHooks.EnsureProxy},
-		eventSessionEnd:       {testHooks.SessionEnd},
+		EventSessionStart:     {testHooks.EnsureProxy},
+		EventUserPromptSubmit: {testHooks.EnsureProxy},
+		EventSessionEnd:       {testHooks.SessionEnd},
+		EventPostToolUse:      {testHooks.GitSnapshot},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
-	for _, marker := range []string{EnsureProxyMarker, SessionEndMarker} {
+	for _, marker := range []string{EnsureProxyMarker, SessionEndMarker, GitSnapshotMarker} {
 		if !HasHook(path, marker) {
 			t.Errorf("HasHook(%q) = false after injection", marker)
 		}
@@ -181,7 +183,7 @@ func TestInjectProjectIsIdempotent(t *testing.T) {
 	}
 	settings := readJSON(t, path)
 	hooks := settings["hooks"].(map[string]any)
-	if starts := hooks[eventSessionStart].([]any); len(starts) != 1 {
+	if starts := hooks[EventSessionStart].([]any); len(starts) != 1 {
 		t.Errorf("SessionStart groups after repeat injection = %d, want 1", len(starts))
 	}
 }
@@ -755,7 +757,7 @@ func TestInjectProjectRefusesASymlinkedSettingsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := InjectProject(link, "http://127.0.0.1:1/t/tok", HookCommands{EnsureProxy: "trajector hook ensure-proxy", SessionEnd: "trajector hook session-end"})
+	err := InjectProject(link, "http://127.0.0.1:1/t/tok", HookCommands{EnsureProxy: "trajector hook ensure-proxy", SessionEnd: "trajector hook session-end", GitSnapshot: "trajector hook git-snapshot"})
 	if !errors.Is(err, errSymlinked) {
 		t.Fatalf("InjectProject = %v, want errSymlinked", err)
 	}
@@ -925,9 +927,10 @@ func TestInjectProjectWithoutBaseURLInstallsMarkedHooksAndNoEnv(t *testing.T) {
 	}
 	marked := testHooks.EnsureProxy + " --no-proxy"
 	if got, want := hookCommandsByEvent(t, path), map[string][]string{
-		eventSessionStart:     {marked},
-		eventUserPromptSubmit: {marked},
-		eventSessionEnd:       {testHooks.SessionEnd},
+		EventSessionStart:     {marked},
+		EventUserPromptSubmit: {marked},
+		EventSessionEnd:       {testHooks.SessionEnd},
+		EventPostToolUse:      {testHooks.GitSnapshot},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
@@ -1022,9 +1025,10 @@ func TestInjectProjectWithBaseURLReplacesHooksSpelledWithoutOne(t *testing.T) {
 	}
 
 	if got, want := hookCommandsByEvent(t, path), map[string][]string{
-		eventSessionStart:     {testHooks.EnsureProxy},
-		eventUserPromptSubmit: {testHooks.EnsureProxy},
-		eventSessionEnd:       {testHooks.SessionEnd},
+		EventSessionStart:     {testHooks.EnsureProxy},
+		EventUserPromptSubmit: {testHooks.EnsureProxy},
+		EventSessionEnd:       {testHooks.SessionEnd},
+		EventPostToolUse:      {testHooks.GitSnapshot},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
@@ -1038,6 +1042,7 @@ func TestInjectProjectReplacesAHookSpelledForAnOlderExecutablePath(t *testing.T)
 	older := HookCommands{
 		EnsureProxy: "/opt/old/trajector hook ensure-proxy",
 		SessionEnd:  "/opt/old/trajector hook session-end",
+		GitSnapshot: "/opt/old/trajector hook git-snapshot",
 	}
 	if err := InjectProject(path, testBaseURL, older); err != nil {
 		t.Fatal(err)
@@ -1046,9 +1051,10 @@ func TestInjectProjectReplacesAHookSpelledForAnOlderExecutablePath(t *testing.T)
 		t.Fatal(err)
 	}
 	if got, want := hookCommandsByEvent(t, path), map[string][]string{
-		eventSessionStart:     {testHooks.EnsureProxy},
-		eventUserPromptSubmit: {testHooks.EnsureProxy},
-		eventSessionEnd:       {testHooks.SessionEnd},
+		EventSessionStart:     {testHooks.EnsureProxy},
+		EventUserPromptSubmit: {testHooks.EnsureProxy},
+		EventSessionEnd:       {testHooks.SessionEnd},
+		EventPostToolUse:      {testHooks.GitSnapshot},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
@@ -1057,7 +1063,7 @@ func TestInjectProjectReplacesAHookSpelledForAnOlderExecutablePath(t *testing.T)
 // A file injected before the session-end hook existed carries the base
 // URL and two hooks. Re-injecting it adds the third and changes nothing
 // else, which is what a repair of such a file amounts to.
-func TestInjectProjectCompletesAnInjectionMadeBeforeTheSessionEndHook(t *testing.T) {
+func TestInjectProjectCompletesAnInjectionMadeBeforeALaterHookExisted(t *testing.T) {
 	path := ProjectLocalPath(t.TempDir())
 	legacy := `{
   "env": {
@@ -1092,9 +1098,10 @@ func TestInjectProjectCompletesAnInjectionMadeBeforeTheSessionEndHook(t *testing
 		t.Errorf("env = %v, want the base URL and the user's variable unchanged", env)
 	}
 	if got, want := hookCommandsByEvent(t, path), map[string][]string{
-		eventSessionStart:     {"echo user-hook", testHooks.EnsureProxy},
-		eventUserPromptSubmit: {testHooks.EnsureProxy},
-		eventSessionEnd:       {testHooks.SessionEnd},
+		EventSessionStart:     {"echo user-hook", testHooks.EnsureProxy},
+		EventUserPromptSubmit: {testHooks.EnsureProxy},
+		EventSessionEnd:       {testHooks.SessionEnd},
+		EventPostToolUse:      {testHooks.GitSnapshot},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}

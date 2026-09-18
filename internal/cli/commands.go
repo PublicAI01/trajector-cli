@@ -154,19 +154,25 @@ func (a *app) hookCmd(args []string) int {
 		if err != nil {
 			return a.fail(err)
 		}
-		err = m.EnsureProxy(cwd, a.io())
-		m.FollowSession(cwd, hook)
-		return a.exit(err)
+		return a.exit(m.SessionStarting(cwd, hook, a.io()))
 	case claudesettings.HookSessionEnd:
 		if len(rest) != 0 {
 			hookUsage(a.stderr)
 			return 2
 		}
-		// The session is closing: nothing said here is read, and the
-		// one thing that lasts past it is a file registered now.
 		hook := a.hookInput()
 		if m, cwd, err := a.prelude(); err == nil {
-			m.FollowSession(cwd, hook)
+			m.SessionEnded(cwd, hook)
+		}
+		return 0
+	case claudesettings.HookGitSnapshot:
+		if len(rest) != 0 {
+			hookUsage(a.stderr)
+			return 2
+		}
+		hook := a.hookInput()
+		if m, cwd, err := a.prelude(); err == nil {
+			m.ToolUsed(cwd, hook)
 		}
 		return 0
 	case claudesettings.HookDiscovery:
@@ -199,9 +205,10 @@ func (a *app) hookCmd(args []string) int {
 }
 
 func hookUsage(w io.Writer) {
-	fmt.Fprintf(w, "usage: trajector hook <%s [%s]|%s|%s|%s>\n",
+	fmt.Fprintf(w, "usage: trajector hook <%s [%s]|%s|%s|%s|%s>\n",
 		claudesettings.HookEnsureProxy, claudesettings.NoProxyMarker,
-		claudesettings.HookSessionEnd, claudesettings.HookDiscovery, claudesettings.HookRead)
+		claudesettings.HookSessionEnd, claudesettings.HookGitSnapshot,
+		claudesettings.HookDiscovery, claudesettings.HookRead)
 }
 
 // hookInput decodes what the session wrote on stdin. A terminal is not

@@ -1,7 +1,9 @@
 package proxytest
 
 import (
+	"cmp"
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -73,6 +75,29 @@ func (s *Sandbox) Records() []Record {
 		s.t.Fatal(err)
 	}
 	return stored
+}
+
+// GitSnapshots is every observation of a repository the spool holds,
+// read back from its own bytes and in the order the observations were
+// made. The spool addresses a record by an id that is a digest, so the
+// order is restored here from what each record states about itself.
+func (s *Sandbox) GitSnapshots() []envelope.GitSnapshot {
+	s.t.Helper()
+	var found []envelope.GitSnapshot
+	for _, r := range s.Records() {
+		if r.Kind != envelope.KindGitSnapshot.RecordKind {
+			continue
+		}
+		snap, err := envelope.ParseGitSnapshot(r.Raw)
+		if err != nil {
+			s.t.Fatalf("stored observation does not read back: %v", err)
+		}
+		found = append(found, snap)
+	}
+	slices.SortStableFunc(found, func(a, b envelope.GitSnapshot) int {
+		return cmp.Compare(a.Capture.Timestamp, b.Capture.Timestamp)
+	})
+	return found
 }
 
 // SessionsHeld counts what the spool still holds for each session,

@@ -173,8 +173,8 @@ func projectLines(d Diagnosis) []string {
 	}
 	lines = append(lines, ShapeNotice(st.Shape))
 	lines = append(lines, hookJudgementLines(d)...)
-	if st.MissingSessionEnd() {
-		lines = append(lines, sessionEndMissingLine(st.SettingsPath()))
+	if st.MissingSessionHooks() {
+		lines = append(lines, sessionHooksMissingLine(st.SettingsPath()))
 	}
 	lines = append(lines, sessionFileLines(d.SessionFiles)...)
 	return append(lines, signalLines(d)...)
@@ -249,10 +249,10 @@ func hookJudgementLines(d Diagnosis) []string {
 	return ExplainHooks(*d.HookPolicy, d.Project.Shape).Lines()
 }
 
-// sessionEndMissingLine names the one hook an injection made before
-// that hook existed lacks, and the command that adds it.
-func sessionEndMissingLine(settingsPath string) string {
-	return fmt.Sprintf("The session-end hook is missing from %s; run `trajector doctor` to add it.", settingsPath)
+// sessionHooksMissingLine says that an injection made before a hook
+// existed lacks it, and names the command that adds it.
+func sessionHooksMissingLine(settingsPath string) string {
+	return fmt.Sprintf("A session hook is missing from %s; run `trajector doctor` to add it.", settingsPath)
 }
 
 // sessionFileLines is the registry's account of the project's session

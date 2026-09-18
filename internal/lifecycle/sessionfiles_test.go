@@ -67,7 +67,7 @@ func (e *env) registeredPaths(root string) []string {
 	return e.sandbox.RegisteredPaths(proxytest.ProjectIDHash(root))
 }
 
-func TestRegisterSessionFile(t *testing.T) {
+func TestSessionEndedRegistersTheSessionFileItWasToldAbout(t *testing.T) {
 	const sessionFile = "-work-sample/0f1e2d3c.jsonl"
 	tests := []struct {
 		name string
@@ -176,13 +176,8 @@ func TestRegisterSessionFile(t *testing.T) {
 			}
 			path := strings.NewReplacer("%s", e.sessionFilesRoot(), "%c", configRoot).Replace(tt.path)
 
-			got, err := e.machine().RegisterSessionFile(e.project, lifecycle.HookInput{SessionPath: path})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tt.want {
-				t.Errorf("registered = %v, want %v", got, tt.want)
-			}
+			e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: path})
+
 			registered := e.registeredPaths(e.canonicalRoot())
 			if tt.want && (len(registered) != 1 || registered[0] != filepath.Clean(path)) {
 				t.Errorf("registry = %q, want exactly %q", registered, filepath.Clean(path))
@@ -194,7 +189,7 @@ func TestRegisterSessionFile(t *testing.T) {
 	}
 }
 
-func TestRegisterSessionFileTakesTheAgentFilesBesideIt(t *testing.T) {
+func TestSessionEndedTakesTheAgentFilesBesideTheSessionFile(t *testing.T) {
 	e := newEnv(t)
 	e.enableProject()
 	sessionDir := filepath.Join(e.sessionFilesRoot(), "-work-sample")
@@ -210,10 +205,7 @@ func TestRegisterSessionFileTakesTheAgentFilesBesideIt(t *testing.T) {
 	}
 
 	for range 2 {
-		registered, err := e.machine().RegisterSessionFile(e.project, lifecycle.HookInput{SessionPath: main})
-		if err != nil || !registered {
-			t.Fatalf("registered = %v, %v", registered, err)
-		}
+		e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: main})
 	}
 	want := []string{
 		main,
@@ -225,34 +217,54 @@ func TestRegisterSessionFileTakesTheAgentFilesBesideIt(t *testing.T) {
 	}
 }
 
-func TestRegisterSessionFileLeavesAProjectUnderTheWSLMountAlone(t *testing.T) {
+func TestSessionEndedLeavesAProjectUnderTheWSLMountAlone(t *testing.T) {
 	e := newEnv(t)
 	root := "/mnt/c/work/sample"
 	e.enableRoot(root)
 	path := filepath.Join(e.sessionFilesRoot(), "-mnt-c-work-sample", "0f1e2d3c.jsonl")
 
-	registered, err := e.machine().RegisterSessionFile(root, lifecycle.HookInput{SessionPath: path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if registered {
-		t.Error("a project under the WSL mount root was registered")
-	}
+	e.machine().SessionEnded(root, lifecycle.HookInput{SessionPath: path})
+
 	if got := e.registeredPaths(root); len(got) != 0 {
 		t.Errorf("registry = %q, want nothing", got)
 	}
 }
 
-func TestSpawnReaderStartsAProcessThatExitsCleanly(t *testing.T) {
+func TestSessionStartingFollowsTheSessionAndObservesTheRepository(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.gitProject()
+	e.gitCommit("main.go", "package main\n")
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", "")
+
+	hook := lifecycle.HookInput{
+		SessionID:   "0a1b2c3d-1111-4aaa-8aaa-000000000001",
+		SessionPath: main,
+		Cwd:         e.project,
+		HookEvent:   "SessionStart",
+	}
+	if err := e.machine().SessionStarting(e.project, hook, e.io()); err != nil {
+		t.Fatalf("session start: %v", err)
+	}
+	if got := e.registeredPaths(e.canonicalRoot()); len(got) != 1 || got[0] != main {
+		t.Errorf("registry = %q, want %q", got, main)
+	}
+	if got := e.observations(); len(got) != 1 {
+		t.Fatalf("observations = %+v, want the session opening observed once", got)
+	}
+}
+
+func TestSessionEndedStartsAReaderThatExitsCleanly(t *testing.T) {
 	e := newEnv(t)
 	userdirs.Isolate(t.Setenv, e.deps.Home)
 	e.deps.ExecPath = procbin.Self(t, "cli")
 	exitFile := filepath.Join(t.TempDir(), "exit")
 	t.Setenv(exitFileEnv, exitFile)
+	e.enableProject()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", "")
 
-	if err := e.machine().SpawnReader(e.project); err != nil {
-		t.Fatal(err)
-	}
+	e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
+
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		record, err := os.ReadFile(exitFile)
@@ -270,10 +282,15 @@ func TestSpawnReaderStartsAProcessThatExitsCleanly(t *testing.T) {
 	}
 }
 
-func TestSpawnReaderReportsAnExecutableItCannotStart(t *testing.T) {
+func TestSessionEndedKeepsTheRegistrationWhenTheReaderCannotStart(t *testing.T) {
 	e := newEnv(t)
-	if err := e.machine().SpawnReader(e.project); err == nil {
-		t.Error("spawning a missing executable reported no error")
+	e.enableProject()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", "")
+
+	e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
+
+	if got := e.registeredPaths(e.canonicalRoot()); len(got) != 1 || got[0] != main {
+		t.Errorf("registry = %q, want %q", got, main)
 	}
 }
 
@@ -284,9 +301,9 @@ func TestReadHookInput(t *testing.T) {
 		want  lifecycle.HookInput
 	}{
 		{
-			name:  "the three base fields",
+			name:  "the named fields",
 			input: `{"session_id":"s1","transcript_path":"/x/s1.jsonl","cwd":"/work","hook_event_name":"SessionStart"}`,
-			want:  lifecycle.HookInput{SessionID: "s1", SessionPath: "/x/s1.jsonl", Cwd: "/work"},
+			want:  lifecycle.HookInput{SessionID: "s1", SessionPath: "/x/s1.jsonl", Cwd: "/work", HookEvent: "SessionStart"},
 		},
 		{name: "empty input", input: ""},
 		{name: "not JSON", input: "hello\n"},
@@ -295,10 +312,63 @@ func TestReadHookInput(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := lifecycle.ReadHookInput(strings.NewReader(tt.input)); got != tt.want {
+			got := lifecycle.ReadHookInput(strings.NewReader(tt.input))
+			if got.SessionID != tt.want.SessionID || got.SessionPath != tt.want.SessionPath ||
+				got.Cwd != tt.want.Cwd || got.HookEvent != tt.want.HookEvent {
 				t.Errorf("got %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHookInputReadsWhatAToolWasGivenAndAnswered(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantCommand string
+		wantCommit  bool
+	}{
+		{
+			name:        "a shell tool that reported a commit",
+			input:       `{"tool_input":{"command":"git commit -m x"},"tool_response":{"gitOperation":{"commit":{"sha":"abc1234","branch":"main"}}}}`,
+			wantCommand: "git commit -m x",
+			wantCommit:  true,
+		},
+		{
+			name:        "a host that reports no commit beside the command",
+			input:       `{"tool_input":{"command":"git commit -m x"},"tool_response":{"stdout":"","interrupted":false}}`,
+			wantCommand: "git commit -m x",
+		},
+		{
+			name:  "a tool that answered with something other than an object",
+			input: `{"session_id":"s1","tool_input":"raw","tool_response":"raw"}`,
+		},
+		{
+			name:  "a commit member explicitly absent",
+			input: `{"tool_response":{"gitOperation":{"commit":null}}}`,
+		},
+		{name: "no tool members at all", input: `{"session_id":"s1"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := lifecycle.ReadHookInput(strings.NewReader(tt.input))
+			if got.Command() != tt.wantCommand {
+				t.Errorf("Command = %q, want %q", got.Command(), tt.wantCommand)
+			}
+			if got.ReportedCommit() != tt.wantCommit {
+				t.Errorf("ReportedCommit = %v, want %v", got.ReportedCommit(), tt.wantCommit)
+			}
+		})
+	}
+}
+
+// TestHookInputSurvivesAToolAnswerThatIsNotAnObject pins the reason the
+// tool members stay raw: one tool answering with a string must not cost
+// the caller the session identity in the same input.
+func TestHookInputSurvivesAToolAnswerThatIsNotAnObject(t *testing.T) {
+	got := lifecycle.ReadHookInput(strings.NewReader(`{"session_id":"s1","cwd":"/work","tool_response":"plain text"}`))
+	if got.SessionID != "s1" || got.Cwd != "/work" {
+		t.Errorf("got %+v, want the session identity kept", got)
 	}
 }
 
@@ -622,13 +692,7 @@ func TestHook_EndToEnd_RegisterReadStore(t *testing.T) {
 	e.injectWithoutBaseURL()
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
 
-	registered, err := e.machine().RegisterSessionFile(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
-	if err != nil || !registered {
-		t.Fatalf("register = %v, %v", registered, err)
-	}
-	if err := e.machine().SpawnReader(e.project); err != nil {
-		t.Fatal(err)
-	}
+	e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
 
 	deadline := time.Now().Add(15 * time.Second)
 	for {

@@ -242,10 +242,15 @@ func (m *Machine) recordedUpstream(root, injectedToken string) string {
 	return revoked
 }
 
-// unregisterSessionFiles drops the project's session file registry —
-// which files are read and how far each was read — so nothing of the
-// project's is read again. The files stay where Claude Code wrote them.
+// unregisterSessionFiles drops what this device kept about reading the
+// project: which files are read and how far each was read, and the
+// commit its repository was last observed at. Nothing of the project's
+// is read or observed again. The files stay where Claude Code wrote
+// them.
 func (m *Machine) unregisterSessionFiles(projectIDHash string) error {
+	if err := m.heads.Forget(projectIDHash); err != nil {
+		return fmt.Errorf("forgetting this project's last observed commit: %w", err)
+	}
 	if err := m.registry.Unregister(projectIDHash); err != nil {
 		return fmt.Errorf("withdrawing this project's session files from reading: %w", err)
 	}

@@ -13,12 +13,23 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
-// SpawnReader starts a detached process that reads projectDir's
+// recordingCleared reports whether this device may record for a
+// project right now. Every recording path asks this one question
+// before it opens the spool, so a device-wide pause stops all of them
+// at once and a reason that means "forward but do not record" takes
+// effect on each of them without a second edit. A table that cannot be
+// read answers no: refusing beats guessing.
+func (m *Machine) recordingCleared(token string) bool {
+	verdict, err := m.routes.Resolve(token)
+	return err == nil && verdict.Records()
+}
+
+// spawnReader starts a detached process that reads projectDir's
 // registered files, and returns as soon as it is started. The hook that
 // calls this is on the session's critical path, so reading happens in a
 // process the session never waits for; the process inherits none of
 // the hook's streams, which keeps the hook's own output empty.
-func (m *Machine) SpawnReader(projectDir string) error {
+func (m *Machine) spawnReader(projectDir string) error {
 	_, err := proxylife.StartDetached(m.deps.ExecPath, []string{"hook", claudesettings.HookRead, projectDir}, "")
 	return err
 }
@@ -43,7 +54,7 @@ func (m *Machine) SpawnReader(projectDir string) error {
 //
 // A project the routing table does not clear is nothing to read
 // either: this asks the table the same question the proxy asks before
-// it records, so a device-wide pause stops both recording paths and
+// it records, so a device-wide pause stops every recording path and
 // not only the one the proxy is on. It stops neither forwarding nor
 // the flusher, which is why it leaves the way out alone. What each
 // record states about this client is the shape the grant records,
@@ -56,8 +67,7 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 	}
 	defer func() { _ = m.EnsureProxy(projectDir, io) }()
 
-	verdict, err := m.routes.Resolve(st.Token)
-	if err != nil || !verdict.Records() {
+	if !m.recordingCleared(st.Token) {
 		return
 	}
 

@@ -146,6 +146,7 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 	}
 	st.HookInstalled = claudesettings.HasHook(settings, claudesettings.EnsureProxyMarker)
 	st.SessionEndInstalled = claudesettings.HasHook(settings, claudesettings.SessionEndMarker)
+	st.GitSnapshotInstalled = claudesettings.HasHook(settings, claudesettings.GitSnapshotMarker)
 	onFile, injected := claudesettings.InjectionShape(settings)
 	st.Injected = injected
 	st.InjectionAgrees = injectionAgrees(st, onFile)

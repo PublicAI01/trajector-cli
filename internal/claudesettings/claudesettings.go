@@ -23,12 +23,21 @@ import (
 // local proxy.
 const envBaseURL = "ANTHROPIC_BASE_URL"
 
-// Hook events used for injection.
+// Hook events used for injection. They are exported because a hook
+// command is handed the event it ran under and decides on it, so the
+// settings file and that decision must spell each event once.
 const (
-	eventSessionStart     = "SessionStart"
-	eventUserPromptSubmit = "UserPromptSubmit"
-	eventSessionEnd       = "SessionEnd"
+	EventSessionStart     = "SessionStart"
+	EventUserPromptSubmit = "UserPromptSubmit"
+	EventSessionEnd       = "SessionEnd"
+	EventPostToolUse      = "PostToolUse"
 )
+
+// BashMatcher selects the tool whose uses the PostToolUse injection
+// runs after. A matcher belongs to the group a hook sits in, not to the
+// hook, which is why it travels beside the event rather than inside the
+// command.
+const BashMatcher = "Bash"
 
 // Hook subcommands of the trajector command line. The word is what a
 // settings file carries, what the command line dispatches on, and what
@@ -36,6 +45,7 @@ const (
 const (
 	HookEnsureProxy = "ensure-proxy"
 	HookSessionEnd  = "session-end"
+	HookGitSnapshot = "git-snapshot"
 	HookDiscovery   = "discovery"
 	HookRead        = "read"
 )
@@ -45,6 +55,7 @@ const (
 const (
 	EnsureProxyMarker = "hook " + HookEnsureProxy
 	SessionEndMarker  = "hook " + HookSessionEnd
+	GitSnapshotMarker = "hook " + HookGitSnapshot
 	DiscoveryMarker   = "hook " + HookDiscovery
 )
 
@@ -59,14 +70,15 @@ const NoProxyMarker = "--no-proxy"
 // projectMarkers are the markers of every hook a project injection
 // installs; removal and re-injection treat a hook carrying any of them
 // as trajector's own.
-var projectMarkers = []string{EnsureProxyMarker, SessionEndMarker}
+var projectMarkers = []string{EnsureProxyMarker, SessionEndMarker, GitSnapshotMarker}
 
 // HookCommands are the shell commands a project injection installs:
 // EnsureProxy under SessionStart and UserPromptSubmit, SessionEnd under
-// SessionEnd.
+// SessionEnd, GitSnapshot under PostToolUse for the shell tool.
 type HookCommands struct {
 	EnsureProxy string
 	SessionEnd  string
+	GitSnapshot string
 }
 
 // errBaseURLInjected reports an attempt to inject without a base URL
@@ -121,7 +133,7 @@ func TokenFromBaseURL(value string) (string, bool) {
 }
 
 // InjectProject merges a project injection into the settings file at
-// path: the three session hooks, and the proxy base URL when baseURL
+// path: every session hook, and the proxy base URL when baseURL
 // is not empty. An empty baseURL installs the WithoutProxy shape.
 // After it returns the file carries exactly the shape asked for: a
 // trajector hook spelled for the other shape, or for an older
@@ -142,10 +154,14 @@ func InjectProject(path string, baseURL string, hooks HookCommands) error {
 		ensureProxy += " " + NoProxyMarker
 	}
 	wanted := map[string]string{
-		eventSessionStart:     ensureProxy,
-		eventUserPromptSubmit: ensureProxy,
-		eventSessionEnd:       hooks.SessionEnd,
+		EventSessionStart:     ensureProxy,
+		EventUserPromptSubmit: ensureProxy,
+		EventSessionEnd:       hooks.SessionEnd,
+		EventPostToolUse:      hooks.GitSnapshot,
 	}
+	// The matcher of each event's group. Only the shell tool's uses can
+	// have made a commit, so only they are followed.
+	matchers := map[string]string{EventPostToolUse: BashMatcher}
 	mutate := func(root map[string]any) error {
 		if baseURL != "" {
 			env, err := childObject(root, "env")
@@ -163,8 +179,11 @@ func InjectProject(path string, baseURL string, hooks HookCommands) error {
 			}
 			return dropEntry
 		})
-		for _, event := range []string{eventSessionStart, eventUserPromptSubmit, eventSessionEnd} {
-			if err := addHook(root, event, wanted[event]); err != nil {
+		for _, event := range []string{EventSessionStart, EventUserPromptSubmit, EventSessionEnd, EventPostToolUse} {
+			if wanted[event] == "" {
+				return fmt.Errorf("claudesettings: no command to install under %s", event)
+			}
+			if err := addHook(root, event, matchers[event], wanted[event]); err != nil {
 				return err
 			}
 		}
@@ -278,7 +297,7 @@ func envValue(root map[string]any, key string) (string, bool) {
 // at path.
 func InjectUserHook(path, hookCommand string) error {
 	return edit(path, func(root map[string]any) error {
-		return addHook(root, eventSessionStart, hookCommand)
+		return addHook(root, EventSessionStart, "", hookCommand)
 	})
 }
 
@@ -340,7 +359,11 @@ func dropInjectedEnv(root map[string]any) {
 	}
 }
 
-func addHook(root map[string]any, event, command string) error {
+// addHook merges one hook command into an event's group list, under a
+// matcher when the event needs one. A command already installed for the
+// event is left where it is: which group holds it is the user's file to
+// arrange, not this package's to normalize.
+func addHook(root map[string]any, event, matcher, command string) error {
 	hooks, err := childObject(root, "hooks")
 	if err != nil {
 		return err
@@ -362,9 +385,13 @@ func addHook(root map[string]any, event, command string) error {
 	if exists {
 		return nil
 	}
-	hooks[event] = append(groups, map[string]any{
+	group := map[string]any{
 		"hooks": []any{map[string]any{"type": "command", "command": command}},
-	})
+	}
+	if matcher != "" {
+		group["matcher"] = matcher
+	}
+	hooks[event] = append(groups, group)
 	return nil
 }
 

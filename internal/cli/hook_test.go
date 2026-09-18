@@ -248,6 +248,7 @@ func TestHook_SubcommandsRejectStrayArguments(t *testing.T) {
 		{"hook", "ensure-proxy", "extra"},
 		{"hook", "ensure-proxy", "--no-proxy", "extra"},
 		{"hook", "session-end", "extra"},
+		{"hook", "git-snapshot", "extra"},
 		{"hook", "discovery", "extra"},
 		{"hook", "read"},
 		{"hook", "read", "one", "two"},

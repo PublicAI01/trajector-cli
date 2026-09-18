@@ -55,9 +55,11 @@ type ProjectStatus struct {
 	Injected        bool
 	InjectionAgrees bool
 	// HookInstalled reports the ensure-proxy hooks in the project
-	// settings; SessionEndInstalled the session-end hook.
-	HookInstalled       bool
-	SessionEndInstalled bool
+	// settings; SessionEndInstalled the session-end hook, and
+	// GitSnapshotInstalled the one that runs after a shell tool.
+	HookInstalled        bool
+	SessionEndInstalled  bool
+	GitSnapshotInstalled bool
 
 	// AgreementVersion is the accepted data agreement version, empty
 	// when none was ever accepted.
@@ -77,19 +79,19 @@ type ProjectStatus struct {
 }
 
 // Consistent reports the fully healthy enabled state: a standing grant
-// with all three session hooks in place, in the shape the grant
-// records — and, in the shape with a base URL, a token exactly what
-// the settings inject. status presents it as contributing; doctor
-// treats anything else as something to reconcile or report.
+// with every session hook in place, in the shape the grant records —
+// and, in the shape with a base URL, a token exactly what the settings
+// inject. status presents it as contributing; doctor treats anything
+// else as something to reconcile or report.
 func (s ProjectStatus) Consistent() bool {
-	return s.InjectionAgrees && s.SessionEndInstalled
+	return s.InjectionAgrees && s.SessionEndInstalled && s.GitSnapshotInstalled
 }
 
-// MissingSessionEnd reports an injection that predates the session-end
-// hook: the rest of it stands, that hook does not. doctor completes
-// such an injection in place.
-func (s ProjectStatus) MissingSessionEnd() bool {
-	return s.Injected && s.HookInstalled && !s.SessionEndInstalled
+// MissingSessionHooks reports an injection that predates a hook this
+// release installs: the rest of it stands, that hook does not. doctor
+// completes such an injection in place.
+func (s ProjectStatus) MissingSessionHooks() bool {
+	return s.Injected && s.HookInstalled && (!s.SessionEndInstalled || !s.GitSnapshotInstalled)
 }
 
 // IdentityDisagreement reports that the routing table and the consent

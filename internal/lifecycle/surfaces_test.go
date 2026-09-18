@@ -150,7 +150,7 @@ func TestStatusShowsWhenAFileWasLastReadAndWhatIsNotReadYet(t *testing.T) {
 	}
 }
 
-func TestStatusReportsAMissingSessionEndHookThatDoctorAdds(t *testing.T) {
+func TestStatusReportsAMissingSessionHookThatDoctorAdds(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.enable(proxytest.WithProxy)
@@ -158,7 +158,7 @@ func TestStatusReportsAMissingSessionEndHookThatDoctorAdds(t *testing.T) {
 	e.stdout.Reset()
 
 	out := e.statusOutput()
-	for _, want := range []string{"Contributing", "The session-end hook is missing from " + e.settingsPath() + "; run `trajector doctor` to add it."} {
+	for _, want := range []string{"Contributing", "A session hook is missing from " + e.settingsPath() + "; run `trajector doctor` to add it."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status = %q, want it to contain %q", out, want)
 		}
@@ -172,8 +172,30 @@ func TestStatusReportsAMissingSessionEndHookThatDoctorAdds(t *testing.T) {
 		t.Errorf("doctor = %q, want the hook restored", out)
 	}
 	e.stdout.Reset()
-	if out := e.statusOutput(); strings.Contains(out, "session-end hook is missing") {
+	if out := e.statusOutput(); strings.Contains(out, "session hook is missing") {
 		t.Errorf("status = %q, want nothing missing after doctor", out)
+	}
+}
+
+// TestStatusReportsAMissingGitSnapshotHookThatDoctorAdds covers the
+// injection an upgrade inherits: everything an earlier release wrote
+// stands, and the hook this release adds does not.
+func TestStatusReportsAMissingGitSnapshotHookThatDoctorAdds(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.enable(proxytest.WithProxy)
+	e.dropHook(claudesettings.GitSnapshotMarker)
+	e.stdout.Reset()
+
+	if out := e.statusOutput(); !strings.Contains(out, "A session hook is missing from "+e.settingsPath()) {
+		t.Errorf("status = %q, want the missing hook named", out)
+	}
+	e.stdout.Reset()
+	if _, out := e.doctor(); !strings.Contains(out, "session hooks restored") {
+		t.Errorf("doctor = %q, want the hook restored", out)
+	}
+	if !claudesettings.HasHook(e.settingsPath(), claudesettings.GitSnapshotMarker) {
+		t.Error("doctor reported the injection restored without the hook it lacked")
 	}
 }
 

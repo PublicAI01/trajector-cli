@@ -59,6 +59,7 @@ func projectHooks(execPath string) claudesettings.HookCommands {
 	return claudesettings.HookCommands{
 		EnsureProxy: hookCommand(execPath, claudesettings.HookEnsureProxy),
 		SessionEnd:  hookCommand(execPath, claudesettings.HookSessionEnd),
+		GitSnapshot: hookCommand(execPath, claudesettings.HookGitSnapshot),
 	}
 }
 
@@ -78,7 +79,7 @@ func projectHooks(execPath string) claudesettings.HookCommands {
 // this project, and a failure in this project does not withdraw it.
 //
 // The invariant it protects: a project with an injected base URL always
-// has its token in the routing table and all three session hooks
+// has its token in the routing table and every session hook
 // present — a half-enabled project routing traffic at a dead port must
 // be impossible.
 //

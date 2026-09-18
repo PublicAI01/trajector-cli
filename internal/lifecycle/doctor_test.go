@@ -188,7 +188,7 @@ func TestDoctorCompletesAnInjectionMadeBeforeTheSessionEndHook(t *testing.T) {
 	}
 	e.dropSessionEndHook()
 	before := e.status()
-	if !before.MissingSessionEnd() || before.Consistent() {
+	if !before.MissingSessionHooks() || before.Consistent() {
 		t.Fatalf("status = %+v, want the missing session-end hook reported", before)
 	}
 
@@ -201,7 +201,7 @@ func TestDoctorCompletesAnInjectionMadeBeforeTheSessionEndHook(t *testing.T) {
 		t.Errorf("doctor = %q, want the repair reported", out)
 	}
 	after := e.status()
-	if after.MissingSessionEnd() || !after.SessionEndInstalled || !after.Consistent() {
+	if after.MissingSessionHooks() || !after.SessionEndInstalled || !after.Consistent() {
 		t.Errorf("status after doctor = %+v, want all three hooks in place", after)
 	}
 	if after.InjectedBaseURL != before.InjectedBaseURL {
@@ -220,7 +220,7 @@ func TestDoctorRepairsTheInjectionWithoutBaseURLInItsOwnShape(t *testing.T) {
 	})
 	e.injectWithoutBaseURL()
 	e.dropSessionEndHook()
-	if st := e.status(); !st.MissingSessionEnd() || st.Shape != proxytest.WithoutProxy {
+	if st := e.status(); !st.MissingSessionHooks() || st.Shape != proxytest.WithoutProxy {
 		t.Fatalf("status = %+v, want the missing session-end hook reported on the shape without a base URL", st)
 	}
 

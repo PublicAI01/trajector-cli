@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -37,6 +36,7 @@ type env struct {
 	stderr   *bytes.Buffer
 	environ  map[string]string
 	sandbox  *proxytest.Sandbox
+	repo     *proxytest.GitRepo
 	proxyEnv *proxytest.Env
 	client   *http.Client
 }
@@ -188,6 +188,7 @@ func (e *env) projectHooks() claudesettings.HookCommands {
 	return claudesettings.HookCommands{
 		EnsureProxy: e.deps.ExecPath + " hook ensure-proxy",
 		SessionEnd:  e.deps.ExecPath + " hook session-end",
+		GitSnapshot: e.deps.ExecPath + " hook git-snapshot",
 	}
 }
 
@@ -202,7 +203,11 @@ func (e *env) injectWithoutBaseURL() {
 
 // dropSessionEndHook rewrites the settings file as an injection made
 // before the session-end hook existed would have left it.
-func (e *env) dropSessionEndHook() {
+func (e *env) dropSessionEndHook() { e.dropHook(claudesettings.SessionEndMarker) }
+
+// dropHook rewrites the settings file as an injection made before the
+// hook carrying marker existed would have left it.
+func (e *env) dropHook(marker string) {
 	e.t.Helper()
 	data, err := os.ReadFile(e.settingsPath())
 	if err != nil {
@@ -213,10 +218,38 @@ func (e *env) dropSessionEndHook() {
 		e.t.Fatal(err)
 	}
 	hooks, ok := settings["hooks"].(map[string]any)
-	if !ok || hooks["SessionEnd"] == nil {
-		e.t.Fatalf("no session-end hook to drop in %s", data)
+	if !ok {
+		e.t.Fatalf("no hooks to drop from in %s", data)
 	}
-	delete(hooks, "SessionEnd")
+	dropped := false
+	for event, groups := range hooks {
+		list, ok := groups.([]any)
+		if !ok {
+			continue
+		}
+		var kept []any
+		for _, g := range list {
+			group, _ := g.(map[string]any)
+			entries, _ := group["hooks"].([]any)
+			if len(entries) == 1 {
+				if entry, ok := entries[0].(map[string]any); ok {
+					if cmd, _ := entry["command"].(string); strings.Contains(cmd, marker) {
+						dropped = true
+						continue
+					}
+				}
+			}
+			kept = append(kept, g)
+		}
+		if len(kept) == 0 {
+			delete(hooks, event)
+			continue
+		}
+		hooks[event] = kept
+	}
+	if !dropped {
+		e.t.Fatalf("no hook carrying %q to drop in %s", marker, data)
+	}
 	if data, err = json.Marshal(settings); err != nil {
 		e.t.Fatal(err)
 	}
@@ -263,39 +296,17 @@ func (e *env) consentFileContents() string {
 	return string(data)
 }
 
-// gitRepo turns the project into a git repository, isolated from the
-// developer's global git configuration so ignore coverage comes only
-// from the repository itself. Skips the test when git is unavailable.
+// gitRepo turns the project into a git repository. Skips the test when
+// git is unavailable.
 func (e *env) gitRepo() {
 	e.t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		e.t.Skip("git not available")
-	}
-	e.t.Setenv("HOME", e.deps.Home)
-	e.t.Setenv("XDG_CONFIG_HOME", filepath.Join(e.deps.Home, ".config"))
-	e.t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(e.deps.Home, "gitconfig"))
-	e.t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	cmd := exec.Command("git", "init", "-q")
-	cmd.Dir = e.project
-	if out, err := cmd.CombinedOutput(); err != nil {
-		e.t.Fatalf("git init: %v\n%s", err, out)
-	}
+	e.repo = proxytest.NewGitRepo(e.t, e.canonicalRoot())
 }
 
 // gitIgnored reports whether git ignores path inside the project.
 func (e *env) gitIgnored(path string) bool {
 	e.t.Helper()
-	check := exec.Command("git", "check-ignore", "-q", "--", path)
-	check.Dir = e.canonicalRoot()
-	err := check.Run()
-	if err == nil {
-		return true
-	}
-	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-		return false
-	}
-	e.t.Fatalf("git check-ignore: %v", err)
-	return false
+	return e.repo.Ignores(path)
 }
 
 // pairable stubs a complete pairing flow on the fake service.
