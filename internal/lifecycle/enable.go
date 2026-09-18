@@ -297,6 +297,7 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		fmt.Fprintln(io.Out, "Self-check passed: routing and recording verified end to end.")
 	}
 	fmt.Fprintln(io.Out, report.ShapeNotice(shape))
+	fmt.Fprintln(io.Out, report.UnwitnessedReward)
 	fmt.Fprintln(io.Out, contributesNow)
 	return nil
 }

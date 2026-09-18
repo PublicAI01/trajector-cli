@@ -62,7 +62,15 @@ machine.
    rewards for contributions that are delivered. What a record is
    worth depends on what it contains: a record that came from only
    one of the sources above may be rewarded less than one that came
-   from more of them.
+   from more of them. It also depends on whether the local proxy
+   witnessed the call the record is of. A call is witnessed when the
+   proxy handled its request and its response on your machine; a
+   call it did not witness — every session a project had before you
+   enabled it, and every session that runs while the proxy does not
+   — is rewarded at a lower rate than a witnessed one. The tokens
+   are counted in full either way; only the amount is reduced. The
+   rates themselves are set by trajector and are not fixed by this
+   agreement.
 
 4. Third-party relays. If this project routes traffic through a
    non-official base URL, its records are marked as third-party

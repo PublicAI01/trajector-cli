@@ -29,6 +29,16 @@ spool with a bounded disk quota, secrets are masked on your machine, and
 only redacted batches are uploaded. The proxy starts on demand, exits when
 idle, and never runs as a permanent daemon.
 
+Not every call is witnessed by the proxy. A call is witnessed when the proxy
+handled its request and its response on your machine, so the sessions a
+project had before you enabled it, and any session that runs while the proxy
+does not — a project enabled with `--no-proxy` records from its session
+files alone — are not witnessed. Calls the proxy did not witness are
+rewarded at a lower rate than witnessed ones; the tokens are counted in full
+either way, and only the amount is reduced. The rates themselves are set by
+the service, not by the client, and `trajector enable` says the same thing
+before anything of yours is recorded.
+
 Design commitments:
 
 - Forwarding is sacred: capture failures never break your Claude Code session.

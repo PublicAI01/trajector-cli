@@ -213,6 +213,15 @@ terms are confidential, the sale itself is not. Records captured through a
 third-party base URL (a relay you configured yourself) are labelled as
 third-party origin; reward terms are the same regardless of origin.
 
+What a record is worth does depend on whether the local proxy witnessed the
+call it is of. A call is witnessed when the proxy handled its request and
+its response on your machine, so the sessions a project had before you
+enabled it, and any session that runs while the proxy does not, are not
+witnessed. Calls the proxy did not witness are rewarded at a lower rate than
+witnessed ones; the tokens are counted in full either way, and only the
+amount is reduced. The rates themselves are set by the service and are not
+fixed by the client, so this page states the rule and no figure.
+
 ## Revoking consent and deleting data
 
 Every deletion below applies to all three kinds of records — recorded API

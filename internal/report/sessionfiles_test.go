@@ -58,7 +58,7 @@ const (
 	hooksWillNotLoadLine = "Judged from configuration readable on this machine, Claude Code will not load trajector's hooks in this project"
 	proxyHalfOnlyLine    = "Only the proxy records this project for now; its session files are not read"
 	nothingRecordedLine  = "Nothing is recorded from this project for now"
-	remoteControlLine    = "Remote Control: inside this project, /remote-control will not be available. To use it, either start sessions with claude remote-control (both sources are still recorded), or run trajector enable --no-proxy to record only the session files (Remote Control stays available; records from one source may be rewarded differently)."
+	remoteControlLine    = "Remote Control: inside this project, /remote-control will not be available. To use it, either start sessions with claude remote-control (both sources are still recorded), or run trajector enable --no-proxy to record only the session files (Remote Control stays available; with no proxy, none of this project's calls are witnessed)."
 	noProxyFactLine      = "This project records from its session files only, so Remote Control stays available."
 	treeLimitLine        = "This project's directory tree has more than 50000 directories, so the count above is incomplete."
 	workspaceTrustLine   = "This workspace is not trusted yet; accept the trust dialog in Claude Code."

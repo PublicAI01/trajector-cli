@@ -20,7 +20,7 @@ const (
 	proxyHalfOnlyLine    = "Only the proxy records this project for now; its session files are not read"
 	noProxyNothingLine   = "Judged from configuration readable on this machine, Claude Code will not run trajector's hooks here, so --no-proxy would record nothing from this project. Either accept that nothing is recorded for now, or run trajector enable without --no-proxy (the proxy records; /remote-control inside this project becomes unavailable, claude remote-control still works)."
 	enableAnywayPrompt   = "Enable anyway? [y/N]"
-	remoteControlLine    = "Remote Control: inside this project, /remote-control will not be available. To use it, either start sessions with claude remote-control (both sources are still recorded), or run trajector enable --no-proxy to record only the session files (Remote Control stays available; records from one source may be rewarded differently)."
+	remoteControlLine    = "Remote Control: inside this project, /remote-control will not be available. To use it, either start sessions with claude remote-control (both sources are still recorded), or run trajector enable --no-proxy to record only the session files (Remote Control stays available; with no proxy, none of this project's calls are witnessed)."
 	noProxyFactLine      = "This project records from its session files only, so Remote Control stays available."
 	contributesLine      = "This project now contributes data."
 	agreementPrompt      = "Do you accept the data agreement? [yes/no]:"

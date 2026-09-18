@@ -152,9 +152,10 @@ func Dashboard(w io.Writer, d Diagnosis) {
 
 // projectLines follows the contributing line with everything else
 // status states about an enabled project, one fact per line: the
-// shape it records in and what that shape costs, the static reading
-// of whether its hooks load, a hook doctor still has to add, and what
-// the registry says about its session files.
+// shape it records in and what that shape costs, what a call the proxy
+// did not witness is rewarded at, the static reading of whether its
+// hooks load, a hook doctor still has to add, and what the registry
+// says about its session files.
 func projectLines(d Diagnosis) []string {
 	st := d.Project
 	var lines []string
@@ -172,6 +173,7 @@ func projectLines(d Diagnosis) []string {
 		}
 	}
 	lines = append(lines, ShapeNotice(st.Shape))
+	lines = append(lines, UnwitnessedReward)
 	lines = append(lines, hookJudgementLines(d)...)
 	if st.MissingSessionHooks() {
 		lines = append(lines, sessionHooksMissingLine(st.SettingsPath()))

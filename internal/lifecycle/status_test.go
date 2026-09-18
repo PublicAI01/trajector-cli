@@ -284,6 +284,24 @@ func TestStatusSaysNothingAboutAMinimumThisBuildMeets(t *testing.T) {
 	}
 }
 
+// The client states no figure of its own about what a contribution is
+// worth, so the service's notice is the channel that carries one. A
+// relayed notice is therefore printed as the whole line the service
+// wrote, never shortened, reordered, or read as a format string.
+func TestStatusRelaysAServiceNoticeAsOneWholeLine(t *testing.T) {
+	e := newEnv(t)
+	notice := "read the dashboard before 1 November: 100% of what changes is listed there (%s)"
+	e.sandbox.SeedHandshake(proxytest.Handshake{Notice: notice})
+	out := e.statusOutput()
+
+	if !strings.Contains(out, "\n  Notice from the service: "+notice+"\n") {
+		t.Errorf("status = %q, want the notice on one line of its own, word for word: %q", out, notice)
+	}
+	if strings.Count(out, notice) != 1 {
+		t.Errorf("status = %q, want the notice said once", out)
+	}
+}
+
 // A satisfied minimum silences the version lines, not the whole block:
 // a notice is the service talking about something else entirely.
 func TestStatusStillRelaysANoticeWhenTheVersionIsFine(t *testing.T) {

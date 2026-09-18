@@ -36,10 +36,22 @@ const (
 	// remoteControlNotice is said for a project in the shape with a
 	// base URL: that shape makes /remote-control unavailable inside
 	// the project, and both ways around it are named beside the fact.
-	remoteControlNotice = "Remote Control: inside this project, /remote-control will not be available. To use it, either start sessions with claude remote-control (both sources are still recorded), or run trajector enable --no-proxy to record only the session files (Remote Control stays available; records from one source may be rewarded differently)."
+	remoteControlNotice = "Remote Control: inside this project, /remote-control will not be available. To use it, either start sessions with claude remote-control (both sources are still recorded), or run trajector enable --no-proxy to record only the session files (Remote Control stays available; with no proxy, none of this project's calls are witnessed)."
 	// noProxyShapeFact is said for a project in the shape without a
 	// base URL.
 	noProxyShapeFact = "This project records from its session files only, so Remote Control stays available."
+
+	// UnwitnessedReward is what a call no proxy of this device handled
+	// is worth, said wherever a project is stated to be contributing:
+	// the user reads it before anything of theirs is uploaded, not
+	// after. It states the rule and no figure — what the rates are is
+	// the service's to say and changes without a new build, and a
+	// number frozen into a binary would be read as a promise.
+	UnwitnessedReward = "Calls the local proxy did not witness are rewarded at a lower rate than witnessed ones. " +
+		"A call is witnessed when the proxy handled its request and its response on this machine, so the sessions this project had before you enabled it, " +
+		"and any session that runs while the proxy does not, are not witnessed. " +
+		"The tokens are counted in full either way; only the amount is reduced. " +
+		"The rates themselves are set by the service, not by this build."
 
 	// emptyReasoningFact counts the assistant lines of a project's
 	// session files that carry the reasoning field with nothing in it,

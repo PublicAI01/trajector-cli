@@ -52,6 +52,15 @@ All notable changes to trajector are documented here. The format follows
   setting is off. `doctor` additionally walks the project's session
   files and reports sessions that were written without a hook of
   trajector's noticing them; `doctor bundle` carries the same findings.
+- `enable` and `status` say what a call the local proxy did not witness
+  is worth, before anything of yours is uploaded: a call is witnessed
+  when the proxy handled its request and its response on your machine,
+  so the sessions a project had before it was enabled, and any session
+  that runs while the proxy does not, are rewarded at a lower rate than
+  witnessed ones. The tokens are counted in full either way. The data
+  agreement, `PRIVACY.md` and the README say the same. The rates
+  themselves are the service's to set, so the client states the rule
+  and no figure.
 - Uploads now use batch schema version 2, which carries recorded calls,
   session file segments and metadata snapshots in one batch.
 - A third source of records: the state of an enabled project's git
@@ -68,7 +77,15 @@ All notable changes to trajector are documented here. The format follows
 
 - The data agreement covers the second and third sources and its version
   is bumped. Recording pauses for existing users until the new terms are
-  reconfirmed with `trajector enable`; forwarding is untouched.
+  reconfirmed with `trajector enable`; forwarding is untouched. The
+  version is the day the build carrying the terms was released, and
+  `PRIVACY.md` names the version it describes.
+- The data agreement says which paths are masked and which are uploaded
+  as observed, in the terms `PRIVACY.md` already used: the few fields
+  whose value is the directory a session ran in are replaced with a
+  placeholder, and every other path a record holds goes up as observed.
+  It previously claimed that every field identifying where the project
+  lives on disk was masked, which is more than the client does.
 - Uploads now use batch schema version 3, which adds the git
   observations to the batch. A batch and every record body in it declare
   one version.
