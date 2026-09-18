@@ -140,7 +140,7 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 // process it spawns. Every remover reports this value.
 func (m *Machine) removeInjection(root string) (restored, unrestored string, err error) {
 	settingsPath := claudesettings.ProjectLocalPath(root)
-	_, wasInjected := claudesettings.InjectedBaseURL(settingsPath)
+	injected, wasInjected := claudesettings.InjectedBaseURL(settingsPath)
 	if err := claudesettings.RemoveProject(settingsPath); err != nil {
 		return "", "", fmt.Errorf("removing injection from %s: %w", settingsPath, err)
 	}
@@ -149,7 +149,10 @@ func (m *Machine) removeInjection(root string) (restored, unrestored string, err
 		// displaced out of it and there is nothing to put back.
 		return "", "", nil
 	}
-	upstream := m.recordedUpstream(root)
+	// The removed injection named a token, and that token names the one
+	// grant whose upstream this injection actually routed at.
+	injectedToken, _ := claudesettings.TokenFromBaseURL(injected)
+	upstream := m.recordedUpstream(root, injectedToken)
 	if upstream == "" || upstream == capture.Anthropic.OfficialUpstream {
 		return "", "", nil
 	}
@@ -185,26 +188,47 @@ func unrestoredBaseURLWarning(settingsPath, upstream string) string {
 		settingsPath, upstream)
 }
 
-// recordedUpstream reports what this project's grant says its traffic
-// goes to. Revoked entries count, and only as a fallback: uninstall and
-// doctor remove injections whose grant was revoked long ago, and that
-// entry is by then the only surviving record of the displaced value. A
-// table that cannot be read yields nothing, so no restore is attempted
-// on a guess.
-func (m *Machine) recordedUpstream(root string) string {
+// recordedUpstream reports what the removed injection's grant says its
+// traffic went to. A table that cannot be read yields nothing, so no
+// restore is attempted on a guess.
+//
+// injectedToken is the token the removed injection carried, and it is
+// the authoritative answer: it names the single grant that injection
+// routed at. Asking by root path alone was the same answer only while a
+// root could hold one entry at a time. Since Grant retires rather than
+// deletes (see routing.Store.Grant), a root that has been enabled more
+// than once holds several, All reads a map, and "the revoked one" would
+// mean whichever entry the iteration happened to reach last — a
+// coin-flip choosing which base URL gets written back into the user's
+// own settings file. 2026-09-18.
+//
+// The root-path search stays as the fallback for a token no entry
+// claims: a hand-edited table, or an injection older than a rollback.
+// Revoked entries count there, and only as a fallback, because
+// uninstall and doctor remove injections whose grant was revoked long
+// ago and that entry is by then the only surviving record of the
+// displaced value.
+func (m *Machine) recordedUpstream(root, injectedToken string) string {
 	grants, err := m.routes.All()
 	if err != nil {
 		return ""
 	}
-	revoked := ""
+	active, revoked := "", ""
 	for _, g := range grants {
+		if injectedToken != "" && g.Token == injectedToken {
+			return g.Upstream
+		}
 		if g.RootPath != root {
 			continue
 		}
-		if !g.Revoked {
-			return g.Upstream
+		if g.Revoked {
+			revoked = g.Upstream
+		} else {
+			active = g.Upstream
 		}
-		revoked = g.Upstream
+	}
+	if active != "" {
+		return active
 	}
 	return revoked
 }

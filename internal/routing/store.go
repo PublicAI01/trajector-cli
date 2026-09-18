@@ -50,15 +50,32 @@ type UpstreamMove struct {
 // Happened reports whether a move was recorded.
 func (m UpstreamMove) Happened() bool { return m.At != "" }
 
-// Grant installs the record for one project. Any previous entry for the
-// same root path — active or revoked — is replaced: a re-enabled
-// project rotates its token instead of resurrecting an old one.
+// Grant installs the record for one project. A re-enabled project
+// rotates its token rather than resurrecting an old one, so no previous
+// entry for the same root path stays active — but they are retired, not
+// deleted, which is the same rule Revoke states and holds for the same
+// reason.
+//
+// Deleting them was a hole in exactly the guarantee Revoke exists for. A
+// Claude Code session reads the injected base URL once, when it starts,
+// and carries that token in its environment for the rest of its life; a
+// `disable` followed by an `enable` under such a session leaves it
+// sending a token this table no longer knows. An unknown token resolves
+// to nothing, and the data path answers that with the default upstream —
+// which for a project chained to a third-party relay means the relay's
+// own credential headers go to the official endpoint, the one guess
+// enable, disable, and the unattended reconcile each refuse to make.
+// Retired entries keep forwarding where they were granted to and record
+// nothing, so the residual injection stays harmless until the session
+// ends. 2026-09-18.
 func (s *Store) Grant(g Grant) error {
 	return s.update(func(f *tableFile) {
 		for tok, rec := range f.Projects {
-			if rec.RootPath == g.RootPath {
-				delete(f.Projects, tok)
+			if tok == g.Token || rec.RootPath != g.RootPath || rec.RevokedAt != "" {
+				continue
 			}
+			rec.RevokedAt = g.GrantedAt
+			f.Projects[tok] = rec
 		}
 		f.Projects[g.Token] = projectRecord{
 			ProjectIDHash: g.ProjectIDHash,

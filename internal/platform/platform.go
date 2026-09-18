@@ -45,6 +45,33 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("platform: %s %s: %s", e.Method, e.Path, e.Status)
 }
 
+// newStatusError records one non-2xx answer, disarming the status
+// line's reason phrase on the way in.
+//
+// That phrase is free text the service chose — Go's response reader
+// keeps whatever followed the status code, control bytes included — and
+// every error built from a StatusError carries it in its message. Those
+// messages reach a terminal (`trajector upload` prints the flush error),
+// the status dashboard (State.LastError), a quarantined batch's
+// reason.json and the diagnostic bundle. Printed raw, an escape sequence
+// in the phrase repaints the lines around it and forges output the user
+// reads as this client's own report, which is precisely what
+// SafeServiceText exists to stop for the service's other free text —
+// the notice, the upgrade message, a rejection body. The phrase was the
+// one spelling that never went through it, and settleFailure copies it
+// verbatim into a Rejection's Details. Disarmed here, at the single
+// place a response becomes an error, rather than at each surface that
+// prints one. 2026-09-18.
+func newStatusError(resp *http.Response, method, path string, body []byte) *StatusError {
+	return &StatusError{
+		StatusCode: resp.StatusCode,
+		Status:     SafeServiceText(resp.Status),
+		Method:     method,
+		Path:       path,
+		Body:       body,
+	}
+}
+
 // Temporary reports whether retrying the same call later could
 // succeed: service-side failures and rate limits are temporary, client
 // errors are not.
@@ -245,7 +272,7 @@ func (c *Client) call(method, path, bearer string, reqBody, respBody any) error 
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &StatusError{StatusCode: resp.StatusCode, Status: resp.Status, Method: method, Path: path, Body: data}
+		return newStatusError(resp, method, path, data)
 	}
 	if respBody == nil {
 		return nil

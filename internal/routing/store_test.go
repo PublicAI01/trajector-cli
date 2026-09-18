@@ -48,26 +48,70 @@ func TestGrantMakesTokenResolvable(t *testing.T) {
 	}
 }
 
-func TestGrantReplacesPreviousEntryForSameRoot(t *testing.T) {
+// TestGrantRetiresThePreviousTokenInsteadOfDeletingIt pins the
+// 2026-09-18 fix. A re-enable rotates the token, but the token it
+// rotates away from is still exported into every Claude Code session
+// that started before the rotation — a session reads the injected base
+// URL once and carries it for the rest of its life. Deleting the old
+// entry made those requests resolve to nothing, and the data path
+// answers an unknown token with the default upstream: a project chained
+// to a third-party relay had its own relay credentials carried to the
+// official endpoint the moment a disable/enable pair ran underneath a
+// live session. That is the guarantee Revoke states in so many words —
+// a route that stops recording keeps forwarding where it was recorded
+// to go — and Grant was the one path that broke it.
+func TestGrantRetiresThePreviousTokenInsteadOfDeletingIt(t *testing.T) {
+	const (
+		root  = "/home/dev/relay-project"
+		relay = "https://relay.example.com"
+	)
 	store, table := openStore(t)
-	grant(t, store, "tok-old", "/home/dev/project")
-	if err := store.Revoke("/home/dev/project", "2026-08-01T01:00:00Z"); err != nil {
+	grantTo := func(token, upstream, at string) {
+		t.Helper()
+		if err := store.Grant(routing.Grant{
+			Token: token, ProjectIDHash: "hash-r", RootPath: root,
+			Upstream: upstream, GrantedAt: at,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	grantTo("tok-old", relay, "2026-08-01T00:00:00Z")
+	if err := store.Revoke(root, "2026-08-01T01:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	grant(t, store, "tok-new", "/home/dev/project")
+	grantTo("tok-new", relay, "2026-08-01T02:00:00Z")
 
-	if _, verdict := table.Lookup("tok-old"); verdict.Resolves() {
-		t.Error("re-enable kept the old token resolvable")
+	route, verdict := table.Lookup("tok-old")
+	if verdict.Decision != routing.ForwardOnlyRevoked {
+		t.Fatalf("retired token verdict = %+v, want ForwardOnlyRevoked; a session still holding it now forwards at the default upstream", verdict)
+	}
+	if route.Upstream != relay {
+		t.Errorf("retired token routes at %q, want the recorded third-party upstream %q", route.Upstream, relay)
 	}
 	if _, verdict := table.Lookup("tok-new"); !verdict.Records() {
 		t.Errorf("new token verdict = %+v, want Record", verdict)
 	}
-	all, err := store.All()
-	if err != nil {
-		t.Fatal(err)
+	// Exactly one entry stands: rotation must not leave two live tokens.
+	active, ok, err := store.Active(root)
+	if err != nil || !ok || active.Token != "tok-new" {
+		t.Errorf("Active = %+v, %v, %v; want the freshly granted token", active, ok, err)
 	}
-	if len(all) != 1 {
-		t.Errorf("entries after re-enable = %d, want 1", len(all))
+}
+
+// TestGrantRetiresAStandingEntryOfTheSameRoot is the other half: a
+// rotation that happens without an intervening disable — doctor's
+// repair, or a re-enable that re-keys — must also leave the displaced
+// token forwarding rather than gone.
+func TestGrantRetiresAStandingEntryOfTheSameRoot(t *testing.T) {
+	store, table := openStore(t)
+	grant(t, store, "tok-old", "/home/dev/project")
+	grant(t, store, "tok-new", "/home/dev/project")
+
+	if _, verdict := table.Lookup("tok-old"); verdict.Decision != routing.ForwardOnlyRevoked {
+		t.Errorf("displaced token verdict = %+v, want ForwardOnlyRevoked", verdict)
+	}
+	if _, verdict := table.Lookup("tok-new"); !verdict.Records() {
+		t.Errorf("new token verdict = %+v, want Record", verdict)
 	}
 }
 

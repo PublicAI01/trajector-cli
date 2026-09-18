@@ -201,7 +201,10 @@ func (s *source) get(url string, timeout time.Duration, limit int64) ([]byte, er
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return nil, statusError(url, resp.StatusCode, resp.Status)
+		// The reason phrase is free text the release source chose and it
+		// ends up on a terminal line beside this command's own words; see
+		// platform.newStatusError for why that has to be disarmed.
+		return nil, statusError(url, resp.StatusCode, platform.SafeServiceText(resp.Status))
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {

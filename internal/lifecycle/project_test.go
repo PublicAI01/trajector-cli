@@ -561,6 +561,44 @@ func TestDoctorPutsBackAUsersOwnBaseURLWithAStaleInjection(t *testing.T) {
 	}
 }
 
+// TestRemovalRestoresTheBaseURLTheInjectionItselfNamed pins the other
+// half of the 2026-09-18 Grant fix. Once a root can hold more than one
+// entry — the standing grant plus the tokens it rotated away from —
+// "what does this project route at" stops having one answer, and the
+// removal path is the one that writes the answer back into the user's
+// own settings file. The injected base URL carries the token of the
+// grant it actually routed at, so that token settles it; asking by root
+// path alone returned whichever entry the standing grant happened to be,
+// which after a rotation is a different relay than the injection being
+// removed ever pointed at.
+func TestRemovalRestoresTheBaseURLTheInjectionItselfNamed(t *testing.T) {
+	const rotatedRelay = "https://relay-after-rotation.example.com"
+	e := enabledOverAUsersOwnRelay(t)
+	injectedToken := e.status().Token
+
+	// A rotation behind the injection's back: the standing grant moves to
+	// a second relay under a fresh token, while the settings file still
+	// injects the first one.
+	e.sandbox.GrantProject(proxytest.Grant{
+		Token:         "tok-rotated",
+		ProjectIDHash: e.status().Hash,
+		RootPath:      e.canonicalRoot(),
+		Upstream:      rotatedRelay,
+		GrantedAt:     "2026-08-20T00:00:00Z",
+	})
+	if got, _ := claudesettings.TokenFromBaseURL(e.status().InjectedBaseURL); got != injectedToken {
+		t.Fatalf("test setup: injection now names %q, want the pre-rotation token %q", got, injectedToken)
+	}
+
+	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+		t.Fatalf("disable: %v\nstdout: %s", err, e.stdout)
+	}
+
+	if got := ownBaseURL(t, e); got != relayInSettingsLocal {
+		t.Errorf("removal put back %q as the user's own base URL; the injection it removed routed at %q", got, relayInSettingsLocal)
+	}
+}
+
 func TestEnableAndDisableKeepAUsersOwnBaseURL(t *testing.T) {
 	e := enabledOverAUsersOwnRelay(t)
 	// Re-running enable repairs rather than re-keys, the relay included.

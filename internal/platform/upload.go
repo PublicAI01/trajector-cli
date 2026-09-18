@@ -302,7 +302,7 @@ func uploadFailure(err error, bodyBytes int64, budget time.Duration) error {
 // — transient, keep and retry — matching how every other failure
 // without its own class is treated.
 func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, budget time.Duration) error {
-	status := &StatusError{StatusCode: resp.StatusCode, Status: resp.Status, Method: http.MethodPost, Path: BatchesPath, Body: body}
+	status := newStatusError(resp, http.MethodPost, BatchesPath, body)
 	switch {
 	case resp.StatusCode == http.StatusUpgradeRequired:
 		var deny struct {
@@ -359,7 +359,10 @@ func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, bu
 		resp.StatusCode == http.StatusForbidden:
 		return status
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
-		return &BatchRejectedError{Status: resp.Status, Details: trimDetails(body), status: status}
+		// status.Status, never resp.Status: settleFailure copies this field
+		// straight into the Rejection it writes to disk and into the error
+		// `trajector upload` prints, so it has to be the disarmed reading.
+		return &BatchRejectedError{Status: status.Status, Details: trimDetails(body), status: status}
 	default:
 		return status
 	}

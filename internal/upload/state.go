@@ -102,9 +102,20 @@ type storedHandshake struct {
 
 // LoadState reads the uploader's state; a missing or unreadable file is
 // an empty state, never an error to act on.
+//
+// The two fields that can carry the service's own words — the last
+// error's message and the last rejection's details — are cleaned again
+// on the way out, the way LoadHandshake, LoadStandings and readReason
+// clean theirs: this file may have been written by a build that predates
+// the cleaning at the network edge, or edited by hand, and the status
+// dashboard prints both.
 func LoadState(dir string) State {
 	var st State
 	readJSON(filepath.Join(dir, stateName), &st)
+	st.LastError = platform.SafeServiceText(st.LastError)
+	if st.LastRejected != nil {
+		st.LastRejected.Details = platform.SafeServiceText(st.LastRejected.Details)
+	}
 	return st
 }
 
