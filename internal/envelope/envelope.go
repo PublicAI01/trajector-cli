@@ -1,25 +1,49 @@
-// Package envelope defines the schema_version 1 rawcall record: the
-// on-disk envelope wrapping one captured API call. It is the only place
-// that decides what an observed exchange looks like once stored, and the
-// only place that reads a stored record back. The serialized layout is a
-// documented product contract; changing field names or semantics
-// requires a new schema version.
+// Package envelope defines the records this client stores and uploads:
+// the rawcall wrapping one captured API call, the segments and
+// snapshots read from what Claude Code wrote, and the git snapshot one
+// hook observed. It is the only place that decides what an observation
+// looks like once stored, and the only place that reads a stored record
+// back. The serialized layout is a documented product contract;
+// changing field names or semantics requires a new schema version.
 package envelope
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 )
 
+// SchemaVersion is the one version number a batch and every record it
+// carries declare. There is no second version axis: a batch of this
+// version holds records of this version only, which is why the constant
+// is stated here once and read by every package that writes a version.
+const SchemaVersion = "3"
+
+// readableVersions are the versions this client still reads back. Only
+// SchemaVersion is ever written; the older values are readable so a
+// record stored before an upgrade is packed and uploaded rather than
+// refused, and they are restated to the current version on the way into
+// a batch.
+var readableVersions = map[string]bool{"1": true, "2": true, SchemaVersion: true}
+
+// checkVersion reports whether a stored record declares a version this
+// client can read.
+func checkVersion(version string) error {
+	if !readableVersions[version] {
+		return fmt.Errorf("envelope: unsupported schema version %q", version)
+	}
+	return nil
+}
+
 const (
-	schemaVersion = "1"
-	sourceProxy   = "proxy"
+	sourceProxy = "proxy"
 
 	// Upstream origin values. The origin must be recorded truthfully
 	// and never defaulted to official: a rawcall that flowed through a
@@ -166,7 +190,7 @@ func Record(obs Observation) (Envelope, error) {
 	request, requestGarbled := obs.classifyRequest()
 
 	rec := wire{
-		SchemaVersion: schemaVersion,
+		SchemaVersion: SchemaVersion,
 		Source:        sourceProxy,
 		Provider:      obs.Provider,
 		Endpoint:      obs.Endpoint,
@@ -198,11 +222,51 @@ func Parse(data []byte) (Envelope, error) {
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return Envelope{}, fmt.Errorf("envelope: reading rawcall: %w", err)
 	}
-	if rec.SchemaVersion != schemaVersion {
-		return Envelope{}, fmt.Errorf("envelope: unsupported schema version %q", rec.SchemaVersion)
+	if err := checkVersion(rec.SchemaVersion); err != nil {
+		return Envelope{}, err
 	}
 	return Envelope{data: append([]byte(nil), data...), rec: rec}, nil
 }
+
+// Restated returns the record's bytes with its schema version set to
+// the current one and every other byte as it was. A batch and the
+// records in it declare one version, so a rawcall stored under an
+// earlier one is restated on its way into a batch. A record already at
+// the current version is returned as it was stored, so the common path
+// copies nothing.
+//
+// The version token is replaced where it stands rather than the record
+// being serialized again: the bodies a rawcall carries are observed
+// bytes, and a round trip through the encoder would re-escape them.
+func (e Envelope) Restated() ([]byte, error) {
+	if e.rec.SchemaVersion == SchemaVersion {
+		return e.data, nil
+	}
+	return restateVersion(e.data)
+}
+
+// versionPrefix is how every record this package writes begins: the
+// schema version is the first member, which is what lets restating it
+// be one replacement instead of a re-serialization.
+const versionPrefix = `{"schema_version":"`
+
+func restateVersion(data []byte) ([]byte, error) {
+	rest, ok := bytes.CutPrefix(data, []byte(versionPrefix))
+	if !ok {
+		return nil, errNoVersionToken
+	}
+	_, tail, ok := bytes.Cut(rest, []byte(`"`))
+	if !ok {
+		return nil, errNoVersionToken
+	}
+	out := make([]byte, 0, len(data))
+	out = append(out, versionPrefix...)
+	out = append(out, SchemaVersion...)
+	out = append(out, '"')
+	return append(out, tail...), nil
+}
+
+var errNoVersionToken = errors.New("envelope: record does not open with its schema version")
 
 // ProjectIDHashOf reads only which project a stored rawcall belongs to.
 // It deliberately validates nothing else: consent withdrawal must be

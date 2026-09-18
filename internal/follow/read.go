@@ -80,7 +80,7 @@ type ReadResult struct {
 // again: the copy sent first stands. Lines are stored byte for byte;
 // nothing in them is interpreted beyond the three fields that steer
 // reading.
-func Read(f File, capture envelope.TranscriptCapture, opts ReadOptions) (ReadResult, error) {
+func Read(f File, capture envelope.Capture, opts ReadOptions) (ReadResult, error) {
 	st, err := StatFile(f.Path)
 	if err != nil {
 		return ReadResult{}, err
@@ -95,7 +95,7 @@ func Read(f File, capture envelope.TranscriptCapture, opts ReadOptions) (ReadRes
 	return readLines(res, st, capture, opts)
 }
 
-func readLines(res ReadResult, st Stat, capture envelope.TranscriptCapture, opts ReadOptions) (ReadResult, error) {
+func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptions) (ReadResult, error) {
 	f := res.File
 	start := f.Offset
 	if res.Reaction == Rewrite {
@@ -198,7 +198,7 @@ func readLines(res ReadResult, st Stat, capture envelope.TranscriptCapture, opts
 // overwritten in place, so the cursor's message id set holds the record
 // id of the last snapshot taken: a new snapshot is due exactly when the
 // content names a different one, however the size or inode moved.
-func readMeta(res ReadResult, st Stat, capture envelope.TranscriptCapture) (ReadResult, error) {
+func readMeta(res ReadResult, st Stat, capture envelope.Capture) (ReadResult, error) {
 	f := res.File
 	content, err := os.ReadFile(f.Path)
 	if os.IsNotExist(err) {

@@ -70,7 +70,7 @@ func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
 		Registry:      m.registry,
 		ProjectIDHash: st.Hash,
 		Options:       follow.ReadOptions{Root: st.Root},
-		Capture: envelope.TranscriptCapture{
+		Capture: envelope.Capture{
 			ClientVersion: m.deps.Version,
 			Timestamp:     now.UTC().Format(time.RFC3339Nano),
 			ProjectIDHash: st.Hash,

@@ -23,8 +23,8 @@ const (
 // recordsDir restates the documented on-disk home of the second slot.
 const recordsDir = "records"
 
-func captureAt(at time.Time, projectHash string) envelope.TranscriptCapture {
-	return envelope.TranscriptCapture{
+func captureAt(at time.Time, projectHash string) envelope.Capture {
+	return envelope.Capture{
 		ClientVersion: "0.0.0-test",
 		Timestamp:     at.UTC().Format(time.RFC3339Nano),
 		ProjectIDHash: projectHash,
@@ -43,6 +43,11 @@ func snapshot(t *testing.T, sessionID, projectHash, content string, at time.Time
 		t.Fatal(err)
 	}
 	return snap
+}
+
+func gitSnapshot(sessionID, projectHash, head string, at time.Time) envelope.GitSnapshot {
+	return envelope.NewGitSnapshot(sessionID, "SessionStart", envelope.TriggerSessionStart,
+		captureAt(at, projectHash), "main", head, envelope.CommitOrNone(""), envelope.CommitOrNone(""), nil)
 }
 
 // userIDFor spells metadata.user_id the way a request body carries it:
@@ -350,6 +355,15 @@ func TestSpool_WriteRecordRefusesWhatItCannotStore(t *testing.T) {
 			snap.Source = "proxy"
 			return s.WriteMetaSnapshot(snap)
 		}},
+		{"observation declaring another kind", func() error {
+			snap := gitSnapshot(sessionA, "hash-a", headA, noon)
+			snap.RecordKind = "segment"
+			return s.WriteGitSnapshot(snap)
+		}},
+		{"observation without a session id", func() error {
+			snap := gitSnapshot("", "hash-a", headA, noon)
+			return s.WriteGitSnapshot(snap)
+		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -468,6 +482,9 @@ func TestSpool_SummarySeparatesSlots(t *testing.T) {
 	if err := s.WriteMetaSnapshot(snapshot(t, sessionA, "hash-a", `{"agentId":"0000"}`, day2)); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.WriteGitSnapshot(gitSnapshot(sessionA, "hash-a", headA, day2)); err != nil {
+		t.Fatal(err)
+	}
 
 	days, err := s.Summary()
 	if err != nil {
@@ -477,18 +494,21 @@ func TestSpool_SummarySeparatesSlots(t *testing.T) {
 		t.Fatalf("Summary = %+v, want two days", days)
 	}
 	tests := []struct {
-		day                           string
-		rawcalls, segments, snapshots int
-		rawcallBytes, recordBytesZero bool
+		day                                         string
+		rawcalls, segments, snapshots, gitSnapshots int
+		rawcallBytes, recordBytesZero               bool
 	}{
-		{"20260801", 1, 2, 0, true, false},
-		{"20260802", 0, 0, 1, false, false},
+		{"20260801", 1, 2, 0, 0, true, false},
+		{"20260802", 0, 0, 1, 1, false, false},
 	}
 	var total int64
 	for i, tc := range tests {
 		d := days[i]
-		if d.Day != tc.day || d.Rawcalls != tc.rawcalls || d.Segments != tc.segments || d.Snapshots != tc.snapshots {
+		if d.Day != tc.day || d.Rawcalls != tc.rawcalls || d.Segments != tc.segments || d.Snapshots != tc.snapshots || d.GitSnapshots != tc.gitSnapshots {
 			t.Errorf("day %s = %+v, want %+v", tc.day, d, tc)
+		}
+		if want := tc.rawcalls + tc.segments + tc.snapshots + tc.gitSnapshots; d.Total() != want {
+			t.Errorf("day %s Total() = %d, want %d", tc.day, d.Total(), want)
 		}
 		if (d.Bytes > 0) != tc.rawcallBytes {
 			t.Errorf("day %s rawcall bytes = %d", tc.day, d.Bytes)
@@ -828,7 +848,7 @@ func TestSpool_UnreadableRecordIsSetAside(t *testing.T) {
 	}{
 		{"not json", "seg_broken1", "not json at all"},
 		{"json of no known kind", "seg_broken2", `{"source":"elsewhere","record_kind":"other"}`},
-		{"segment of an unknown schema version", "seg_broken3", strings.Replace(string(declared), `"schema_version":"2"`, `"schema_version":"9"`, 1)},
+		{"segment of an unknown schema version", "seg_broken3", strings.Replace(string(declared), `"schema_version":"3"`, `"schema_version":"9"`, 1)},
 	}
 	for _, tc := range tests {
 		if err := os.WriteFile(filepath.Join(dayDir, tc.id+".json"), []byte(tc.body), 0o600); err != nil {
@@ -970,5 +990,81 @@ func TestSessionIDFromUserID(t *testing.T) {
 				t.Errorf("SessionIDFromUserID(%q) = %q, %v; want %q, %v", tc.userID, got, ok, tc.want, tc.ok)
 			}
 		})
+	}
+}
+
+const (
+	headA = "d0cf90f327430f11f8a68493a58f402fa11d7c9e"
+	headB = "4d0071c7e54967da4d11e6a397df9844797bdf81"
+)
+
+func TestSpool_StoresObservationsBesideTheOtherRecordsOfTheirSlot(t *testing.T) {
+	s, err := spool.Create(t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteSegment(segment(sessionA, "hash-a", 0, noon)); err != nil {
+		t.Fatal(err)
+	}
+	snap := gitSnapshot(sessionA, "hash-a", headA, noon)
+	if err := s.WriteGitSnapshot(snap); err != nil {
+		t.Fatal(err)
+	}
+
+	kinds := map[string]string{}
+	for _, r := range collectRecords(t, s) {
+		kinds[r.ID] = r.Kind
+		if r.SessionID != sessionA || r.ProjectIDHash != "hash-a" {
+			t.Errorf("record %s = %+v, want it attributed to its session and project", r.ID, r)
+		}
+	}
+	if kinds[snap.RecordID] != "git_snapshot" {
+		t.Errorf("records = %v, want the observation stored under its own kind", kinds)
+	}
+	if len(kinds) != 2 {
+		t.Errorf("records = %v, want both slots' records", kinds)
+	}
+}
+
+func TestSpool_WriteGitSnapshotIsIdempotentPerRecordID(t *testing.T) {
+	s, err := spool.Create(t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := gitSnapshot(sessionA, "hash-a", headA, noon)
+	for range 3 {
+		if err := s.WriteGitSnapshot(snap); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := collectRecords(t, s); len(got) != 1 {
+		t.Errorf("the same observation stored three times left %d records", len(got))
+	}
+	if err := s.WriteGitSnapshot(gitSnapshot(sessionA, "hash-a", headB, noon)); err != nil {
+		t.Fatal(err)
+	}
+	if got := collectRecords(t, s); len(got) != 2 {
+		t.Errorf("a second observation left %d records", len(got))
+	}
+}
+
+func TestSpool_DeletingASessionTakesItsObservationsToo(t *testing.T) {
+	s, err := spool.Create(t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteGitSnapshot(gitSnapshot(sessionA, "hash-a", headA, noon)); err != nil {
+		t.Fatal(err)
+	}
+	kept := gitSnapshot(sessionB, "hash-a", headB, noon)
+	if err := s.WriteGitSnapshot(kept); err != nil {
+		t.Fatal(err)
+	}
+	if _, records, err := s.DeleteSession(sessionA); err != nil || records != 1 {
+		t.Fatalf("DeleteSession = %d, %v; want the session's one observation", records, err)
+	}
+	got := collectRecords(t, s)
+	if len(got) != 1 || got[0].ID != kept.RecordID {
+		t.Errorf("records = %+v, want only the other session's observation", got)
 	}
 }

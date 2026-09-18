@@ -383,3 +383,44 @@ func walkStringValues(s string, visit func(path []string, start, end int, value 
 		}
 	}
 }
+
+// RedactGitSnapshot masks one git snapshot for upload. Only the
+// observed paths go through the pass: every other field the record
+// carries — the branch name this client read from git, the commit and
+// blob identifiers, the counts — is either this client's own value or a
+// forty-character identifier, and running an entropy-sensitive pass
+// over those could only damage them.
+//
+// The returned snapshot is redacted as a whole; the caller wraps its
+// serialized bytes with AlreadyRedacted.
+func RedactGitSnapshot(snap envelope.GitSnapshot) (envelope.GitSnapshot, error) {
+	if len(snap.Changed) == 0 {
+		return snap, nil
+	}
+	paths := make([]string, len(snap.Changed))
+	for i, c := range snap.Changed {
+		paths[i] = c.Path
+	}
+	encoded, err := json.Marshal(paths)
+	if err != nil {
+		return envelope.GitSnapshot{}, err
+	}
+	redacted, err := JSONLBytes(encoded)
+	if err != nil {
+		return envelope.GitSnapshot{}, err
+	}
+	var masked []string
+	if err := json.Unmarshal(redacted.Bytes(), &masked); err != nil {
+		return envelope.GitSnapshot{}, err
+	}
+	if len(masked) != len(snap.Changed) {
+		return envelope.GitSnapshot{}, errors.New("redact: masking changed a git snapshot's path count")
+	}
+	changed := make([]envelope.Change, len(snap.Changed))
+	copy(changed, snap.Changed)
+	for i := range changed {
+		changed[i].Path = masked[i]
+	}
+	snap.Changed = changed
+	return snap, nil
+}

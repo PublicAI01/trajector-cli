@@ -14,8 +14,8 @@ const (
 	fixtureMetaJSON  = `{"agentId":"a1b2c3d4","toolUseId":"toolu_01FIXTURE","spawnDepth":1,"name":"Explore","createdAt":"2026-09-10T09:00:00.000000000Z"}`
 )
 
-func fixtureCapture() envelope.TranscriptCapture {
-	return envelope.TranscriptCapture{
+func fixtureCapture() envelope.Capture {
+	return envelope.Capture{
 		ClientVersion: "0.2.0",
 		Timestamp:     "2026-09-10T09:00:00.000000000Z",
 		ProjectIDHash: "a4935b31d2ff72636fb53f77bb80a37fe44f9e113820330ebae207b70108a58e",
@@ -97,7 +97,7 @@ func TestSegmentRoundTripsByteForByte(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPrefix := `{"schema_version":"2","source":"transcript","record_kind":"segment","record_id":"seg_352333f5dc638f1374b930d6a0ffa419","session_id":"` + fixtureSessionID + `","file":"","segment_index":0,"capture":{"client_version":"0.2.0","timestamp":"2026-09-10T09:00:00.000000000Z","project_id_hash":"a4935b31d2ff72636fb53f77bb80a37fe44f9e113820330ebae207b70108a58e","injection":"proxy"},"lines":"`
+	wantPrefix := `{"schema_version":"3","source":"transcript","record_kind":"segment","record_id":"seg_352333f5dc638f1374b930d6a0ffa419","session_id":"` + fixtureSessionID + `","file":"","segment_index":0,"capture":{"client_version":"0.2.0","timestamp":"2026-09-10T09:00:00.000000000Z","project_id_hash":"a4935b31d2ff72636fb53f77bb80a37fe44f9e113820330ebae207b70108a58e","injection":"proxy"},"lines":"`
 	if !strings.HasPrefix(string(data), wantPrefix) {
 		t.Fatalf("serialized segment = %s", data)
 	}
@@ -162,7 +162,7 @@ func TestTranscriptParsersRefuseEachOthersRecordsAndRawcalls(t *testing.T) {
 	snap, _ := envelope.NewMetaSnapshot(fixtureSessionID, "f.meta.json", fixtureCapture(), []byte(`{}`))
 	snapData, _ := snap.Bytes()
 	rawcall, _ := json.Marshal(map[string]any{"schema_version": "1", "source": "proxy"})
-	future, _ := json.Marshal(map[string]any{"schema_version": "3", "source": "transcript", "record_kind": "segment"})
+	future, _ := json.Marshal(map[string]any{"schema_version": "9", "source": "transcript", "record_kind": "segment"})
 
 	if _, err := envelope.ParseSegment(snapData); err == nil {
 		t.Error("a snapshot parsed as a segment")

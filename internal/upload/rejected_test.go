@@ -346,6 +346,19 @@ func snapshotBytesOfSession(t *testing.T, sessionID string) (recordID string, da
 	return snap.RecordID, data
 }
 
+func gitSnapshotBytesOfSession(t *testing.T, sessionID string) (recordID string, data []byte) {
+	t.Helper()
+	snap := envelope.NewGitSnapshot(sessionID, "SessionStart", envelope.TriggerSessionStart,
+		recordCapture(time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC), "hash-project"),
+		"main", "d0cf90f327430f11f8a68493a58f402fa11d7c9e",
+		envelope.CommitOrNone(""), envelope.CommitOrNone(""), nil)
+	data, err := snap.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snap.RecordID, data
+}
+
 // heldByBatch lists the record ids each quarantined batch still holds.
 func heldByBatch(t *testing.T, rejectedDir string) map[string][]string {
 	t.Helper()
@@ -429,11 +442,13 @@ func TestPurgeRejectedSessionReachesEveryRecordKind(t *testing.T) {
 	rejectedDir := t.TempDir()
 	segmentID, segment := segmentBytesOfSession(t, sessionX)
 	snapshotID, snapshot := snapshotBytesOfSession(t, sessionX)
+	gitSnapshotID, gitSnapshot := gitSnapshotBytesOfSession(t, sessionX)
 	otherSegmentID, otherSegment := segmentBytesOfSession(t, sessionY)
 	seedBatch(t, rejectedDir, "b-mixed", map[string][]byte{
 		"req-x1":       rawcallBytesOfSession(t, "req-x1", sessionX),
 		segmentID:      segment,
 		snapshotID:     snapshot,
+		gitSnapshotID:  gitSnapshot,
 		otherSegmentID: otherSegment,
 	})
 
@@ -441,8 +456,8 @@ func TestPurgeRejectedSessionReachesEveryRecordKind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
-	if deleted != 3 {
-		t.Errorf("deleted = %d, want the rawcall, the segment and the snapshot", deleted)
+	if deleted != 4 {
+		t.Errorf("deleted = %d, want every kind that names the session deleted", deleted)
 	}
 	if held := heldByBatch(t, rejectedDir); strings.Join(held["b-mixed"], ",") != otherSegmentID {
 		t.Errorf("batch holds %v, want only the other session's segment %s", held, otherSegmentID)

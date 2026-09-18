@@ -37,13 +37,28 @@ func TestStatusCountsEveryKindOfRecordWaitingInTheSpool(t *testing.T) {
 	seedRawcall(e, "req-1", at)
 	e.Sandbox().SeedSegment("sess-1", e.ProjectHash(), at)
 	e.Sandbox().SeedMetaSnapshot("sess-1", e.ProjectHash(), at)
+	e.Sandbox().SeedGitSnapshot("sess-1", e.ProjectHash(), at)
 
 	got := e.InProject("status")
 	if got.Exit != 0 {
 		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
 	}
-	if !strings.Contains(got.Stdout, "Records waiting to upload: 1 rawcall(s), 1 segment(s), 1 snapshot(s)") {
+	if !strings.Contains(got.Stdout, "Records waiting to upload: 1 rawcall(s), 1 segment(s), 1 snapshot(s), 1 git snapshot(s)") {
 		t.Errorf("stdout = %q, want every waiting kind counted", got.Stdout)
+	}
+}
+
+func TestStatusCountsWaitingGitSnapshotsOnADeviceThatRecordsOnlyFromSessionHooks(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	e.Sandbox().SeedGitSnapshot("sess-1", e.ProjectHash(), time.Now().UTC())
+
+	got := e.InProject("status")
+	if !strings.Contains(got.Stdout, "Records waiting to upload: 1 git snapshot(s)") {
+		t.Errorf("stdout = %q, want the waiting observation counted", got.Stdout)
+	}
+	if strings.Contains(got.Stdout, "waiting to upload: none") {
+		t.Errorf("stdout = %q, want the wait reported by what is in the spool", got.Stdout)
 	}
 }
 

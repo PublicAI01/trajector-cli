@@ -49,7 +49,7 @@ func TestLocalCorpus(t *testing.T) {
 			return nil
 		}
 		files++
-		res, err := follow.Read(follow.File{Path: path}, envelope.TranscriptCapture{}, opts)
+		res, err := follow.Read(follow.File{Path: path}, envelope.Capture{}, opts)
 		if err != nil {
 			unreadable++
 			return nil

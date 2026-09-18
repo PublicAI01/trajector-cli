@@ -151,10 +151,19 @@ func TestStatusCountsWaitingRawcallsOnADeviceThatRecordsOnlyThroughTheProxy(t *t
 
 func TestStatusCountsEveryKindWaitingOnADeviceThatRecordsBothWays(t *testing.T) {
 	d := device()
-	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{Rawcalls: 2, Segments: 3, Snapshots: 1}}}
+	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{Rawcalls: 2, Segments: 3, Snapshots: 1, GitSnapshots: 4}}}
 	out := dashboard(d)
 
-	wants(t, "status", out, "Records waiting to upload: 2 rawcall(s), 3 segment(s), 1 snapshot(s).")
+	wants(t, "status", out, "Records waiting to upload: 2 rawcall(s), 3 segment(s), 1 snapshot(s), 4 git snapshot(s).")
+}
+
+func TestStatusCountsWaitingGitSnapshotsWhenNothingElseWaits(t *testing.T) {
+	d := device()
+	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{GitSnapshots: 4}}}
+	out := dashboard(d)
+
+	wants(t, "status", out, "Records waiting to upload: 4 git snapshot(s).")
+	rejects(t, "status", out, "waiting to upload: none")
 }
 
 func TestStatusRendersEverySectionWhenTheSpoolCannotOpen(t *testing.T) {

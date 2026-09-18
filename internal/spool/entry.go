@@ -44,17 +44,20 @@ func (r Rawcall) entry() Entry {
 	}
 }
 
-// entry reads one segment or snapshot as a stored record.
+// entry reads one second-slot record as a stored record.
 func (r Record) entry() Entry {
 	return Entry{Kind: recordKind(r.Kind), ID: r.ID, Timestamp: r.Timestamp, Raw: r.Raw}
 }
 
-// recordKind is the whole kind of a second-slot record: the source
-// every record of that slot declares, and what this one says it is.
-// The source stands even for a record whose bytes name no kind,
-// because which slot holds a record is known even when its content is
-// not.
+// recordKind is the whole kind of a second-slot record: what the record
+// says it is, and the source that kind belongs to. A record whose bytes
+// name no kind keeps a source of the slot all the same, because which
+// slot holds a record is known even when its content is not — without
+// one it could never be deleted.
 func recordKind(kind string) envelope.Kind {
+	if kind == envelope.KindGitSnapshot.RecordKind {
+		return envelope.KindGitSnapshot
+	}
 	return envelope.Kind{Source: envelope.KindSegment.Source, RecordKind: kind}
 }
 
@@ -64,9 +67,8 @@ func (e Entry) inRawcallSlot() bool { return e.Kind.Source == envelope.KindRawca
 
 // EachEntry visits every stored record of every kind, stopping at the
 // first error the visitor returns: the rawcalls oldest day first, then
-// the segments and snapshots of the second slot. The two directories
-// are how records are stored, not what they are, so they arrive as one
-// sequence.
+// the second slot. The two directories are how records are stored, not
+// what they are, so they arrive as one sequence.
 func (s *Spool) EachEntry(visit func(Entry) error) error {
 	return s.EachEntryWhere(func(string) bool { return true }, visit)
 }

@@ -25,8 +25,8 @@ const (
 	sessionY      = "0a1b2c3d-2222-4bbb-8bbb-000000000002"
 )
 
-func recordCapture(at time.Time, projectIDHash string) envelope.TranscriptCapture {
-	return envelope.TranscriptCapture{
+func recordCapture(at time.Time, projectIDHash string) envelope.Capture {
+	return envelope.Capture{
 		ClientVersion: "test",
 		Timestamp:     at.UTC().Format(time.RFC3339Nano),
 		ProjectIDHash: projectIDHash,
@@ -114,7 +114,7 @@ func spooledRawcallIDs(t *testing.T, sp *spool.Spool) []string {
 }
 
 // uploadedIndex reads the index one upload carried.
-func uploadedIndex(t *testing.T, r fakeplatform.Request) batch.IndexV2 {
+func uploadedIndex(t *testing.T, r fakeplatform.Request) batch.Index {
 	t.Helper()
 	ix, err := fakeplatform.UploadedIndex(r)
 	if err != nil {
@@ -142,7 +142,7 @@ func uploadedStream(t *testing.T, r fakeplatform.Request) []byte {
 	return stream
 }
 
-func indexedRecordIDs(ix batch.IndexV2) []string {
+func indexedRecordIDs(ix batch.Index) []string {
 	var ids []string
 	for _, item := range ix.Records {
 		ids = append(ids, item.RecordID)
@@ -612,15 +612,23 @@ func TestRequeue_ReturnsRecordsToTheirSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	gitSnap := envelope.NewGitSnapshot(sessionX, "SessionStart", envelope.TriggerSessionStart,
+		recordCapture(at, "hash-p1"), "main", "d0cf90f327430f11f8a68493a58f402fa11d7c9e",
+		envelope.CommitOrNone(""), envelope.CommitOrNone(""), nil)
+	gitSnapBytes, err := gitSnap.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
 	seedBatch(t, rejectedDir, "b-mixed", map[string][]byte{
-		"req-1":       rawcallBytes(t, "req-1"),
-		seg.RecordID:  segBytes,
-		snap.RecordID: snapBytes,
+		"req-1":          rawcallBytes(t, "req-1"),
+		seg.RecordID:     segBytes,
+		snap.RecordID:    snapBytes,
+		gitSnap.RecordID: gitSnapBytes,
 	})
 
 	_, moved, err := upload.Requeue(rejectedDir, sp, "b-mixed")
-	if err != nil || moved != 3 {
-		t.Fatalf("requeue = %d, %v; want all three moved", moved, err)
+	if err != nil || moved != 4 {
+		t.Fatalf("requeue = %d, %v; want every record moved", moved, err)
 	}
 	if ids := spooledRawcallIDs(t, sp); strings.Join(ids, ",") != "req-1" {
 		t.Errorf("rawcall slot = %v, want req-1", ids)
@@ -632,9 +640,18 @@ func TestRequeue_ReturnsRecordsToTheirSlot(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{seg.RecordID + "=segment": true, snap.RecordID + "=meta_snapshot": true}
-	if len(kinds) != 2 || !want[kinds[0]] || !want[kinds[1]] {
-		t.Errorf("record slot = %v, want the segment and the snapshot attributed by kind", kinds)
+	want := map[string]bool{
+		seg.RecordID + "=segment":                   true,
+		snap.RecordID + "=meta_snapshot":            true,
+		gitSnap.RecordID + "=" + gitSnap.RecordKind: true,
+	}
+	if len(kinds) != 3 {
+		t.Fatalf("record slot = %v, want three records", kinds)
+	}
+	for _, k := range kinds {
+		if !want[k] {
+			t.Errorf("record slot holds %q, want every requeued record attributed by kind", k)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(rejectedDir, "b-mixed")); !os.IsNotExist(err) {
 		t.Error("batch directory still present after a full requeue")

@@ -6,10 +6,10 @@
 // can route a batch without unpacking it; its serialized layout is a
 // product contract like the record envelopes'.
 //
-// Records of every kind ride in one batch: rawcalls, and the segments
-// and snapshots the spool's second slot holds. They share the stream
-// and the index, and nothing else — each record is masked by the pass
-// its own kind needs and ordered by its own session key.
+// Records of every kind ride in one batch: rawcalls, and everything the
+// spool's second slot holds. They share the stream and the index, and
+// nothing else — each record is masked by the pass its own kind needs
+// and ordered by its own session key.
 package batch
 
 import (
@@ -105,7 +105,7 @@ func Build(id string, createdAt time.Time, clientVersion string, in spool.Entrie
 		stream bytes.Buffer
 		packed spool.Entries
 	)
-	ix := newIndexV2(id, createdAt, clientVersion, run)
+	ix := newIndex(id, createdAt, clientVersion, run)
 	for _, p := range ready {
 		item, masked, err := p.mask()
 		if err != nil {
@@ -134,10 +134,11 @@ func Build(id string, createdAt time.Time, clientVersion string, in spool.Entrie
 	return Batch{ID: id, Envelope: env, Records: redact.AlreadyRedacted(compressed), Packed: packed}, refused, nil
 }
 
-// The two slots, in the order their records ride in the stream.
+// The slots, in the order their records ride in the stream.
 const (
 	rawcallSlot = iota
 	sessionRecordSlot
+	hookRecordSlot
 )
 
 // snapshotOrder is the segment index a snapshot sorts at: below every
@@ -186,7 +187,7 @@ func (a placement) before(b placement) bool {
 type packable struct {
 	entry spool.Entry
 	at    placement
-	mask  func() (IndexItemV2, redact.RedactedBytes, error)
+	mask  func() (IndexItem, redact.RedactedBytes, error)
 }
 
 // read reads one entry by what its bytes declare, never by what the
@@ -215,7 +216,7 @@ func read(e spool.Entry) (packable, error) {
 		return packable{
 			entry: e,
 			at:    placement{slot: rawcallSlot, session: session, unnamed: session == "", when: e.Timestamp, id: e.ID},
-			mask: func() (IndexItemV2, redact.RedactedBytes, error) {
+			mask: func() (IndexItem, redact.RedactedBytes, error) {
 				return maskRawcall(kind, e, env)
 			},
 		}, nil
@@ -232,7 +233,7 @@ func read(e spool.Entry) (packable, error) {
 				slot: sessionRecordSlot, session: seg.SessionID, unnamed: seg.SessionID == "",
 				file: seg.File, index: seg.SegmentIndex, when: captureTime(seg.Capture), id: seg.RecordID,
 			},
-			mask: func() (IndexItemV2, redact.RedactedBytes, error) {
+			mask: func() (IndexItem, redact.RedactedBytes, error) {
 				return maskSegment(kind, seg)
 			},
 		}, nil
@@ -247,8 +248,25 @@ func read(e spool.Entry) (packable, error) {
 				slot: sessionRecordSlot, session: snap.SessionID, unnamed: snap.SessionID == "",
 				file: snap.File, index: snapshotOrder, when: captureTime(snap.Capture), id: snap.RecordID,
 			},
-			mask: func() (IndexItemV2, redact.RedactedBytes, error) {
+			mask: func() (IndexItem, redact.RedactedBytes, error) {
 				return maskMetaSnapshot(kind, snap)
+			},
+		}, nil
+	case envelope.KindGitSnapshot:
+		snap, err := envelope.ParseGitSnapshot(e.Raw)
+		if err != nil {
+			return packable{}, err
+		}
+		// A git snapshot names no file and has no index of its own, so
+		// its order inside its session is the order it was observed in.
+		return packable{
+			entry: e,
+			at: placement{
+				slot: hookRecordSlot, session: snap.SessionID, unnamed: snap.SessionID == "",
+				when: captureTime(snap.Capture), id: snap.RecordID,
+			},
+			mask: func() (IndexItem, redact.RedactedBytes, error) {
+				return maskGitSnapshot(kind, snap)
 			},
 		}, nil
 	}
@@ -258,18 +276,24 @@ func read(e spool.Entry) (packable, error) {
 // captureTime is when a record read from a session file was captured.
 // A timestamp that does not read back leaves the record at the front of
 // its own file's group rather than out of the order altogether.
-func captureTime(capture envelope.TranscriptCapture) time.Time {
+func captureTime(capture envelope.Capture) time.Time {
 	at, _ := time.Parse(time.RFC3339Nano, capture.Timestamp)
 	return at
 }
 
 // maskRawcall masks one rawcall and indexes it. The index copies what
 // the rawcall's own envelope says.
-func maskRawcall(kind envelope.Kind, e spool.Entry, env envelope.Envelope) (IndexItemV2, redact.RedactedBytes, error) {
-	masked, err := redact.JSONLBytes(e.Raw)
+func maskRawcall(kind envelope.Kind, e spool.Entry, env envelope.Envelope) (IndexItem, redact.RedactedBytes, error) {
+	// The batch and every record in it declare one version, so a record
+	// stored under an earlier one is restated before it is masked.
+	stored, err := env.Restated()
+	if err != nil {
+		return IndexItem{}, redact.RedactedBytes{}, err
+	}
+	masked, err := redact.JSONLBytes(stored)
 	if err != nil {
 		// An unmaskable record must not be shipped.
-		return IndexItemV2{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
+		return IndexItem{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
 	}
 	item := rawcallItem(kind, env)
 	if item.Timestamp == "" && !e.Timestamp.IsZero() {
@@ -282,14 +306,15 @@ func maskRawcall(kind envelope.Kind, e spool.Entry, env envelope.Envelope) (Inde
 // lines are the unit redaction knows, and a second pass over the
 // serialized record would see them as one string and undo the field
 // policy that kept signatures intact.
-func maskSegment(kind envelope.Kind, seg envelope.Segment) (IndexItemV2, redact.RedactedBytes, error) {
+func maskSegment(kind envelope.Kind, seg envelope.Segment) (IndexItem, redact.RedactedBytes, error) {
 	masked, err := redact.RedactSegment(seg)
 	if err != nil {
-		return IndexItemV2{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
+		return IndexItem{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
 	}
+	masked = masked.Restated()
 	data, err := masked.Bytes()
 	if err != nil {
-		return IndexItemV2{}, redact.RedactedBytes{}, err
+		return IndexItem{}, redact.RedactedBytes{}, err
 	}
 	return segmentItem(kind, masked), redact.AlreadyRedacted(data), nil
 }
@@ -297,16 +322,34 @@ func maskSegment(kind envelope.Kind, seg envelope.Segment) (IndexItemV2, redact.
 // maskMetaSnapshot masks one snapshot the same way, and indexes it by
 // the id the masked content names, since the id must name what the
 // record carries.
-func maskMetaSnapshot(kind envelope.Kind, snap envelope.MetaSnapshot) (IndexItemV2, redact.RedactedBytes, error) {
+func maskMetaSnapshot(kind envelope.Kind, snap envelope.MetaSnapshot) (IndexItem, redact.RedactedBytes, error) {
 	masked, err := redact.RedactMetaSnapshot(snap)
 	if err != nil {
-		return IndexItemV2{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
+		return IndexItem{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
 	}
+	masked = masked.Restated()
 	data, err := masked.Bytes()
 	if err != nil {
-		return IndexItemV2{}, redact.RedactedBytes{}, err
+		return IndexItem{}, redact.RedactedBytes{}, err
 	}
 	return metaSnapshotItem(kind, masked), redact.AlreadyRedacted(data), nil
+}
+
+// maskGitSnapshot masks one git snapshot and indexes it. Only the
+// observed paths are scanned: every other field the record carries is a
+// commit or blob identifier this client read from git, and a scan could
+// only damage those.
+func maskGitSnapshot(kind envelope.Kind, snap envelope.GitSnapshot) (IndexItem, redact.RedactedBytes, error) {
+	masked, err := redact.RedactGitSnapshot(snap)
+	if err != nil {
+		return IndexItem{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
+	}
+	masked = masked.Restated()
+	data, err := masked.Bytes()
+	if err != nil {
+		return IndexItem{}, redact.RedactedBytes{}, err
+	}
+	return sessionRecordItem(kind, masked.RecordID, masked.Capture), redact.AlreadyRedacted(data), nil
 }
 
 func compress(data []byte) ([]byte, error) {

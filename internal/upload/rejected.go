@@ -153,9 +153,9 @@ func PurgeRejectedSession(rejectedDir, sessionID string) (int, error) {
 
 // sessionOf reads which coding session a quarantined record belongs
 // to, from the record itself: a rawcall carries its session inside the
-// request it wrapped, a segment and a snapshot each state theirs. Only
-// the record's own declaration decides which parser reads it, as a
-// requeue does — the reason file describes the batch, never a record.
+// request it wrapped, and every other kind states its own. Only the
+// record's own declaration decides which parser reads it, as a requeue
+// does — the reason file describes the batch, never a record.
 func sessionOf(data []byte) (string, bool) {
 	kind, err := envelope.KindOf(data)
 	if err != nil {
@@ -176,6 +176,12 @@ func sessionOf(data []byte) (string, bool) {
 		return seg.SessionID, seg.SessionID != ""
 	case envelope.KindMetaSnapshot:
 		snap, err := envelope.ParseMetaSnapshot(data)
+		if err != nil {
+			return "", false
+		}
+		return snap.SessionID, snap.SessionID != ""
+	case envelope.KindGitSnapshot:
+		snap, err := envelope.ParseGitSnapshot(data)
 		if err != nil {
 			return "", false
 		}
@@ -441,6 +447,12 @@ func respool(sp *spool.Spool, data []byte) error {
 			return &errUnreadableRecord{err: err}
 		}
 		return sp.WriteMetaSnapshot(snap)
+	case envelope.KindGitSnapshot:
+		snap, err := envelope.ParseGitSnapshot(data)
+		if err != nil {
+			return &errUnreadableRecord{err: err}
+		}
+		return sp.WriteGitSnapshot(snap)
 	}
 	return &errUnreadableRecord{err: fmt.Errorf("record declares %s/%s, which is not a kind this client stores", kind.Source, kind.RecordKind)}
 }

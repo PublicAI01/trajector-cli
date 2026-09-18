@@ -44,7 +44,21 @@ func (s *Sandbox) SeedMetaSnapshot(sessionID, projectIDHash string, at time.Time
 	return snap.RecordID
 }
 
-// Records reports every segment and snapshot currently stored.
+// SeedGitSnapshot stores one observation of a project's repository, as
+// a session hook would, and returns the record id it was stored under.
+func (s *Sandbox) SeedGitSnapshot(sessionID, projectIDHash string, at time.Time) string {
+	s.t.Helper()
+	snap := envelope.NewGitSnapshot(sessionID, "SessionStart", envelope.TriggerSessionStart,
+		seedCapture(projectIDHash, at), "main", "d0cf90f327430f11f8a68493a58f402fa11d7c9e",
+		envelope.CommitOrNone(""), envelope.CommitOrNone(""), nil)
+	sp := s.openSpool()
+	if err := sp.WriteGitSnapshot(snap); err != nil {
+		s.t.Fatal(err)
+	}
+	return snap.RecordID
+}
+
+// Records reports every record of the second slot currently stored.
 func (s *Sandbox) Records() []Record {
 	s.t.Helper()
 	sp, err := spool.Open(s.layout.SpoolDir(), 0)
@@ -106,8 +120,8 @@ func (s *Sandbox) openSpool() *spool.Spool {
 	return sp
 }
 
-func seedCapture(projectIDHash string, at time.Time) envelope.TranscriptCapture {
-	return envelope.TranscriptCapture{
+func seedCapture(projectIDHash string, at time.Time) envelope.Capture {
+	return envelope.Capture{
 		ClientVersion: seedClientVersion,
 		Timestamp:     at.UTC().Format(time.RFC3339Nano),
 		ProjectIDHash: projectIDHash,

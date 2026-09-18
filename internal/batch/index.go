@@ -9,31 +9,31 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 )
 
-// schemaVersionV2 is the batch envelope that indexes records by
-// record_id and names each one's source. The record stream, the
-// compression, and the idempotency of batch_id are the same as in
-// schema_version 1; only the index items differ.
-const schemaVersionV2 = "2"
+// readableVersions are the batch envelope versions this package reads
+// back. A batch is written at envelope.SchemaVersion and never at any
+// other; the older value is readable so an envelope written before an
+// upgrade, or by the other side of the contract, still parses.
+var readableVersions = map[string]bool{"2": true, envelope.SchemaVersion: true}
 
-// IndexV2 is the schema_version 2 batch envelope. Every JSON tag is part
-// of the documented contract, and the field order is the serialized
-// order.
-type IndexV2 struct {
-	SchemaVersion string        `json:"schema_version"`
-	BatchID       string        `json:"batch_id"`
-	ClientVersion string        `json:"client_version"`
-	CreatedAt     string        `json:"created_at"`
-	Compression   string        `json:"compression"`
-	RecordsSize   int64         `json:"records_size"`
-	Records       []IndexItemV2 `json:"records"`
-	Run           Run           `json:"run"`
+// Index is the batch envelope: it indexes every record in the stream by
+// record_id and names each one's source. Every JSON tag is part of the
+// documented contract, and the field order is the serialized order.
+type Index struct {
+	SchemaVersion string      `json:"schema_version"`
+	BatchID       string      `json:"batch_id"`
+	ClientVersion string      `json:"client_version"`
+	CreatedAt     string      `json:"created_at"`
+	Compression   string      `json:"compression"`
+	RecordsSize   int64       `json:"records_size"`
+	Records       []IndexItem `json:"records"`
+	Run           Run         `json:"run"`
 }
 
-// IndexItemV2 indexes one record inside the decompressed stream. Source
+// IndexItem indexes one record inside the decompressed stream. Source
 // is what lets a receiver route the record before decompressing it;
 // UpstreamOrigin and Endpoint exist only for rawcalls. The metadata
 // fields are copies of what the record's own envelope says.
-type IndexItemV2 struct {
+type IndexItem struct {
 	RecordID       string `json:"record_id"`
 	Source         string `json:"source"`
 	ProjectIDHash  string `json:"project_id_hash,omitempty"`
@@ -45,23 +45,23 @@ type IndexItemV2 struct {
 	Size           int64  `json:"size"`
 }
 
-// newIndexV2 starts an empty schema_version 2 envelope for one batch.
-// Records and RecordsSize are filled by add as records are laid out.
-func newIndexV2(id string, createdAt time.Time, clientVersion string, run Run) IndexV2 {
-	return IndexV2{
-		SchemaVersion: schemaVersionV2,
+// newIndex starts an empty envelope for one batch. Records and
+// RecordsSize are filled by add as records are laid out.
+func newIndex(id string, createdAt time.Time, clientVersion string, run Run) Index {
+	return Index{
+		SchemaVersion: envelope.SchemaVersion,
 		BatchID:       id,
 		ClientVersion: clientVersion,
 		CreatedAt:     createdAt.UTC().Format(time.RFC3339Nano),
 		Compression:   "zstd",
-		Records:       []IndexItemV2{},
+		Records:       []IndexItem{},
 		Run:           run,
 	}
 }
 
 // add appends an item at the current end of the stream, sized to the
 // record's bytes, and grows the stream size to match.
-func (ix *IndexV2) add(item IndexItemV2, recordSize int64) {
+func (ix *Index) add(item IndexItem, recordSize int64) {
 	item.Offset = ix.RecordsSize
 	item.Size = recordSize
 	ix.Records = append(ix.Records, item)
@@ -69,7 +69,7 @@ func (ix *IndexV2) add(item IndexItemV2, recordSize int64) {
 }
 
 // Bytes serializes the envelope.
-func (ix IndexV2) Bytes() ([]byte, error) {
+func (ix Index) Bytes() ([]byte, error) {
 	var out bytes.Buffer
 	enc := json.NewEncoder(&out)
 	enc.SetEscapeHTML(false)
@@ -79,23 +79,24 @@ func (ix IndexV2) Bytes() ([]byte, error) {
 	return bytes.TrimSuffix(out.Bytes(), []byte{'\n'}), nil
 }
 
-// ParseIndexV2 reads a schema_version 2 envelope back, refusing any
-// other version.
-func ParseIndexV2(data []byte) (IndexV2, error) {
-	var ix IndexV2
+// ParseIndex reads an envelope back, refusing any version this package
+// cannot read and keeping the version the envelope declares: what it
+// reads back is what was written, never a restatement of it.
+func ParseIndex(data []byte) (Index, error) {
+	var ix Index
 	if err := json.Unmarshal(data, &ix); err != nil {
-		return IndexV2{}, fmt.Errorf("batch: reading envelope: %w", err)
+		return Index{}, fmt.Errorf("batch: reading envelope: %w", err)
 	}
-	if ix.SchemaVersion != schemaVersionV2 {
-		return IndexV2{}, fmt.Errorf("batch: unsupported schema version %q", ix.SchemaVersion)
+	if !readableVersions[ix.SchemaVersion] {
+		return Index{}, fmt.Errorf("batch: unsupported schema version %q", ix.SchemaVersion)
 	}
 	return ix, nil
 }
 
 // rawcallItem indexes a rawcall: its record id is its request id, and
 // the item carries where the exchange went.
-func rawcallItem(kind envelope.Kind, env envelope.Envelope) IndexItemV2 {
-	item := IndexItemV2{
+func rawcallItem(kind envelope.Kind, env envelope.Envelope) IndexItem {
+	item := IndexItem{
 		RecordID:       env.RequestID(),
 		Source:         kind.Source,
 		ProjectIDHash:  env.ProjectIDHash(),
@@ -110,20 +111,20 @@ func rawcallItem(kind envelope.Kind, env envelope.Envelope) IndexItemV2 {
 }
 
 // segmentItem indexes one segment record.
-func segmentItem(kind envelope.Kind, seg envelope.Segment) IndexItemV2 {
+func segmentItem(kind envelope.Kind, seg envelope.Segment) IndexItem {
 	return sessionRecordItem(kind, seg.RecordID, seg.Capture)
 }
 
 // metaSnapshotItem indexes one metadata snapshot record.
-func metaSnapshotItem(kind envelope.Kind, snap envelope.MetaSnapshot) IndexItemV2 {
+func metaSnapshotItem(kind envelope.Kind, snap envelope.MetaSnapshot) IndexItem {
 	return sessionRecordItem(kind, snap.RecordID, snap.Capture)
 }
 
-// sessionRecordItem indexes one record read from a session file. The
+// sessionRecordItem indexes one record observed on this machine. The
 // source is the record's own declaration, so a receiver routes every
 // kind of record by what that kind says it is.
-func sessionRecordItem(kind envelope.Kind, recordID string, capture envelope.TranscriptCapture) IndexItemV2 {
-	return IndexItemV2{
+func sessionRecordItem(kind envelope.Kind, recordID string, capture envelope.Capture) IndexItem {
+	return IndexItem{
 		RecordID:      recordID,
 		Source:        kind.Source,
 		ProjectIDHash: capture.ProjectIDHash,

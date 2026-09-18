@@ -11,8 +11,8 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
-func transcriptCapture(at time.Time) envelope.TranscriptCapture {
-	return envelope.TranscriptCapture{
+func transcriptCapture(at time.Time) envelope.Capture {
+	return envelope.Capture{
 		ClientVersion: "test",
 		Timestamp:     at.UTC().Format(time.RFC3339Nano),
 		ProjectIDHash: "hash-p1",
@@ -34,7 +34,7 @@ func TestTheEnvelopeSerializesEveryContractFieldInOrder(t *testing.T) {
 		t.Fatalf("index = %+v", ix.Records)
 	}
 	items := ix.Records
-	want := fmt.Sprintf(`{"schema_version":"2","batch_id":"batch-42","client_version":"1.2.3","created_at":"2026-08-03T10:00:00Z","compression":"zstd","records_size":%d,"records":[`, ix.RecordsSize) +
+	want := fmt.Sprintf(`{"schema_version":"3","batch_id":"batch-42","client_version":"1.2.3","created_at":"2026-08-03T10:00:00Z","compression":"zstd","records_size":%d,"records":[`, ix.RecordsSize) +
 		fmt.Sprintf(`{"record_id":"req-1","source":"proxy","project_id_hash":"hash-p1","upstream_origin":"official","endpoint":"/v1/messages","timestamp":"2026-08-03T10:00:00Z","offset":%d,"size":%d},`, items[0].Offset, items[0].Size) +
 		fmt.Sprintf(`{"record_id":%q,"source":"transcript","project_id_hash":"hash-p1","timestamp":"2026-08-03T10:00:00Z","offset":%d,"size":%d},`, seg.ID, items[1].Offset, items[1].Size) +
 		fmt.Sprintf(`{"record_id":%q,"source":"transcript","project_id_hash":"hash-p1","timestamp":"2026-08-03T10:01:00Z","offset":%d,"size":%d}],`, snap.ID, items[2].Offset, items[2].Size) +
@@ -87,27 +87,27 @@ func TestGarbledRawcallIsMarkedInTheIndex(t *testing.T) {
 	}
 }
 
-func TestParseIndexV2RefusesOtherVersions(t *testing.T) {
+func TestParseIndexRefusesOtherVersions(t *testing.T) {
 	v1 := []byte(`{"schema_version":"1","batch_id":"batch-1","client_version":"test","created_at":"2026-08-03T10:00:00Z","compression":"zstd","records_size":0,"records":[],"run":{}}`)
-	if _, err := batch.ParseIndexV2(v1); err == nil {
-		t.Error("a schema_version 1 envelope parsed as 2")
+	if _, err := batch.ParseIndex(v1); err == nil {
+		t.Error("a schema_version 1 envelope parsed")
 	}
-	if _, err := batch.ParseIndexV2([]byte("{")); err == nil {
+	if _, err := batch.ParseIndex([]byte("{")); err == nil {
 		t.Error("unreadable bytes parsed")
 	}
 }
 
-func TestBuildEmitsSchemaVersion2(t *testing.T) {
+func TestBuildEmitsTheCurrentSchemaVersion(t *testing.T) {
 	rc := simpleRawcall(t, "req-1", "session-a", buildTime)
 	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(rc), batch.Run{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ix, err := batch.ParseIndexV2(b.Envelope)
+	ix, err := batch.ParseIndex(b.Envelope)
 	if err != nil {
-		t.Fatalf("Build's envelope is not a schema_version 2 index: %v", err)
+		t.Fatalf("Build's envelope is not an index this package reads: %v", err)
 	}
-	if ix.SchemaVersion != "2" || ix.Records[0].RecordID != "req-1" || ix.Records[0].Source != "proxy" {
+	if ix.SchemaVersion != envelope.SchemaVersion || ix.Records[0].RecordID != "req-1" || ix.Records[0].Source != "proxy" {
 		t.Errorf("Build emitted %s", b.Envelope)
 	}
 	if strings.Contains(string(b.Envelope), "request_id") {

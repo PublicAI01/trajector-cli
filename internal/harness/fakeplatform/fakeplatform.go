@@ -265,12 +265,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp.Body)
 }
 
-// RecordIDsBySource reads the index part of a schema_version 2 upload
-// and groups its record ids by source, in stream order. It is for
+// RecordIDsBySource reads the index part of an upload and groups its
+// record ids by source, in stream order. Every batch version that names
+// a source is read, which is what lets one assertion cover the whole
+// parallel period. It is for
 // asserting what a receiver could route on without decompressing the
 // records; it sends nothing and changes no stub.
 func RecordIDsBySource(batchPart []byte) (map[string][]string, error) {
-	ix, err := batch.ParseIndexV2(batchPart)
+	ix, err := batch.ParseIndex(batchPart)
 	if err != nil {
 		return nil, fmt.Errorf("fakeplatform: %w", err)
 	}
@@ -281,17 +283,16 @@ func RecordIDsBySource(batchPart []byte) (map[string][]string, error) {
 	return groups, nil
 }
 
-// UploadedIndex reads the index part of one recorded upload as a
-// schema_version 2 envelope, for asserting which batch id carried which
-// record ids. It sends nothing and changes no stub.
-func UploadedIndex(r Request) (batch.IndexV2, error) {
+// UploadedIndex reads the index part of one recorded upload, for
+// asserting which batch id carried which record ids. It sends nothing and changes no stub.
+func UploadedIndex(r Request) (batch.Index, error) {
 	parts, err := Parts(r)
 	if err != nil {
-		return batch.IndexV2{}, err
+		return batch.Index{}, err
 	}
-	ix, err := batch.ParseIndexV2(parts["batch"])
+	ix, err := batch.ParseIndex(parts["batch"])
 	if err != nil {
-		return batch.IndexV2{}, fmt.Errorf("fakeplatform: %w", err)
+		return batch.Index{}, fmt.Errorf("fakeplatform: %w", err)
 	}
 	return ix, nil
 }

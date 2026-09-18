@@ -9,16 +9,15 @@ import (
 	"strconv"
 )
 
-// Transcript records are the schema_version 2 envelopes for what Claude
-// Code itself wrote to disk: a segment of a session file, or a snapshot
-// of a whole agent metadata file. They are not rawcalls and share no
-// layout with them; what they share is the record stream, where the
-// source and record_kind fields tell the two apart.
+// These records carry what Claude Code itself wrote to disk: a segment
+// of a session file, or a snapshot of a whole agent metadata file. They
+// are not rawcalls and share no layout with them; what they share is
+// the record stream, where the source and record_kind fields tell the
+// two apart.
 const (
-	transcriptSchemaVersion = "2"
-	sourceTranscript        = "transcript"
-	kindSegment             = "segment"
-	kindMetaSnapshot        = "meta_snapshot"
+	sourceTranscript = "transcript"
+	kindSegment      = "segment"
+	kindMetaSnapshot = "meta_snapshot"
 
 	segmentRecordIDPrefix      = "seg_"
 	metaSnapshotRecordIDPrefix = "meta_"
@@ -33,10 +32,11 @@ const (
 	InjectionTailOnly = "tail_only"
 )
 
-// TranscriptCapture describes how a transcript record was observed. It
-// carries only what the transcript lines themselves do not: the
-// consenting project and this client's own state at capture time.
-type TranscriptCapture struct {
+// Capture describes how a record was observed, and is the same shape
+// for every record read from this machine rather than from the wire. It
+// carries only what such a record does not carry itself: the consenting
+// project and this client's own state at capture time.
+type Capture struct {
 	ClientVersion string `json:"client_version"`
 	Timestamp     string `json:"timestamp"`
 	ProjectIDHash string `json:"project_id_hash"`
@@ -63,9 +63,9 @@ type Segment struct {
 	// SegmentIndex counts up from 0 per (session, file) and is never
 	// reused: a rewritten file is read again from the start and its new
 	// segments take new indexes.
-	SegmentIndex int               `json:"segment_index"`
-	Capture      TranscriptCapture `json:"capture"`
-	Lines        string            `json:"lines"`
+	SegmentIndex int     `json:"segment_index"`
+	Capture      Capture `json:"capture"`
+	Lines        string  `json:"lines"`
 }
 
 // MetaSnapshot is one whole agent metadata file at one moment. The file
@@ -73,22 +73,22 @@ type Segment struct {
 // index: a later snapshot of the same file replaces an earlier one, and
 // its record id changes with its content.
 type MetaSnapshot struct {
-	SchemaVersion string            `json:"schema_version"`
-	Source        string            `json:"source"`
-	RecordKind    string            `json:"record_kind"`
-	RecordID      string            `json:"record_id"`
-	SessionID     string            `json:"session_id"`
-	File          string            `json:"file"`
-	Capture       TranscriptCapture `json:"capture"`
+	SchemaVersion string  `json:"schema_version"`
+	Source        string  `json:"source"`
+	RecordKind    string  `json:"record_kind"`
+	RecordID      string  `json:"record_id"`
+	SessionID     string  `json:"session_id"`
+	File          string  `json:"file"`
+	Capture       Capture `json:"capture"`
 	// Content is the redacted file kept verbatim: its bytes are stored
 	// as they were read, never re-serialized.
 	Content json.RawMessage `json:"content"`
 }
 
 // NewSegment builds a segment record and names it from its identity.
-func NewSegment(sessionID, file string, index int, capture TranscriptCapture, lines string) Segment {
+func NewSegment(sessionID, file string, index int, capture Capture, lines string) Segment {
 	return Segment{
-		SchemaVersion: transcriptSchemaVersion,
+		SchemaVersion: SchemaVersion,
 		Source:        sourceTranscript,
 		RecordKind:    kindSegment,
 		RecordID:      SegmentRecordID(sessionID, file, index),
@@ -103,13 +103,13 @@ func NewSegment(sessionID, file string, index int, capture TranscriptCapture, li
 // NewMetaSnapshot builds a snapshot record and names it from its
 // identity and content. It fails only when content is not a JSON
 // document, because such content has no canonical form to name.
-func NewMetaSnapshot(sessionID, file string, capture TranscriptCapture, content []byte) (MetaSnapshot, error) {
+func NewMetaSnapshot(sessionID, file string, capture Capture, content []byte) (MetaSnapshot, error) {
 	id, err := MetaSnapshotRecordID(sessionID, file, content)
 	if err != nil {
 		return MetaSnapshot{}, err
 	}
 	return MetaSnapshot{
-		SchemaVersion: transcriptSchemaVersion,
+		SchemaVersion: SchemaVersion,
 		Source:        sourceTranscript,
 		RecordKind:    kindMetaSnapshot,
 		RecordID:      id,
@@ -173,6 +173,21 @@ func canonicalJSON(data []byte) ([]byte, error) {
 	return bytes.TrimSuffix(out.Bytes(), []byte{'\n'}), nil
 }
 
+// Restated returns the segment with its schema version set to the
+// current one, for the same reason a rawcall is restated: a batch and
+// the records in it declare one version.
+func (s Segment) Restated() Segment {
+	s.SchemaVersion = SchemaVersion
+	return s
+}
+
+// Restated returns the snapshot with its schema version set to the
+// current one.
+func (m MetaSnapshot) Restated() MetaSnapshot {
+	m.SchemaVersion = SchemaVersion
+	return m
+}
+
 // Bytes serializes the segment.
 func (s Segment) Bytes() ([]byte, error) { return marshalRecord(s) }
 
@@ -218,8 +233,8 @@ func ParseMetaSnapshot(data []byte) (MetaSnapshot, error) {
 }
 
 func checkTranscriptHeader(version, source, kind, wantKind string) error {
-	if version != transcriptSchemaVersion {
-		return fmt.Errorf("envelope: unsupported schema version %q", version)
+	if err := checkVersion(version); err != nil {
+		return err
 	}
 	if source != sourceTranscript || kind != wantKind {
 		return fmt.Errorf("envelope: record is %s/%s, not %s/%s", source, kind, sourceTranscript, wantKind)
@@ -240,6 +255,7 @@ var (
 	KindRawcall      = Kind{Source: sourceProxy}
 	KindSegment      = Kind{Source: sourceTranscript, RecordKind: kindSegment}
 	KindMetaSnapshot = Kind{Source: sourceTranscript, RecordKind: kindMetaSnapshot}
+	KindGitSnapshot  = Kind{Source: sourceHook, RecordKind: kindGitSnapshot}
 )
 
 // KindOf reads only a record's self-declaration, so a caller can pick

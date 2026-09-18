@@ -41,7 +41,7 @@ func degraded() envelope.Assembler {
 	}
 }
 
-func TestRecordMatchesGoldenSchemaV1(t *testing.T) {
+func TestRecordMatchesGolden(t *testing.T) {
 	env, err := envelope.Record(envelope.Observation{
 		Provider:         "anthropic",
 		Endpoint:         "/v1/messages",
@@ -67,7 +67,7 @@ func TestRecordMatchesGoldenSchemaV1(t *testing.T) {
 	}
 
 	got := env.Bytes()
-	golden := filepath.Join("testdata", "envelope_v1.json")
+	golden := filepath.Join("testdata", "rawcall.json")
 	if *update {
 		if err := os.WriteFile(golden, append(got, '\n'), 0o644); err != nil {
 			t.Fatalf("writing golden: %v", err)

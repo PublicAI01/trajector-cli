@@ -329,6 +329,7 @@ func recordsWaitingLine(s SpoolState) string {
 	count(waiting.Rawcalls, "rawcall(s)")
 	count(waiting.Segments, "segment(s)")
 	count(waiting.Snapshots, "snapshot(s)")
+	count(waiting.GitSnapshots, "git snapshot(s)")
 	line := "Records waiting to upload: " + strings.Join(kinds, ", ")
 	if !s.OldestRecord.IsZero() {
 		line += fmt.Sprintf("; the oldest is from %s", s.OldestRecord.UTC().Format(time.RFC3339))

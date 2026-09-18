@@ -25,8 +25,9 @@ import (
 // translation step here that could agree with neither side.
 // What it does not prove: that this client *builds* an envelope matching
 // the fixture's. That comparison belongs to the envelope's own tests;
-// here the fixtures are read for their answers. The schema_version 2
-// fixtures are additionally read for their shape, in conformance_v2_test.go.
+// here the fixtures are read for their answers. The fixtures that carry
+// a record stream are additionally read for their shape, in
+// conformance_stream_test.go.
 //
 // One substitution, and it is not a shortcut: for the acknowledged case
 // the response's batch id is replaced with the id this client actually
@@ -62,8 +63,8 @@ func TestSharedContractFixtures(t *testing.T) {
 
 			res, _ := f.uploader.Flush(true)
 			assertContractRow(t, f, c, res)
-			if c.Envelope["schema_version"] == "2" {
-				assertV2Fixture(t, c)
+			if indexed(c) {
+				assertStreamFixture(t, c)
 			}
 		})
 	}
@@ -76,9 +77,9 @@ func TestSharedContractFixtures(t *testing.T) {
 			t.Errorf("no fixture requires the %q disposition", want)
 		}
 	}
-	// Both batch versions are in the contract; a set missing either
-	// would let the shape checks above pass by never running.
-	for _, want := range []string{"1", "2"} {
+	// Every batch version the contract keeps in parallel; a set missing
+	// one would let the shape checks above pass by never running.
+	for _, want := range []string{"1", "2", "3"} {
 		if !versions[want] {
 			t.Errorf("no fixture carries schema_version %q", want)
 		}

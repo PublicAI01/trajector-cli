@@ -14,9 +14,10 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
-// recordsDirName is the subdirectory holding the second slot: segment
-// and snapshot records. It sits beside the rawcall day directories, so
-// rawcall readers must skip it by name and record readers start there.
+// recordsDirName is the subdirectory holding the second slot: every
+// record that is not a rawcall. It sits beside the rawcall day
+// directories, so rawcall readers must skip it by name and record
+// readers start there.
 const recordsDirName = "records"
 
 // recordIndexLine is one entry in a record day's sidecar index. Every
@@ -33,7 +34,7 @@ type recordIndexLine struct {
 	Timestamp     string `json:"timestamp"`
 }
 
-// Record is one stored segment or snapshot as a reader sees it. Kind,
+// Record is one stored second-slot record as a reader sees it. Kind,
 // SessionID, ProjectIDHash and Timestamp come from the day index; a
 // record the index does not account for is attributed from its own
 // bytes, and one that cannot be parsed reads back with only its id, the
@@ -80,7 +81,23 @@ func (s *Spool) WriteMetaSnapshot(snap envelope.MetaSnapshot) error {
 	return s.writeRecord(snap.RecordID, snap.RecordKind, snap.SessionID, snap.Capture, data)
 }
 
-func (s *Spool) writeRecord(id, kind, sessionID string, capture envelope.TranscriptCapture, data []byte) error {
+// WriteGitSnapshot stores one git snapshot. Storage is idempotent per
+// record id like a segment's: the id is derived from what the
+// observation saw, so the same observation resent after a crash must
+// not cost a rewrite.
+func (s *Spool) WriteGitSnapshot(snap envelope.GitSnapshot) error {
+	kind := envelope.Kind{Source: snap.Source, RecordKind: snap.RecordKind}
+	if kind != envelope.KindGitSnapshot {
+		return fmt.Errorf("spool: record %s declares %s/%s, not a git snapshot", snap.RecordID, snap.Source, snap.RecordKind)
+	}
+	data, err := snap.Bytes()
+	if err != nil {
+		return err
+	}
+	return s.writeRecord(snap.RecordID, snap.RecordKind, snap.SessionID, snap.Capture, data)
+}
+
+func (s *Spool) writeRecord(id, kind, sessionID string, capture envelope.Capture, data []byte) error {
 	// The spool builds a file path from the id and must not trust it.
 	// Record ids and request ids share one shape rule so neither can
 	// name a file outside its day directory.
@@ -256,7 +273,7 @@ func describeRecord(id string, data []byte) Record {
 	if err != nil {
 		return r
 	}
-	var capture envelope.TranscriptCapture
+	var capture envelope.Capture
 	switch kind {
 	case envelope.KindSegment:
 		seg, err := envelope.ParseSegment(data)
@@ -266,6 +283,12 @@ func describeRecord(id string, data []byte) Record {
 		r.SessionID, capture = seg.SessionID, seg.Capture
 	case envelope.KindMetaSnapshot:
 		snap, err := envelope.ParseMetaSnapshot(data)
+		if err != nil {
+			return r
+		}
+		r.SessionID, capture = snap.SessionID, snap.Capture
+	case envelope.KindGitSnapshot:
+		snap, err := envelope.ParseGitSnapshot(data)
 		if err != nil {
 			return r
 		}
@@ -281,7 +304,7 @@ func describeRecord(id string, data []byte) Record {
 	return r
 }
 
-// EachRecord visits every stored segment and snapshot, oldest day first
+// EachRecord visits every stored second-slot record, oldest day first
 // and by record id within a day, stopping at the first error the
 // visitor returns. As with rawcalls, the files are the source of truth:
 // an index entry with no file is ignored and a file the index never
@@ -332,7 +355,7 @@ func (s *Spool) EachRecordWhere(match func(recordID string) bool, visit func(Rec
 	return nil
 }
 
-// OldestRecord reports when the oldest stored segment or snapshot was
+// OldestRecord reports when the oldest stored second-slot record was
 // captured, consulting only the earliest day that holds one: its index
 // leads and file modification times settle records the index missed.
 func (s *Spool) OldestRecord() (time.Time, bool) {
@@ -373,7 +396,7 @@ func (s *Spool) OldestRecord() (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// DeleteRecordsWhere removes every stored segment and snapshot the
+// DeleteRecordsWhere removes every stored second-slot record the
 // matcher accepts and rewrites each affected day index. The matcher
 // sees the index's description of a record, never its bytes — Raw is
 // nil — so an uploader deleting what it has shipped pays no reread. A
@@ -437,7 +460,7 @@ func (s *Spool) deleteRecordsLocked(match func(Record) bool) (int, error) {
 }
 
 // DeleteSession removes everything stored for one coding session on
-// both sides: segments and snapshots by the session id they declare,
+// both sides: second-slot records by the session id they declare,
 // rawcalls by the session id their request body carries. It reports
 // the two counts separately because they answer different questions —
 // how much of the session's file was waiting, and how many of its API

@@ -43,8 +43,8 @@ func benchmarkCorpus(b *testing.B) string {
 	return corpus.String()
 }
 
-func benchmarkCapture() envelope.TranscriptCapture {
-	return envelope.TranscriptCapture{
+func benchmarkCapture() envelope.Capture {
+	return envelope.Capture{
 		ClientVersion: "0.1.0",
 		Timestamp:     "2026-09-01T10:00:00Z",
 		ProjectIDHash: strings.Repeat("a", 64),

@@ -434,9 +434,10 @@ func (s *Spool) rewriteIndexFileLocked(path string, drop func(line []byte) bool)
 // is waiting has to know how many kinds there are, and Add is the one
 // place that decides which counter a kind belongs to.
 type Count struct {
-	Rawcalls  int `json:"rawcalls"`
-	Segments  int `json:"segments"`
-	Snapshots int `json:"snapshots"`
+	Rawcalls     int `json:"rawcalls"`
+	Segments     int `json:"segments"`
+	Snapshots    int `json:"snapshots"`
+	GitSnapshots int `json:"git_snapshots"`
 }
 
 // Add counts one record of the kind it declares. A kind this client
@@ -450,6 +451,8 @@ func (c *Count) Add(kind envelope.Kind) {
 		c.Segments++
 	case envelope.KindMetaSnapshot:
 		c.Snapshots++
+	case envelope.KindGitSnapshot:
+		c.GitSnapshots++
 	}
 }
 
@@ -458,15 +461,16 @@ func (c *Count) Plus(other Count) {
 	c.Rawcalls += other.Rawcalls
 	c.Segments += other.Segments
 	c.Snapshots += other.Snapshots
+	c.GitSnapshots += other.GitSnapshots
 }
 
 // Total counts the records of every kind.
-func (c Count) Total() int { return c.Rawcalls + c.Segments + c.Snapshots }
+func (c Count) Total() int { return c.Rawcalls + c.Segments + c.Snapshots + c.GitSnapshots }
 
 // DaySummary reports one day of the spool: counts and sizes only, never
 // file names — ids belong to the records, not to diagnostics. The
 // count's Rawcalls and Bytes describe the rawcall slot's day directory;
-// its Segments and Snapshots, with RecordBytes, describe the same day
+// every other kind it counts, with RecordBytes, describes the same day
 // in the record slot. A day appears when either slot holds it.
 type DaySummary struct {
 	Day string `json:"day"`

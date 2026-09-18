@@ -113,9 +113,9 @@ func decompress(t *testing.T, data []byte) []byte {
 	return out
 }
 
-func parseIndex(t *testing.T, b batch.Batch) batch.IndexV2 {
+func parseIndex(t *testing.T, b batch.Batch) batch.Index {
 	t.Helper()
-	ix, err := batch.ParseIndexV2(b.Envelope)
+	ix, err := batch.ParseIndex(b.Envelope)
 	if err != nil {
 		t.Fatalf("batch envelope: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestBuildEnvelopeCarriesIdentityIndexAndRunMetadata(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	ix := parseIndex(t, b)
-	if ix.SchemaVersion != "2" || ix.BatchID != "batch-42" || ix.ClientVersion != "1.2.3" {
+	if ix.SchemaVersion != envelope.SchemaVersion || ix.BatchID != "batch-42" || ix.ClientVersion != "1.2.3" {
 		t.Fatalf("envelope identity = %q/%q/%q", ix.SchemaVersion, ix.BatchID, ix.ClientVersion)
 	}
 	if ix.Compression != "zstd" {
@@ -250,7 +250,7 @@ func TestBuildEnvelopeCarriesIdentityIndexAndRunMetadata(t *testing.T) {
 	}
 }
 
-func TestBuild_WritesSchemaVersionTwo(t *testing.T) {
+func TestBuild_WritesTheCurrentSchemaVersion(t *testing.T) {
 	segment := storedSegment(t, "sess-1", "", 0, buildTime, `{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
 	snapshot := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime, `{"agentId":"x"}`)
 	in := spool.Entries{simpleRawcall(t, "req-1", "session-a", buildTime), segment, snapshot}
@@ -258,7 +258,7 @@ func TestBuild_WritesSchemaVersionTwo(t *testing.T) {
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
 	}
-	if !strings.HasPrefix(string(b.Envelope), `{"schema_version":"2",`) {
+	if !strings.HasPrefix(string(b.Envelope), `{"schema_version":"`+envelope.SchemaVersion+`",`) {
 		t.Fatalf("envelope = %s", b.Envelope)
 	}
 	ix := parseIndex(t, b)
@@ -527,5 +527,98 @@ func TestBuildSessionAdjacencySurvivesALostIndex(t *testing.T) {
 	}
 	if withoutIndex != withIndex {
 		t.Errorf("order without the index = %s, want %s", withoutIndex, withIndex)
+	}
+}
+
+func storedGitSnapshot(t *testing.T, sessionID, hookEvent, head string, at time.Time, changed []envelope.Change) spool.Entry {
+	t.Helper()
+	snap := envelope.NewGitSnapshot(sessionID, hookEvent, envelope.TriggerGitOperation, transcriptCapture(at),
+		"main", head, envelope.CommitOrNone(""), envelope.CommitOrNone(""), changed)
+	data, err := snap.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spool.Entry{Kind: envelope.KindGitSnapshot, ID: snap.RecordID, Timestamp: at, Raw: data}
+}
+
+func TestBuildLaysTheStreamOutProxyThenSessionThenHook(t *testing.T) {
+	const head = "d0cf90f327430f11f8a68493a58f402fa11d7c9e"
+	hook := storedGitSnapshot(t, "s-1", "SessionEnd", head, buildTime, nil)
+	seg := storedSegment(t, "s-1", "", 0, buildTime, "{\"type\":\"user\"}\n")
+	rawcall := simpleRawcall(t, "req-1", "user_x_session_s-1", buildTime)
+
+	// The order given is the reverse of the order required, so the
+	// result can only come from the layout and not from the input.
+	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(hook, seg, rawcall), batch.Run{})
+	if err != nil || len(refused) != 0 {
+		t.Fatalf("Build = %v, refused %+v", err, refused)
+	}
+	var sources []string
+	for _, item := range parseIndex(t, b).Records {
+		sources = append(sources, item.Source)
+	}
+	if want := []string{"proxy", "transcript", "hook"}; strings.Join(sources, ",") != strings.Join(want, ",") {
+		t.Errorf("sources = %v, want %v", sources, want)
+	}
+	if got := indexedIDs(t, b); got[2] != hook.ID {
+		t.Errorf("index = %v, want the observation last", got)
+	}
+}
+
+func TestBuildOrdersObservationsOfOneSessionByWhenTheyWereMade(t *testing.T) {
+	const headA = "1111111111111111111111111111111111111111"
+	const headB = "2222222222222222222222222222222222222222"
+	later := storedGitSnapshot(t, "s-1", "PostToolUse", headB, buildTime.Add(time.Minute), nil)
+	earlier := storedGitSnapshot(t, "s-1", "SessionStart", headA, buildTime, nil)
+	other := storedGitSnapshot(t, "s-0", "SessionStart", headA, buildTime.Add(2*time.Minute), nil)
+
+	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(later, other, earlier), batch.Run{})
+	if err != nil || len(refused) != 0 {
+		t.Fatalf("Build = %v, refused %+v", err, refused)
+	}
+	want := []string{other.ID, earlier.ID, later.ID}
+	if got := indexedIDs(t, b); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("index = %v, want the sessions grouped and each in time order (%v)", got, want)
+	}
+}
+
+func TestBuildIndexesAnObservationWithoutTheFieldsOnlyARawcallHas(t *testing.T) {
+	const head = "d0cf90f327430f11f8a68493a58f402fa11d7c9e"
+	snap := storedGitSnapshot(t, "s-1", "SessionStart", head, buildTime, nil)
+
+	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(snap), batch.Run{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := parseIndex(t, b).Records[0]
+	if item.Source != "hook" || item.ProjectIDHash != "hash-p1" || item.Timestamp == "" {
+		t.Errorf("item = %+v, want the observation's own source, project and time", item)
+	}
+	if item.UpstreamOrigin != "" || item.Endpoint != "" {
+		t.Errorf("item = %+v, want no field that belongs to a rawcall", item)
+	}
+}
+
+func TestBuildMasksAnObservedPathAndLeavesGitsIdentifiersAlone(t *testing.T) {
+	const head = "d0cf90f327430f11f8a68493a58f402fa11d7c9e"
+	changed := []envelope.Change{{
+		Path:    "config/" + fakeSecret + ".env",
+		Status:  "A",
+		OldBlob: strings.Repeat("0", 40),
+		NewBlob: "2394262ce26c44c0fe958c60825b1ef29d94f397",
+	}}
+	b, refused, err := batch.Build("batch-1", buildTime, "test",
+		rawcalls(storedGitSnapshot(t, "s-1", "PostToolUse", head, buildTime, changed)), batch.Run{})
+	if err != nil || len(refused) != 0 {
+		t.Fatalf("Build = %v, refused %+v", err, refused)
+	}
+	stream := string(decompress(t, b.Records.Bytes()))
+	if strings.Contains(stream, fakeSecret) {
+		t.Errorf("an observed path carried a secret into the stream: %s", stream)
+	}
+	for _, want := range []string{head, strings.Repeat("0", 40), "2394262ce26c44c0fe958c60825b1ef29d94f397"} {
+		if !strings.Contains(stream, want) {
+			t.Errorf("the stream no longer carries %q as git printed it: %s", want, stream)
+		}
 	}
 }

@@ -133,8 +133,8 @@ func TestRecordIDsBySourceGroupsTheIndexBySource(t *testing.T) {
 	}
 }
 
-func fixtureCapture(at time.Time) envelope.TranscriptCapture {
-	return envelope.TranscriptCapture{
+func fixtureCapture(at time.Time) envelope.Capture {
+	return envelope.Capture{
 		ClientVersion: "test",
 		Timestamp:     at.UTC().Format(time.RFC3339Nano),
 		ProjectIDHash: "hash-p1",

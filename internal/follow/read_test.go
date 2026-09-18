@@ -20,7 +20,7 @@ const (
 	sessionID = "sid-main"
 )
 
-var capture = envelope.TranscriptCapture{
+var capture = envelope.Capture{
 	ClientVersion: "0.1.0",
 	Timestamp:     "2026-01-01T00:00:00Z",
 	ProjectIDHash: project,

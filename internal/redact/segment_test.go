@@ -29,8 +29,8 @@ const (
 	pathToken        = `"[REDACTED_PATH]"`
 )
 
-func fixtureCapture() envelope.TranscriptCapture {
-	return envelope.TranscriptCapture{
+func fixtureCapture() envelope.Capture {
+	return envelope.Capture{
 		ClientVersion:  "0.1.0",
 		Timestamp:      "2026-09-01T10:00:05.000Z",
 		ProjectIDHash:  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -591,5 +591,60 @@ func TestJSONFieldPolicy_GitBranchIsDeterministic(t *testing.T) {
 				t.Errorf("\n got %s\nwant %s", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRedactGitSnapshotMasksThePathsAndNothingElse(t *testing.T) {
+	const secret = "sk-test-fake-xK9mZ2vL8nQ5rT1wY4bC7dF0gH3jE6pA"
+	const head = "d0cf90f327430f11f8a68493a58f402fa11d7c9e"
+	const parent = "4d0071c7e54967da4d11e6a397df9844797bdf81"
+	absent := strings.Repeat("0", 40)
+
+	snap := envelope.NewGitSnapshot("s-1", "PostToolUse", envelope.TriggerGitOperation,
+		envelope.Capture{ClientVersion: "test", Timestamp: "2026-09-18T10:00:00.000000000Z", ProjectIDHash: "hash-a", Injection: envelope.InjectionProxy},
+		"main", head, envelope.CommitOrNone(parent), envelope.CommitOrNone(parent),
+		[]envelope.Change{
+			{Path: "config/" + secret + ".env", Status: "A", OldBlob: absent, NewBlob: head},
+			{Path: "src/app.ts", Status: "M", OldBlob: parent, NewBlob: head},
+		})
+
+	masked, err := redact.RedactGitSnapshot(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(masked.Changed) != 2 {
+		t.Fatalf("masking changed the number of paths: %+v", masked.Changed)
+	}
+	if strings.Contains(masked.Changed[0].Path, secret) {
+		t.Errorf("path = %q, want the secret in it masked", masked.Changed[0].Path)
+	}
+	if masked.Changed[1].Path != "src/app.ts" {
+		t.Errorf("path = %q, want an ordinary path left as observed", masked.Changed[1].Path)
+	}
+	// Everything git printed beside the path is left standing, the
+	// forty zeros of an absent side included.
+	if masked.Changed[0].OldBlob != absent || masked.Changed[0].NewBlob != head || masked.Changed[0].Status != "A" {
+		t.Errorf("change = %+v, want what git printed beside the path untouched", masked.Changed[0])
+	}
+	if masked.Head != head || masked.Branch != "main" || *masked.Base != parent || *masked.Parent != parent {
+		t.Errorf("observation = %+v, want the commits and the branch untouched", masked)
+	}
+	// The input is left as it was: the caller keeps what it observed.
+	if strings.Contains(snap.Changed[0].Path, "REDACTED") {
+		t.Error("masking rewrote the observation it was handed")
+	}
+}
+
+func TestRedactGitSnapshotWithNothingChanged(t *testing.T) {
+	snap := envelope.NewGitSnapshot("s-1", "SessionStart", envelope.TriggerSessionStart,
+		envelope.Capture{ClientVersion: "test", Timestamp: "2026-09-18T10:00:00.000000000Z", ProjectIDHash: "hash-a", Injection: envelope.InjectionProxy},
+		"main", "d0cf90f327430f11f8a68493a58f402fa11d7c9e", nil, nil, nil)
+
+	masked, err := redact.RedactGitSnapshot(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(masked.Changed) != 0 || masked.Truncated || masked.ChangedCount != 0 {
+		t.Errorf("masked = %+v, want it unchanged", masked)
 	}
 }

@@ -41,7 +41,7 @@ type Reader struct {
 	// Capture is what every record of this run states about the
 	// exchange it came from. Each record takes the position of the
 	// entry that produced it; the rest is the caller's to fill.
-	Capture envelope.TranscriptCapture
+	Capture envelope.Capture
 	// Store lands the records of one read and reports what became of
 	// them. It is the one judge of whether a cursor may move.
 	Store func(ReadResult) Storing
