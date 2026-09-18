@@ -121,12 +121,6 @@ func TestProjectIDHashIsStableAcrossPathSpellings(t *testing.T) {
 	}
 }
 
-func TestAgreementTextNamesItsVersion(t *testing.T) {
-	if !strings.Contains(consent.AgreementText, consent.AgreementVersion) {
-		t.Error("agreement text does not carry its version")
-	}
-}
-
 func TestRestoreProjectLeavesOtherDecisionsAlone(t *testing.T) {
 	s := open(t)
 	if err := s.AcceptAgreement(consent.AgreementVersion, "2026-08-01T00:00:00Z"); err != nil {

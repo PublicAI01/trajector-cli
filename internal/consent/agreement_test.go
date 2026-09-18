@@ -6,9 +6,15 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 )
+
+// agreementVersionFloor is the version the terms before these carried.
+// A version that does not pass it leaves every earlier acceptance
+// current, so nobody is asked to reconfirm and the pause never fires.
+const agreementVersionFloor = "2026-08-31"
 
 // The version, the agreement text, and PRIVACY.md state the same terms.
 // The three hashes below pin them to each other: changing any one of the
@@ -16,7 +22,7 @@ import (
 const (
 	pinnedAgreementVersionSHA256 = "cbdbacf80be93c3d1b7bef40ac4d8f54d0beeb1141f5565216f25df26baf9006"
 	pinnedAgreementTextSHA256    = "13ed9eb0e2ce9d4b12503f36baaae2f95943cf9fa13939c63bffd214c76cab58"
-	pinnedPrivacyMarkdownSHA256  = "4d07f49ed4af36d1f64f9d347aa574fb0606b840daa21cf33aae23d9cd71eb3c"
+	pinnedPrivacyMarkdownSHA256  = "5e63d25325e507b0f58038c2b52740b8a0ad8d558d040421a9f285e5bb6aa576"
 )
 
 const privacyMarkdownPath = "../../PRIVACY.md"
@@ -24,6 +30,35 @@ const privacyMarkdownPath = "../../PRIVACY.md"
 func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// The version is one constant, and the release day it names is stated
+// in the agreement text and in PRIVACY.md. This test is what a release
+// changing the day has to satisfy: the other two places say the new day
+// too, and the day itself still passes the floor.
+func TestAgreementVersion_IsAReleaseDaySaidInAllThreePlaces(t *testing.T) {
+	version, err := time.Parse(time.DateOnly, consent.AgreementVersion)
+	if err != nil {
+		t.Fatalf("AgreementVersion %q is not an ISO date (YYYY-MM-DD): %v", consent.AgreementVersion, err)
+	}
+	floor, err := time.Parse(time.DateOnly, agreementVersionFloor)
+	if err != nil {
+		t.Fatalf("agreementVersionFloor %q is not an ISO date: %v", agreementVersionFloor, err)
+	}
+	if !version.After(floor) {
+		t.Errorf("AgreementVersion %q does not pass %q: an acceptance of the earlier terms would stay current",
+			consent.AgreementVersion, agreementVersionFloor)
+	}
+	if !strings.Contains(consent.AgreementText, consent.AgreementVersion) {
+		t.Errorf("the agreement text does not say the version %q it is shown under", consent.AgreementVersion)
+	}
+	privacy, err := os.ReadFile(privacyMarkdownPath)
+	if err != nil {
+		t.Fatalf("read PRIVACY.md: %v", err)
+	}
+	if !strings.Contains(string(privacy), consent.AgreementVersion) {
+		t.Errorf("PRIVACY.md does not say the version %q it describes", consent.AgreementVersion)
+	}
 }
 
 func TestAgreement_VersionTextAndPrivacyChangeTogether(t *testing.T) {
