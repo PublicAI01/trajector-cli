@@ -4,7 +4,7 @@ This page describes everything trajector does with data on your machine and
 what leaves it. The client is fully open source; every statement here can be
 checked against the code in this repository.
 
-It describes version 2026-09-18 of the data agreement — the version
+It describes version 2026-09-19 of the data agreement — the version
 `trajector enable` shows you in full and records when you accept it. The
 agreement and this page state the same terms and change together; the
 version is the day the build carrying those terms was released.

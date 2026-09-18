@@ -20,9 +20,9 @@ const agreementVersionFloor = "2026-08-31"
 // The three hashes below pin them to each other: changing any one of the
 // three without the other two fails the test.
 const (
-	pinnedAgreementVersionSHA256 = "cbdbacf80be93c3d1b7bef40ac4d8f54d0beeb1141f5565216f25df26baf9006"
-	pinnedAgreementTextSHA256    = "c784f08346c8b7242d6151c15480c8e9dd64782dd7df804d1974c4075ca1be84"
-	pinnedPrivacyMarkdownSHA256  = "72d09687dcb83954d6fe76871cd12a4ad90ee093964023411c233bccb65d2799"
+	pinnedAgreementVersionSHA256 = "ea8b9d012dc88e1236cc8a88cda2866b896b9fda9162b5e2846e98c3297e097c"
+	pinnedAgreementTextSHA256    = "48ded9d3ea2aee6a14d861f43e14965710d5ad7e0fbb3488623394c04e280606"
+	pinnedPrivacyMarkdownSHA256  = "8109733b8477f66d1c41bbf830f2044677b3dd89f6382ff215f1eb1c8c0a3df8"
 )
 
 const privacyMarkdownPath = "../../PRIVACY.md"

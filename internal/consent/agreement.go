@@ -3,7 +3,7 @@ package consent
 // AgreementVersion identifies the agreement text below. Bumping it
 // makes every earlier acceptance stale: capture pauses until the user
 // reconfirms, so recorded consent always matches the current terms.
-const AgreementVersion = "2026-09-18"
+const AgreementVersion = "2026-09-19"
 
 // AgreementText is shown in full before the explicit yes/no prompt.
 // It states the actual client behavior and must be kept truthful to

@@ -6,11 +6,13 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-19
+
 ### Added
 
 - A second source of records: the session files Claude Code writes on
-  your machine. `trajector enable` now installs three session hooks
-  (session start, prompt submit, session end). Each hook registers the
+  your machine. `trajector enable` now installs session hooks (session
+  start, prompt submit, session end). Each hook registers the
   session's own files and starts a one-shot reader that appends what
   the files gained since the last run to the spool and exits — nothing
   runs permanently and nothing is watched. Files are read only for
@@ -45,7 +47,8 @@ All notable changes to trajector are documented here. The format follows
   session.
 - `trajector status` shows the second source per project: how many files
   are registered and when they were last read, what is waiting to
-  upload by kind (`rawcall`, `segment`, `snapshot`), what the reader
+  upload by kind (`rawcall`, `segment`, `session snapshot`, `git snapshot`),
+  what the reader
   noticed about the files' shape (counts and field names only, never a
   path or a session id), and how many assistant lines carried no
   reasoning — with a pointer to `showThinkingSummaries` when that
@@ -62,8 +65,6 @@ All notable changes to trajector are documented here. The format follows
   states the rule and no figure: the current rates are published at
   <https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/rewards>,
   and the agreement carries no address of its own.
-- Uploads now use batch schema version 2, which carries recorded calls,
-  session file segments and metadata snapshots in one batch.
 - A third source of records: the state of an enabled project's git
   repository, observed when a session opens, when it closes, and after
   a shell command that makes a commit. Each record states what `git`
@@ -87,9 +88,17 @@ All notable changes to trajector are documented here. The format follows
   placeholder, and every other path a record holds goes up as observed.
   It previously claimed that every field identifying where the project
   lives on disk was masked, which is more than the client does.
-- Uploads now use batch schema version 3, which adds the git
-  observations to the batch. A batch and every record body in it declare
-  one version.
+- `status` states, for every enabled project, that sessions started
+  under another spelling of the project's path — or under a directory
+  name Claude Code was told to use instead — are stored under names
+  this device does not compute and are not collected. Where a folder
+  name trajector would derive could also belong to a different path on
+  your machine, it leaves that whole folder alone and says which one
+  and why.
+- Uploads now use batch schema version 3: one batch carries recorded
+  calls, session file segments, metadata snapshots and git observations
+  together, and the batch and every record body in it declare one
+  version.
 - The word `record` now means any entry the spool stores and a batch
   carries; `rawcall`, `segment` and `snapshot` are its kinds. Counts in
   `upload`, `status`, `doctor`, `discard` and `forget` say which they
@@ -142,14 +151,49 @@ All notable changes to trajector are documented here. The format follows
   diagnostic bundle.
 - A batch left pending by an interrupted upload resumes only the
   records it named, even when a record in the other slot carries the
-  same id.
-- A refused credential is no longer treated as a rate limit. When the
-  service will not accept this device's pairing token, `status` says so
-  and tells you to run `trajector login`; uploads then resume at the
-  next flush instead of waiting out a fifteen-minute backoff that
-  nothing local could shorten. A refusal of access to the upload
-  endpoint is stated as its own reason and no longer names a time by
-  which it clears.
+  same id, and finds them without rereading every record on this
+  machine. An offline run used to reread the whole spool once a minute
+  for as long as the batch stood, and one unreadable record anywhere
+  could block the resend for good.
+- A git observation is counted among the records waiting to upload.
+  `status` left the kind out of the line, so a spool holding only
+  observations was reported as having nothing waiting; `trajector
+  forget` left observations behind in a quarantined batch, and
+  `doctor requeue` reported such a batch stuck and kept it.
+- Stopping the machine no longer kills a recording proxy outright. A
+  reboot or a logout asks it to stop and gives it time to finish: live
+  Claude Code sessions are drained, captures already complete are
+  written, and the uploader runs its last flush.
+- A base URL that carries its own credentials (`https://user:pass@relay`)
+  works through trajector. The credentials were dropped on the way out,
+  so such a relay answered 401 to everything the moment trajector stood
+  in the path.
+- A large batch over a slow link is no longer cut off after 30 seconds
+  whatever budget the upload had escalated to — which retried the same
+  attempt forever and eventually filled the spool and stopped
+  recording.
+- `trajector upgrade` flushes the new binary to disk before it replaces
+  the old one, so a crash during the upgrade can no longer leave an
+  empty file where trajector was.
+- A consent record that cannot be read pauses recording and says so,
+  instead of being taken for an agreement that is current.
+- The spool's own accounting of its size survives records deleted while
+  it is being measured — by `trajector disable` in another process, or
+  by the uploader — instead of undercounting and letting the quota stop
+  binding.
+- Claude Code's settings files are read the same way trajector writes
+  them, so a read racing one of trajector's own writes no longer has
+  `doctor` report an injection problem that does not exist and rewrite
+  a settings file that was already correct.
+- The service refusing this device's credential (401) or refusing it
+  access (403) stops automatic uploads and says which it was;
+  everything captured is kept. When the service will not accept this
+  device's pairing token, `status` says so and tells you to run
+  `trajector login`, and uploads resume at the next flush after you
+  do, with no fixed wait. A 401 used to re-offer the whole batch every
+  minute for the life of the process, and a 403 quarantined batches
+  one a minute until the spool had walked into a store that is never
+  retried automatically.
 - In a git record the branch name is masked in the same pass as the
   changed paths, so a secret in a branch name is masked exactly as one
   in a path is. `PRIVACY.md` says which of a git record's fields are
@@ -157,6 +201,19 @@ All notable changes to trajector are documented here. The format follows
 - `ARCHITECTURE.md` stated that records carry `schema_version 1`. They
   carry 3.
 
+### Security
+
+- A credential value that contains a `,`, `;` or `&` is masked to its
+  end. Only the head was masked before, which left the rest of the
+  password in a record that reads as redacted.
+- A credential named by its key is masked in the JSON spelling too
+  (`"db_password": "…"`), not only in `KEY=value`. A JSON document that
+  arrives inside a string — a tool result, an MCP answer, a read of a
+  `.json` config — was masked as structure and shipped in the clear as
+  text.
+- A credential that also appears as a bare array element — an argument
+  vector, say — is masked there as well, under the verdict its own key
+  established elsewhere in the same record.
 
 ## [0.2.1] - 2026-08-31
 
@@ -372,7 +429,8 @@ Hardened ahead of the tag:
 - State files are replaced and read atomically on every platform,
   Windows rename collisions included.
 
-[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/PublicAI01/trajector-cli/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/PublicAI01/trajector-cli/compare/v0.1.0...v0.1.1
