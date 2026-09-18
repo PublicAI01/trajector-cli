@@ -8,10 +8,11 @@ checked against the code in this repository.
 
 Nothing, until you opt a project in. `trajector enable`, run inside a
 project, shows the data agreement and requires an explicit yes. Only after
-that is anything collected from the project, and it is collected from two
+that is anything collected from the project, and it is collected from three
 sources: the project's Claude Code API traffic, which flows through the
-local proxy, and the session files Claude Code writes on your machine for
-that project.
+local proxy; the session files Claude Code writes on your machine for that
+project; and the state of that project's git repository at a few moments
+during a session.
 
 **From the proxy.** For an enabled project, the proxy records **successful
 `POST /v1/messages` exchanges, verbatim**: the full request (system prompt,
@@ -29,6 +30,15 @@ what the proxy cannot see: your tool results, including the contents of the
 files that were read and the changes that were written; your working
 directory and git branch; and the full conversations of subagents.
 
+**From git.** When a session starts, when it ends, and after a shell command
+that makes a commit, trajector runs `git` in the enabled project and records
+what it prints: the commit that is checked out, its first parent, the branch
+name, and the list of paths that changed between two commits together with
+the blob identifiers git prints beside them. **Only paths and identifiers are
+recorded — never the content of any file**, and no `git` command trajector
+runs writes anything to your repository. Each such record also says how far
+inside the project the session was running, never the absolute directory.
+
 **Sessions from before you enabled the project.** When you enable a
 project, trajector also collects, once, the session files that project had
 already written before that moment. `trajector enable` tells you how many
@@ -37,7 +47,8 @@ backwards again unless you ask it to.
 
 Records are observed facts and are never rewritten: model identifiers,
 thinking signatures, and usage figures stay exactly as the API produced
-them, and session lines stay exactly as Claude Code wrote them.
+them, session lines stay exactly as Claude Code wrote them, and what `git`
+prints is copied as printed.
 
 ## What is never collected
 
@@ -72,13 +83,14 @@ them, and session lines stay exactly as Claude Code wrote them.
 
 ## What happens on your machine
 
-Recorded calls and recorded session lines wait in a local spool, in files
+Recorded calls, recorded session lines, and recorded git observations wait
+in a local spool, in files
 and directories readable only by your user account (0600/0700), under a
 bounded disk quota (2 GiB by default). A full spool stops recording; it
 never evicts captured data. trajector only reads the session files Claude
 Code writes; it never writes to them.
 
-Before anything is uploaded, records from both sources pass the **same local
+Before anything is uploaded, records from every source pass the **same local
 redaction pass**. It masks secrets — API keys, tokens, passwords, and other
 credential-shaped strings — and personally identifying strings — email
 addresses and phone numbers — while preserving JSON structure, message
@@ -90,6 +102,8 @@ other path is uploaded as observed, including the working directory stated
 in the environment description Claude Code writes at the start of a session,
 and any file your messages and tool results name: trajector does not rewrite
 an observation, because rewriting it would destroy the record.
+In a git record the changed paths pass the same masking, and the commit and
+blob identifiers are left exactly as git printed them.
 **Unredacted data never leaves your machine.** Known limitation: masking
 applies to values only — a secret placed in a JSON key position is not
 masked, because keys are structure and the pass never rewrites them.
@@ -175,8 +189,8 @@ follows the same rule: one refusal ends it.
 
 ## What leaves your machine
 
-Redacted records of both kinds — recorded API calls and recorded session
-lines — are packed into compressed batches (by default when 10 MiB or 24
+Redacted records of all three kinds — recorded API calls, recorded session
+lines, and recorded git observations — are packed into compressed batches (by default when 10 MiB or 24
 hours accumulate) and uploaded over HTTPS to the trajector service,
 authenticated by your device pairing token. The upload destination can be
 changed only through `config.json` in your user config directory (field
@@ -196,8 +210,9 @@ third-party origin; reward terms are the same regardless of origin.
 
 ## Revoking consent and deleting data
 
-Every deletion below applies to both kinds of records — recorded API calls
-and recorded session lines — in the same way. It reaches trajector's own
+Every deletion below applies to all three kinds of records — recorded API
+calls, recorded session lines, and recorded git observations — in the same
+way. It reaches trajector's own
 copies only: the session files Claude Code writes on your machine are yours,
 and trajector never modifies or deletes them — not on `disable`, not on
 `uninstall`.

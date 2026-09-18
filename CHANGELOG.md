@@ -54,12 +54,24 @@ All notable changes to trajector are documented here. The format follows
   trajector's noticing them; `doctor bundle` carries the same findings.
 - Uploads now use batch schema version 2, which carries recorded calls,
   session file segments and metadata snapshots in one batch.
+- A third source of records: the state of an enabled project's git
+  repository, observed when a session opens, when it closes, and after
+  a shell command that makes a commit. Each record states what `git`
+  printed — the commit checked out, its first parent, the branch, and
+  the paths that changed between two commits with the identifiers git
+  prints beside them. **Only paths and identifiers, never the content
+  of any file**, and nothing is written to your repository. `enable`
+  installs one more session hook for it, and `doctor` adds that hook to
+  an injection made before it existed.
 
 ### Changed
 
-- The data agreement covers the second source and its version is bumped.
-  Recording pauses for existing users until the new terms are
+- The data agreement covers the second and third sources and its version
+  is bumped. Recording pauses for existing users until the new terms are
   reconfirmed with `trajector enable`; forwarding is untouched.
+- Uploads now use batch schema version 3, which adds the git
+  observations to the batch. A batch and every record body in it declare
+  one version.
 - The word `record` now means any entry the spool stores and a batch
   carries; `rawcall`, `segment` and `snapshot` are its kinds. Counts in
   `upload`, `status`, `doctor`, `discard` and `forget` say which they

@@ -14,9 +14,9 @@ import (
 // The three hashes below pin them to each other: changing any one of the
 // three without the other two fails the test.
 const (
-	pinnedAgreementVersionSHA256 = "febdcffe80f65f132f958ab62dd154c630d3c2e768c2695482afc6819eae0907"
-	pinnedAgreementTextSHA256    = "c8d12e67d4d1b0766e0829131099af33313c7a231f0b7c2a848d3fafebeed4c9"
-	pinnedPrivacyMarkdownSHA256  = "5fa93513748657528fdf12c3b96b69acd49428af3f0fb53008ff1fbea8342c6a"
+	pinnedAgreementVersionSHA256 = "cbdbacf80be93c3d1b7bef40ac4d8f54d0beeb1141f5565216f25df26baf9006"
+	pinnedAgreementTextSHA256    = "13ed9eb0e2ce9d4b12503f36baaae2f95943cf9fa13939c63bffd214c76cab58"
+	pinnedPrivacyMarkdownSHA256  = "4d07f49ed4af36d1f64f9d347aa574fb0606b840daa21cf33aae23d9cd71eb3c"
 )
 
 const privacyMarkdownPath = "../../PRIVACY.md"
@@ -64,12 +64,13 @@ func TestAgreement_VersionTextAndPrivacyChangeTogether(t *testing.T) {
 		strings.Join(changed, ", "), got[0], got[1], got[2])
 }
 
-func TestAgreementText_KeepsTheThreeWordings(t *testing.T) {
+func TestAgreementText_KeepsTheWordingsThatMustNotWeaken(t *testing.T) {
 	text := consent.AgreementText
 	for _, want := range []string{
 		"the paths to their session files are\n   never constructed, so those files are never opened",
 		"Tool results, however, are kept as\n   observed: their text may contain file paths from your machine",
-		"Fields that identify where your project lives\n   on disk are masked as well",
+		"the few fields whose value is, by construction, the\n   directory the session ran in are replaced with a placeholder",
+		"Every other path a record holds is uploaded the\n   same way, as observed",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("agreement text lost the wording %q", want)
@@ -77,6 +78,9 @@ func TestAgreementText_KeepsTheThreeWordings(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(text), "hash") {
 		t.Error("agreement text describes project paths as hashed; they are masked")
+	}
+	if strings.Contains(text, "identify where your project lives") {
+		t.Error("agreement text claims every field that locates the project is masked; only the few that are the session's own directory are")
 	}
 	if strings.Contains(text, "we do not read") {
 		t.Error("agreement text weakens 'never constructed' into a promise not to read")

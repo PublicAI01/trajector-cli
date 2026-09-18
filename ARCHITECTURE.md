@@ -55,9 +55,10 @@ reported, never fought — enable refuses to inject, and session hooks warn.
 ## Nothing runs permanently
 
 There is no daemon. Session hooks injected by enable run
-`trajector hook ensure-proxy` at session start and prompt submit and
-`trajector hook session-end` at session end; any CLI touchpoint does the
-same as the first. If a healthy proxy is listening, that is a
+`trajector hook ensure-proxy` at session start and prompt submit,
+`trajector hook session-end` at session end, and
+`trajector hook git-snapshot` after a shell tool use; any CLI touchpoint
+does the same as the first. If a healthy proxy is listening, that is a
 no-op; only a proxy announcing a strictly older release is asked to
 drain in-flight requests and hand the port over — an equal or newer
 proxy is reused, and so is one whose version cannot be ordered against
@@ -66,8 +67,16 @@ drain each other. Nothing listening starts a supervisor that restarts a
 crashed proxy with backoff. Idle for 30 minutes, the proxy exits on its
 own.
 
-Each hook also registers the session's own files and starts a one-shot
-process to read them: it appends what the files gained since last time
+The session hooks also observe the project's git repository at the
+moments a commit can have appeared — a session opening or closing, and a
+shell command that made one. Each observation is one record of what
+`git` printed: the commit checked out, its first parent, the branch, and
+the paths that changed between two commits. No file content is read, and
+nothing is written to the repository. Which commit was last observed is
+local state like a reading cursor and is never uploaded.
+
+Each session hook also registers the session's own files and starts a
+one-shot process to read them: it appends what the files gained since last time
 to the spool and exits. It is not a daemon and watches nothing — each
 run reads from where the last left off, so a run killed before it
 advances a cursor simply reads the same bytes again, and the spool
@@ -164,13 +173,13 @@ WSL boundary; doctor points this out.
 - Observed truth is never rewritten.
 - Credential headers are never written to disk.
 - Unredacted data never leaves the machine.
-- An injected base URL implies an active token and all three session
-  hooks; enable either reaches that state or undoes what it wrote. Files
+- An injected base URL implies an active token and every session
+  hook; enable either reaches that state or undoes what it wrote. Files
   shared with other writers — the routing table, the consent file, the
   project's .gitignore — are undone entry by entry through their own
   writers, so a rollback never hands a concurrent writer's work back to
   the past.
-  An injection can also carry no base URL: the three hooks still stand,
+  An injection can also carry no base URL: the hooks still stand,
   marked `--no-proxy`, and the project's traffic is not routed through
   the proxy.
 - Acknowledgement is the only deletion trigger; a batch id is never reused
