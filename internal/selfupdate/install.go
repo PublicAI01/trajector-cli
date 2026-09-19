@@ -2,19 +2,12 @@ package selfupdate
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
-
-// stageBinary writes the downloaded binary to its staged sibling and
-// flushes it to stable storage before returning. It is a variable only
-// so a test can observe that the staging goes through the flushing
-// writer; production always uses fsatomic.WriteFile.
-var stageBinary func(path string, data []byte, perm fs.FileMode) error = fsatomic.WriteFile
 
 // Sibling-name markers. Every transient file this package creates next
 // to the installed binary spells the binary's own name first and one of
@@ -59,18 +52,13 @@ func install(execPath string, binary []byte) error {
 	err = f.Close()
 	if err == nil {
 		// Through fsatomic, not a plain write: it flushes the content to
-		// stable storage before the rename that installs it. Writing
-		// straight to the staged file flushed nothing, and
-		// replaceExecutable's rename only orders a directory entry — so a
-		// crash inside the writeback window left execPath naming blocks
-		// that were never written, while that same rename had already
-		// unlinked the previous binary. The file read back empty with
-		// mode 0755 on it and there was no trajector left to retry the
-		// upgrade with, which is the one thing this package promises
-		// cannot happen. The mode is passed rather than left to the
-		// creation mask, so the install is runnable whatever umask the
-		// upgrade ran under. 2026-09-16.
-		err = stageBinary(staged, binary, executablePerm)
+		// stable storage before the rename that installs it, and the mode
+		// travels with the content rather than being left to the creation
+		// mask, so the install is runnable whatever umask the upgrade ran
+		// under. A staged file nobody flushed can read back empty after a
+		// crash, and by then the rename has already unlinked the binary
+		// that would have retried the upgrade. 2026-09-16.
+		err = fsatomic.WriteFile(staged, binary, executablePerm)
 	}
 	if err != nil {
 		os.Remove(staged)

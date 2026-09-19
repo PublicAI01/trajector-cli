@@ -579,8 +579,6 @@ func readSettings(path string) (map[string]any, error) {
 	// exist and rewriting a settings file that was already correct. The
 	// injected hooks run trajector on every prompt, so two processes
 	// touching these files at once is the normal case, not a corner.
-	// project.go moved .gitignore across for this reason on 2026-08-27;
-	// the settings files were missed. 2026-09-13.
 	data, err := fsatomic.ReadFile(path)
 	if os.IsNotExist(err) {
 		return map[string]any{}, nil

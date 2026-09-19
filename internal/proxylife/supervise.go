@@ -57,16 +57,14 @@ func superviseChild(ctx context.Context, cfg superviseConfig) error {
 		cmd := exec.CommandContext(ctx, cfg.Command[0], cfg.Command[1:]...)
 		cmd.Stdout = cfg.Stdout
 		cmd.Stderr = cfg.Stderr
-		// CommandContext's default cancellation is Process.Kill — SIGKILL,
-		// which the child cannot catch. The child is where every graceful
-		// exit guarantee lives: the uploader's final flush, the drain of
+		// Ask the child to stop, and keep the kill only as the backstop
+		// for one that will not go. Every graceful exit guarantee lives
+		// in the child: the uploader's final flush, the drain of
 		// in-flight requests, and the drain of finished-but-unwritten
-		// captures still sitting in the record queue. Killing it outright
-		// loses all three, so an ordinary reboot or logout — which TERMs
-		// this watchdog — cut live Claude Code sessions off and dropped
-		// whole captures that were already complete. Ask first, and keep
-		// the kill only as the backstop for a child that will not go.
-		// 2026-09-13.
+		// captures still sitting in the record queue. CommandContext
+		// cancels with Process.Kill by default, which the child cannot
+		// catch, so an ordinary reboot or logout — which TERMs this
+		// watchdog — lost all three.
 		cmd.Cancel = func() error {
 			if err := cmd.Process.Signal(terminateSignal); err != nil {
 				// Windows has no SIGTERM to send; the kill is all there is.

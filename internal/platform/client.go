@@ -19,19 +19,13 @@ func UserAgent(version string) string { return "trajector/" + version }
 func newClient(version string) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSHandshakeTimeout = 10 * time.Second
-	// The widest budget any caller may ask for, not requestTimeout, so
-	// this is never the binding constraint — http.Client.Timeout is, and
-	// it bounds the whole exchange including the body.
-	//
-	// UploadBatch bounds one attempt by copying this client and setting
-	// Timeout to a budget that doubles per consecutive timeout, up to
-	// maxUploadBudget. The copy is shallow and shares this transport, so
-	// a 30s header timeout here cut every attempt off at 30 seconds
-	// however far the budget had escalated: the abort read back as a
-	// timeout, the budget doubled, and the retry repeated the attempt
-	// that had just failed — forever, with the batch pinned at the head
-	// of the queue until the spool filled and recording stopped. That is
-	// the failure UploadBudget exists to prevent. 2026-09-16.
+	// This transport is never the binding constraint: http.Client.Timeout
+	// is, and it bounds the whole exchange including the body. Callers
+	// that need a wider bound copy this client and raise that timeout —
+	// the copy is shallow and shares this transport, so anything narrower
+	// than the widest budget a caller may ask for would cut every
+	// attempt off at one fixed point, whatever bound the caller set.
+	// 2026-09-16.
 	transport.ResponseHeaderTimeout = maxUploadBudget
 	return &http.Client{
 		Timeout:   requestTimeout,

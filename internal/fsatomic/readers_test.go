@@ -11,15 +11,6 @@ import (
 // all aimed at paths WriteFile never replaces, so the Windows rename
 // collision that fsatomic.ReadFile absorbs cannot occur there.
 var plainReadFiles = map[string]bool{
-	// The Claude settings files no longer belong here either: this
-	// codebase replaces them by rename through editFile's fsatomic.Update,
-	// so the premise this entry rested on — that only programs outside
-	// this codebase write them, and plainly — was never true of
-	// trajector's own writes. The injected hooks run trajector on every
-	// prompt, so a read racing one of our renames is the normal case.
-	// The project .gitignore left this list on 2026-08-15 for the same
-	// reason. 2026-09-13.
-	//
 	// The user config file has no writer in this codebase.
 	"internal/cli/cli.go": true,
 	// Lock files are created exclusively and removed, never replaced.
