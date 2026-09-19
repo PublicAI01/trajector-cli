@@ -22,7 +22,7 @@ const agreementVersionFloor = "2026-08-31"
 const (
 	pinnedAgreementVersionSHA256 = "cbdbacf80be93c3d1b7bef40ac4d8f54d0beeb1141f5565216f25df26baf9006"
 	pinnedAgreementTextSHA256    = "c784f08346c8b7242d6151c15480c8e9dd64782dd7df804d1974c4075ca1be84"
-	pinnedPrivacyMarkdownSHA256  = "8a2bceba98bd33600086d8cade7a0e16b19643c36bf80b3e3ce937f655c4019a"
+	pinnedPrivacyMarkdownSHA256  = "72d09687dcb83954d6fe76871cd12a4ad90ee093964023411c233bccb65d2799"
 )
 
 const privacyMarkdownPath = "../../PRIVACY.md"

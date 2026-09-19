@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,8 +39,8 @@ import (
 const defaultTimeout = 5 * time.Second
 
 // commitID is the shape of every commit this package will pass back to
-// git. A value that does not match it never reaches a command line, so
-// a stored or printed value can never be read as an option.
+// git. A commit that does not match it never reaches a command line, so
+// a stored or printed commit can never be read as an option.
 var commitID = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // ValidCommitID reports whether id is a full commit identifier. The
@@ -60,7 +61,9 @@ type Position struct {
 // Observer reads one directory's repository.
 type Observer struct {
 	// Dir is the directory the commands run in. Git resolves it to
-	// whichever repository or linked worktree contains it.
+	// whichever repository or linked worktree contains it. Nothing
+	// here checks it: the caller passes a directory it has already
+	// established, and git reads it as a path and never as an option.
 	Dir string
 	// Timeout bounds each command. Zero selects the default.
 	Timeout time.Duration
@@ -138,11 +141,24 @@ func parseRawLine(line string) (envelope.Change, bool) {
 	return envelope.Change{Path: path, Status: fields[4], OldBlob: fields[2], NewBlob: fields[3]}, true
 }
 
+// readOnlySubcommands are the git subcommands this package may run.
+// Each one only reads, so no argv assembled anywhere in this package
+// can change the repository it observes.
+var readOnlySubcommands = []string{"rev-parse", "rev-list", "diff-tree"}
+
+// errNotReadOnly refuses an argv before git is started, which is what
+// keeps "this package writes nothing" true of a caller added later
+// rather than of today's three call sites only.
+var errNotReadOnly = errors.New("gitsnapshot: not one of the read-only subcommands this package runs")
+
 // run executes one git command in Dir under the observer's deadline and
 // returns its standard output. Nothing of the command's standard error
 // is kept: a failure here is answered by not observing, never by
 // telling the session about it.
 func (o Observer) run(ctx context.Context, args ...string) (string, error) {
+	if len(args) == 0 || !slices.Contains(readOnlySubcommands, args[0]) {
+		return "", fmt.Errorf("%w: %q", errNotReadOnly, strings.Join(args, " "))
+	}
 	timeout := o.Timeout
 	if timeout <= 0 {
 		timeout = defaultTimeout

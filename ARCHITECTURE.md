@@ -95,7 +95,7 @@ stream text with a `garbled` mark; an interrupted response is kept as far as
 it got. Records are never repaired or rewritten: model, signatures, and
 usage are observed truth.
 
-Each record is wrapped in a versioned envelope (schema_version 1) carrying
+Each record is wrapped in a versioned envelope (schema_version 3) carrying
 the request id, timestamps, project hash, upstream origin
 (official/third-party), and format hints, then written atomically into a
 day-partitioned spool with owner-only permissions, a sidecar index, and a

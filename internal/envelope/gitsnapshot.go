@@ -19,14 +19,19 @@ const (
 	gitSnapshotRecordIDPrefix = "gs_"
 
 	// MaxChanges bounds how many changed paths one record carries. A
-	// record past the bound keeps the first MaxChanges of them and says
-	// so, so one enormous commit cannot fill the spool by itself.
+	// record past the bound keeps the first MaxChanges of them and
+	// states the count it was cut from, so one enormous commit is
+	// observed as one bounded record. How much the store as a whole
+	// may hold is the spool's quota and not this bound.
 	MaxChanges = 500
 )
 
-// Triggers are the reasons this client observes a repository. The value
-// travels as observed by the receiver: it is a closed set here and an
-// open one there, so a reason a later client adds needs no agreement.
+// Triggers are the reasons this client observes a repository. A trigger
+// states which of its own actions made this client read git, not a
+// reading of what it then found, so it adds no judgement of the
+// repository to the record. The value travels as observed by the
+// receiver: it is a closed set here and an open one there, so a reason
+// a later client adds needs no agreement.
 const (
 	TriggerSessionStart = "session_start"
 	TriggerSessionEnd   = "session_end"

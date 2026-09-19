@@ -594,7 +594,7 @@ func TestJSONFieldPolicy_GitBranchIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestRedactGitSnapshotMasksThePathsAndNothingElse(t *testing.T) {
+func TestRedactGitSnapshotMasksThePathsAndLeavesWhatGitPrinted(t *testing.T) {
 	const secret = "sk-test-fake-xK9mZ2vL8nQ5rT1wY4bC7dF0gH3jE6pA"
 	const head = "d0cf90f327430f11f8a68493a58f402fa11d7c9e"
 	const parent = "4d0071c7e54967da4d11e6a397df9844797bdf81"
@@ -631,6 +631,29 @@ func TestRedactGitSnapshotMasksThePathsAndNothingElse(t *testing.T) {
 	}
 	// The input is left as it was: the caller keeps what it observed.
 	if strings.Contains(snap.Changed[0].Path, "REDACTED") {
+		t.Error("masking rewrote the observation it was handed")
+	}
+}
+
+func TestRedactGitSnapshotMasksASecretInTheBranchName(t *testing.T) {
+	const secret = "sk-test-fake-xK9mZ2vL8nQ5rT1wY4bC7dF0gH3jE6pA"
+	const head = "d0cf90f327430f11f8a68493a58f402fa11d7c9e"
+
+	snap := envelope.NewGitSnapshot("s-1", "SessionStart", envelope.TriggerSessionStart,
+		envelope.Capture{ClientVersion: "test", Timestamp: "2026-09-18T10:00:00.000000000Z", ProjectIDHash: "hash-a", Injection: envelope.InjectionProxy},
+		"feat/"+secret+"-rotate", head, nil, nil, nil)
+
+	masked, err := redact.RedactGitSnapshot(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(masked.Branch, secret) {
+		t.Errorf("branch = %q, want the secret in it masked", masked.Branch)
+	}
+	if masked.Head != head {
+		t.Errorf("head = %q, want it left as git printed it", masked.Head)
+	}
+	if strings.Contains(snap.Branch, "REDACTED") {
 		t.Error("masking rewrote the observation it was handed")
 	}
 }

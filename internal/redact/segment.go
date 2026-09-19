@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
@@ -384,24 +385,25 @@ func walkStringValues(s string, visit func(path []string, start, end int, value 
 	}
 }
 
-// RedactGitSnapshot masks one git snapshot for upload. Only the
-// observed paths go through the pass: every other field the record
-// carries — the branch name this client read from git, the commit and
-// blob identifiers, the counts — is either this client's own value or a
+// RedactGitSnapshot masks one git snapshot for upload. The branch name
+// and the observed paths are text the user wrote, so both go through
+// the pass, and through the same one, so a secret is masked the same
+// way wherever the record carries it. Every other field — the commit
+// and blob identifiers, the counts — is this client's own value or a
 // forty-character identifier, and running an entropy-sensitive pass
 // over those could only damage them.
 //
 // The returned snapshot is redacted as a whole; the caller wraps its
 // serialized bytes with AlreadyRedacted.
 func RedactGitSnapshot(snap envelope.GitSnapshot) (envelope.GitSnapshot, error) {
-	if len(snap.Changed) == 0 {
-		return snap, nil
+	// The branch leads, so one pass covers every user-written string
+	// the record holds and the reply can be read back by position.
+	written := make([]string, 0, len(snap.Changed)+1)
+	written = append(written, snap.Branch)
+	for _, c := range snap.Changed {
+		written = append(written, c.Path)
 	}
-	paths := make([]string, len(snap.Changed))
-	for i, c := range snap.Changed {
-		paths[i] = c.Path
-	}
-	encoded, err := json.Marshal(paths)
+	encoded, err := json.Marshal(written)
 	if err != nil {
 		return envelope.GitSnapshot{}, err
 	}
@@ -413,13 +415,13 @@ func RedactGitSnapshot(snap envelope.GitSnapshot) (envelope.GitSnapshot, error) 
 	if err := json.Unmarshal(redacted.Bytes(), &masked); err != nil {
 		return envelope.GitSnapshot{}, err
 	}
-	if len(masked) != len(snap.Changed) {
-		return envelope.GitSnapshot{}, errors.New("redact: masking changed a git snapshot's path count")
+	if len(masked) != len(written) {
+		return envelope.GitSnapshot{}, errors.New("redact: masking changed how many strings a git snapshot carries")
 	}
-	changed := make([]envelope.Change, len(snap.Changed))
-	copy(changed, snap.Changed)
+	snap.Branch = masked[0]
+	changed := slices.Clone(snap.Changed)
 	for i := range changed {
-		changed[i].Path = masked[i]
+		changed[i].Path = masked[i+1]
 	}
 	snap.Changed = changed
 	return snap, nil

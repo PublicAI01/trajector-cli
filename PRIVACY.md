@@ -107,8 +107,8 @@ other path is uploaded as observed, including the working directory stated
 in the environment description Claude Code writes at the start of a session,
 and any file your messages and tool results name: trajector does not rewrite
 an observation, because rewriting it would destroy the record.
-In a git record the changed paths pass the same masking, and the commit and
-blob identifiers are left exactly as git printed them.
+In a git record the branch name and the changed paths pass the same masking,
+and the commit and blob identifiers are left exactly as git printed them.
 **Unredacted data never leaves your machine.** Known limitation: masking
 applies to values only — a secret placed in a JSON key position is not
 masked, because keys are structure and the pass never rewrites them.
