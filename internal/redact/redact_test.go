@@ -1995,3 +1995,227 @@ func TestJSONLBytes_CredentialInArrayIsRedactedToo(t *testing.T) {
 		}
 	}
 }
+
+// awsAccessKeyID and slackToken assemble their fixtures from fragments so no
+// complete credential-shaped literal appears verbatim in source, mirroring
+// the Supabase helpers above.
+func awsAccessKeyID(prefix, body string) string { return prefix + body }
+
+func slackToken(kind, body string) string { return "xo" + "x" + kind + "-" + body }
+
+// TestAWSAccessKeyIDInFreeText covers AWS access key ids captured without a
+// secret access key nearby. betterleaks' rule is composite and needs one
+// within five lines, so an id on its own reaches no other layer: the
+// 16-character base32 body is low-entropy, so the entropy layer misses it
+// as well.
+func TestAWSAccessKeyIDInFreeText(t *testing.T) {
+	t.Parallel()
+
+	longTerm := awsAccessKeyID("AKIA", "YRWQG5EJLPZLBYNP")
+	temporary := awsAccessKeyID("ASIA", "YRWQG5EJLPZLBYNP")
+	bearer := awsAccessKeyID("ABIA", "YRWQG5EJLPZLBYNP")
+	contextual := awsAccessKeyID("ACCA", "YRWQG5EJLPZLBYNP")
+
+	assertFieldRedactionCases(t, []stringRedactionCase{
+		{
+			name:  "bare long-term key id in prose",
+			input: "the key is " + longTerm + " and it still works",
+			want:  "the key is REDACTED and it still works",
+		},
+		{
+			name:  "credentials-file assignment with spaces around the equals sign",
+			input: "aws_access_key_id = " + longTerm,
+			want:  "aws_access_key_id = REDACTED",
+		},
+		{
+			name:  "env-style assignment",
+			input: "AWS_ACCESS_KEY_ID=" + longTerm,
+			want:  "AWS_ACCESS_KEY_ID=REDACTED",
+		},
+		{
+			name:  "temporary session key id",
+			input: temporary,
+			want:  "REDACTED",
+		},
+		{
+			name:  "bearer token id",
+			input: bearer,
+			want:  "REDACTED",
+		},
+		{
+			name:  "context-specific credential id",
+			input: contextual,
+			want:  "REDACTED",
+		},
+		{
+			// betterleaks skips values ending in EXAMPLE. This layer masks
+			// them anyway: masking a documented placeholder costs nothing,
+			// and a real key that merely looks like one costs the record.
+			name:  "documented EXAMPLE placeholder is masked anyway",
+			input: awsAccessKeyID("AKIA", "IOSFODNN7EXAMPLE"),
+			want:  "REDACTED",
+		},
+	})
+}
+
+// TestAWSAccessKeyIDOverRedactionGuards pins the shape the pattern refuses:
+// the prefix needs its full 16-character uppercase base32 body, and a
+// lowercase value is not an access key id.
+func TestAWSAccessKeyIDOverRedactionGuards(t *testing.T) {
+	t.Parallel()
+
+	short := awsAccessKeyID("AKIA", "YRWQG5EJLPZLBYN") // 15-char body
+	lower := "akia" + "yrwqg5ejlpzlbynp"
+
+	assertFieldRedactionCases(t, []stringRedactionCase{
+		{
+			name:  "prefix with a 15-char body is preserved",
+			input: short,
+			want:  short,
+		},
+		{
+			name:  "lowercase lookalike is preserved",
+			input: lower,
+			want:  lower,
+		},
+		{
+			name:  "bare AKIA prefix in prose is preserved",
+			input: "AWS key ids start with AKIA",
+			want:  "AWS key ids start with AKIA",
+		},
+	})
+}
+
+// TestSlackTokenRedacted covers the xox<letter>- token family. betterleaks
+// recognizes today's body shapes, but each of its rules pins one; these cases
+// pin that the prefix alone is enough, so a body-shape change cannot reopen
+// the gap. The drifted-shape bodies are low-entropy on purpose, so a pass
+// cannot come from the entropy layer.
+func TestSlackTokenRedacted(t *testing.T) {
+	t.Parallel()
+
+	bot := slackToken("b", "2026091901-2026091902-aBcDeFgHiJkLmNoPqRsTuVwX")
+	user := slackToken("p", "2026091901-2026091902-2026091903-aBcDeFgHiJkL")
+	driftedBot := slackToken("b", "2026-2026-aaaa-bbbb")
+	driftedConfig := slackToken("e", "2026-aaaa-bbbb-cccc")
+
+	assertFieldRedactionCases(t, []stringRedactionCase{
+		{
+			name:  "bot token in prose",
+			input: "use " + bot + " for the webhook",
+			want:  "use REDACTED for the webhook",
+		},
+		{
+			name:  "user token in an env-style assignment",
+			input: "SLACK_TOKEN=" + user,
+			want:  "SLACK_TOKEN=REDACTED",
+		},
+		{
+			name:  "bot token whose body drifted from the catalogued shape",
+			input: "token " + driftedBot + " here",
+			want:  "token REDACTED here",
+		},
+		{
+			name:  "configuration token whose body drifted from the catalogued shape",
+			input: driftedConfig,
+			want:  "REDACTED",
+		},
+		{
+			name:  "prefix with a too-short body is preserved",
+			input: slackToken("b", "12345"),
+			want:  slackToken("b", "12345"),
+		},
+	})
+}
+
+// TestAWSAndSlackTokenBoundaries is the AWS and Slack half of
+// TestSupabaseProviderTokenBoundaries: a leading \b would let an id glued to
+// a preceding word character slip past, and with low-entropy bodies no other
+// layer stands behind this one. Each case fails if a leading anchor is
+// reintroduced.
+func TestAWSAndSlackTokenBoundaries(t *testing.T) {
+	t.Parallel()
+
+	keyID := awsAccessKeyID("AKIA", "YRWQG5EJLPZLBYNP")
+	token := slackToken("b", "2026-2026-aaaa-bbbb")
+
+	assertRawRedactionCases(t, []stringRedactionCase{
+		{
+			name:  "access key id glued to a preceding word char",
+			input: "x" + keyID,
+			want:  "xREDACTED",
+		},
+		{
+			name:  "access key id preceded by a literal JSON escape letter",
+			input: `first line\n` + keyID,
+			want:  `first line\nREDACTED`,
+		},
+		{
+			name:  "slack token glued to a preceding word char",
+			input: "x" + token,
+			want:  "xREDACTED",
+		},
+		{
+			name:  "slack token preceded by a literal JSON escape letter",
+			input: `first line\n` + token,
+			want:  `first line\nREDACTED`,
+		},
+	})
+}
+
+func TestJSONLBytes_AWSAndSlackTokensMalformedLineFallback(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ name, secret string }{
+		{"access key id", awsAccessKeyID("AKIA", "YRWQG5EJLPZLBYNP")},
+		{"slack token", slackToken("b", "2026-2026-aaaa-bbbb")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			line := `{"content":"line1\n` + tc.secret + `"} <-- truncated`
+			got := redactedString(t, line)
+			if strings.Contains(got, tc.secret) {
+				t.Fatalf("secret survived JSONL fall-back redaction: %q", got)
+			}
+			if !strings.Contains(got, "REDACTED") {
+				t.Fatalf("expected REDACTED placeholder in %q", got)
+			}
+		})
+	}
+}
+
+// TestJSONLBytes_AWSAndSlackTokensRedacted drives both formats through the
+// field-aware JSONL path in the two places a session line carries free text:
+// a user message content string and an assistant text block.
+func TestJSONLBytes_AWSAndSlackTokensRedacted(t *testing.T) {
+	t.Parallel()
+
+	keyID := awsAccessKeyID("AKIA", "YRWQG5EJLPZLBYNP")
+	token := slackToken("b", "2026091901-2026091902-aBcDeFgHiJkLmNoPqRsTuVwX")
+
+	cases := []struct{ name, line, secret string }{
+		{
+			name:   "user message content string",
+			line:   `{"type":"user","message":{"role":"user","content":"my key is ` + keyID + ` ok"}}`,
+			secret: keyID,
+		},
+		{
+			name:   "assistant text block",
+			line:   `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"set it to ` + token + ` first"}]}}`,
+			secret: token,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := redactedString(t, tc.line)
+			if strings.Contains(got, tc.secret) {
+				t.Fatalf("secret survived JSONL redaction: %q", got)
+			}
+			if !strings.Contains(got, "REDACTED") {
+				t.Fatalf("expected REDACTED placeholder in %q", got)
+			}
+		})
+	}
+}

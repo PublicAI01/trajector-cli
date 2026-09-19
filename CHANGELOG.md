@@ -214,6 +214,13 @@ All notable changes to trajector are documented here. The format follows
 - A credential that also appears as a bare array element — an argument
   vector, say — is masked there as well, under the verdict its own key
   established elsewhere in the same record.
+- An AWS access key id is masked on its own. It was masked only when a
+  secret access key stood within a few lines of it; an id in a sentence
+  you typed, in the output of a command, or in the
+  `aws_access_key_id = …` line of a credentials file was not. The
+  documented `AKIA…EXAMPLE` placeholder is masked too.
+- A Slack `xox…-` token is masked by its prefix alone, so a token whose
+  body does not match a catalogued shape is masked all the same.
 
 ## [0.2.1] - 2026-08-31
 

@@ -64,9 +64,50 @@ import "regexp"
 // high-entropy incidental match would already be caught by the entropy layer,
 // and a mid-word identifier collision (documented above) only ever
 // over-redacts, never under-redacts.
+//
+// AWS access key ids (https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-identifiers.html):
+// the four assignable prefixes (AKIA long-term user key, ASIA temporary
+// session key, ABIA bearer token, ACCA context-specific credential) followed
+// by a 16-character base32 body. betterleaks' aws-access-token rule matches
+// that shape on its own, but it is a *composite* rule (RequiredRules:
+// aws-secret-access-key, WithinLines 5): it only fires when a secret access
+// key sits within five lines of the id. An id captured alone — in prose, in
+// tool output, in the `aws_access_key_id = ...` line of a credentials file,
+// or as the value of `AWS_ACCESS_KEY_ID=` — never reaches its filter. The
+// body is low-entropy by construction, so the entropy layer misses it too.
+// The older A3T prefix is left out: AWS no longer assigns it, and betterleaks
+// itself marks it as doubtful.
+//
+// The documented placeholder AKIAIOSFODNN7EXAMPLE is deliberately NOT
+// exempted, although betterleaks skips anything ending in EXAMPLE. Masking a
+// placeholder costs a few characters of an example; leaving a real key that
+// merely looks like one costs the whole record downstream.
+//
+// Slack tokens (https://api.slack.com/authentication/token-types): the
+// xox<letter>- family. The letters this layer accepts are the ones
+// betterleaks' rule catalog knows, each of which pins one body shape: b (bot
+// and legacy bot), p and e (user, configuration access and configuration
+// refresh), a and r (legacy workspace), o and s (legacy). Their bodies are
+// dash-separated runs of alphanumerics and low-entropy, so a token whose body
+// drifts from the pinned shape reaches no other layer; the prefix alone says
+// the value is a credential, and this layer matches on it. Left out on
+// purpose: app-level tokens (xapp-, a different prefix) and session tokens
+// (xoxc-, xoxd-), whose bodies carry `/`, `+` and `_` and would be truncated
+// by the trailing anchor below; betterleaks covers both standalone.
+//
+// Neither pattern has a leading \b, for the reason given above for the
+// Supabase prefixes: an id glued to a preceding word character — an
+// underscore-joined name, or the trailing letter of a JSON escape in the
+// raw-line fall-back path — would otherwise slip past, with no other layer
+// behind it. The trailing \b stays: an AWS id body is a fixed length and a
+// Slack body excludes `_`, so the anchor cannot truncate a real secret, and
+// it keeps the fixed-length AWS pattern from firing inside a longer
+// uppercase identifier.
 var providerTokenPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`sb_secret_[A-Za-z0-9_-]{20,}`),
 	regexp.MustCompile(`sbp_[a-z0-9_-]{20,}`),
+	regexp.MustCompile(`(?:AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}\b`),
+	regexp.MustCompile(`xox[abeoprs]-[0-9A-Za-z-]{10,}\b`),
 }
 
 // detectProviderTokens returns tagged regions for every occurrence of a
