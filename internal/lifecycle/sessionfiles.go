@@ -124,14 +124,17 @@ func (m *Machine) registerSessionFile(cwd string, hook HookInput) (registered bo
 }
 
 // followSession takes the session a hook was told about: it registers
-// the session's file, marks it hot — or cold, when the session ended
-// — and has it read. The resident process reads it on this hook's
-// word when one is up; when none is, a one-shot reader is started for
-// the project, and that reader brings the resident process up on its
-// way out. A file that is not registered is nothing to read, and a
-// failure of any step stays here: the session must not learn what
-// the hook did, and the registry is where the outcome is read
-// afterwards.
+// the session's file, marks the session hot — or cold, when it ended
+// — and has it read. The marking comes before the report and not
+// after it: the resident process reads the heat from the registry,
+// not from the report, so a report that arrived first would be acted
+// on against what the last hook left. The resident process reads the
+// session on this hook's word when one is up; when none is, a
+// one-shot reader is started for the project, and that reader brings
+// the resident process up on its way out. A file that is not
+// registered is nothing to read, and a failure of any step stays
+// here: the session must not learn what the hook did, and the
+// registry is where the outcome is read afterwards.
 func (m *Machine) followSession(cwd string, hook HookInput, ended bool) {
 	registered, err := m.registerSessionFile(cwd, hook)
 	if err != nil || !registered {
@@ -148,7 +151,7 @@ func (m *Machine) followSession(cwd string, hook HookInput, ended bool) {
 	} else {
 		_ = m.registry.Warm(st.Hash, path, pid, m.deps.Now())
 	}
-	err = m.proxy.Progress(apiproxy.Progress{ProjectIDHash: st.Hash, Path: path, PID: pid, End: ended})
+	err = m.proxy.Progress(apiproxy.Progress{ProjectIDHash: st.Hash, Path: path, End: ended})
 	if err != nil {
 		_ = m.spawnReader(cwd)
 	}

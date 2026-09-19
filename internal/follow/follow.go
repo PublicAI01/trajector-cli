@@ -229,8 +229,8 @@ func (r *Registry) Update(projectIDHash string, f File) error {
 }
 
 // Warm records that a session hook named path at at, from the process
-// pid, so the entry reads as hot from now on. A pid of 0 keeps the
-// process the entry already carries: a hook that cannot tell which
+// pid, so the session reads as hot from now on. A pid of 0 keeps the
+// process the entries already carry: a hook that cannot tell which
 // process runs the session must not erase one that could. A path
 // that is not registered is refused, as an update to it is.
 func (r *Registry) Warm(projectIDHash, path string, pid int, at time.Time) error {
@@ -242,7 +242,7 @@ func (r *Registry) Warm(projectIDHash, path string, pid int, at time.Time) error
 	})
 }
 
-// Cool records that the session writing path is over: the entry
+// Cool records that the session writing path is over: the session
 // reads as cold until a hook names it again. A path that is not
 // registered is refused, as an update to it is.
 func (r *Registry) Cool(projectIDHash, path string) error {
@@ -252,10 +252,15 @@ func (r *Registry) Cool(projectIDHash, path string) error {
 	})
 }
 
-// mark changes one entry in place, leaving its cursor as the reader
-// left it. It is how the hot state is written: the cursor and the
-// heat have different writers, and neither may take the other's
-// fields back in time.
+// mark changes the whole session path belongs to — its main file and
+// the agent files registered beside it — in place, leaving every
+// cursor as the reader left it. It is how the hot state is written,
+// and there are two rules in it. The cursor and the heat have
+// different writers, and neither may take the other's fields back in
+// time. The heat belongs to the session and not to one of its files,
+// so one mark covers the group in one write: a hook names the main
+// file only, and an agent file marked on its own would stay cold for
+// good.
 func (r *Registry) mark(projectIDHash, path string, change func(*File)) error {
 	if err := checkProjectIDHash(projectIDHash); err != nil {
 		return err
@@ -268,11 +273,15 @@ func (r *Registry) mark(projectIDHash, path string, change func(*File)) error {
 		if err != nil {
 			return nil, err
 		}
-		i, ok := find(reg.Files, path)
-		if !ok {
+		if _, ok := find(reg.Files, path); !ok {
 			return nil, ErrNotRegistered
 		}
-		change(&reg.Files[i])
+		session := sessionOf(path)
+		for i := range reg.Files {
+			if sessionOf(reg.Files[i].Path) == session {
+				change(&reg.Files[i])
+			}
+		}
 		return encode(reg)
 	})
 }

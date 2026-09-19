@@ -164,6 +164,27 @@ func TestProgressReportReadsTheOneFileItNames(t *testing.T) {
 	}
 }
 
+func TestProgressReportLeavesTheHeatTheHookWrote(t *testing.T) {
+	proxytest.RequireSessionSources(t)
+	e := newEnv(t)
+	_, hash := e.enabledProject()
+	path := e.sessionFile(hash, "s.jsonl", sessionLine)
+	e.warm(hash, path)
+	before := e.entry(hash, path)
+
+	served := e.serve(io.Discard, io.Discard)
+	e.waitHealthy()
+	defer e.stopServed(served)
+
+	if status := e.progress(apiproxy.Progress{ProjectIDHash: hash, Path: path}); status != http.StatusAccepted {
+		t.Fatalf("progress = %d, want 202", status)
+	}
+	after := e.entry(hash, path)
+	if after.LastEvent != before.LastEvent || after.PID != before.PID {
+		t.Errorf("file after the report = %+v, want the event time and the process the hook wrote: %+v", after, before)
+	}
+}
+
 func TestProgressReportRefusesAFileThatIsNotRegistered(t *testing.T) {
 	e := newEnv(t)
 	_, hash := e.enabledProject()
@@ -274,6 +295,44 @@ func TestARunningSessionProcessStretchesTheIdleExit(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Serve never exited: a running session process must stretch the idle exit, not cancel it")
+	}
+}
+
+func TestProgressReportReadsTheAgentFilesBesideTheNamedOne(t *testing.T) {
+	proxytest.RequireSessionSources(t)
+	e := newEnv(t)
+	_, hash := e.enabledProject()
+	named := e.sessionFile(hash, "sess.jsonl", sessionLine)
+	// A subagent's lines live beside the main file, under the session's
+	// own directory; a hook registers them but never names them.
+	agent := filepath.Join(filepath.Dir(named), "sess", follow.SubagentsDir, "agent-x.jsonl")
+	if err := os.MkdirAll(filepath.Dir(agent), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agent, []byte(sessionLine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.sandbox.RegisterSessionFile(hash, agent, "")
+	e.warm(hash, named)
+
+	served := e.serve(io.Discard, io.Discard)
+	e.waitHealthy()
+	defer e.stopServed(served)
+
+	if status := e.progress(apiproxy.Progress{ProjectIDHash: hash, Path: named}); status != http.StatusAccepted {
+		t.Fatalf("progress = %d, want 202", status)
+	}
+	if records := e.sandbox.Records(); len(records) != 2 {
+		t.Fatalf("records = %d, want the main file's segment and the agent file's", len(records))
+	}
+	files, err := e.registry().Files(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if f.Offset == 0 || f.LastEvent == "" {
+			t.Errorf("%s = %+v, want read and hot", filepath.Base(f.Path), f)
+		}
 	}
 }
 

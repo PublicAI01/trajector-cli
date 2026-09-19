@@ -1,12 +1,30 @@
 package follow_test
 
 import (
+	"math"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
+
+// entry is one registered file of the project, by path.
+func entry(t *testing.T, r *follow.Registry, path string) follow.File {
+	t.Helper()
+	files, err := r.Files(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if f.Path == path {
+			return f
+		}
+	}
+	t.Fatalf("%q is not registered", path)
+	return follow.File{}
+}
 
 func TestFile_HotWhileItsProcessRunsOrAHookNamedItWithinADay(t *testing.T) {
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
@@ -92,6 +110,93 @@ func TestRegistry_WarmAndCoolLeaveTheCursorAlone(t *testing.T) {
 	}
 	if files[0].Hot(at, func(int) bool { return true }) {
 		t.Error("a cooled file with no process is hot")
+	}
+}
+
+func TestFile_QuietForCountsFromTheLastHookEvent(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name string
+		file follow.File
+		want time.Duration
+	}{
+		{"named just now", follow.File{LastEvent: now.Format(time.RFC3339)}, 0},
+		{"named an hour ago", follow.File{LastEvent: now.Add(-time.Hour).Format(time.RFC3339)}, time.Hour},
+		{"never named by a hook", follow.File{}, math.MaxInt64},
+		{"a time not in the layout's form", follow.File{LastEvent: "yesterday"}, math.MaxInt64},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.file.QuietFor(now); got != tc.want {
+				t.Errorf("QuietFor() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRegistry_WarmAndCoolMarkTheWholeSession(t *testing.T) {
+	r := follow.Open(t.TempDir())
+	main := abs(t, "s.jsonl")
+	agent := abs(t, "s/subagents/agent-x.jsonl")
+	meta := abs(t, "s/subagents/agent-x.meta.json")
+	elsewhere := abs(t, "other.jsonl")
+	mustRegister(t, r, project, main, agent, meta, elsewhere)
+	at := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+
+	if err := r.Warm(project, main, 42, at); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]bool{main: true, agent: true, meta: true, elsewhere: false} {
+		f := entry(t, r, path)
+		if hot := f.LastEvent != "" && f.PID == 42; hot != want {
+			t.Errorf("%s after Warm of the main file = %+v, want hot %v", filepath.Base(path), f, want)
+		}
+	}
+
+	if err := r.Cool(project, main); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{main, agent, meta} {
+		if f := entry(t, r, path); f.LastEvent != "" || f.PID != 0 {
+			t.Errorf("%s after Cool of the main file = %+v, want cold", filepath.Base(path), f)
+		}
+	}
+	if files, _ := r.Files(project); len(files) != 4 {
+		t.Errorf("files = %d, want the four registered: marking a session registers nothing", len(files))
+	}
+}
+
+func TestRegistry_WarmOfAnAgentFileMarksItsMainFile(t *testing.T) {
+	r := follow.Open(t.TempDir())
+	main := abs(t, "s.jsonl")
+	agent := abs(t, "s/subagents/agent-x.jsonl")
+	mustRegister(t, r, project, main, agent)
+
+	if err := r.Warm(project, agent, 42, time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if f := entry(t, r, main); f.LastEvent != "2026-09-19T12:00:00Z" || f.PID != 42 {
+		t.Errorf("main file after Warm of an agent file = %+v, want hot", f)
+	}
+}
+
+func TestGroupHoldsASessionsFilesAndNoOthers(t *testing.T) {
+	main := abs(t, "s.jsonl")
+	agent := abs(t, "s/subagents/agent-x.jsonl")
+	files := []follow.File{
+		{Path: main},
+		{Path: agent},
+		{Path: abs(t, "s/subagents/agent-x.meta.json")},
+		{Path: abs(t, "other.jsonl")},
+		{Path: abs(t, "other/subagents/agent-x.jsonl")},
+	}
+	for _, path := range []string{main, agent} {
+		got := follow.Group(files, path)
+		if len(got) != 3 || got[0].Path != main {
+			t.Errorf("Group(_, %q) = %+v, want the main file and its two agent files", filepath.Base(path), got)
+		}
+	}
+	if got := follow.Group(files, abs(t, "gone.jsonl")); len(got) != 0 {
+		t.Errorf("Group(_, an unregistered session) = %+v, want none", got)
 	}
 }
 
