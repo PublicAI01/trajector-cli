@@ -316,7 +316,7 @@ func maskSegment(kind envelope.Kind, seg envelope.Segment) (IndexItem, redact.Re
 	if err != nil {
 		return IndexItem{}, redact.RedactedBytes{}, err
 	}
-	return segmentItem(kind, masked), redact.AlreadyRedacted(data), nil
+	return sessionRecordItem(kind, masked.RecordID, masked.Capture), redact.AlreadyRedacted(data), nil
 }
 
 // maskMetaSnapshot masks one snapshot the same way, and indexes it by
@@ -332,7 +332,7 @@ func maskMetaSnapshot(kind envelope.Kind, snap envelope.MetaSnapshot) (IndexItem
 	if err != nil {
 		return IndexItem{}, redact.RedactedBytes{}, err
 	}
-	return metaSnapshotItem(kind, masked), redact.AlreadyRedacted(data), nil
+	return sessionRecordItem(kind, masked.RecordID, masked.Capture), redact.AlreadyRedacted(data), nil
 }
 
 // maskGitSnapshot masks one git snapshot and indexes it. Only the

@@ -241,32 +241,3 @@ func checkTranscriptHeader(version, source, kind, wantKind string) error {
 	}
 	return nil
 }
-
-// Kind is what a stored record declares itself to be, read before
-// anything else about it is interpreted. RecordKind is empty for a
-// rawcall.
-type Kind struct {
-	Source     string
-	RecordKind string
-}
-
-// Kind values of the records this package can read.
-var (
-	KindRawcall      = Kind{Source: sourceProxy}
-	KindSegment      = Kind{Source: sourceTranscript, RecordKind: kindSegment}
-	KindMetaSnapshot = Kind{Source: sourceTranscript, RecordKind: kindMetaSnapshot}
-	KindGitSnapshot  = Kind{Source: sourceHook, RecordKind: kindGitSnapshot}
-)
-
-// KindOf reads only a record's self-declaration, so a caller can pick
-// the parser before committing to a layout.
-func KindOf(data []byte) (Kind, error) {
-	var k struct {
-		Source     string `json:"source"`
-		RecordKind string `json:"record_kind"`
-	}
-	if err := json.Unmarshal(data, &k); err != nil {
-		return Kind{}, fmt.Errorf("envelope: reading record kind: %w", err)
-	}
-	return Kind{Source: k.Source, RecordKind: k.RecordKind}, nil
-}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -155,25 +156,25 @@ func TestStatusWarnsAboutRejectedBatches(t *testing.T) {
 
 func TestStatusCountsWaitingRawcallsOnADeviceThatRecordsOnlyThroughTheProxy(t *testing.T) {
 	d := device()
-	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{Rawcalls: 2}}, {Day: "20260910", Count: spool.Count{Rawcalls: 1}}}
+	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{envelope.KindRawcall: 2}}, {Day: "20260910", Count: spool.Count{envelope.KindRawcall: 1}}}
 	d.Spool.OldestRecord = time.Date(2026, 9, 9, 7, 0, 0, 0, time.UTC)
 	out := dashboard(d)
 
 	wants(t, "status", out, "Records waiting to upload: 3 rawcall(s); the oldest is from 2026-09-09T07:00:00Z.")
-	rejects(t, "status", out, "waiting to upload: none", "segment(s)", "snapshot(s)")
+	rejects(t, "status", out, "waiting to upload: none", "segment(s)", "session snapshot(s)")
 }
 
 func TestStatusCountsEveryKindWaitingOnADeviceThatRecordsBothWays(t *testing.T) {
 	d := device()
-	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{Rawcalls: 2, Segments: 3, Snapshots: 1, GitSnapshots: 4}}}
+	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{envelope.KindRawcall: 2, envelope.KindSegment: 3, envelope.KindMetaSnapshot: 1, envelope.KindGitSnapshot: 4}}}
 	out := dashboard(d)
 
-	wants(t, "status", out, "Records waiting to upload: 2 rawcall(s), 3 segment(s), 1 snapshot(s), 4 git snapshot(s).")
+	wants(t, "status", out, "Records waiting to upload: 2 rawcall(s), 3 segment(s), 1 session snapshot(s), 4 git snapshot(s).")
 }
 
 func TestStatusCountsWaitingGitSnapshotsWhenNothingElseWaits(t *testing.T) {
 	d := device()
-	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{GitSnapshots: 4}}}
+	d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{envelope.KindGitSnapshot: 4}}}
 	out := dashboard(d)
 
 	wants(t, "status", out, "Records waiting to upload: 4 git snapshot(s).")
@@ -345,5 +346,32 @@ func full() report.SpoolState {
 		Usage:       2 << 30,
 		Quota:       2 << 30,
 		WritableErr: spool.ErrQuotaExceeded,
+	}
+}
+
+// waitingLine returns what status says is waiting, without its prefix.
+func waitingLine(t *testing.T, out string) string {
+	t.Helper()
+	const prefix = "Records waiting to upload: "
+	for line := range strings.SplitSeq(out, "\n") {
+		if after, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
+			return after
+		}
+	}
+	t.Fatalf("status says nothing about records waiting:\n%s", out)
+	return ""
+}
+
+func TestStatusHasAWordForEveryRecordKindItCanCount(t *testing.T) {
+	for _, kind := range envelope.Kinds() {
+		t.Run(kind.CountKey(), func(t *testing.T) {
+			d := device()
+			d.Spool.Days = []spool.DaySummary{{Day: "20260909", Count: spool.Count{kind: 1}}}
+			noun, counted := strings.CutPrefix(waitingLine(t, dashboard(d)), "1 ")
+			noun = strings.TrimSuffix(noun, ".")
+			if !counted || noun == "" || noun == kind.CountKey() {
+				t.Errorf("one %s record is reported as %q, want a word written for the user", kind.CountKey(), noun)
+			}
+		})
 	}
 }

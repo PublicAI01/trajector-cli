@@ -11,53 +11,78 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
-// Record is one stored segment or snapshot, in spool's own type.
+// Record is one record of the spool's second slot, in spool's own type.
 type Record = spool.Record
 
 // seedClientVersion is the build a seeded record states it came from.
 const seedClientVersion = "seed-build"
 
+// SeedRecord stores one record of the given kind, as the path that
+// produces that kind would, and returns the record id it was stored
+// under. Every kind reaches the spool through one write, so a test
+// that seeds a spool exercises what a requeue exercises.
+func (s *Sandbox) SeedRecord(kind envelope.Kind, sessionID, projectIDHash string, at time.Time) string {
+	s.t.Helper()
+	data, id := seedRecord(s.t, kind, sessionID, projectIDHash, at)
+	if err := s.openSpool().WriteRecord(data); err != nil {
+		s.t.Fatal(err)
+	}
+	return id
+}
+
 // SeedSegment stores one segment of a session's own file, as a reading
 // run would, and returns the record id it was stored under.
 func (s *Sandbox) SeedSegment(sessionID, projectIDHash string, at time.Time) string {
 	s.t.Helper()
-	seg := envelope.NewSegment(sessionID, "", 0, seedCapture(projectIDHash, at),
-		`{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
-	sp := s.openSpool()
-	if err := sp.WriteSegment(seg); err != nil {
-		s.t.Fatal(err)
-	}
-	return seg.RecordID
+	return s.SeedRecord(envelope.KindSegment, sessionID, projectIDHash, at)
 }
 
 // SeedMetaSnapshot stores one snapshot of a sub-agent's metadata file
 // and returns the record id it was stored under.
 func (s *Sandbox) SeedMetaSnapshot(sessionID, projectIDHash string, at time.Time) string {
 	s.t.Helper()
-	snap, err := envelope.NewMetaSnapshot(sessionID, "subagents/agent-0000.meta.json",
-		seedCapture(projectIDHash, at), []byte(`{"agentId":"0000"}`))
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	sp := s.openSpool()
-	if err := sp.WriteMetaSnapshot(snap); err != nil {
-		s.t.Fatal(err)
-	}
-	return snap.RecordID
+	return s.SeedRecord(envelope.KindMetaSnapshot, sessionID, projectIDHash, at)
 }
 
 // SeedGitSnapshot stores one observation of a project's repository, as
 // a session hook would, and returns the record id it was stored under.
 func (s *Sandbox) SeedGitSnapshot(sessionID, projectIDHash string, at time.Time) string {
 	s.t.Helper()
-	snap := envelope.NewGitSnapshot(sessionID, "SessionStart", envelope.TriggerSessionStart,
-		seedCapture(projectIDHash, at), "main", "d0cf90f327430f11f8a68493a58f402fa11d7c9e",
-		envelope.CommitOrNone(""), envelope.CommitOrNone(""), nil)
-	sp := s.openSpool()
-	if err := sp.WriteGitSnapshot(snap); err != nil {
-		s.t.Fatal(err)
+	return s.SeedRecord(envelope.KindGitSnapshot, sessionID, projectIDHash, at)
+}
+
+// seedRecord builds one record of the given kind: the content each kind
+// carries is the one thing a seeder cannot share.
+func seedRecord(t *testing.T, kind envelope.Kind, sessionID, projectIDHash string, at time.Time) ([]byte, string) {
+	t.Helper()
+	capture := seedCapture(projectIDHash, at)
+	var data []byte
+	var err error
+	switch kind {
+	case envelope.KindSegment:
+		data, err = envelope.NewSegment(sessionID, "", 0, capture,
+			`{"type":"user","message":{"role":"user","content":"hi"}}`+"\n").Bytes()
+	case envelope.KindMetaSnapshot:
+		var snap envelope.MetaSnapshot
+		if snap, err = envelope.NewMetaSnapshot(sessionID, "subagents/agent-0000.meta.json",
+			capture, []byte(`{"agentId":"0000"}`)); err == nil {
+			data, err = snap.Bytes()
+		}
+	case envelope.KindGitSnapshot:
+		data, err = envelope.NewGitSnapshot(sessionID, "SessionStart", envelope.TriggerSessionStart,
+			capture, "main", "d0cf90f327430f11f8a68493a58f402fa11d7c9e",
+			envelope.CommitOrNone(""), envelope.CommitOrNone(""), nil).Bytes()
+	default:
+		t.Fatalf("no seed for a record of kind %s/%s", kind.Source, kind.RecordKind)
 	}
-	return snap.RecordID
+	if err != nil {
+		t.Fatal(err)
+	}
+	header, err := envelope.ReadHeader(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data, header.RecordID
 }
 
 // Records reports every record of the second slot currently stored.

@@ -21,7 +21,7 @@ import (
 // set aside itself because they no longer read back as what they claim
 // to be or could not be masked. Both are moved out of the spool so one
 // bad batch or one unreadable file cannot block every upload behind it.
-// Rawcalls and the segment and snapshot records share one layout, since
+// Rawcalls and every record of the second slot share one layout, since
 // every record declares its own kind; a requeue reads that declaration
 // to return each record to its slot. The layout is a documented product
 // contract:
@@ -153,41 +153,23 @@ func PurgeRejectedSession(rejectedDir, sessionID string) (int, error) {
 
 // sessionOf reads which coding session a quarantined record belongs
 // to, from the record itself: a rawcall carries its session inside the
-// request it wrapped, and every other kind states its own. Only the
-// record's own declaration decides which parser reads it, as a requeue
-// does — the reason file describes the batch, never a record.
+// request it wrapped, and every other kind states its own under one
+// name. Attribution asks for no more than that name, exactly as
+// withdrawal asks only for the project hash — a record this client can
+// no longer interpret is still the session's to delete.
 func sessionOf(data []byte) (string, bool) {
 	kind, err := envelope.KindOf(data)
 	if err != nil {
 		return "", false
 	}
-	switch kind {
-	case envelope.KindRawcall:
+	if kind == envelope.KindRawcall {
 		env, err := envelope.Parse(data)
 		if err != nil {
 			return "", false
 		}
 		return spool.SessionIDFromUserID(env.SessionKey())
-	case envelope.KindSegment:
-		seg, err := envelope.ParseSegment(data)
-		if err != nil {
-			return "", false
-		}
-		return seg.SessionID, seg.SessionID != ""
-	case envelope.KindMetaSnapshot:
-		snap, err := envelope.ParseMetaSnapshot(data)
-		if err != nil {
-			return "", false
-		}
-		return snap.SessionID, snap.SessionID != ""
-	case envelope.KindGitSnapshot:
-		snap, err := envelope.ParseGitSnapshot(data)
-		if err != nil {
-			return "", false
-		}
-		return snap.SessionID, snap.SessionID != ""
 	}
-	return "", false
+	return envelope.SessionIDOf(data)
 }
 
 // purgeRejected deletes from every quarantined batch the records the
@@ -424,37 +406,18 @@ func (e *errUnreadableRecord) Unwrap() error { return e.err }
 // one kind and parse as none is unreadable, whatever the index that
 // once described it said.
 func respool(sp *spool.Spool, data []byte) error {
-	kind, err := envelope.KindOf(data)
+	header, err := envelope.ReadHeader(data)
 	if err != nil {
 		return &errUnreadableRecord{err: err}
 	}
-	switch kind {
-	case envelope.KindRawcall:
+	if header.Kind == envelope.KindRawcall {
 		env, err := envelope.Parse(data)
 		if err != nil {
 			return &errUnreadableRecord{err: err}
 		}
 		return sp.Write(env)
-	case envelope.KindSegment:
-		seg, err := envelope.ParseSegment(data)
-		if err != nil {
-			return &errUnreadableRecord{err: err}
-		}
-		return sp.WriteSegment(seg)
-	case envelope.KindMetaSnapshot:
-		snap, err := envelope.ParseMetaSnapshot(data)
-		if err != nil {
-			return &errUnreadableRecord{err: err}
-		}
-		return sp.WriteMetaSnapshot(snap)
-	case envelope.KindGitSnapshot:
-		snap, err := envelope.ParseGitSnapshot(data)
-		if err != nil {
-			return &errUnreadableRecord{err: err}
-		}
-		return sp.WriteGitSnapshot(snap)
 	}
-	return &errUnreadableRecord{err: fmt.Errorf("record declares %s/%s, which is not a kind this client stores", kind.Source, kind.RecordKind)}
+	return sp.WriteRecord(data)
 }
 
 // Discard deletes one quarantined batch and reports the recorded reason

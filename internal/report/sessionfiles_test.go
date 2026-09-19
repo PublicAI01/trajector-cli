@@ -9,6 +9,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/drift"
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -255,11 +256,11 @@ func TestStatusShowsHowFarBehindUploadingTheRecordsAre(t *testing.T) {
 	wants(t, "status", dashboard(d), "Records waiting to upload: none.")
 
 	d.Spool.Days = []spool.DaySummary{
-		{Day: "20260909", Count: spool.Count{Segments: 2, Snapshots: 1}},
-		{Day: "20260910", Count: spool.Count{Segments: 3}},
+		{Day: "20260909", Count: spool.Count{envelope.KindSegment: 2, envelope.KindMetaSnapshot: 1}},
+		{Day: "20260910", Count: spool.Count{envelope.KindSegment: 3}},
 	}
 	d.Spool.OldestRecord = time.Date(2026, 9, 9, 7, 0, 0, 0, time.UTC)
-	wants(t, "status", dashboard(d), "Records waiting to upload: 5 segment(s), 1 snapshot(s); the oldest is from 2026-09-09T07:00:00Z.")
+	wants(t, "status", dashboard(d), "Records waiting to upload: 5 segment(s), 1 session snapshot(s); the oldest is from 2026-09-09T07:00:00Z.")
 
 	d.Spool = report.SpoolState{Dir: spoolDir, OpenErr: errors.New("not a directory")}
 	rejects(t, "status", dashboard(d), "waiting to upload")
@@ -413,7 +414,7 @@ func TestTheBundleCarriesShapeAndSessionCountsWithoutIdsOrPaths(t *testing.T) {
 		Walked:       true,
 		Unregistered: 2,
 	}
-	d.Spool.Days = []spool.DaySummary{{Day: "20260910", Count: spool.Count{Segments: 2}}}
+	d.Spool.Days = []spool.DaySummary{{Day: "20260910", Count: spool.Count{envelope.KindSegment: 2}}}
 	d.Spool.OldestRecord = time.Date(2026, 9, 10, 7, 0, 0, 0, time.UTC)
 
 	got := string(report.DiagnosisJSON(d))

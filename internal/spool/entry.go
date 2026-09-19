@@ -46,19 +46,7 @@ func (r Rawcall) entry() Entry {
 
 // entry reads one second-slot record as a stored record.
 func (r Record) entry() Entry {
-	return Entry{Kind: recordKind(r.Kind), ID: r.ID, Timestamp: r.Timestamp, Raw: r.Raw}
-}
-
-// recordKind is the whole kind of a second-slot record: what the record
-// says it is, and the source that kind belongs to. A record whose bytes
-// name no kind keeps a source of the slot all the same, because which
-// slot holds a record is known even when its content is not — without
-// one it could never be deleted.
-func recordKind(kind string) envelope.Kind {
-	if kind == envelope.KindGitSnapshot.RecordKind {
-		return envelope.KindGitSnapshot
-	}
-	return envelope.Kind{Source: envelope.KindSegment.Source, RecordKind: kind}
+	return Entry{Kind: r.kind(), ID: r.ID, Timestamp: r.Timestamp, Raw: r.Raw}
 }
 
 // inRawcallSlot reports which of the two directories holds an entry.

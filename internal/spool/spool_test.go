@@ -492,7 +492,7 @@ func TestSummaryReportsDaysWithoutFileNames(t *testing.T) {
 	var total int64
 	for i, want := range []string{"20260801", "20260802"} {
 		d := days[i]
-		if d.Day != want || d.Rawcalls != 1 || d.Bytes <= 0 {
+		if d.Day != want || d.Count[envelope.KindRawcall] != 1 || d.Bytes <= 0 {
 			t.Errorf("day %d = %+v, want %s with one record and non-zero bytes", i, d, want)
 		}
 		if strings.Contains(d.Day, "msg_") {

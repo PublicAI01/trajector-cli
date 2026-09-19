@@ -8,6 +8,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
@@ -310,6 +311,17 @@ func ambiguityLine(a follow.Ambiguity) string {
 		a.Dir, strings.Join(others, ", "))
 }
 
+// recordNouns is the user's word for each kind of record waiting. The
+// word is the user's and not the wire's, so it lives here rather than
+// beside the kind; a kind with no word here is not printed, because a
+// count under no noun says nothing.
+var recordNouns = map[envelope.Kind]string{
+	envelope.KindRawcall:      "rawcall(s)",
+	envelope.KindSegment:      "segment(s)",
+	envelope.KindMetaSnapshot: "session snapshot(s)",
+	envelope.KindGitSnapshot:  "git snapshot(s)",
+}
+
 // recordsWaitingLine is how far behind uploading the records are: how
 // many wait in the spool and of which kinds, and how old the oldest is.
 // Every kind the spool holds is counted, so a device that records only
@@ -323,15 +335,11 @@ func recordsWaitingLine(s SpoolState) string {
 		return "Records waiting to upload: none."
 	}
 	var kinds []string
-	count := func(n int, noun string) {
-		if n > 0 {
-			kinds = append(kinds, fmt.Sprintf("%d %s", n, noun))
+	for _, kind := range envelope.Kinds() {
+		if n := waiting[kind]; n > 0 && recordNouns[kind] != "" {
+			kinds = append(kinds, fmt.Sprintf("%d %s", n, recordNouns[kind]))
 		}
 	}
-	count(waiting.Rawcalls, "rawcall(s)")
-	count(waiting.Segments, "segment(s)")
-	count(waiting.Snapshots, "snapshot(s)")
-	count(waiting.GitSnapshots, "git snapshot(s)")
 	line := "Records waiting to upload: " + strings.Join(kinds, ", ")
 	if !s.OldestRecord.IsZero() {
 		line += fmt.Sprintf("; the oldest is from %s", s.OldestRecord.UTC().Format(time.RFC3339))

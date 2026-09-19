@@ -504,3 +504,22 @@ func TestPurgeRejectedSessionOnAMissingDirDeletesNothing(t *testing.T) {
 		t.Errorf("got %d, %v; want 0, nil", deleted, err)
 	}
 }
+
+func TestPurgeRejectedSessionReachesARecordThisBuildCannotInterpret(t *testing.T) {
+	rejectedDir := t.TempDir()
+	seedBatch(t, rejectedDir, "b-mixed", map[string][]byte{
+		"rec-later": []byte(`{"schema_version":"9","source":"hook","record_kind":"later_kind","session_id":"` + sessionX + `"}`),
+		"req-y1":    rawcallBytesOfSession(t, "req-y1", sessionY),
+	})
+
+	deleted, err := upload.PurgeRejectedSession(rejectedDir, sessionX)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("deleted = %d, want the record deleted by the session it names, readable or not", deleted)
+	}
+	if held := heldByBatch(t, rejectedDir); strings.Join(held["b-mixed"], ",") != "req-y1" {
+		t.Errorf("batch holds %v, want only the other session's rawcall", held)
+	}
+}

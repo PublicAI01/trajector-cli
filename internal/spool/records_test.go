@@ -504,7 +504,8 @@ func TestSpool_SummarySeparatesSlots(t *testing.T) {
 	var total int64
 	for i, tc := range tests {
 		d := days[i]
-		if d.Day != tc.day || d.Rawcalls != tc.rawcalls || d.Segments != tc.segments || d.Snapshots != tc.snapshots || d.GitSnapshots != tc.gitSnapshots {
+		if d.Day != tc.day || d.Count[envelope.KindRawcall] != tc.rawcalls || d.Count[envelope.KindSegment] != tc.segments ||
+			d.Count[envelope.KindMetaSnapshot] != tc.snapshots || d.Count[envelope.KindGitSnapshot] != tc.gitSnapshots {
 			t.Errorf("day %s = %+v, want %+v", tc.day, d, tc)
 		}
 		if want := tc.rawcalls + tc.segments + tc.snapshots + tc.gitSnapshots; d.Total() != want {
@@ -801,7 +802,7 @@ func TestSpool_RecordIndexRebuildsFromFiles(t *testing.T) {
 	})
 	t.Run("Summary still counts by kind", func(t *testing.T) {
 		days, err := s.Summary()
-		if err != nil || len(days) != 1 || days[0].Segments != 1 || days[0].Snapshots != 1 {
+		if err != nil || len(days) != 1 || days[0].Count[envelope.KindSegment] != 1 || days[0].Count[envelope.KindMetaSnapshot] != 1 {
 			t.Errorf("Summary = %+v, %v", days, err)
 		}
 	})
@@ -1066,5 +1067,81 @@ func TestSpool_DeletingASessionTakesItsObservationsToo(t *testing.T) {
 	got := collectRecords(t, s)
 	if len(got) != 1 || got[0].ID != kept.RecordID {
 		t.Errorf("records = %+v, want only the other session's observation", got)
+	}
+}
+
+func TestDaySummaryStatesOneCountPerRecordKind(t *testing.T) {
+	day := spool.DaySummary{Day: "20260909", Bytes: 7, RecordBytes: 9}
+	day.Add(envelope.KindRawcall)
+	day.Add(envelope.KindSegment)
+	day.Add(envelope.KindSegment)
+	day.Add(envelope.KindMetaSnapshot)
+	day.Add(envelope.KindGitSnapshot)
+	day.Add(envelope.Kind{Source: "elsewhere", RecordKind: "other"})
+
+	got, err := json.Marshal(day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"day":"20260909","rawcalls":1,"segments":2,"snapshots":1,"git_snapshots":1,"bytes":7,"record_bytes":9}`
+	if string(got) != want {
+		t.Errorf("day summary = %s, want %s", got, want)
+	}
+	if day.Total() != 5 {
+		t.Errorf("Total() = %d, want 5", day.Total())
+	}
+}
+
+func TestARecordDayIndexWrittenBeforeItNamedTheSourceStillNamesTheKind(t *testing.T) {
+	dir := t.TempDir()
+	s, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	snap := gitSnapshot(sessionA, "hash-a", "d0cf90f327430f11f8a68493a58f402fa11d7c9e", at)
+	if err := s.WriteGitSnapshot(snap); err != nil {
+		t.Fatal(err)
+	}
+	seg := segment(sessionA, "hash-a", 0, at)
+	if err := s.WriteSegment(seg); err != nil {
+		t.Fatal(err)
+	}
+
+	index := filepath.Join(dir, recordsDir, "20260801", indexName)
+	stored, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var older [][]byte
+	for raw := range bytes.SplitSeq(bytes.TrimSpace(stored), []byte("\n")) {
+		var line map[string]any
+		if err := json.Unmarshal(raw, &line); err != nil {
+			t.Fatal(err)
+		}
+		delete(line, "source")
+		rewritten, err := json.Marshal(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		older = append(older, rewritten)
+	}
+	if err := os.WriteFile(index, append(bytes.Join(older, []byte("\n")), '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := spool.Open(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]envelope.Kind{}
+	if err := reopened.EachEntry(func(e spool.Entry) error {
+		kinds[e.ID] = e.Kind
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if kinds[snap.RecordID] != envelope.KindGitSnapshot || kinds[seg.RecordID] != envelope.KindSegment {
+		t.Errorf("entries read back as %+v", kinds)
 	}
 }

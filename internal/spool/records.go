@@ -2,11 +2,13 @@ package spool
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,8 +28,11 @@ const recordsDirName = "records"
 // the files. Size is kept so a caller reading the index alone can
 // budget a batch without a stat per file.
 type recordIndexLine struct {
-	RecordID      string `json:"record_id"`
-	RecordKind    string `json:"record_kind"`
+	RecordID   string `json:"record_id"`
+	RecordKind string `json:"record_kind"`
+	// Source completes the kind. A line written before it was stored
+	// carries none; recordSource says how such a line is read.
+	Source        string `json:"source"`
 	SessionID     string `json:"session_id"`
 	ProjectIDHash string `json:"project_id_hash,omitempty"`
 	Size          int64  `json:"size"`
@@ -47,6 +52,19 @@ type Record struct {
 	ProjectIDHash string
 	Timestamp     time.Time
 	Raw           []byte
+	// source is the other half of the record's kind. It is not exported
+	// because a reader addresses a record by its id and describes it by
+	// its kind; which source a kind belongs to is this package's own
+	// business.
+	source string
+}
+
+// kind is the whole kind of a stored record. A record whose bytes name
+// no kind keeps the source of the slot it sits in, because which slot
+// holds a record is known even when its content is not — without one it
+// could never be deleted.
+func (r Record) kind() envelope.Kind {
+	return envelope.Kind{Source: cmp.Or(r.source, envelope.KindSegment.Source), RecordKind: r.Kind}
 }
 
 // WriteSegment stores one segment. Storage is idempotent per record id:
@@ -54,15 +72,11 @@ type Record struct {
 // success, because the id is derived from the segment's identity and
 // the same segment resent after a crash must not cost a rewrite.
 func (s *Spool) WriteSegment(seg envelope.Segment) error {
-	kind := envelope.Kind{Source: seg.Source, RecordKind: seg.RecordKind}
-	if kind != envelope.KindSegment {
-		return fmt.Errorf("spool: record %s declares %s/%s, not a segment", seg.RecordID, seg.Source, seg.RecordKind)
-	}
 	data, err := seg.Bytes()
 	if err != nil {
 		return err
 	}
-	return s.writeRecord(seg.RecordID, seg.RecordKind, seg.SessionID, seg.Capture, data)
+	return s.writeDeclaredRecord(data, envelope.KindSegment)
 }
 
 // WriteMetaSnapshot stores one snapshot. A snapshot's id changes with
@@ -70,15 +84,11 @@ func (s *Spool) WriteSegment(seg envelope.Segment) error {
 // and a changed one is simply a new record: which snapshot is current
 // is the producer's knowledge, not the spool's.
 func (s *Spool) WriteMetaSnapshot(snap envelope.MetaSnapshot) error {
-	kind := envelope.Kind{Source: snap.Source, RecordKind: snap.RecordKind}
-	if kind != envelope.KindMetaSnapshot {
-		return fmt.Errorf("spool: record %s declares %s/%s, not a snapshot", snap.RecordID, snap.Source, snap.RecordKind)
-	}
 	data, err := snap.Bytes()
 	if err != nil {
 		return err
 	}
-	return s.writeRecord(snap.RecordID, snap.RecordKind, snap.SessionID, snap.Capture, data)
+	return s.writeDeclaredRecord(data, envelope.KindMetaSnapshot)
 }
 
 // WriteGitSnapshot stores one git snapshot. Storage is idempotent per
@@ -86,18 +96,37 @@ func (s *Spool) WriteMetaSnapshot(snap envelope.MetaSnapshot) error {
 // observation saw, so the same observation resent after a crash must
 // not cost a rewrite.
 func (s *Spool) WriteGitSnapshot(snap envelope.GitSnapshot) error {
-	kind := envelope.Kind{Source: snap.Source, RecordKind: snap.RecordKind}
-	if kind != envelope.KindGitSnapshot {
-		return fmt.Errorf("spool: record %s declares %s/%s, not a git snapshot", snap.RecordID, snap.Source, snap.RecordKind)
-	}
 	data, err := snap.Bytes()
 	if err != nil {
 		return err
 	}
-	return s.writeRecord(snap.RecordID, snap.RecordKind, snap.SessionID, snap.Capture, data)
+	return s.writeDeclaredRecord(data, envelope.KindGitSnapshot)
 }
 
-func (s *Spool) writeRecord(id, kind, sessionID string, capture envelope.Capture, data []byte) error {
+// WriteRecord stores one second-slot record from its own bytes, under
+// the kind those bytes declare. A caller returning a record it did not
+// build — a requeue — has only the bytes, and the declaration is the
+// only thing that may decide where the record lands.
+func (s *Spool) WriteRecord(data []byte) error {
+	return s.writeDeclaredRecord(data, envelope.Kind{})
+}
+
+// writeDeclaredRecord stores one record under the kind its own bytes
+// declare. want, where it names a kind, is the kind the caller means to
+// store: bytes declaring anything else are refused rather than stored
+// as something the caller did not ask for.
+func (s *Spool) writeDeclaredRecord(data []byte, want envelope.Kind) error {
+	header, err := envelope.ReadHeader(data)
+	if err != nil {
+		return fmt.Errorf("spool: %w", err)
+	}
+	if want != (envelope.Kind{}) && header.Kind != want {
+		return fmt.Errorf("spool: record %s declares %s/%s, not %s/%s", header.RecordID, header.Kind.Source, header.Kind.RecordKind, want.Source, want.RecordKind)
+	}
+	if header.Kind == envelope.KindRawcall {
+		return fmt.Errorf("spool: record %s is a rawcall, which this slot does not hold", header.RecordID)
+	}
+	id, capture := header.RecordID, header.Capture
 	// The spool builds a file path from the id and must not trust it.
 	// Record ids and request ids share one shape rule so neither can
 	// name a file outside its day directory.
@@ -106,7 +135,7 @@ func (s *Spool) writeRecord(id, kind, sessionID string, capture envelope.Capture
 	}
 	// A record with no session cannot be addressed for deletion by the
 	// session it came from, so it must not be stored.
-	if sessionID == "" {
+	if header.SessionID == "" {
 		return fmt.Errorf("spool: record %s carries no session id", id)
 	}
 	at, err := time.Parse(time.RFC3339Nano, capture.Timestamp)
@@ -115,8 +144,9 @@ func (s *Spool) writeRecord(id, kind, sessionID string, capture envelope.Capture
 	}
 	line, err := json.Marshal(recordIndexLine{
 		RecordID:      id,
-		RecordKind:    kind,
-		SessionID:     sessionID,
+		RecordKind:    header.Kind.RecordKind,
+		Source:        header.Kind.Source,
+		SessionID:     header.SessionID,
 		ProjectIDHash: capture.ProjectIDHash,
 		Size:          int64(len(data)),
 		Timestamp:     at.UTC().Format(time.RFC3339Nano),
@@ -246,6 +276,7 @@ func recordFromIndex(f rawcallFile, indexed map[string]recordIndexLine, read fun
 	r := Record{ID: f.id}
 	if line, ok := indexed[f.id]; ok {
 		r.Kind = line.RecordKind
+		r.source = cmp.Or(line.Source, recordSource(line.RecordKind))
 		r.SessionID = line.SessionID
 		r.ProjectIDHash = line.ProjectIDHash
 		if ts, err := time.Parse(time.RFC3339Nano, line.Timestamp); err == nil {
@@ -264,41 +295,34 @@ func recordFromIndex(f rawcallFile, indexed map[string]recordIndexLine, read fun
 	return r, nil
 }
 
+// recordSource is the source of a record whose index line named only
+// its kind. Those lines were written while each kind of this slot had
+// one source, so the kind still names it; a kind no longer declared
+// keeps the source of the slot the record sits in, or the record could
+// never be deleted.
+func recordSource(recordKind string) string {
+	kinds := envelope.Kinds()
+	i := slices.IndexFunc(kinds, func(k envelope.Kind) bool { return k.RecordKind == recordKind })
+	if recordKind == "" || i < 0 {
+		return envelope.KindSegment.Source
+	}
+	return kinds[i].Source
+}
+
 // describeRecord attributes a record from its bytes alone, which is the
-// rebuild path. A record that does not read back as any known kind is
-// left unattributed rather than guessed at.
+// rebuild path. A record that does not read back as the kind it
+// declares is left unattributed rather than guessed at, and so is a
+// rawcall, which this slot does not hold.
 func describeRecord(id string, data []byte) Record {
 	r := Record{ID: id}
-	kind, err := envelope.KindOf(data)
-	if err != nil {
+	header, err := envelope.ReadHeader(data)
+	if err != nil || header.Kind == envelope.KindRawcall {
 		return r
 	}
-	var capture envelope.Capture
-	switch kind {
-	case envelope.KindSegment:
-		seg, err := envelope.ParseSegment(data)
-		if err != nil {
-			return r
-		}
-		r.SessionID, capture = seg.SessionID, seg.Capture
-	case envelope.KindMetaSnapshot:
-		snap, err := envelope.ParseMetaSnapshot(data)
-		if err != nil {
-			return r
-		}
-		r.SessionID, capture = snap.SessionID, snap.Capture
-	case envelope.KindGitSnapshot:
-		snap, err := envelope.ParseGitSnapshot(data)
-		if err != nil {
-			return r
-		}
-		r.SessionID, capture = snap.SessionID, snap.Capture
-	default:
-		return r
-	}
-	r.Kind = kind.RecordKind
-	r.ProjectIDHash = capture.ProjectIDHash
-	if ts, err := time.Parse(time.RFC3339Nano, capture.Timestamp); err == nil {
+	r.Kind, r.source = header.Kind.RecordKind, header.Kind.Source
+	r.SessionID = header.SessionID
+	r.ProjectIDHash = header.Capture.ProjectIDHash
+	if ts, err := time.Parse(time.RFC3339Nano, header.Capture.Timestamp); err == nil {
 		r.Timestamp = ts
 	}
 	return r

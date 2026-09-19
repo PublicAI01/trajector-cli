@@ -110,19 +110,11 @@ func rawcallItem(kind envelope.Kind, env envelope.Envelope) IndexItem {
 	return item
 }
 
-// segmentItem indexes one segment record.
-func segmentItem(kind envelope.Kind, seg envelope.Segment) IndexItem {
-	return sessionRecordItem(kind, seg.RecordID, seg.Capture)
-}
-
-// metaSnapshotItem indexes one metadata snapshot record.
-func metaSnapshotItem(kind envelope.Kind, snap envelope.MetaSnapshot) IndexItem {
-	return sessionRecordItem(kind, snap.RecordID, snap.Capture)
-}
-
-// sessionRecordItem indexes one record observed on this machine. The
-// source is the record's own declaration, so a receiver routes every
-// kind of record by what that kind says it is.
+// sessionRecordItem indexes one record of the second slot, whatever
+// kind it is: every such record is indexed by the id and the capture it
+// declares, and by nothing of its own kind. The source is the record's
+// own declaration, so a receiver routes every kind of record by what
+// that kind says it is.
 func sessionRecordItem(kind envelope.Kind, recordID string, capture envelope.Capture) IndexItem {
 	return IndexItem{
 		RecordID:      recordID,

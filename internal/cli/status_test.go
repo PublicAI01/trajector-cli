@@ -43,7 +43,7 @@ func TestStatusCountsEveryKindOfRecordWaitingInTheSpool(t *testing.T) {
 	if got.Exit != 0 {
 		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
 	}
-	if !strings.Contains(got.Stdout, "Records waiting to upload: 1 rawcall(s), 1 segment(s), 1 snapshot(s), 1 git snapshot(s)") {
+	if !strings.Contains(got.Stdout, "Records waiting to upload: 1 rawcall(s), 1 segment(s), 1 session snapshot(s), 1 git snapshot(s)") {
 		t.Errorf("stdout = %q, want every waiting kind counted", got.Stdout)
 	}
 }

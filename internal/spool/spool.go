@@ -431,52 +431,75 @@ func (s *Spool) rewriteIndexFileLocked(path string, drop func(line []byte) bool)
 
 // Count is how many stored records of each kind a spool holds, or one
 // day of it. One value counts every kind, so nothing that reports what
-// is waiting has to know how many kinds there are, and Add is the one
-// place that decides which counter a kind belongs to.
-type Count struct {
-	Rawcalls     int `json:"rawcalls"`
-	Segments     int `json:"segments"`
-	Snapshots    int `json:"snapshots"`
-	GitSnapshots int `json:"git_snapshots"`
-}
+// is waiting has to know how many kinds there are: the kinds are
+// envelope's, and a kind it does not declare is counted under none of
+// them.
+type Count map[envelope.Kind]int
 
 // Add counts one record of the kind it declares. A kind this client
-// does not store is counted in no field, so a count never claims a
+// does not store is counted under no key, so a count never claims a
 // record it cannot name.
 func (c *Count) Add(kind envelope.Kind) {
-	switch kind {
-	case envelope.KindRawcall:
-		c.Rawcalls++
-	case envelope.KindSegment:
-		c.Segments++
-	case envelope.KindMetaSnapshot:
-		c.Snapshots++
-	case envelope.KindGitSnapshot:
-		c.GitSnapshots++
+	if kind.CountKey() == "" {
+		return
 	}
+	if *c == nil {
+		*c = Count{}
+	}
+	(*c)[kind]++
 }
 
 // Plus adds another count into this one.
 func (c *Count) Plus(other Count) {
-	c.Rawcalls += other.Rawcalls
-	c.Segments += other.Segments
-	c.Snapshots += other.Snapshots
-	c.GitSnapshots += other.GitSnapshots
+	if len(other) == 0 {
+		return
+	}
+	if *c == nil {
+		*c = Count{}
+	}
+	for kind, n := range other {
+		(*c)[kind] += n
+	}
 }
 
 // Total counts the records of every kind.
-func (c Count) Total() int { return c.Rawcalls + c.Segments + c.Snapshots + c.GitSnapshots }
+func (c Count) Total() int {
+	total := 0
+	for _, n := range c {
+		total += n
+	}
+	return total
+}
 
 // DaySummary reports one day of the spool: counts and sizes only, never
 // file names — ids belong to the records, not to diagnostics. The
-// count's Rawcalls and Bytes describe the rawcall slot's day directory;
-// every other kind it counts, with RecordBytes, describes the same day
-// in the record slot. A day appears when either slot holds it.
+// rawcalls it counts, with Bytes, describe the rawcall slot's day
+// directory; every other kind it counts, with RecordBytes, describes
+// the same day in the record slot. A day appears when either slot
+// holds it.
 type DaySummary struct {
 	Day string `json:"day"`
 	Count
 	Bytes       int64 `json:"bytes"`
 	RecordBytes int64 `json:"record_bytes"`
+}
+
+// MarshalJSON writes the day with one key per record kind, under the
+// name that kind's count travels by and in envelope's order. The count
+// keys are written here rather than carried by struct tags because the
+// set of keys is the set of kinds: a kind added to envelope's table
+// reaches this diagnostic with no edit here, and a key already written
+// is never respelled.
+func (d DaySummary) MarshalJSON() ([]byte, error) {
+	day, err := json.Marshal(d.Day)
+	if err != nil {
+		return nil, err
+	}
+	out := append([]byte(`{"day":`), day...)
+	for _, kind := range envelope.Kinds() {
+		out = fmt.Appendf(out, `,%q:%d`, kind.CountKey(), d.Count[kind])
+	}
+	return fmt.Appendf(out, `,"bytes":%d,"record_bytes":%d}`, d.Bytes, d.RecordBytes), nil
 }
 
 // Summary walks the day directories of both slots and reports each
@@ -566,7 +589,7 @@ func summarizeRecordDay(dayDir string, d *DaySummary) error {
 		if err != nil {
 			return err
 		}
-		d.Add(recordKind(r.Kind))
+		d.Add(r.kind())
 	}
 	return nil
 }
