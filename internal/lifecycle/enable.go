@@ -53,14 +53,16 @@ func hookCommand(execPath, subcommand string) string {
 	return execPath + " hook " + subcommand
 }
 
-// projectHooks renders the commands a project injection installs, so
-// enable and doctor spell them once.
+// projectHooks renders one command per hook a project injection
+// installs, so enable and doctor spell them once and neither names the
+// hooks the injection is made of.
 func projectHooks(execPath string) claudesettings.HookCommands {
-	return claudesettings.HookCommands{
-		EnsureProxy: hookCommand(execPath, claudesettings.HookEnsureProxy),
-		SessionEnd:  hookCommand(execPath, claudesettings.HookSessionEnd),
-		GitSnapshot: hookCommand(execPath, claudesettings.HookGitSnapshot),
+	subcommands := claudesettings.ProjectHookSubcommands()
+	hooks := make(claudesettings.HookCommands, len(subcommands))
+	for _, subcommand := range subcommands {
+		hooks[subcommand] = hookCommand(execPath, subcommand)
 	}
+	return hooks
 }
 
 // enableProject drives the enable state machine to completion or rolls

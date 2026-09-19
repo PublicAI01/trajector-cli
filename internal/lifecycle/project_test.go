@@ -39,11 +39,8 @@ func TestEnableInjectsRoutesAndSelfChecks(t *testing.T) {
 	if st.InjectedToken != st.Token {
 		t.Error("injected token differs from the routed token")
 	}
-	if !st.HookInstalled {
-		t.Error("ensure-proxy hooks missing")
-	}
-	if !st.SessionEndInstalled {
-		t.Error("session-end hook missing")
+	if !st.Hooks.Complete() {
+		t.Errorf("hooks after enable = %v, want every hook this release installs", st.Hooks)
 	}
 	if st.Shape != proxytest.WithProxy {
 		t.Error("an enable that injected a base URL records the shape without one")
@@ -267,8 +264,8 @@ func TestDisableRemovesInjectionRevokesAndDeletesProjectData(t *testing.T) {
 	if after.InjectedBaseURL != "" {
 		t.Error("base URL still injected")
 	}
-	if after.HookInstalled || after.SessionEndInstalled {
-		t.Error("hooks still injected")
+	if len(after.Hooks) > 0 {
+		t.Errorf("hooks after disable = %v, want none left", after.Hooks)
 	}
 	if after.Enabled {
 		t.Error("route still active")
@@ -662,7 +659,7 @@ func TestDisableRemovesTheInjectionWithoutBaseURL(t *testing.T) {
 	}
 
 	after := e.status()
-	if after.Injected || after.HookInstalled || after.SessionEndInstalled {
+	if after.Injected || len(after.Hooks) > 0 {
 		t.Errorf("status after disable = %+v, want nothing of the injection left", after)
 	}
 	if after.Enabled {

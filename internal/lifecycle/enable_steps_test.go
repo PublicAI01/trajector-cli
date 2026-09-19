@@ -282,8 +282,8 @@ func TestEnable_NoProxyInjectsThreeHooksWithoutBaseURL(t *testing.T) {
 	if !st.Enabled || st.Shape != proxytest.WithoutProxy {
 		t.Errorf("status = %+v, want a grant recording the shape without a base URL", st)
 	}
-	if st.InjectedBaseURL != "" || !st.InjectionAgrees || !st.HookInstalled || !st.SessionEndInstalled {
-		t.Errorf("status = %+v, want three hooks and no base URL", st)
+	if st.InjectedBaseURL != "" || !st.InjectionAgrees || !st.Hooks.Complete() {
+		t.Errorf("status = %+v, want every hook and no base URL", st)
 	}
 	if !st.Consistent() {
 		t.Error("status does not read as consistent")
@@ -297,11 +297,11 @@ func TestEnable_NoProxyInjectsThreeHooksWithoutBaseURL(t *testing.T) {
 	}
 	commands := hookCommands(t, e.settingsPath())
 	for _, event := range []string{"SessionStart", "UserPromptSubmit"} {
-		if got := commands[event]; len(got) != 1 || got[0] != e.projectHooks().EnsureProxy+" --no-proxy" {
+		if got := commands[event]; len(got) != 1 || got[0] != e.projectHooks()[proxytest.HookEnsureProxy]+" --no-proxy" {
 			t.Errorf("%s hooks = %q, want the ensure-proxy command marked --no-proxy", event, got)
 		}
 	}
-	if got := commands["SessionEnd"]; len(got) != 1 || got[0] != e.projectHooks().SessionEnd {
+	if got := commands["SessionEnd"]; len(got) != 1 || got[0] != e.projectHooks()[proxytest.HookSessionEnd] {
 		t.Errorf("SessionEnd hooks = %q, want the session-end command unmarked", got)
 	}
 	out := e.stdout.String()

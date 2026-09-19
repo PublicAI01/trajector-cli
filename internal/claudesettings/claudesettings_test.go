@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -21,9 +22,9 @@ import (
 const testBaseURL = "http://127.0.0.1:41100/t/tok-abc123"
 
 var testHooks = HookCommands{
-	EnsureProxy: `"/usr/local/bin/trajector" hook ensure-proxy`,
-	SessionEnd:  `"/usr/local/bin/trajector" hook session-end`,
-	GitSnapshot: `"/usr/local/bin/trajector" hook git-snapshot`,
+	HookEnsureProxy: `"/usr/local/bin/trajector" hook ensure-proxy`,
+	HookSessionEnd:  `"/usr/local/bin/trajector" hook session-end`,
+	HookGitSnapshot: `"/usr/local/bin/trajector" hook git-snapshot`,
 }
 
 func readJSON(t *testing.T, path string) map[string]any {
@@ -39,6 +40,35 @@ func readJSON(t *testing.T, path string) map[string]any {
 	return root
 }
 
+func TestInstalledProjectHooksReadsWhichHooksOfThisReleaseAFileCarries(t *testing.T) {
+	if got := InstalledProjectHooks(ProjectLocalPath(t.TempDir())); len(got) != 0 || got.Complete() {
+		t.Errorf("hooks of a file that does not exist = %v, want none", got)
+	}
+	for _, absent := range ProjectHookSubcommands() {
+		t.Run(absent, func(t *testing.T) {
+			path := ProjectLocalPath(t.TempDir())
+			if err := InjectProject(path, testBaseURL, testHooks); err != nil {
+				t.Fatal(err)
+			}
+			if got := InstalledProjectHooks(path); !got.Complete() || !slices.Equal(got, ProjectHookSubcommands()) {
+				t.Fatalf("hooks after injection = %v, want %v", got, ProjectHookSubcommands())
+			}
+			if err := removeInjection(path, false, hookPrefix+absent); err != nil {
+				t.Fatal(err)
+			}
+			got := InstalledProjectHooks(path)
+			if got.Has(absent) || got.Complete() {
+				t.Errorf("hooks of a file without the %s hook = %v", absent, got)
+			}
+			for _, kept := range ProjectHookSubcommands() {
+				if kept != absent && !got.Has(kept) {
+					t.Errorf("hooks of a file without the %s hook = %v, want the %s hook kept", absent, got, kept)
+				}
+			}
+		})
+	}
+}
+
 func TestInjectProjectCreatesFileWithEnvAndEverySessionHook(t *testing.T) {
 	root := t.TempDir()
 	path := ProjectLocalPath(root)
@@ -52,10 +82,10 @@ func TestInjectProjectCreatesFileWithEnvAndEverySessionHook(t *testing.T) {
 		t.Errorf("env = %v", env)
 	}
 	if got, want := hookCommandsByEvent(t, path), map[string][]string{
-		EventSessionStart:     {testHooks.EnsureProxy},
-		EventUserPromptSubmit: {testHooks.EnsureProxy},
-		EventSessionEnd:       {testHooks.SessionEnd},
-		EventPostToolUse:      {testHooks.GitSnapshot},
+		EventSessionStart:     {testHooks[HookEnsureProxy]},
+		EventUserPromptSubmit: {testHooks[HookEnsureProxy]},
+		EventSessionEnd:       {testHooks[HookSessionEnd]},
+		EventPostToolUse:      {testHooks[HookGitSnapshot]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
@@ -757,7 +787,7 @@ func TestInjectProjectRefusesASymlinkedSettingsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := InjectProject(link, "http://127.0.0.1:1/t/tok", HookCommands{EnsureProxy: "trajector hook ensure-proxy", SessionEnd: "trajector hook session-end", GitSnapshot: "trajector hook git-snapshot"})
+	err := InjectProject(link, "http://127.0.0.1:1/t/tok", HookCommands{HookEnsureProxy: "trajector hook ensure-proxy", HookSessionEnd: "trajector hook session-end", HookGitSnapshot: "trajector hook git-snapshot"})
 	if !errors.Is(err, errSymlinked) {
 		t.Fatalf("InjectProject = %v, want errSymlinked", err)
 	}
@@ -925,12 +955,12 @@ func TestInjectProjectWithoutBaseURLInstallsMarkedHooksAndNoEnv(t *testing.T) {
 	if _, ok := settings["env"]; ok {
 		t.Errorf("env block written without a base URL: %v", settings["env"])
 	}
-	marked := testHooks.EnsureProxy + " --no-proxy"
+	marked := testHooks[HookEnsureProxy] + " --no-proxy"
 	if got, want := hookCommandsByEvent(t, path), map[string][]string{
 		EventSessionStart:     {marked},
 		EventUserPromptSubmit: {marked},
-		EventSessionEnd:       {testHooks.SessionEnd},
-		EventPostToolUse:      {testHooks.GitSnapshot},
+		EventSessionEnd:       {testHooks[HookSessionEnd]},
+		EventPostToolUse:      {testHooks[HookGitSnapshot]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
@@ -1025,10 +1055,10 @@ func TestInjectProjectWithBaseURLReplacesHooksSpelledWithoutOne(t *testing.T) {
 	}
 
 	if got, want := hookCommandsByEvent(t, path), map[string][]string{
-		EventSessionStart:     {testHooks.EnsureProxy},
-		EventUserPromptSubmit: {testHooks.EnsureProxy},
-		EventSessionEnd:       {testHooks.SessionEnd},
-		EventPostToolUse:      {testHooks.GitSnapshot},
+		EventSessionStart:     {testHooks[HookEnsureProxy]},
+		EventUserPromptSubmit: {testHooks[HookEnsureProxy]},
+		EventSessionEnd:       {testHooks[HookSessionEnd]},
+		EventPostToolUse:      {testHooks[HookGitSnapshot]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
@@ -1040,9 +1070,9 @@ func TestInjectProjectWithBaseURLReplacesHooksSpelledWithoutOne(t *testing.T) {
 func TestInjectProjectReplacesAHookSpelledForAnOlderExecutablePath(t *testing.T) {
 	path := ProjectLocalPath(t.TempDir())
 	older := HookCommands{
-		EnsureProxy: "/opt/old/trajector hook ensure-proxy",
-		SessionEnd:  "/opt/old/trajector hook session-end",
-		GitSnapshot: "/opt/old/trajector hook git-snapshot",
+		HookEnsureProxy: "/opt/old/trajector hook ensure-proxy",
+		HookSessionEnd:  "/opt/old/trajector hook session-end",
+		HookGitSnapshot: "/opt/old/trajector hook git-snapshot",
 	}
 	if err := InjectProject(path, testBaseURL, older); err != nil {
 		t.Fatal(err)
@@ -1051,10 +1081,10 @@ func TestInjectProjectReplacesAHookSpelledForAnOlderExecutablePath(t *testing.T)
 		t.Fatal(err)
 	}
 	if got, want := hookCommandsByEvent(t, path), map[string][]string{
-		EventSessionStart:     {testHooks.EnsureProxy},
-		EventUserPromptSubmit: {testHooks.EnsureProxy},
-		EventSessionEnd:       {testHooks.SessionEnd},
-		EventPostToolUse:      {testHooks.GitSnapshot},
+		EventSessionStart:     {testHooks[HookEnsureProxy]},
+		EventUserPromptSubmit: {testHooks[HookEnsureProxy]},
+		EventSessionEnd:       {testHooks[HookSessionEnd]},
+		EventPostToolUse:      {testHooks[HookGitSnapshot]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
@@ -1073,10 +1103,10 @@ func TestInjectProjectCompletesAnInjectionMadeBeforeALaterHookExisted(t *testing
   "hooks": {
     "SessionStart": [
       {"hooks": [{"type": "command", "command": "echo user-hook"}]},
-      {"hooks": [{"type": "command", "command": ` + fmt.Sprintf("%q", testHooks.EnsureProxy) + `}]}
+      {"hooks": [{"type": "command", "command": ` + fmt.Sprintf("%q", testHooks[HookEnsureProxy]) + `}]}
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": ` + fmt.Sprintf("%q", testHooks.EnsureProxy) + `}]}
+      {"hooks": [{"type": "command", "command": ` + fmt.Sprintf("%q", testHooks[HookEnsureProxy]) + `}]}
     ]
   }
 }
@@ -1098,18 +1128,18 @@ func TestInjectProjectCompletesAnInjectionMadeBeforeALaterHookExisted(t *testing
 		t.Errorf("env = %v, want the base URL and the user's variable unchanged", env)
 	}
 	if got, want := hookCommandsByEvent(t, path), map[string][]string{
-		EventSessionStart:     {"echo user-hook", testHooks.EnsureProxy},
-		EventUserPromptSubmit: {testHooks.EnsureProxy},
-		EventSessionEnd:       {testHooks.SessionEnd},
-		EventPostToolUse:      {testHooks.GitSnapshot},
+		EventSessionStart:     {"echo user-hook", testHooks[HookEnsureProxy]},
+		EventUserPromptSubmit: {testHooks[HookEnsureProxy]},
+		EventSessionEnd:       {testHooks[HookSessionEnd]},
+		EventPostToolUse:      {testHooks[HookGitSnapshot]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
 }
 
 func TestInjectionShapeReadsEitherFormAndNothingElse(t *testing.T) {
-	ours := fmt.Sprintf("%q", testHooks.EnsureProxy)
-	marked := fmt.Sprintf("%q", testHooks.EnsureProxy+" --no-proxy")
+	ours := fmt.Sprintf("%q", testHooks[HookEnsureProxy])
+	marked := fmt.Sprintf("%q", testHooks[HookEnsureProxy]+" --no-proxy")
 	tests := []struct {
 		name      string
 		content   string
@@ -1165,7 +1195,7 @@ func TestInjectionShapeReadsEitherFormAndNothingElse(t *testing.T) {
 
 func TestHasHookTellsTheProjectMarkersApart(t *testing.T) {
 	path := ProjectLocalPath(t.TempDir())
-	writeFile(t, path, []byte(`{"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": `+fmt.Sprintf("%q", testHooks.SessionEnd)+`}]}]}}`))
+	writeFile(t, path, []byte(`{"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": `+fmt.Sprintf("%q", testHooks[HookSessionEnd])+`}]}]}}`))
 	if HasHook(path, EnsureProxyMarker) {
 		t.Error("HasHook(EnsureProxyMarker) = true for a file carrying only the session-end hook")
 	}

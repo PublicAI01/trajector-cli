@@ -54,12 +54,11 @@ type ProjectStatus struct {
 	// second answer about the shape.
 	Injected        bool
 	InjectionAgrees bool
-	// HookInstalled reports the ensure-proxy hooks in the project
-	// settings; SessionEndInstalled the session-end hook, and
-	// GitSnapshotInstalled the one that runs after a shell tool.
-	HookInstalled        bool
-	SessionEndInstalled  bool
-	GitSnapshotInstalled bool
+	// Hooks is which of the hooks this release installs stand in the
+	// project's settings file. It is one reading of the file, so a hook
+	// this release adds is reported on without a surface here being
+	// taught its name.
+	Hooks claudesettings.InstalledHooks
 
 	// AgreementVersion is the accepted data agreement version, empty
 	// when none was ever accepted.
@@ -84,14 +83,14 @@ type ProjectStatus struct {
 // inject. status presents it as contributing; doctor treats anything
 // else as something to reconcile or report.
 func (s ProjectStatus) Consistent() bool {
-	return s.InjectionAgrees && s.SessionEndInstalled && s.GitSnapshotInstalled
+	return s.InjectionAgrees && s.Hooks.Complete()
 }
 
 // MissingSessionHooks reports an injection that predates a hook this
 // release installs: the rest of it stands, that hook does not. doctor
 // completes such an injection in place.
 func (s ProjectStatus) MissingSessionHooks() bool {
-	return s.Injected && s.HookInstalled && (!s.SessionEndInstalled || !s.GitSnapshotInstalled)
+	return s.Injected && s.Hooks.Has(claudesettings.HookEnsureProxy) && !s.Hooks.Complete()
 }
 
 // IdentityDisagreement reports that the routing table and the consent

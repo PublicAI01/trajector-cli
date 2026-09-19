@@ -2,6 +2,7 @@ package report_test
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -303,20 +304,29 @@ func TestStatusShowsNoOptionalSettingLineOutsideAContributingProject(t *testing.
 // contributing is a project in the fully healthy enabled state.
 func contributing() report.ProjectStatus {
 	return report.ProjectStatus{
-		Root:                 "/home/dev/sample-project",
-		Hash:                 "hash-p1",
-		Enabled:              true,
-		Token:                "tok-1",
-		Upstream:             "https://api.anthropic.com",
-		Shape:                routing.WithProxy,
-		InjectedBaseURL:      "http://127.0.0.1:41100/t/tok-1",
-		InjectedToken:        "tok-1",
-		Injected:             true,
-		InjectionAgrees:      true,
-		HookInstalled:        true,
-		SessionEndInstalled:  true,
-		GitSnapshotInstalled: true,
+		Root:            "/home/dev/sample-project",
+		Hash:            "hash-p1",
+		Enabled:         true,
+		Token:           "tok-1",
+		Upstream:        "https://api.anthropic.com",
+		Shape:           routing.WithProxy,
+		InjectedBaseURL: "http://127.0.0.1:41100/t/tok-1",
+		InjectedToken:   "tok-1",
+		Injected:        true,
+		InjectionAgrees: true,
+		Hooks:           everyProjectHook(),
 	}
+}
+
+// everyProjectHook is the settings file of a project carrying every
+// hook this release installs; hooksWithout is the same file with one
+// hook of it never installed.
+func everyProjectHook() claudesettings.InstalledHooks {
+	return claudesettings.InstalledHooks(claudesettings.ProjectHookSubcommands())
+}
+
+func hooksWithout(subcommand string) claudesettings.InstalledHooks {
+	return slices.DeleteFunc(everyProjectHook(), func(installed string) bool { return installed == subcommand })
 }
 
 // ours is a verdict about a proxy of this device's own.

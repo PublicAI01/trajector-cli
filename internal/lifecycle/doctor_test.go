@@ -200,8 +200,8 @@ func TestDoctorCompletesAnInjectionMadeBeforeTheSessionEndHook(t *testing.T) {
 		t.Errorf("doctor = %q, want the repair reported", out)
 	}
 	after := e.status()
-	if after.MissingSessionHooks() || !after.SessionEndInstalled || !after.Consistent() {
-		t.Errorf("status after doctor = %+v, want all three hooks in place", after)
+	if after.MissingSessionHooks() || !after.Hooks.Complete() || !after.Consistent() {
+		t.Errorf("status after doctor = %+v, want every hook in place", after)
 	}
 	if after.InjectedBaseURL != before.InjectedBaseURL {
 		t.Errorf("base URL after doctor = %q, want %q kept", after.InjectedBaseURL, before.InjectedBaseURL)
@@ -229,7 +229,7 @@ func TestDoctorRepairsTheInjectionWithoutBaseURLInItsOwnShape(t *testing.T) {
 		t.Errorf("doctor = %q, want the repair reported", out)
 	}
 	after := e.status()
-	if after.Shape != proxytest.WithoutProxy || !after.SessionEndInstalled || !after.Consistent() {
+	if after.Shape != proxytest.WithoutProxy || !after.Hooks.Complete() || !after.Consistent() {
 		t.Errorf("status after doctor = %+v, want the same shape completed", after)
 	}
 	if after.InjectedBaseURL != "" {

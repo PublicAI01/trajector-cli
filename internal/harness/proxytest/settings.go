@@ -45,6 +45,12 @@ const (
 	SourceProjectLocal = claudesettings.SourceProjectLocal
 )
 
+// The subcommands naming the hooks a test speaks about one by one.
+const (
+	HookEnsureProxy = claudesettings.HookEnsureProxy
+	HookSessionEnd  = claudesettings.HookSessionEnd
+)
+
 // The markers that tell each hook trajector installs from every other
 // command in the file.
 const (
@@ -67,13 +73,14 @@ const ConfigDirEnv = claudesettings.ConfigDirEnv
 type HookCommands = claudesettings.HookCommands
 
 // ProjectHooks spells the hook commands an enable installs for the
-// binary at execPath.
+// binary at execPath: one for every hook this release installs, so a
+// test drives the same list the machine does.
 func ProjectHooks(execPath string) HookCommands {
-	return HookCommands{
-		EnsureProxy: execPath + " hook ensure-proxy",
-		SessionEnd:  execPath + " hook session-end",
-		GitSnapshot: execPath + " hook git-snapshot",
+	hooks := HookCommands{}
+	for _, subcommand := range claudesettings.ProjectHookSubcommands() {
+		hooks[subcommand] = execPath + " hook " + subcommand
 	}
+	return hooks
 }
 
 // Path is where this settings file lives.

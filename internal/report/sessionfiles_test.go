@@ -198,13 +198,16 @@ func TestStatusSaysWhatEachShapeCosts(t *testing.T) {
 }
 
 func TestStatusNamesAMissingSessionHookWhileStillContributing(t *testing.T) {
-	for name, drop := range map[string]func(*report.ProjectStatus){
-		"the hook that runs when a session ends":    func(p *report.ProjectStatus) { p.SessionEndInstalled = false },
-		"the hook that runs after a shell tool use": func(p *report.ProjectStatus) { p.GitSnapshotInstalled = false },
-	} {
-		t.Run(name, func(t *testing.T) {
+	for _, missing := range claudesettings.ProjectHookSubcommands() {
+		if missing == claudesettings.HookEnsureProxy {
+			// The hook that routes the project's traffic is not a
+			// session hook a repair completes: without it the
+			// injection does not agree with the grant at all.
+			continue
+		}
+		t.Run(missing, func(t *testing.T) {
 			d := enabledDevice()
-			drop(&d.Project)
+			d.Project.Hooks = hooksWithout(missing)
 			out := dashboard(d)
 			wants(t, "status", out, "Contributing",
 				"A session hook is missing from /home/dev/sample-project/.claude/settings.local.json; run `trajector doctor` to add it.")
@@ -400,7 +403,7 @@ func TestDoctorSaysNothingAboutAProjectNotEnabled(t *testing.T) {
 
 func TestTheBundleCarriesShapeAndSessionCountsWithoutIdsOrPaths(t *testing.T) {
 	d := withoutProxy(enabledDevice())
-	d.Project.SessionEndInstalled = false
+	d.Project.Hooks = hooksWithout(claudesettings.HookSessionEnd)
 	d.HookPolicy = &claudesettings.HookPolicy{Reason: "disableAllHooks in user settings.json"}
 	d.SessionFiles = report.SessionFilesState{
 		Sessions:    4,

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
@@ -50,13 +51,18 @@ const (
 	HookRead        = "read"
 )
 
+// hookPrefix precedes the subcommand in every hook command trajector
+// installs, which is what makes the subcommand recognizable in a file
+// full of commands the user wrote.
+const hookPrefix = "hook "
+
 // Marker substrings identifying trajector-injected hook commands, so
 // removal never touches a hook the user wrote themselves.
 const (
-	EnsureProxyMarker = "hook " + HookEnsureProxy
-	SessionEndMarker  = "hook " + HookSessionEnd
-	GitSnapshotMarker = "hook " + HookGitSnapshot
-	DiscoveryMarker   = "hook " + HookDiscovery
+	EnsureProxyMarker = hookPrefix + HookEnsureProxy
+	SessionEndMarker  = hookPrefix + HookSessionEnd
+	GitSnapshotMarker = hookPrefix + HookGitSnapshot
+	DiscoveryMarker   = hookPrefix + HookDiscovery
 )
 
 // NoProxyMarker is the argument the ensure-proxy hook command carries
@@ -67,18 +73,98 @@ const (
 // same walk as the hook itself.
 const NoProxyMarker = "--no-proxy"
 
-// projectMarkers are the markers of every hook a project injection
-// installs; removal and re-injection treat a hook carrying any of them
-// as trajector's own.
-var projectMarkers = []string{EnsureProxyMarker, SessionEndMarker, GitSnapshotMarker}
+// projectHook is one hook of a project injection: which subcommand it
+// runs, the events it runs under, and the matcher of the group it sits
+// in. carriesShape marks the one hook that also states the shape of
+// the injection, which is why the shape rides on a command rather than
+// on a key of its own.
+type projectHook struct {
+	subcommand   string
+	events       []string
+	matcher      string
+	carriesShape bool
+}
 
-// HookCommands are the shell commands a project injection installs:
-// EnsureProxy under SessionStart and UserPromptSubmit, SessionEnd under
-// SessionEnd, GitSnapshot under PostToolUse for the shell tool.
-type HookCommands struct {
-	EnsureProxy string
-	SessionEnd  string
-	GitSnapshot string
+func (h projectHook) marker() string { return hookPrefix + h.subcommand }
+
+// projectHooks is the hooks a project injection installs in this
+// release, and the one list they are read from: injection installs
+// exactly these, removal and re-injection treat a hook carrying any of
+// their markers as trajector's own, and status reports on exactly
+// these. A hook added here needs nothing added anywhere else.
+//
+// Only the shell tool's uses can have made a commit, so the hook that
+// follows a tool use follows that tool alone.
+var projectHooks = []projectHook{
+	{subcommand: HookEnsureProxy, events: []string{EventSessionStart, EventUserPromptSubmit}, carriesShape: true},
+	{subcommand: HookSessionEnd, events: []string{EventSessionEnd}},
+	{subcommand: HookGitSnapshot, events: []string{EventPostToolUse}, matcher: BashMatcher},
+}
+
+// projectMarkers are the markers of every hook in the list.
+func projectMarkers() []string {
+	markers := make([]string, 0, len(projectHooks))
+	for _, hook := range projectHooks {
+		markers = append(markers, hook.marker())
+	}
+	return markers
+}
+
+// ProjectHookSubcommands names each hook a project injection installs,
+// for the caller that renders a shell command per hook. The commands
+// are rendered above this package because only the caller knows which
+// executable runs them.
+func ProjectHookSubcommands() []string {
+	subcommands := make([]string, 0, len(projectHooks))
+	for _, hook := range projectHooks {
+		subcommands = append(subcommands, hook.subcommand)
+	}
+	return subcommands
+}
+
+// HookCommands is the shell command to install for each hook of a
+// project injection, keyed by the hook's subcommand. An injection
+// installs the whole list or nothing: a command missing for any hook
+// of the list fails the injection rather than leaving that hook out.
+type HookCommands map[string]string
+
+// InstalledHooks is which hooks of a project injection stand in one
+// settings file. It is the one reading every surface asks for, in
+// place of asking hook by hook, so a hook added to the list is
+// reported on without any surface being taught about it. The zero
+// value holds no hook, which is what a file with no injection of ours
+// carries.
+type InstalledHooks []string
+
+// Has reports whether the named hook stands in the file that was read.
+func (h InstalledHooks) Has(subcommand string) bool { return slices.Contains(h, subcommand) }
+
+// Complete reports that every hook this release installs stands in the
+// file. Anything less is an injection a repair completes.
+func (h InstalledHooks) Complete() bool { return len(h) == len(projectHooks) }
+
+// InstalledProjectHooks reads the settings file at path once and
+// reports which hooks of a project injection it carries. An unreadable
+// file carries none.
+func InstalledProjectHooks(path string) InstalledHooks {
+	root, err := readSettings(path)
+	if err != nil {
+		return nil
+	}
+	var commands []string
+	eachHookEntry(root, func(_ string, entry map[string]any) hookAction {
+		if cmd, _ := entry["command"].(string); cmd != "" {
+			commands = append(commands, cmd)
+		}
+		return keepEntry
+	})
+	var installed InstalledHooks
+	for _, hook := range projectHooks {
+		if slices.ContainsFunc(commands, func(cmd string) bool { return strings.Contains(cmd, hook.marker()) }) {
+			installed = append(installed, hook.subcommand)
+		}
+	}
+	return installed
 }
 
 // errBaseURLInjected reports an attempt to inject without a base URL
@@ -149,19 +235,25 @@ func TokenFromBaseURL(value string) (string, bool) {
 // the file, so that form goes through editSecret; the other leaves the
 // file's mode alone.
 func InjectProject(path string, baseURL string, hooks HookCommands) error {
-	ensureProxy := hooks.EnsureProxy
-	if baseURL == "" {
-		ensureProxy += " " + NoProxyMarker
+	// One entry per place a hook is installed: the same hook installed
+	// under two events is two entries, and an event two hooks run under
+	// keeps both.
+	type placement struct{ event, matcher, command string }
+	var install []placement
+	wanted := map[string][]string{}
+	for _, hook := range projectHooks {
+		command := hooks[hook.subcommand]
+		if command == "" {
+			return fmt.Errorf("claudesettings: no command to install for the %s hook", hook.subcommand)
+		}
+		if hook.carriesShape && baseURL == "" {
+			command += " " + NoProxyMarker
+		}
+		for _, event := range hook.events {
+			install = append(install, placement{event: event, matcher: hook.matcher, command: command})
+			wanted[event] = append(wanted[event], command)
+		}
 	}
-	wanted := map[string]string{
-		EventSessionStart:     ensureProxy,
-		EventUserPromptSubmit: ensureProxy,
-		EventSessionEnd:       hooks.SessionEnd,
-		EventPostToolUse:      hooks.GitSnapshot,
-	}
-	// The matcher of each event's group. Only the shell tool's uses can
-	// have made a commit, so only they are followed.
-	matchers := map[string]string{EventPostToolUse: BashMatcher}
 	mutate := func(root map[string]any) error {
 		if baseURL != "" {
 			env, err := childObject(root, "env")
@@ -174,16 +266,13 @@ func InjectProject(path string, baseURL string, hooks HookCommands) error {
 		}
 		eachHookEntry(root, func(event string, entry map[string]any) hookAction {
 			cmd, _ := entry["command"].(string)
-			if !isProjectHook(cmd) || cmd == wanted[event] {
+			if !isProjectHook(cmd) || slices.Contains(wanted[event], cmd) {
 				return keepEntry
 			}
 			return dropEntry
 		})
-		for _, event := range []string{EventSessionStart, EventUserPromptSubmit, EventSessionEnd, EventPostToolUse} {
-			if wanted[event] == "" {
-				return fmt.Errorf("claudesettings: no command to install under %s", event)
-			}
-			if err := addHook(root, event, matchers[event], wanted[event]); err != nil {
+		for _, at := range install {
+			if err := addHook(root, at.event, at.matcher, at.command); err != nil {
 				return err
 			}
 		}
@@ -198,8 +287,8 @@ func InjectProject(path string, baseURL string, hooks HookCommands) error {
 // isProjectHook reports whether a hook command is one a project
 // injection installs, in either shape.
 func isProjectHook(cmd string) bool {
-	for _, marker := range projectMarkers {
-		if strings.Contains(cmd, marker) {
+	for _, hook := range projectHooks {
+		if strings.Contains(cmd, hook.marker()) {
 			return true
 		}
 	}
@@ -210,7 +299,7 @@ func isProjectHook(cmd string) bool {
 // session hook, in either shape, from the settings file at path. A
 // missing file is already-removed.
 func RemoveProject(path string) error {
-	return removeInjection(path, true, projectMarkers...)
+	return removeInjection(path, true, projectMarkers()...)
 }
 
 // InjectionShape reports which shape of injection stands in the

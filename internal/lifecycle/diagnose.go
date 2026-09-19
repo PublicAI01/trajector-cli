@@ -144,9 +144,7 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 		st.InjectedBaseURL = url
 		st.InjectedToken, _ = claudesettings.TokenFromBaseURL(url)
 	}
-	st.HookInstalled = claudesettings.HasHook(settings, claudesettings.EnsureProxyMarker)
-	st.SessionEndInstalled = claudesettings.HasHook(settings, claudesettings.SessionEndMarker)
-	st.GitSnapshotInstalled = claudesettings.HasHook(settings, claudesettings.GitSnapshotMarker)
+	st.Hooks = claudesettings.InstalledProjectHooks(settings)
 	onFile, injected := claudesettings.InjectionShape(settings)
 	st.Injected = injected
 	st.InjectionAgrees = injectionAgrees(st, onFile)
@@ -172,7 +170,7 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 // URL, carries this project's own token. It is decided here because
 // this is the one place that has read both.
 func injectionAgrees(st report.ProjectStatus, onFile routing.Shape) bool {
-	if !st.Enabled || !st.HookInstalled || onFile != st.Shape {
+	if !st.Enabled || !st.Hooks.Has(claudesettings.HookEnsureProxy) || onFile != st.Shape {
 		return false
 	}
 	return st.Shape == routing.WithoutProxy || st.InjectedToken == st.Token
