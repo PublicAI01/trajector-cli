@@ -237,6 +237,49 @@ func TestResolveAnswersWhatTheProxyWouldAnswer(t *testing.T) {
 	}
 }
 
+func TestRecordsSaysYesOnlyWhileTheTableClearsTheToken(t *testing.T) {
+	tests := []struct {
+		name  string
+		setUp func(t *testing.T, path string, store *routing.Store)
+		want  bool
+	}{
+		{
+			name: "standing grant",
+			setUp: func(t *testing.T, _ string, store *routing.Store) {
+				grant(t, store, "tok-1", "/home/dev/project")
+			},
+			want: true,
+		},
+		{
+			name: "device-wide pause",
+			setUp: func(t *testing.T, _ string, store *routing.Store) {
+				grant(t, store, "tok-1", "/home/dev/project")
+				if err := store.Pause("signed_out"); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "table that cannot be read",
+			setUp: func(t *testing.T, path string, store *routing.Store) {
+				grant(t, store, "tok-1", "/home/dev/project")
+				writeTable(t, path, `{"projects": {`)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "routes-under-test.json")
+			store := routing.OpenStore(path)
+			tt.setUp(t, path, store)
+
+			if got := store.Records("tok-1"); got != tt.want {
+				t.Errorf("Records = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResumeOtherBuildLiftsOnlyWhatAnotherBuildPaused(t *testing.T) {
 	tests := []struct {
 		name        string

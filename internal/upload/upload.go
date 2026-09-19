@@ -9,6 +9,7 @@
 package upload
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -28,6 +29,11 @@ import (
 const (
 	defaultFlushBytes int64 = 10 << 20
 	defaultFlushAge         = 24 * time.Hour
+	// The records read from session files leave on thresholds of their
+	// own, far below the ones for recorded calls: they describe a
+	// session still running, so they leave while it runs.
+	defaultSegmentFlushBytes int64 = 1 << 20
+	defaultSegmentFlushAge         = 5 * time.Minute
 )
 
 // Disposition is what this client does with one batch once the service
@@ -252,12 +258,28 @@ var errBudgetSpent = errors.New("upload: the flush ran out of its budget; what i
 // carries no outcome at all — never a leftover in-progress one. Readers
 // act on the outcome first.
 func (u *Uploader) Flush(force bool) (Result, error) {
+	return u.locked(flushMode{ignoreThreshold: force, ignoreGates: force})
+}
+
+// FlushRecords uploads what the spool holds as soon as it holds any
+// record read from a session file, however new: it is the flush a
+// session's end, or a session gone quiet, asks for. Every gate and
+// the backoff still stand, and the thresholds for recorded calls
+// still hold a spool that carries only those.
+func (u *Uploader) FlushRecords() (Result, error) {
+	return u.locked(flushMode{recordsDue: true})
+}
+
+// locked runs one flush under the uploader's lock and the closed
+// gate, and reports a failed flush's outcome from the disposition it
+// reached.
+func (u *Uploader) locked(mode flushMode) (Result, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.closed {
 		return Result{}, ErrClosed
 	}
-	res, err := u.flush(flushMode{ignoreThreshold: force, ignoreGates: force}, time.Time{})
+	res, err := u.flush(mode, time.Time{})
 	if err != nil {
 		res.Outcome, res.Standing = "", Standing{}
 		u.reportDisposition(&res)
@@ -377,6 +399,10 @@ type flushMode struct {
 	// gate and past the report backoff. This is the recovery path: the
 	// user asked for the attempt the gate suppressed.
 	ignoreGates bool
+	// recordsDue treats the thresholds for records read from session
+	// files as reached: any such record in the spool starts the flush.
+	// The thresholds for recorded calls still hold a spool without one.
+	recordsDue bool
 }
 
 // flush is Flush without the lock and the closed gate. A zero deadline
@@ -443,7 +469,7 @@ func (u *Uploader) flush(mode flushMode, deadline time.Time) (Result, error) {
 		if usage == 0 {
 			return res, nil
 		}
-		if usage < flushBytes && u.spoolAge() < flushAge {
+		if usage < flushBytes && u.spoolAge() < flushAge && !u.recordsDue(handshake, mode) {
 			res.Outcome = BelowThreshold
 			return res, nil
 		}
@@ -839,6 +865,27 @@ func (u *Uploader) spoolAge() time.Duration {
 		return 0
 	}
 	return u.deps.Now().Sub(oldest)
+}
+
+// recordsDue reports whether the records read from session files ask
+// for a flush on their own: there are any and the mode says they are
+// due, or they have crossed their own size or age threshold. The
+// handshake's figures win over the defaults, as they do for recorded
+// calls.
+func (u *Uploader) recordsDue(handshake platform.Handshake, mode flushMode) bool {
+	oldest, ok := u.deps.Spool.OldestRecord()
+	if !ok {
+		return false
+	}
+	if mode.recordsDue {
+		return true
+	}
+	bytes := cmp.Or(handshake.SegmentFlushBytes, defaultSegmentFlushBytes)
+	age := time.Duration(handshake.SegmentFlushAgeSeconds) * time.Second
+	if age <= 0 {
+		age = defaultSegmentFlushAge
+	}
+	return u.deps.Spool.RecordsUsage() >= bytes || u.deps.Now().Sub(oldest) >= age
 }
 
 // maxTimeoutBackoff caps the pause between timed-out attempts, so

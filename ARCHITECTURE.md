@@ -56,16 +56,19 @@ reported, never fought — enable refuses to inject, and session hooks warn.
 
 There is no daemon. Session hooks injected by enable run
 `trajector hook ensure-proxy` at session start and prompt submit,
-`trajector hook session-end` at session end, and
-`trajector hook git-snapshot` after a shell tool use; any CLI touchpoint
-does the same as the first. If a healthy proxy is listening, that is a
-no-op; only a proxy announcing a strictly older release is asked to
-drain in-flight requests and hand the port over — an equal or newer
-proxy is reused, and so is one whose version cannot be ordered against
-this build's (a dev build, for instance), so coexisting builds never
-drain each other. Nothing listening starts a supervisor that restarts a
-crashed proxy with backoff. Idle for 30 minutes, the proxy exits on its
-own.
+`trajector hook session-end` at session end,
+`trajector hook git-snapshot` after a shell tool use, and
+`trajector hook progress` when the model stops or a batch of tools
+finishes; any CLI touchpoint does the same as the first. If a healthy
+proxy is listening, that is a no-op; only a proxy announcing a strictly
+older release is asked to drain in-flight requests and hand the port
+over — an equal or newer proxy is reused, and so is one whose version
+cannot be ordered against this build's (a dev build, for instance), so
+coexisting builds never drain each other. Nothing listening starts a
+supervisor that restarts a crashed proxy with backoff. Idle for 30
+minutes — no traffic forwarded and no session file gaining lines — the
+proxy exits on its own; while a session's process is still running the
+wait is two hours, never unbounded.
 
 The session hooks also observe the project's git repository at the
 moments a commit can have appeared — a session opening or closing, and a
@@ -75,12 +78,20 @@ the paths that changed between two commits. No file content is read, and
 nothing is written to the repository. Which commit was last observed is
 local state like a reading cursor and is never uploaded.
 
-Each session hook also registers the session's own files and starts a
-one-shot process to read them: it appends what the files gained since last time
-to the spool and exits. It is not a daemon and watches nothing — each
-run reads from where the last left off, so a run killed before it
-advances a cursor simply reads the same bytes again, and the spool
-absorbs the repeat by record id. A file whose session moves to a
+Each session hook also registers the session's own files and has them
+read: it tells the resident proxy, over its loopback admin endpoint,
+which file just gained lines, and the proxy reads that one file and
+appends what it gained since last time to the spool. With no proxy up,
+the hook starts a one-shot process that does the same for the project
+and brings the proxy up on its way out. Claude Code is the listener;
+nothing here watches a file — the proxy only looks, every five minutes,
+at the files of sessions that are running (a live process, or a hook
+within the last day), for a hook that was disabled, a proxy that started
+late, or a session killed before its last hook. A cold file is never
+looked at until a hook names it again. Each read starts from where the
+last left off, so a run killed before it advances a cursor simply reads
+the same bytes again, and the spool absorbs the repeat by record id. A
+file whose session moves to a
 directory consent does not cover is retired: the registry keeps the
 entry and enabling the project again does not read that file from its
 start, so its lines are never stored and sent a second time.

@@ -25,6 +25,7 @@ var testHooks = HookCommands{
 	HookEnsureProxy: `"/usr/local/bin/trajector" hook ensure-proxy`,
 	HookSessionEnd:  `"/usr/local/bin/trajector" hook session-end`,
 	HookGitSnapshot: `"/usr/local/bin/trajector" hook git-snapshot`,
+	HookProgress:    `"/usr/local/bin/trajector" hook progress`,
 }
 
 func readJSON(t *testing.T, path string) map[string]any {
@@ -86,10 +87,12 @@ func TestInjectProjectCreatesFileWithEnvAndEverySessionHook(t *testing.T) {
 		EventUserPromptSubmit: {testHooks[HookEnsureProxy]},
 		EventSessionEnd:       {testHooks[HookSessionEnd]},
 		EventPostToolUse:      {testHooks[HookGitSnapshot]},
+		EventStop:             {testHooks[HookProgress]},
+		EventPostToolBatch:    {testHooks[HookProgress]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
-	for _, marker := range []string{EnsureProxyMarker, SessionEndMarker, GitSnapshotMarker} {
+	for _, marker := range []string{EnsureProxyMarker, SessionEndMarker, GitSnapshotMarker, ProgressMarker} {
 		if !HasHook(path, marker) {
 			t.Errorf("HasHook(%q) = false after injection", marker)
 		}
@@ -787,7 +790,7 @@ func TestInjectProjectRefusesASymlinkedSettingsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := InjectProject(link, "http://127.0.0.1:1/t/tok", HookCommands{HookEnsureProxy: "trajector hook ensure-proxy", HookSessionEnd: "trajector hook session-end", HookGitSnapshot: "trajector hook git-snapshot"})
+	err := InjectProject(link, "http://127.0.0.1:1/t/tok", HookCommands{HookEnsureProxy: "trajector hook ensure-proxy", HookSessionEnd: "trajector hook session-end", HookGitSnapshot: "trajector hook git-snapshot", HookProgress: "trajector hook progress"})
 	if !errors.Is(err, errSymlinked) {
 		t.Fatalf("InjectProject = %v, want errSymlinked", err)
 	}
@@ -961,6 +964,8 @@ func TestInjectProjectWithoutBaseURLInstallsMarkedHooksAndNoEnv(t *testing.T) {
 		EventUserPromptSubmit: {marked},
 		EventSessionEnd:       {testHooks[HookSessionEnd]},
 		EventPostToolUse:      {testHooks[HookGitSnapshot]},
+		EventStop:             {testHooks[HookProgress]},
+		EventPostToolBatch:    {testHooks[HookProgress]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
@@ -1059,6 +1064,8 @@ func TestInjectProjectWithBaseURLReplacesHooksSpelledWithoutOne(t *testing.T) {
 		EventUserPromptSubmit: {testHooks[HookEnsureProxy]},
 		EventSessionEnd:       {testHooks[HookSessionEnd]},
 		EventPostToolUse:      {testHooks[HookGitSnapshot]},
+		EventStop:             {testHooks[HookProgress]},
+		EventPostToolBatch:    {testHooks[HookProgress]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
@@ -1073,6 +1080,7 @@ func TestInjectProjectReplacesAHookSpelledForAnOlderExecutablePath(t *testing.T)
 		HookEnsureProxy: "/opt/old/trajector hook ensure-proxy",
 		HookSessionEnd:  "/opt/old/trajector hook session-end",
 		HookGitSnapshot: "/opt/old/trajector hook git-snapshot",
+		HookProgress:    "/opt/old/trajector hook progress",
 	}
 	if err := InjectProject(path, testBaseURL, older); err != nil {
 		t.Fatal(err)
@@ -1085,6 +1093,8 @@ func TestInjectProjectReplacesAHookSpelledForAnOlderExecutablePath(t *testing.T)
 		EventUserPromptSubmit: {testHooks[HookEnsureProxy]},
 		EventSessionEnd:       {testHooks[HookSessionEnd]},
 		EventPostToolUse:      {testHooks[HookGitSnapshot]},
+		EventStop:             {testHooks[HookProgress]},
+		EventPostToolBatch:    {testHooks[HookProgress]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}
@@ -1132,6 +1142,8 @@ func TestInjectProjectCompletesAnInjectionMadeBeforeALaterHookExisted(t *testing
 		EventUserPromptSubmit: {testHooks[HookEnsureProxy]},
 		EventSessionEnd:       {testHooks[HookSessionEnd]},
 		EventPostToolUse:      {testHooks[HookGitSnapshot]},
+		EventStop:             {testHooks[HookProgress]},
+		EventPostToolBatch:    {testHooks[HookProgress]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
 	}

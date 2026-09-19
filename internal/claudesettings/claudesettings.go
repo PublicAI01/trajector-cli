@@ -32,6 +32,8 @@ const (
 	EventUserPromptSubmit = "UserPromptSubmit"
 	EventSessionEnd       = "SessionEnd"
 	EventPostToolUse      = "PostToolUse"
+	EventStop             = "Stop"
+	EventPostToolBatch    = "PostToolBatch"
 )
 
 // BashMatcher selects the tool whose uses the PostToolUse injection
@@ -47,6 +49,7 @@ const (
 	HookEnsureProxy = "ensure-proxy"
 	HookSessionEnd  = "session-end"
 	HookGitSnapshot = "git-snapshot"
+	HookProgress    = "progress"
 	HookDiscovery   = "discovery"
 	HookRead        = "read"
 )
@@ -62,6 +65,7 @@ const (
 	EnsureProxyMarker = hookPrefix + HookEnsureProxy
 	SessionEndMarker  = hookPrefix + HookSessionEnd
 	GitSnapshotMarker = hookPrefix + HookGitSnapshot
+	ProgressMarker    = hookPrefix + HookProgress
 	DiscoveryMarker   = hookPrefix + HookDiscovery
 )
 
@@ -94,11 +98,15 @@ func (h projectHook) marker() string { return hookPrefix + h.subcommand }
 // these. A hook added here needs nothing added anywhere else.
 //
 // Only the shell tool's uses can have made a commit, so the hook that
-// follows a tool use follows that tool alone.
+// follows a tool use follows that tool alone. The progress hook runs
+// at the moments a session's file has just gained a turn's worth of
+// lines — the model stopping, a batch of tools finishing — so the
+// file is read while the session runs, not only at its edges.
 var projectHooks = []projectHook{
 	{subcommand: HookEnsureProxy, events: []string{EventSessionStart, EventUserPromptSubmit}, carriesShape: true},
 	{subcommand: HookSessionEnd, events: []string{EventSessionEnd}},
 	{subcommand: HookGitSnapshot, events: []string{EventPostToolUse}, matcher: BashMatcher},
+	{subcommand: HookProgress, events: []string{EventStop, EventPostToolBatch}},
 }
 
 // projectMarkers are the markers of every hook in the list.

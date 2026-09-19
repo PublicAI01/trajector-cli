@@ -37,7 +37,7 @@ func (m *Machine) ObserveGitSnapshot(cwd string, hook HookInput) {
 	if err != nil || !st.Enabled {
 		return
 	}
-	if !m.recordingCleared(st.Token) {
+	if !m.routes.Records(st.Token) {
 		return
 	}
 	dir, subpath, ok := m.observedDir(st, hook)

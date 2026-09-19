@@ -631,6 +631,19 @@ func (s *Spool) Usage() int64 {
 	return s.usage
 }
 
+// RecordsUsage reports how many bytes the second slot holds: the
+// records read from session files and the observations made beside
+// them. It is read from disk each time, as the whole-spool figure is
+// re-derived, because a threshold that reads it is checked once a
+// minute and never on a write.
+func (s *Spool) RecordsUsage() int64 {
+	usage, err := walkUsage(filepath.Join(s.dir, recordsDirName))
+	if err != nil {
+		return 0
+	}
+	return usage
+}
+
 // Quota reports the configured limit in bytes.
 func (s *Spool) Quota() int64 {
 	s.mu.Lock()

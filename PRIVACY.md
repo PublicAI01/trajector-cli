@@ -4,7 +4,7 @@ This page describes everything trajector does with data on your machine and
 what leaves it. The client is fully open source; every statement here can be
 checked against the code in this repository.
 
-It describes version 2026-09-19 of the data agreement — the version
+It describes version 2026-09-20 of the data agreement — the version
 `trajector enable` shows you in full and records when you accept it. The
 agreement and this page state the same terms and change together; the
 version is the day the build carrying those terms was released.
@@ -30,7 +30,10 @@ repaired.
 
 **From the session files.** Claude Code writes a file for every session it
 runs in a project. For an enabled project, trajector reads those files and
-records their lines as Claude Code wrote them. The session files contain
+records their lines as Claude Code wrote them, while the session runs: a
+session hook reports each turn to the resident process, which reads the
+file then, and looks at the files of running sessions on its own every
+few minutes in case a hook was missed. The session files contain
 what the proxy cannot see: your tool results, including the contents of the
 files that were read and the changes that were written; your working
 directory and git branch; and the full conversations of subagents.
@@ -215,11 +218,14 @@ third-party origin; reward terms are the same regardless of origin.
 
 What a record is worth does depend on whether the local proxy witnessed the
 call it is of. A call is witnessed when the proxy handled its request and
-its response on your machine, so the sessions a project had before you
-enabled it, and any session that runs while the proxy does not, are not
-witnessed. Calls the proxy did not witness are rewarded at a lower rate than
-witnessed ones; the tokens are counted in full either way, and only the
-amount is reduced. This page states the rule and no figure: the current
+its response on your machine, or when trajector read it from the session
+file while the session was still running — which is how a project enabled
+with `--no-proxy` is recorded: the session hooks tell the resident process
+each time the file gains a turn, and it reads that file then. The sessions
+a project had before you enabled it, and any session whose file was read
+only after it ended, are not witnessed. Calls that were not witnessed are
+rewarded at a lower rate than witnessed ones; the tokens are counted in
+full either way, and only the amount is reduced. This page states the rule and no figure: the current
 rates are published at
 [docs.publicai.io](https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/rewards)
 and are not fixed by the client.

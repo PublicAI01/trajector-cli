@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/drift"
@@ -122,18 +124,42 @@ func (m *Machine) registerSessionFile(cwd string, hook HookInput) (registered bo
 }
 
 // followSession takes the session a hook was told about: it registers
-// the session's file, and starts the reader for the project when that
-// file is now registered. A file that is not registered is nothing to
-// read, and a failure of either step stays here: the session must not
-// learn what the hook did, and the registry is where the outcome is
-// read afterwards.
-func (m *Machine) followSession(cwd string, hook HookInput) {
+// the session's file, marks it hot — or cold, when the session ended
+// — and has it read. The resident process reads it on this hook's
+// word when one is up; when none is, a one-shot reader is started for
+// the project, and that reader brings the resident process up on its
+// way out. A file that is not registered is nothing to read, and a
+// failure of any step stays here: the session must not learn what
+// the hook did, and the registry is where the outcome is read
+// afterwards.
+func (m *Machine) followSession(cwd string, hook HookInput, ended bool) {
 	registered, err := m.registerSessionFile(cwd, hook)
 	if err != nil || !registered {
 		return
 	}
-	_ = m.spawnReader(cwd)
+	st, err := m.Project(cwd)
+	if err != nil {
+		return
+	}
+	path := filepath.Clean(hook.SessionPath)
+	pid := sessionPID()
+	if ended {
+		_ = m.registry.Cool(st.Hash, path)
+	} else {
+		_ = m.registry.Warm(st.Hash, path, pid, m.deps.Now())
+	}
+	err = m.proxy.Progress(apiproxy.Progress{ProjectIDHash: st.Hash, Path: path, PID: pid, End: ended})
+	if err != nil {
+		_ = m.spawnReader(cwd)
+	}
 }
+
+// sessionPID is the process the session runs in, as seen from a hook
+// it started: the hook's parent. A shell between the two makes this
+// the shell's id, which is gone by the next sweep; the file then stays
+// hot on its events alone, and the registry never keeps a process it
+// cannot see alive.
+func sessionPID() int { return os.Getppid() }
 
 // registryContents is one project's registry as everything here reads
 // it: which files are registered, what the one search for earlier

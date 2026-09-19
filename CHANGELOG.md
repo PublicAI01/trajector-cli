@@ -6,6 +6,39 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-20
+
+### Added
+
+- Session files are read while the session runs. `enable` installs one
+  more session hook, run when the model stops and when a batch of tools
+  finishes; it tells the resident process which file just gained lines,
+  and the process reads that one file at once. When no resident process
+  is up the hook falls back to what 0.3.0 did: a one-shot reader that
+  brings the process up on its way out. `doctor` adds the hook to an
+  injection made before it existed.
+- The resident process looks at the files of running sessions on its
+  own every five minutes, for a session whose hooks are disabled, a
+  process that started after the session did, or a session killed
+  before its last hook ran. A file is hot while the session's process
+  runs or a hook named it within the last day; a cold file is never
+  looked at until a hook names it again. The registry keeps both facts
+  beside the cursor; nothing new is stored elsewhere.
+- Records read from session files leave the machine on thresholds of
+  their own — 1 MiB or five minutes, adjustable by the service
+  handshake — and at once when a session ends or its process is gone
+  and its file stopped growing.
+- The data agreement and `PRIVACY.md` say that a call read from the
+  session file while the session was running counts as witnessed. The
+  agreement version moves to 2026-09-20, so `enable` asks once more.
+
+### Changed
+
+- The resident process now counts a running session as being in use:
+  it exits after 30 minutes with neither traffic forwarded nor a
+  session file gaining lines, and waits two hours instead while a
+  session's process is still running. It never stays up for good.
+
 ## [0.3.0] - 2026-09-19
 
 ### Added
@@ -442,7 +475,8 @@ Hardened ahead of the tag:
 - State files are replaced and read atomically on every platform,
   Windows rename collisions included.
 
-[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/PublicAI01/trajector-cli/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.1.1...v0.2.0

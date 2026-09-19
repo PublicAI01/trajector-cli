@@ -306,6 +306,17 @@ func (s *Store) Resolve(token string) (Verdict, error) {
 	return verdictFor(known, rec.RevokedAt != "", f.PausedReason), nil
 }
 
+// Records reports whether this device may record for token right now.
+// Every recording path off the proxy's cached table asks this one
+// question before it opens the spool, so a device-wide pause stops all
+// of them at once and a reason that means "forward but do not record"
+// takes effect on each of them without a second edit. A table that
+// cannot be read answers no: refusing beats guessing.
+func (s *Store) Records(token string) bool {
+	verdict, err := s.Resolve(token)
+	return err == nil && verdict.Records()
+}
+
 // Active returns the standing grant for rootPath.
 func (s *Store) Active(rootPath string) (Grant, bool, error) {
 	grants, err := s.All()
