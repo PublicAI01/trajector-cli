@@ -64,6 +64,15 @@ const (
 	PauseRedactionDrift PauseReason = "redaction_drift"
 )
 
+// A redaction-drift pause is lifted by two commands in order, and both
+// halves of that promise are spelled from these two names: the build is
+// replaced first, and only the second command reads the session files
+// and decides whether the new build covers them.
+const (
+	driftFirstStep  = "trajector upgrade"
+	driftSecondStep = "trajector doctor"
+)
+
 // Explain returns the pause as one user-readable sentence naming the
 // command that lifts it. A reason this build does not know (written by
 // a newer one) is returned verbatim rather than hidden.
@@ -74,10 +83,22 @@ func (r PauseReason) Explain() string {
 	case PauseConsentReconfirm:
 		return "the data agreement changed; run `trajector enable` to reconfirm it"
 	case PauseRedactionDrift:
-		return "session records changed shape in a way this build's redaction does not cover; run `trajector upgrade`, then `trajector doctor`"
+		return "session records changed shape in a way this build's redaction does not cover; run `" + driftFirstStep + "`, then `" + driftSecondStep + "`"
 	default:
 		return string(r)
 	}
+}
+
+// ExplainAfterUpgrade returns what this pause still owes the user once
+// the build has been replaced, and empty when replacing the build
+// advances nothing about it. A newer binary never resumes recording by
+// itself, so a command that upgrades one asks here rather than deciding
+// for itself which pauses it moved.
+func (r PauseReason) ExplainAfterUpgrade() string {
+	if r != PauseRedactionDrift {
+		return ""
+	}
+	return "Recording is paused until you run `" + driftSecondStep + "`, which checks that this build can read your session files."
 }
 
 // Verdict is the table's answer for one token. Only Record permits

@@ -46,10 +46,11 @@ type finding struct {
 	details  []string
 }
 
-// Findings accumulates what a doctor run establishes. The sections a
-// Diagnosis alone answers are written by this package; the repairs are
-// the machine's, and they write here too, so one run reads as one
-// report whichever half produced a line.
+// Findings accumulates what a doctor run establishes. What a Diagnosis
+// alone answers is written by this package; what a repair did is the
+// machine's own sentence, said by nothing else, and the machine writes
+// it here so that one run reads as one report whichever half produced a
+// line.
 type Findings struct {
 	found []finding
 }
@@ -101,8 +102,8 @@ func (f *Findings) Render(out io.Writer) {
 }
 
 // DoctorDevice reports the two device-wide facts a doctor run opens
-// with: whether the pairing state could be read at all, and whether
-// recording is paused everywhere.
+// with: whether the pairing state could be read at all, and whether a
+// device-wide pause stands.
 func DoctorDevice(f *Findings, d Diagnosis) {
 	doctorTokenStore(f, d.TokenStore)
 	doctorPause(f, d.Project)
@@ -149,7 +150,7 @@ func doctorPause(f *Findings, st ProjectStatus) {
 	if st.PauseReason == "" {
 		return
 	}
-	f.Problem("recording is paused everywhere: %s", st.PauseReason.Explain())
+	f.Problem("%s: %s", strings.ToLower(pausedEverywhere), st.PauseReason.Explain())
 }
 
 // DoctorProject reports what a diagnosis establishes about the current

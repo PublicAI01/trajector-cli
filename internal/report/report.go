@@ -6,11 +6,12 @@
 // touches the network, so what any surface says can be settled by
 // handing it a value.
 //
-// The words are this package's too, and so is the decision about which
-// of them apply right now. A command that says something about a
-// project — enable as much as status — asks here for the sentences and
-// chooses only how to present them; it never keeps a second spelling of
-// one, and never pairs the facts itself.
+// The words more than one surface says are this package's too, and so
+// is the decision about which of them apply right now. A command that
+// says something about a project — enable as much as status — asks here
+// for a shared sentence and chooses only how to present it; it never
+// keeps a second spelling of one, and never pairs the facts itself. A
+// sentence only one command ever says stays with that command.
 package report
 
 import (

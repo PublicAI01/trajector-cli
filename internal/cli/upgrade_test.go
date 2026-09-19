@@ -9,7 +9,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
-	"github.com/PublicAI01/trajector-cli/internal/report"
 )
 
 func TestUpgradeTakesNoArguments(t *testing.T) {
@@ -61,7 +60,7 @@ func TestUpgradeOfABuildFromACheckoutNamesNoStepForAPausedDevice(t *testing.T) {
 	// The step that resumes recording follows a build that changed. This
 	// one did not, so doctor would reach the judgement that paused
 	// recording in the first place.
-	if strings.Contains(got.Stdout, report.RecordingPausedUntilDoctor) {
+	if strings.Contains(got.Stdout, proxytest.PauseRedactionDrift.ExplainAfterUpgrade()) {
 		t.Errorf("stdout = %q, want no step that changes nothing", got.Stdout)
 	}
 	if got := e.Sandbox().PausedReason(); got != proxytest.PauseRedactionDrift {

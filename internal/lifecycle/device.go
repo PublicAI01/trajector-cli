@@ -7,6 +7,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
@@ -141,8 +142,11 @@ func (m *Machine) Logout(io IO) error {
 	if err := m.tokens.ClearDeviceToken(); err != nil {
 		return fmt.Errorf("removing the device token: %w", err)
 	}
-	fmt.Fprintln(io.Out, "Signed out. Forwarding for enabled projects is unaffected; recording is")
-	fmt.Fprintln(io.Out, "paused everywhere until you run `trajector login` again, and kept data")
+	fmt.Fprintln(io.Out, "Signed out. Forwarding for enabled projects is unaffected, and kept data")
 	fmt.Fprintln(io.Out, "uploads once you are back.")
+	// The pause this command just set is stated in the words every other
+	// surface uses for it, so the user reads the same stop and the same
+	// way out here as in status.
+	fmt.Fprintln(io.Out, report.PausedEverywhere(routing.PauseSignedOut))
 	return nil
 }

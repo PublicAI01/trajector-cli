@@ -251,6 +251,32 @@ func TestPurgeRefusedByTheServiceDoesNotAdviseRetrying(t *testing.T) {
 	}
 }
 
+func pauseSentenceIn(t *testing.T, out string) string {
+	t.Helper()
+	for line := range strings.SplitSeq(out, "\n") {
+		if strings.Contains(line, "Recording is paused") {
+			return strings.TrimSpace(line)
+		}
+	}
+	t.Fatalf("no device-wide pause stated in:\n%s", out)
+	return ""
+}
+
+func TestLogoutStatesTheDevicePauseInTheWordsStatusUses(t *testing.T) {
+	e := newEnv(t)
+	e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(200, map[string]any{}))
+
+	if err := e.machine().Logout(e.io()); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	said := pauseSentenceIn(t, e.stdout.String())
+	e.stdout.Reset()
+
+	if out := e.statusOutput(); !strings.Contains(out, said) {
+		t.Errorf("logout says %q; status = %q", said, out)
+	}
+}
+
 func TestLogoutWhenNotPairedIsANoop(t *testing.T) {
 	e := newUnpairedEnv(t)
 	if err := e.machine().Logout(e.io()); err != nil {

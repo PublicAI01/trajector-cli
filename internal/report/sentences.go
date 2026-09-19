@@ -81,12 +81,11 @@ const (
 	// search for a project's session files cannot find by design.
 	spellingVariantsNotice = "Sessions started under another spelling of this project's path, or under a directory name Claude Code was told to use instead, are stored under names this device does not compute and are not collected."
 
-	// RecordingPausedUntilDoctor is what a device still owes its user
-	// after a build that cannot read the session files is replaced: a
-	// newer binary does not resume recording by itself, and doctor is
-	// the command that reads the files and decides whether this build
-	// covers them.
-	RecordingPausedUntilDoctor = "Recording is paused until you run `trajector doctor`, which checks that this build can read your session files."
+	// pausedEverywhere is the one spelling of what a device-wide pause
+	// stops. status and logout lead a sentence with it; doctor states
+	// its findings as lower-case clauses and lowers the whole of it,
+	// which is safe because it names no command and no path.
+	pausedEverywhere = "Recording is paused everywhere"
 
 	// windowsSideClaudeFact names the one arrangement across a WSL
 	// boundary that records nothing, and windowsSideWayOut what makes
@@ -173,6 +172,15 @@ func ExplainHooks(policy claudesettings.HookPolicy, shape routing.Shape) HookOut
 	return outlook
 }
 
+// PausedEverywhere is the sentence a surface states for a device-wide
+// pause: what the pause stops, then the reason, which carries the
+// command that lifts it. status prints it under the device, and so does
+// the command that has just paused the device itself, so the two never
+// describe the same stop differently.
+func PausedEverywhere(reason routing.PauseReason) string {
+	return pausedEverywhere + ": " + reason.Explain() + "."
+}
+
 // ShapeNotice is what the shape a project records in costs or keeps,
 // said wherever the shape is stated: status prints it under every
 // contributing project, and enable prints it once the install is
@@ -188,6 +196,11 @@ func ShapeNotice(shape routing.Shape) string {
 // project already has: how many are collected once it is enabled and
 // how far back they go, and where the search stopped short of the
 // whole tree.
+//
+// enable is its only caller and it stays here because it is a decision
+// rather than a sentence: a count, the oldest date, and the clause
+// about a search that stopped short, which status states too. Moving it
+// to enable would spell that clause a second time.
 func EarlierSessionLines(found discover.Result) []string {
 	var lines []string
 	if len(found.Sessions) == 0 {

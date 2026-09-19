@@ -8,7 +8,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
-	"github.com/PublicAI01/trajector-cli/internal/report"
 )
 
 // newUpgradeEnv is a device on a published release, with an installed
@@ -182,7 +181,7 @@ func TestUpgradeUnderARedactionDriftPauseNamesTheSecondStep(t *testing.T) {
 	if !strings.Contains(out, "Upgraded trajector 0.1.0 -> 0.2.0.") {
 		t.Fatalf("upgrade did not replace the binary:\n%s", out)
 	}
-	if !strings.Contains(out, report.RecordingPausedUntilDoctor) {
+	if !strings.Contains(out, proxytest.PauseRedactionDrift.ExplainAfterUpgrade()) {
 		t.Errorf("upgrade did not name the step that resumes recording:\n%s", out)
 	}
 	// The new binary is not evidence that it reads the session files;
@@ -200,7 +199,7 @@ func TestUpgradeWithRecordingNotPausedNamesNoFurtherStep(t *testing.T) {
 		t.Fatalf("Upgrade: %v", err)
 	}
 
-	if out := e.stdout.String(); strings.Contains(out, report.RecordingPausedUntilDoctor) {
+	if out := e.stdout.String(); strings.Contains(out, proxytest.PauseRedactionDrift.ExplainAfterUpgrade()) {
 		t.Errorf("upgrade sent a recording device to doctor:\n%s", out)
 	}
 }
@@ -216,7 +215,37 @@ func TestUpgradeThatInstallsNothingNamesNoFurtherStep(t *testing.T) {
 
 	// Nothing about this build changed, so doctor would reach the
 	// judgement that paused recording in the first place.
-	if out := e.stdout.String(); strings.Contains(out, report.RecordingPausedUntilDoctor) {
+	if out := e.stdout.String(); strings.Contains(out, proxytest.PauseRedactionDrift.ExplainAfterUpgrade()) {
 		t.Errorf("a machine already on the newest release was sent to doctor:\n%s", out)
+	}
+}
+
+func commandTheUpgradeHintNames(t *testing.T, out string) string {
+	t.Helper()
+	_, hint, ok := strings.Cut(out, "Recording is paused")
+	if !ok {
+		t.Fatalf("upgrade named no step for a paused device:\n%s", out)
+	}
+	_, quoted, ok := strings.Cut(hint, "`")
+	if !ok {
+		t.Fatalf("the step upgrade named carries no command:\n%s", out)
+	}
+	cmd, _, _ := strings.Cut(quoted, "`")
+	return cmd
+}
+
+func TestUpgradeAndStatusNameOneRemedyForARedactionDriftPause(t *testing.T) {
+	e, releases := newUpgradeEnv(t)
+	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
+	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
+
+	if err := e.machine().Upgrade(e.io()); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+	step := commandTheUpgradeHintNames(t, e.stdout.String())
+	e.stdout.Reset()
+
+	if out := e.statusOutput(); !strings.Contains(out, "`"+step+"`") {
+		t.Errorf("upgrade sends the user to %q; status explains the pause as %q", step, out)
 	}
 }
