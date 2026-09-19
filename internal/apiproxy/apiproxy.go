@@ -88,13 +88,15 @@ const DrainPath = "/trajector/drain"
 const ProgressPath = "/trajector/progress"
 
 // Progress is what a session hook reports on ProgressPath: which
-// file of which project gained lines, from which process, and whether
-// the session is over. Both the hook that writes it and the resident
+// file of which project gained lines, and whether the session is
+// over. It carries only what the registry cannot tell the resident
+// process: the hook marks the session hot or cold there before it
+// reports, so the process the session runs in is already on disk and
+// is not sent again. Both the hook that writes it and the resident
 // process that reads it use this type.
 type Progress struct {
 	ProjectIDHash string `json:"project_id_hash"`
 	Path          string `json:"path"`
-	PID           int    `json:"pid,omitzero"`
 	End           bool   `json:"end,omitzero"`
 }
 

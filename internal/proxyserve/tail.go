@@ -3,7 +3,6 @@ package proxyserve
 import (
 	"encoding/json"
 	"io"
-	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -122,32 +121,19 @@ func (t *tailer) progress(ev apiproxy.Progress) bool {
 	if err != nil {
 		return false
 	}
-	var file *follow.File
-	for i := range files {
-		if files[i].Path == ev.Path {
-			file = &files[i]
-			break
+	batch := follow.Group(files, ev.Path)
+	found := false
+	for _, f := range batch {
+		found = found || f.Path == ev.Path
+		if f.Attended(t.alive) {
+			t.setAttended(true)
 		}
 	}
-	if file == nil {
+	if !found {
 		return false
 	}
-	now := t.reader.Now()
-	if ev.End {
-		_ = t.reader.Registry.Cool(ev.ProjectIDHash, ev.Path)
-		file.LastEvent, file.PID = "", 0
-	} else {
-		_ = t.reader.Registry.Warm(ev.ProjectIDHash, ev.Path, ev.PID, now)
-		if ev.PID > 0 {
-			file.PID = ev.PID
-		}
-		file.LastEvent = now.UTC().Format(time.RFC3339)
-	}
-	t.touch(now)
-	if file.Attended(t.alive) {
-		t.setAttended(true)
-	}
-	t.reader.Read(project, []follow.File{*file})
+	t.touch(t.reader.Now())
+	t.reader.Read(project, batch)
 	t.nudge.ask(ev.End)
 	return true
 }
@@ -208,7 +194,7 @@ func (t *tailer) sweep(onStart bool) {
 				_ = t.reader.Registry.Warm(hash, f.Path, 0, now)
 				t.reader.Read(project, []follow.File{f})
 				read = true
-			case t.quietFor(f, now) >= coolGrace:
+			case f.QuietFor(now) >= coolGrace:
 				t.reader.Read(project, []follow.File{f})
 				_ = t.reader.Registry.Cool(hash, f.Path)
 				cooled = true
@@ -224,16 +210,6 @@ func (t *tailer) sweep(onStart bool) {
 	case read:
 		t.flushDue()
 	}
-}
-
-// quietFor is how long f has gone without an event, or forever for a
-// file no hook ever named.
-func (t *tailer) quietFor(f follow.File, now time.Time) time.Duration {
-	at, err := time.Parse(time.RFC3339, f.LastEvent)
-	if err != nil {
-		return math.MaxInt64
-	}
-	return now.Sub(at)
 }
 
 // project is the enabled project a registry belongs to, by hash. A

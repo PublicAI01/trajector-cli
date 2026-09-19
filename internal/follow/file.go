@@ -1,7 +1,9 @@
 package follow
 
 import (
+	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -69,14 +71,61 @@ func (f File) Hot(now time.Time, alive func(pid int) bool) bool {
 	if f.PID > 0 && alive(f.PID) {
 		return true
 	}
+	return f.QuietFor(now) < hotWindow
+}
+
+// QuietFor is how long f has gone since a hook last named it. A file
+// no hook named since it was registered, and one whose time was not
+// written in the layout's own form, has been quiet for as long as
+// this type can state.
+func (f File) QuietFor(now time.Time) time.Duration {
 	at, err := time.Parse(readAtLayout, f.LastEvent)
-	return err == nil && now.Sub(at) < hotWindow
+	if err != nil {
+		return math.MaxInt64
+	}
+	return now.Sub(at)
 }
 
 // Attended reports whether the process the last hook reported for f
 // is still running. A file with no process is unattended.
 func (f File) Attended(alive func(pid int) bool) bool {
 	return f.Retired == "" && f.PID > 0 && alive(f.PID)
+}
+
+// Group lists the entries of files that belong to the same session as
+// path, in the order given. Heat is a property of the session, not of
+// one of its files: a hook names the main file, but the turn it
+// reports may have been a subagent's, written to an agent file no
+// hook ever names. Marking one file of a session marks them all, and
+// what is read on a hook's word is the whole group.
+func Group(files []File, path string) []File {
+	session := sessionOf(path)
+	group := []File{}
+	for _, f := range files {
+		if sessionOf(f.Path) == session {
+			group = append(group, f)
+		}
+	}
+	return group
+}
+
+// sessionOf names the session a path belongs to: the session's own
+// directory, which is the main file's path without the lines
+// extension. It is the one definition of what makes a session's
+// files one group, and it is path arithmetic alone — a group holds
+// together whether or not the files are on disk. A main file
+// <dir>/<sid>.jsonl and the agent files under <dir>/<sid>/subagents/
+// yield the same name. A path that is neither belongs to no session
+// but its own.
+func sessionOf(path string) string {
+	dir := filepath.Dir(path)
+	if filepath.Base(dir) == SubagentsDir && IsAgentFile(filepath.Base(path)) {
+		return filepath.Dir(dir)
+	}
+	if name, ok := strings.CutSuffix(path, linesExt); ok {
+		return name
+	}
+	return path
 }
 
 // Split parts files into the hot ones and the cold ones, each in the
