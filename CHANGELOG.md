@@ -118,6 +118,14 @@ All notable changes to trajector are documented here. The format follows
 - The reader keeps a small diagnostic log of line shapes this build did
   not expect. It is bounded (1 MiB, trimmed to its newest half) and no
   longer grows on shapes the build already knows about.
+- `trajector logout` states the device-wide pause in the same words
+  `status` and `doctor` use: "Recording is paused everywhere", the
+  reason, and the one command that ends it.
+- `status`, `doctor`, `discard` and `forget` count every kind of record
+  the spool holds from one declared list of kinds, so a kind this build
+  stores is counted on every surface rather than only on the ones that
+  remembered to name it. `forget` now also removes a record that
+  declares a kind this build does not know but names your session.
 
 ### Fixed
 
@@ -135,6 +143,19 @@ All notable changes to trajector are documented here. The format follows
 - A batch left pending by an interrupted upload resumes only the
   records it named, even when a record in the other slot carries the
   same id.
+- A refused credential is no longer treated as a rate limit. When the
+  service will not accept this device's pairing token, `status` says so
+  and tells you to run `trajector login`; uploads then resume at the
+  next flush instead of waiting out a fifteen-minute backoff that
+  nothing local could shorten. A refusal of access to the upload
+  endpoint is stated as its own reason and no longer names a time by
+  which it clears.
+- In a git record the branch name is masked in the same pass as the
+  changed paths, so a secret in a branch name is masked exactly as one
+  in a path is. `PRIVACY.md` says which of a git record's fields are
+  masked and which are uploaded as git printed them.
+- `ARCHITECTURE.md` stated that records carry `schema_version 1`. They
+  carry 3.
 
 
 ## [0.2.1] - 2026-08-31
