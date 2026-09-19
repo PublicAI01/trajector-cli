@@ -169,8 +169,9 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		Logf:            logf,
 		Internal:        uploader.Handler(apiproxy.ServiceName),
 		AdminTokens:     layout,
-		// One last threshold check on the way out, run while this process
-		// still holds the listen port: the bind is what excludes the next
+		// One last flush on the way out, past the byte and age
+		// thresholds and behind every gate, run while this process still
+		// holds the listen port: the bind is what excludes the next
 		// proxy's flusher, so no upload of this process may continue past
 		// its release, or the two would drain the same spool records
 		// under different batch ids.

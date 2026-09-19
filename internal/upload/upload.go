@@ -257,7 +257,7 @@ func (u *Uploader) Flush(force bool) (Result, error) {
 	if u.closed {
 		return Result{}, ErrClosed
 	}
-	res, err := u.flush(force, time.Time{})
+	res, err := u.flush(flushMode{ignoreThreshold: force, ignoreGates: force}, time.Time{})
 	if err != nil {
 		res.Outcome, res.Standing = "", Standing{}
 		u.reportDisposition(&res)
@@ -330,13 +330,23 @@ func (u *Uploader) reportBackoff(res *Result) bool {
 	return ok
 }
 
-// Close runs the uploader's last flush — unforced, the same threshold
-// check the periodic cadence makes — within budget, and then refuses
-// every later Flush with ErrClosed. It must be called while this
-// process still holds whatever excludes a successor flusher (for the
-// proxy, its listen port): a flush already running when Close is called
-// finishes under the same lock, so once Close returns, no upload
-// activity from this process can overlap a successor's.
+// Close runs the uploader's last flush within budget, and then refuses
+// every later Flush with ErrClosed. This flush skips the byte and age
+// thresholds: they exist to spare an uploader that will run again
+// shortly, and there is no next automatic flush from this process. A
+// project recorded without a proxy brings one up for nothing else, so
+// what the thresholds hold back here waits on disk for the next prompt,
+// which may be days away.
+//
+// Every gate and the backoff still stand. A service that refused this
+// build, this account or this device has answered, and leaving on the
+// way out is no reason to ask again.
+//
+// Close must be called while this process still holds whatever excludes
+// a successor flusher (for the proxy, its listen port): a flush already
+// running when Close is called finishes under the same lock, so once
+// Close returns, no upload activity from this process can overlap a
+// successor's.
 //
 // Because the exclusion is held for exactly as long as this call runs,
 // the budget is what the caller is willing to keep a successor waiting.
@@ -350,14 +360,29 @@ func (u *Uploader) Close(budget time.Duration) error {
 		return nil
 	}
 	u.closed = true
-	_, err := u.flush(false, time.Now().Add(budget))
+	_, err := u.flush(flushMode{ignoreThreshold: true}, time.Now().Add(budget))
 	return err
+}
+
+// flushMode names the two checks a flush can waive, separately. A
+// forced flush waives both; the flush on the way out waives only the
+// threshold, because a gate or a backoff is an answer the service
+// already gave and asking again on exit would press a service that has
+// refused.
+type flushMode struct {
+	// ignoreThreshold uploads whatever the spool holds, however little
+	// and however new.
+	ignoreThreshold bool
+	// ignoreGates uploads past a held upgrade, authorization or access
+	// gate and past the report backoff. This is the recovery path: the
+	// user asked for the attempt the gate suppressed.
+	ignoreGates bool
 }
 
 // flush is Flush without the lock and the closed gate. A zero deadline
 // is a flush with no budget: it runs until the spool is drained or an
 // attempt fails.
-func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
+func (u *Uploader) flush(mode flushMode, deadline time.Time) (Result, error) {
 	res := Result{Outcome: Empty}
 
 	token, err := u.deps.DeviceToken()
@@ -375,7 +400,7 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 	if u.accessGate.Held() && token != u.refusedToken {
 		u.accessGate, u.refusedToken = Standing{}, ""
 	}
-	if !force {
+	if !mode.ignoreGates {
 		if u.upgradeGate.Held() {
 			u.reportUpgradeGate(&res)
 			return res, nil
@@ -413,7 +438,7 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 		flushAge = defaultFlushAge
 	}
 
-	if res.Batches == 0 && !force {
+	if res.Batches == 0 && !mode.ignoreThreshold {
 		usage := u.deps.Spool.Usage()
 		if usage == 0 {
 			return res, nil

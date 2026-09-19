@@ -108,11 +108,13 @@ The uploader lives inside the resident process, which a session hook
 brings up under either injection shape — the one that routes the
 project's traffic through the proxy and the one that routes none. Where
 it routes none it forwards nothing; it is then only the one process that
-flushes what the readers stored. On thresholds (10 MiB or 24
-hours, adjustable by the service handshake), records are redacted (secret masking that preserves
-JSON structure, ordering, tool-call pairing, and signatures), packed with
-same-session records adjacent for compression, zstd-compressed, and uploaded
-with a client-generated idempotency key.
+flushes what the readers stored. A flush runs on thresholds (10 MiB or
+24 hours, adjustable by the service handshake), and once more when the
+process stops, for whatever the spool holds. Each flush redacts the
+records (secret masking that preserves JSON structure, ordering,
+tool-call pairing, and signatures), packs them with same-session records
+adjacent for compression, zstd-compresses the batch, and uploads it with
+a client-generated idempotency key.
 
 The key rules are strict because they guard against double counting and
 data loss:

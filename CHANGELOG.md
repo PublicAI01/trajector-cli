@@ -200,6 +200,12 @@ All notable changes to trajector are documented here. The format follows
   masked and which are uploaded as git printed them.
 - `ARCHITECTURE.md` stated that records carry `schema_version 1`. They
   carry 3.
+- A session's records no longer wait on disk for the next prompt. The
+  flush the recording process runs as it stops now uploads whatever the
+  spool holds instead of leaving what is under 10 MiB and newer than 24
+  hours for a run that may be days away. A service that refused this
+  build, this account or this device is still not asked again on the way
+  out.
 
 ### Security
 

@@ -523,18 +523,40 @@ func TestCloseRunsAFinalFlushAndThenRefusesToFlush(t *testing.T) {
 	}
 }
 
-func TestCloseKeepsRecordsBelowTheUploadThresholds(t *testing.T) {
+func TestCloseUploadsRecordsBelowTheUploadThresholds(t *testing.T) {
 	f := newFixture(t)
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
 	if err := f.uploader.Close(time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(f.server.Requests()); got != 0 {
-		t.Errorf("service saw %d requests, want 0", got)
+	if f.uploadCount() != 1 {
+		t.Fatalf("service saw %d requests, want 1", f.uploadCount())
+	}
+	if f.spool.Usage() != 0 {
+		t.Error("the final flush left a below-threshold record in the spool")
+	}
+}
+
+func TestCloseDoesNotUploadPastARefusal(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+	before := f.uploadCount()
+
+	if err := f.uploader.Close(time.Minute); err != nil {
+		t.Fatalf("close after a refusal = %v", err)
+	}
+	if got := f.uploadCount(); got != before {
+		t.Errorf("close made %d more attempts at a service that refused this device's credential, want 0", got-before)
 	}
 	if f.spool.Usage() == 0 {
-		t.Error("close drained a spool below the thresholds")
+		t.Error("close deleted records the service never acknowledged")
 	}
 }
 
