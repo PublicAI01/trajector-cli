@@ -99,9 +99,19 @@ var contractRows = map[upload.Disposition]struct {
 	spooled     bool
 	quarantined bool
 	outcome     upload.Outcome
+	// orDeferred admits the second reading a row may honestly carry: a
+	// disposition that asks for another attempt and also left a pause
+	// behind reports that pause, on the flush that set it and on every
+	// automatic flush after (reportDisposition). Only RetrySameID has
+	// one, because only it covers both an answer that changes nothing —
+	// a lost echo, a 500 — and answers whose remedy is a person rather
+	// than time: 401 and 403 both pause. The contract's promise for the
+	// row is the disposition and the records kept, so both readings
+	// satisfy it; every other outcome still fails.
+	orDeferred bool
 }{
 	upload.Ack:                   {outcome: upload.Uploaded},
-	upload.RetrySameID:           {spooled: true},
+	upload.RetrySameID:           {spooled: true, orDeferred: true},
 	upload.PauseUploads:          {spooled: true, outcome: upload.UpgradeRequired},
 	upload.PauseUploadsAuthorize: {spooled: true, outcome: upload.AuthorizationRequired},
 	upload.Quarantine:            {quarantined: true, outcome: upload.Rejected},
@@ -116,7 +126,7 @@ func assertContractRow(t *testing.T, f *fixture, c conformance.Case, res upload.
 	if res.Disposition != c.Meta.Expect {
 		t.Fatalf("disposition = %q, the contract requires %q", res.Disposition, c.Meta.Expect)
 	}
-	if res.Outcome != want.outcome {
+	if res.Outcome != want.outcome && !(want.orDeferred && res.Outcome == upload.Deferred) {
 		t.Errorf("outcome = %q, want %q", res.Outcome, want.outcome)
 	}
 	// Records kept and records quarantined are the two facts every row of
