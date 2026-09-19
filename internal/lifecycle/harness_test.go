@@ -8,13 +8,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
@@ -178,41 +176,38 @@ func (e *env) canonicalRoot() string {
 	return proxytest.CanonicalRoot(e.t, e.project)
 }
 
-func (e *env) settingsPath() string {
-	return claudesettings.ProjectLocalPath(e.canonicalRoot())
+// projectSettings is the settings file Claude Code reads in this
+// device's project.
+func (e *env) projectSettings() *proxytest.Settings {
+	e.t.Helper()
+	return proxytest.ProjectSettings(e.t, e.canonicalRoot())
 }
+
+func (e *env) settingsPath() string { return e.projectSettings().Path() }
 
 // projectHooks spells the hook commands enable would inject for this
 // device's executable.
-func (e *env) projectHooks() claudesettings.HookCommands {
-	return claudesettings.HookCommands{
-		EnsureProxy: e.deps.ExecPath + " hook ensure-proxy",
-		SessionEnd:  e.deps.ExecPath + " hook session-end",
-		GitSnapshot: e.deps.ExecPath + " hook git-snapshot",
-	}
+func (e *env) projectHooks() proxytest.HookCommands {
+	return proxytest.ProjectHooks(e.deps.ExecPath)
 }
 
 // injectWithoutBaseURL writes the injection shape that carries no base
 // URL, as an enable that asks for it would.
 func (e *env) injectWithoutBaseURL() {
 	e.t.Helper()
-	if err := claudesettings.InjectProject(e.settingsPath(), "", e.projectHooks()); err != nil {
-		e.t.Fatal(err)
-	}
+	e.projectSettings().Inject(e.deps.ExecPath, "")
 }
 
 // dropSessionEndHook rewrites the settings file as an injection made
 // before the session-end hook existed would have left it.
-func (e *env) dropSessionEndHook() { e.dropHook(claudesettings.SessionEndMarker) }
+func (e *env) dropSessionEndHook() { e.dropHook(proxytest.SessionEndMarker) }
 
 // dropHook rewrites the settings file as an injection made before the
 // hook carrying marker existed would have left it.
 func (e *env) dropHook(marker string) {
 	e.t.Helper()
-	data, err := os.ReadFile(e.settingsPath())
-	if err != nil {
-		e.t.Fatal(err)
-	}
+	file := e.projectSettings()
+	data := []byte(file.Contents())
 	var settings map[string]any
 	if err := json.Unmarshal(data, &settings); err != nil {
 		e.t.Fatal(err)
@@ -250,12 +245,11 @@ func (e *env) dropHook(marker string) {
 	if !dropped {
 		e.t.Fatalf("no hook carrying %q to drop in %s", marker, data)
 	}
-	if data, err = json.Marshal(settings); err != nil {
+	data, err := json.Marshal(settings)
+	if err != nil {
 		e.t.Fatal(err)
 	}
-	if err := os.WriteFile(e.settingsPath(), data, 0o600); err != nil {
-		e.t.Fatal(err)
-	}
+	file.Put(string(data))
 }
 
 // status is the machine's own answer about the project, the read half
@@ -274,17 +268,13 @@ func (e *env) layout() userdirs.Layout { return e.deps.Layout }
 
 // claude locates Claude Code's directories the way the machine under
 // test locates them.
-func (e *env) claude() claudesettings.Host {
-	return claudesettings.HostFor(runtime.GOOS, e.deps.Home, e.deps.Getenv)
+func (e *env) claude() *proxytest.Claude {
+	return proxytest.ClaudeConfig(e.t, e.deps.Home, e.deps.Getenv)
 }
 
 func (e *env) userSettingsContents() string {
 	e.t.Helper()
-	data, err := os.ReadFile(e.claude().UserSettingsPath())
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return string(data)
+	return e.claude().UserSettings().Contents()
 }
 
 func (e *env) consentFileContents() string {

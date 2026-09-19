@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
@@ -27,7 +26,7 @@ func TestLoginPairsStoresTheTokenAndResumesRecording(t *testing.T) {
 	if reason := e.sandbox.PausedReason(); reason != "" {
 		t.Errorf("pause %q survived login", reason)
 	}
-	if !claudesettings.HasHook(e.claude().UserSettingsPath(), claudesettings.DiscoveryMarker) {
+	if !e.claude().UserSettings().HasHook(proxytest.DiscoveryMarker) {
 		t.Error("discovery hint not installed")
 	}
 	if !strings.Contains(e.stdout.String(), "example.com/pair") {
@@ -374,7 +373,7 @@ func TestUninstallRemovesEveryInjectionAndKeepsDataByDefault(t *testing.T) {
 	if e.status().InjectedBaseURL != "" {
 		t.Error("project injection survived uninstall")
 	}
-	if claudesettings.HasHook(e.claude().UserSettingsPath(), claudesettings.DiscoveryMarker) {
+	if e.claude().UserSettings().HasHook(proxytest.DiscoveryMarker) {
 		t.Error("discovery hint survived uninstall")
 	}
 	if !e.machine().Paired() {
@@ -406,7 +405,7 @@ func TestUninstallPointsAtLeftoverIgnoreLinesWithoutEditingThem(t *testing.T) {
 	out := e.stdout.String()
 	for _, want := range []string{
 		ignorePath,
-		".claude/settings.local.json",
+		proxytest.ProjectLocalRel,
 		"trajector-doctor-*.tar.gz",
 		"trajector-doctor-*/",
 		"remove those lines yourself",

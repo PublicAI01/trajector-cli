@@ -1,7 +1,6 @@
 package cli_test
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,31 +33,17 @@ func TestEnable_NoProxyFlagInstallsHooksWithoutABaseURL(t *testing.T) {
 		t.Errorf("stdout carries the notice for the other shape:\n%s", got.Stdout)
 	}
 
-	data, err := os.ReadFile(filepath.Join(e.Project(), ".claude", "settings.local.json"))
-	if err != nil {
-		t.Fatal(err)
+	settings := e.ProjectSettings()
+	if url, injected := settings.InjectedBaseURL(); injected {
+		t.Errorf("a base URL was injected: %q", url)
 	}
-	var settings struct {
-		Env   map[string]string `json:"env"`
-		Hooks map[string][]struct {
-			Hooks []struct {
-				Command string `json:"command"`
-			} `json:"hooks"`
-		} `json:"hooks"`
+	if shape, ok := settings.Shape(); !ok || shape != proxytest.WithoutProxy {
+		t.Errorf("injection shape = %q, %v, want the shape that routes no traffic through the proxy", shape, ok)
 	}
-	if err := json.Unmarshal(data, &settings); err != nil {
-		t.Fatalf("settings: %v\n%s", err, data)
-	}
-	if _, ok := settings.Env["ANTHROPIC_BASE_URL"]; ok {
-		t.Errorf("a base URL was injected:\n%s", data)
-	}
-	for _, event := range []string{"SessionStart", "UserPromptSubmit", "SessionEnd"} {
-		if len(settings.Hooks[event]) == 0 {
-			t.Errorf("%s hook missing:\n%s", event, data)
+	for _, marker := range []string{proxytest.EnsureProxyMarker, proxytest.SessionEndMarker, proxytest.GitSnapshotMarker} {
+		if !settings.HasHook(marker) {
+			t.Errorf("no hook carrying %q:\n%s", marker, settings.Contents())
 		}
-	}
-	if cmd := settings.Hooks["SessionStart"][0].Hooks[0].Command; !strings.HasSuffix(cmd, " hook ensure-proxy --no-proxy") {
-		t.Errorf("SessionStart command = %q, want it marked --no-proxy", cmd)
 	}
 	if grant, ok := e.Sandbox().ActiveGrant(e.Project()); !ok || grant.Shape != proxytest.WithoutProxy {
 		t.Errorf("grant = %+v, want the shape recorded on the grant", grant)

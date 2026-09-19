@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
@@ -60,14 +59,8 @@ func (e *env) sessionFile(sid string, mtime time.Time) string {
 // every hook from loading, and returns what the reading of it names.
 func (e *env) lockHooksInUserSettings() string {
 	e.t.Helper()
-	path := e.claude().UserSettingsPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		e.t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(`{"disableAllHooks": true}`), 0o600); err != nil {
-		e.t.Fatal(err)
-	}
-	return "disableAllHooks in " + string(claudesettings.SourceUser)
+	e.claude().UserSettings().Put(`{"disableAllHooks": true}`)
+	return "disableAllHooks in " + string(proxytest.SourceUser)
 }
 
 // readOnlyDir takes the write permission off a directory the machine is
@@ -676,12 +669,8 @@ func TestDoctorRewritesTheInjectionInTheGrantsShape(t *testing.T) {
 	e.startProxy()
 	e.enable(proxytest.WithoutProxy)
 	// The file was edited into the other shape behind the grant's back.
-	if err := claudesettings.RemoveProject(e.settingsPath()); err != nil {
-		t.Fatal(err)
-	}
-	if err := claudesettings.InjectProject(e.settingsPath(), "http://127.0.0.1:1/t/"+e.status().Token, e.projectHooks()); err != nil {
-		t.Fatal(err)
-	}
+	e.projectSettings().RemoveInjection()
+	e.projectSettings().Inject(e.deps.ExecPath, "http://127.0.0.1:1/t/"+e.status().Token)
 	if st := e.status(); st.Consistent() || st.Shape != proxytest.WithoutProxy || st.InjectedBaseURL == "" {
 		t.Fatalf("precondition: status = %+v", st)
 	}

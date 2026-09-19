@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/cli"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
@@ -413,9 +412,7 @@ func (e *env) storedRecords() []proxytest.Record {
 // traffic through the proxy, as an ordinary enable would.
 func (e *env) injectWithProxy() {
 	e.t.Helper()
-	if err := claudesettings.InjectProject(e.settingsPath(), "http://127.0.0.1:41100/t/tok-proj", e.projectHooks()); err != nil {
-		e.t.Fatal(err)
-	}
+	e.projectSettings().Inject(e.deps.ExecPath, "http://127.0.0.1:41100/t/tok-proj")
 }
 
 // aProxylessTarget points ensure at a free port with no binary behind

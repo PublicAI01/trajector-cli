@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
@@ -129,7 +128,7 @@ func TestEnableAppendsGitIgnoreInsideRepo(t *testing.T) {
 		t.Errorf("stdout = %q, want a .gitignore note", e.stdout)
 	}
 	ignore, err := os.ReadFile(filepath.Join(e.canonicalRoot(), ".gitignore"))
-	if err != nil || !strings.Contains(string(ignore), claudesettings.ProjectLocalRel) {
+	if err != nil || !strings.Contains(string(ignore), proxytest.ProjectLocalRel) {
 		t.Errorf(".gitignore = %q, %v", ignore, err)
 	}
 }
@@ -163,7 +162,7 @@ func TestEnableBackfillsUnpackedBundleRuleWithoutDuplicates(t *testing.T) {
 	e := newEnv(t)
 	e.gitRepo()
 	ignorePath := filepath.Join(e.canonicalRoot(), ".gitignore")
-	old := ".claude/settings.local.json\ntrajector-doctor-*.tar.gz\n"
+	old := proxytest.ProjectLocalRel + "\ntrajector-doctor-*.tar.gz\n"
 	if err := os.WriteFile(ignorePath, []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +171,7 @@ func TestEnableBackfillsUnpackedBundleRuleWithoutDuplicates(t *testing.T) {
 	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	want := old + ".claude/settings.local.json*\ntrajector-doctor-*/\n"
+	want := old + proxytest.ProjectLocalIgnoreRule + "\ntrajector-doctor-*/\n"
 	after, err := os.ReadFile(ignorePath)
 	if err != nil || string(after) != want {
 		t.Errorf(".gitignore = %q, %v, want %q", after, err, want)
@@ -229,7 +228,7 @@ func TestEnableLeavesASymlinkedSettingsFileAlone(t *testing.T) {
 	if err := os.WriteFile(target, before, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	link := claudesettings.ProjectLocalPath(e.canonicalRoot())
+	link := e.settingsPath()
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -419,18 +418,12 @@ func TestDisableFailsLoudlyWhenRevokeImpossible(t *testing.T) {
 
 func TestDisableHandlesInjectionWithoutRoute(t *testing.T) {
 	e := newEnv(t)
-	if err := claudesettings.InjectProject(
-		e.settingsPath(),
-		"http://127.0.0.1:41100/t/tok-orphan",
-		e.projectHooks(),
-	); err != nil {
-		t.Fatal(err)
-	}
+	e.projectSettings().Inject(e.deps.ExecPath, "http://127.0.0.1:41100/t/tok-orphan")
 
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if _, ok := claudesettings.InjectedBaseURL(e.settingsPath()); ok {
+	if _, ok := e.projectSettings().InjectedBaseURL(); ok {
 		t.Error("orphaned injection not removed")
 	}
 }
@@ -445,7 +438,7 @@ func TestDisableRemovesAnInjectionWithoutBaseURLAndWithoutRoute(t *testing.T) {
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if _, ok := claudesettings.InjectionShape(e.settingsPath()); ok {
+	if _, ok := e.projectSettings().Shape(); ok {
 		t.Error("orphaned injection not removed")
 	}
 	if !strings.Contains(e.stdout.String(), "Removed injection") {

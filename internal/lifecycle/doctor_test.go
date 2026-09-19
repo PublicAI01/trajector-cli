@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 )
@@ -140,7 +139,7 @@ func TestDoctorRemovesAStaleInjection(t *testing.T) {
 	if !strings.Contains(out, "fixed") {
 		t.Errorf("doctor = %q, want the repair reported", out)
 	}
-	if _, injected := claudesettings.InjectedBaseURL(e.settingsPath()); injected {
+	if _, injected := e.projectSettings().InjectedBaseURL(); injected {
 		t.Error("stale injection still present after doctor")
 	}
 }
@@ -175,7 +174,7 @@ func TestDoctorRepairsMissingHooks(t *testing.T) {
 	if problems != 0 {
 		t.Fatalf("problems = %d, want the hooks repaired, output:\n%s", problems, out)
 	}
-	if !claudesettings.HasHook(e.settingsPath(), claudesettings.EnsureProxyMarker) {
+	if !e.projectSettings().HasHook(proxytest.EnsureProxyMarker) {
 		t.Error("ensure-proxy hooks still missing after doctor")
 	}
 }
@@ -277,7 +276,7 @@ func TestDoctorRemovesAStaleInjectionWithoutBaseURL(t *testing.T) {
 	if !strings.Contains(out, "removed a stale injection") {
 		t.Errorf("doctor = %q, want the removal reported", out)
 	}
-	if _, ok := claudesettings.InjectionShape(e.settingsPath()); ok {
+	if _, ok := e.projectSettings().Shape(); ok {
 		t.Error("stale injection still present after doctor")
 	}
 }
@@ -408,8 +407,8 @@ func TestDoctorFixesUpstreamDrift(t *testing.T) {
 
 func TestDoctorReinstallsTheDiscoveryHint(t *testing.T) {
 	e := newEnv(t)
-	userSettings := e.claude().UserSettingsPath()
-	if claudesettings.HasHook(userSettings, claudesettings.DiscoveryMarker) {
+	userSettings := e.claude().UserSettings()
+	if userSettings.HasHook(proxytest.DiscoveryMarker) {
 		t.Fatal("precondition: fresh env already has the discovery hook")
 	}
 	problems, out := e.doctor()
@@ -417,7 +416,7 @@ func TestDoctorReinstallsTheDiscoveryHint(t *testing.T) {
 	if problems != 0 {
 		t.Fatalf("problems = %d, want the hint reinstalled, output:\n%s", problems, out)
 	}
-	if !claudesettings.HasHook(userSettings, claudesettings.DiscoveryMarker) {
+	if !userSettings.HasHook(proxytest.DiscoveryMarker) {
 		t.Error("discovery hook still missing after doctor on a paired device")
 	}
 }
@@ -542,18 +541,15 @@ func TestDoctorNamesBothRefusalsWhenBothStand(t *testing.T) {
 // variable does on a user's machine.
 func (e *env) movedConfigDir() {
 	e.t.Helper()
-	e.environ[claudesettings.ConfigDirEnv] = filepath.Join(e.deps.Home, "elsewhere")
+	e.environ[proxytest.ConfigDirEnv] = filepath.Join(e.deps.Home, "elsewhere")
 }
 
 // hookInDefaultConfigDir writes the settings file of the default
 // configuration directory with a discovery hook of trajector's beside
-// a hook and a setting of the user's own, and returns its path.
-func (e *env) hookInDefaultConfigDir() string {
+// a hook and a setting of the user's own.
+func (e *env) hookInDefaultConfigDir() *proxytest.Settings {
 	e.t.Helper()
-	path := filepath.Join(e.deps.Home, ".claude", "settings.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		e.t.Fatal(err)
-	}
+	settings := e.claude().DefaultUserSettings()
 	content := `{
   "env": {"MY_OWN_KEY": "kept"},
   "hooks": {
@@ -564,16 +560,14 @@ func (e *env) hookInDefaultConfigDir() string {
   }
 }
 `
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		e.t.Fatal(err)
-	}
-	return path
+	settings.Put(content)
+	return settings
 }
 
 func TestDoctorRemovesTheDiscoveryHookLeftWhereClaudeCodeNoLongerReads(t *testing.T) {
 	e := newEnv(t)
 	e.movedConfigDir()
-	path := e.hookInDefaultConfigDir()
+	settings := e.hookInDefaultConfigDir()
 
 	problems, out := e.doctor()
 	if problems != 0 {
@@ -582,15 +576,12 @@ func TestDoctorRemovesTheDiscoveryHookLeftWhereClaudeCodeNoLongerReads(t *testin
 	if !strings.Contains(out, "removed a trajector hook left in ~/.claude/settings.json") {
 		t.Errorf("doctor = %q, want the removal reported", out)
 	}
-	if claudesettings.HasHook(path, claudesettings.DiscoveryMarker) {
+	if settings.HasHook(proxytest.DiscoveryMarker) {
 		t.Error("the hook Claude Code does not read survived doctor")
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := settings.Contents()
 	for _, want := range []string{"echo the user's own hook", "MY_OWN_KEY"} {
-		if !strings.Contains(string(data), want) {
+		if !strings.Contains(data, want) {
 			t.Errorf("settings file = %s, want it to keep %q", data, want)
 		}
 	}
@@ -607,7 +598,7 @@ func TestDoctorRemovesTheDiscoveryHookLeftWhereClaudeCodeNoLongerReads(t *testin
 
 func TestDoctorLeavesTheDiscoveryHookWhereNothingMovesTheConfigDir(t *testing.T) {
 	e := newEnv(t)
-	path := e.hookInDefaultConfigDir()
+	settings := e.hookInDefaultConfigDir()
 
 	problems, out := e.doctor()
 	if problems != 0 {
@@ -616,7 +607,7 @@ func TestDoctorLeavesTheDiscoveryHookWhereNothingMovesTheConfigDir(t *testing.T)
 	if strings.Contains(out, "~/.claude/settings.json") {
 		t.Errorf("doctor = %q, want no finding about a directory nothing moved", out)
 	}
-	if !claudesettings.HasHook(path, claudesettings.DiscoveryMarker) {
+	if !settings.HasHook(proxytest.DiscoveryMarker) {
 		t.Error("doctor removed the discovery hook Claude Code reads")
 	}
 }

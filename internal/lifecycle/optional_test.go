@@ -3,16 +3,14 @@ package lifecycle_test
 import (
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
 
-const optionalKey = claudesettings.KeyShowThinkingSummaries
+const optionalKey = proxytest.KeyShowThinkingSummaries
 
 // containsWrapped reports whether out contains want regardless of where
 // rendering wrapped its lines.
@@ -20,9 +18,9 @@ func containsWrapped(out, want string) bool {
 	return strings.Contains(strings.Join(strings.Fields(out), " "), want)
 }
 
-func settingValue(t *testing.T, path string) (value, found bool) {
+func settingValue(t *testing.T, settings *proxytest.Settings) (value, found bool) {
 	t.Helper()
-	return claudesettings.TopLevelBool(path, optionalKey)
+	return settings.TopLevelBool(optionalKey)
 }
 
 func settingDecision(t *testing.T, e *env, hash string) (proxytest.SettingDecision, bool) {
@@ -33,23 +31,12 @@ func settingDecision(t *testing.T, e *env, hash string) (proxytest.SettingDecisi
 
 func writeUserSettings(t *testing.T, e *env, contents string) {
 	t.Helper()
-	path := e.claude().UserSettingsPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	e.claude().UserSettings().Put(contents)
 }
 
 func writeProjectLocalSettings(t *testing.T, e *env, contents string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(e.settingsPath()), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(e.settingsPath(), []byte(contents), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	e.projectSettings().Put(contents)
 }
 
 func TestEnableAsksAndWritesTheOptionalSettingOnYes(t *testing.T) {
@@ -77,7 +64,7 @@ func TestEnableAsksAndWritesTheOptionalSettingOnYes(t *testing.T) {
 	if strings.Index(out, "Turn it on?") > strings.Index(out, "Injected ") {
 		t.Error("the question came after injection; it must come before")
 	}
-	if value, found := settingValue(t, e.settingsPath()); !found || !value {
+	if value, found := settingValue(t, e.projectSettings()); !found || !value {
 		t.Errorf("setting = %v, %v after yes, want true", value, found)
 	}
 	d, ok := settingDecision(t, e, e.status().Hash)
@@ -131,7 +118,7 @@ func TestEnableEmptyInputTakesTheStatedDefault(t *testing.T) {
 			if !containsWrapped(out, tc.wantSaid) {
 				t.Errorf("stdout misses %q:\n%s", tc.wantSaid, out)
 			}
-			if value, found := settingValue(t, e.settingsPath()); (found && value) != tc.wantOn {
+			if value, found := settingValue(t, e.projectSettings()); (found && value) != tc.wantOn {
 				t.Errorf("setting = %v, %v, want on=%v", value, found, tc.wantOn)
 			}
 			if d, ok := settingDecision(t, e, e.status().Hash); !ok || d.Answer != tc.wantAnswer {
@@ -148,7 +135,7 @@ func TestEnableDeclineIsRecordedAndRerunStillAsks(t *testing.T) {
 	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	if value, found := settingValue(t, e.settingsPath()); found {
+	if value, found := settingValue(t, e.projectSettings()); found {
 		t.Errorf("declining still wrote the setting: %v", value)
 	}
 	if d, ok := settingDecision(t, e, e.status().Hash); !ok || d.Answer != proxytest.AnswerDeclined {
@@ -163,7 +150,7 @@ func TestEnableDeclineIsRecordedAndRerunStillAsks(t *testing.T) {
 	if !strings.Contains(e.stdout.String(), "Turn it on? [Y/n]") {
 		t.Errorf("rerun after a decline did not ask again:\n%s", e.stdout)
 	}
-	if value, found := settingValue(t, e.settingsPath()); !found || !value {
+	if value, found := settingValue(t, e.projectSettings()); !found || !value {
 		t.Errorf("setting = %v, %v after changing the answer to yes, want true", value, found)
 	}
 }
@@ -180,9 +167,9 @@ func TestEnableLeavesAUsersOwnTrueAlone(t *testing.T) {
 			seed: func(t *testing.T, e *env) {
 				writeUserSettings(t, e, `{"showThinkingSummaries": true}`)
 			},
-			wantSaid: "showThinkingSummaries is already true in your user settings.json.",
+			wantSaid: "showThinkingSummaries is already true in your " + string(proxytest.SourceUser) + ".",
 			stillOn: func(t *testing.T, e *env) bool {
-				value, found := claudesettings.TopLevelBool(e.claude().UserSettingsPath(), optionalKey)
+				value, found := e.claude().UserSettings().TopLevelBool(optionalKey)
 				return found && value
 			},
 		},
@@ -191,9 +178,9 @@ func TestEnableLeavesAUsersOwnTrueAlone(t *testing.T) {
 			seed: func(t *testing.T, e *env) {
 				writeProjectLocalSettings(t, e, `{"showThinkingSummaries": true}`)
 			},
-			wantSaid: "showThinkingSummaries is already true in your project settings.local.json.",
+			wantSaid: "showThinkingSummaries is already true in your " + string(proxytest.SourceProjectLocal) + ".",
 			stillOn: func(t *testing.T, e *env) bool {
-				value, found := settingValue(t, e.settingsPath())
+				value, found := settingValue(t, e.projectSettings())
 				return found && value
 			},
 		},
@@ -254,9 +241,7 @@ func TestEnableAcceptWhenAlreadyTrueRecordsNoWriteOfOurs(t *testing.T) {
 
 	in := &editThenAnswer{
 		edit: func() {
-			if err := claudesettings.SetTopLevelBool(e.settingsPath(), optionalKey, true); err != nil {
-				t.Error(err)
-			}
+			e.projectSettings().SetTopLevelBool(optionalKey, true)
 		},
 		answer: strings.NewReader("y\n"),
 	}
@@ -271,7 +256,7 @@ func TestEnableAcceptWhenAlreadyTrueRecordsNoWriteOfOurs(t *testing.T) {
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if value, found := settingValue(t, e.settingsPath()); !found || !value {
+	if value, found := settingValue(t, e.projectSettings()); !found || !value {
 		t.Errorf("disable touched a true trajector never wrote: %v, %v", value, found)
 	}
 }
@@ -298,7 +283,7 @@ func TestEnableRecordFailureLeavesTheSettingUnwritten(t *testing.T) {
 	if !strings.Contains(e.stderr.String(), "nothing was changed") {
 		t.Errorf("stderr misses the degraded outcome:\n%s", e.stderr)
 	}
-	if value, found := settingValue(t, e.settingsPath()); found {
+	if value, found := settingValue(t, e.projectSettings()); found {
 		t.Errorf("the setting was written without its record: %v", value)
 	}
 }
@@ -312,10 +297,7 @@ func TestEnableSecondRunKeepsAnOptionalSettingOnByDefault(t *testing.T) {
 			if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 				t.Fatalf("enable: %v", err)
 			}
-			before, err := os.ReadFile(e.settingsPath())
-			if err != nil {
-				t.Fatal(err)
-			}
+			before := e.projectSettings().Contents()
 
 			e.stdout.Reset()
 			e.stdin = input
@@ -329,14 +311,11 @@ func TestEnableSecondRunKeepsAnOptionalSettingOnByDefault(t *testing.T) {
 			if !strings.Contains(out, "Keep it on? [Y/n]") {
 				t.Errorf("stdout misses the keep-it-on question:\n%s", out)
 			}
-			after, err := os.ReadFile(e.settingsPath())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(after) != string(before) {
+			after := e.projectSettings().Contents()
+			if after != before {
 				t.Errorf("keeping the setting rewrote the file:\n%s\nwant:\n%s", after, before)
 			}
-			if value, found := settingValue(t, e.settingsPath()); !found || !value {
+			if value, found := settingValue(t, e.projectSettings()); !found || !value {
 				t.Errorf("an answer that keeps it on turned the setting off: %v, %v", value, found)
 			}
 			if d, ok := settingDecision(t, e, e.status().Hash); !ok || d.Prior != proxytest.PriorAbsent {
@@ -362,7 +341,7 @@ func TestEnableSecondRunAnswerNoRestoresTheSetting(t *testing.T) {
 	if !strings.Contains(e.stdout.String(), "Set showThinkingSummaries back to what it was before trajector wrote it.") {
 		t.Errorf("stdout misses the undo line:\n%s", e.stdout)
 	}
-	if _, found := settingValue(t, e.settingsPath()); found {
+	if _, found := settingValue(t, e.projectSettings()); found {
 		t.Error("the key survived being turned back off")
 	}
 	if _, ok := settingDecision(t, e, e.status().Hash); ok {
@@ -426,7 +405,7 @@ func TestEnableEveryOptionalQuestionMeansOnOnYes(t *testing.T) {
 			if !strings.Contains(e.stdout.String(), tc.wantPrompt) {
 				t.Errorf("stdout misses %q:\n%s", tc.wantPrompt, e.stdout)
 			}
-			if value, found := settingValue(t, e.settingsPath()); !found || !value {
+			if value, found := settingValue(t, e.projectSettings()); !found || !value {
 				t.Errorf("setting = %v, %v after yes, want it on", value, found)
 			}
 		})
@@ -461,7 +440,7 @@ func TestDisableRestoresTheSettingToItsPriorState(t *testing.T) {
 			if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
-			if value, found := settingValue(t, e.settingsPath()); !found || !value {
+			if value, found := settingValue(t, e.projectSettings()); !found || !value {
 				t.Fatalf("test setup: setting = %v, %v after accepting, want true", value, found)
 			}
 
@@ -472,7 +451,7 @@ func TestDisableRestoresTheSettingToItsPriorState(t *testing.T) {
 			if !strings.Contains(e.stdout.String(), "Set showThinkingSummaries back to what it was before trajector wrote it.") {
 				t.Errorf("stdout misses the undo line:\n%s", e.stdout)
 			}
-			if value, found := settingValue(t, e.settingsPath()); !tc.wantAfter(value, found) {
+			if value, found := settingValue(t, e.projectSettings()); !tc.wantAfter(value, found) {
 				t.Errorf("setting after disable = %v, %v", value, found)
 			}
 			if _, ok := settingDecision(t, e, e.status().Hash); ok {
@@ -489,15 +468,13 @@ func TestDisableLeavesAHandEditedValueAlone(t *testing.T) {
 	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	if err := claudesettings.SetTopLevelBool(e.settingsPath(), optionalKey, false); err != nil {
-		t.Fatal(err)
-	}
+	e.projectSettings().SetTopLevelBool(optionalKey, false)
 
 	e.stdout.Reset()
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if value, found := settingValue(t, e.settingsPath()); !found || value {
+	if value, found := settingValue(t, e.projectSettings()); !found || value {
 		t.Errorf("setting = %v, %v, want the hand-edited false kept", value, found)
 	}
 	if strings.Contains(e.stdout.String(), "Set showThinkingSummaries back") {
@@ -532,7 +509,7 @@ func TestDisableKeepsTheRecordWhenRestoreFails(t *testing.T) {
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("rerun: %v", err)
 	}
-	if _, found := settingValue(t, e.settingsPath()); found {
+	if _, found := settingValue(t, e.projectSettings()); found {
 		t.Error("the rerun did not finish the restore")
 	}
 	if _, ok := settingDecision(t, e, hash); ok {
@@ -553,7 +530,7 @@ func TestEnableNonInteractiveChangesNoOptionalSetting(t *testing.T) {
 		!strings.Contains(out, "Run `trajector enable` from a terminal to review them.") {
 		t.Errorf("stdout misses the non-interactive notice:\n%s", out)
 	}
-	if _, found := settingValue(t, e.settingsPath()); found {
+	if _, found := settingValue(t, e.projectSettings()); found {
 		t.Error("a non-interactive enable wrote the setting")
 	}
 	if _, ok := settingDecision(t, e, e.status().Hash); ok {
@@ -588,7 +565,7 @@ func TestUninstallRestoresSettingsAcrossRoots(t *testing.T) {
 	if err := e.machine().Enable(second, proxytest.WithProxy, e.io()); err != nil {
 		t.Fatalf("enable second project: %v", err)
 	}
-	secondSettings := claudesettings.ProjectLocalPath(proxytest.CanonicalRoot(t, second))
+	secondSettings := proxytest.ProjectSettings(t, proxytest.CanonicalRoot(t, second))
 	if value, found := settingValue(t, secondSettings); !found || !value {
 		t.Fatalf("test setup: second project setting = %v, %v, want true", value, found)
 	}
@@ -598,7 +575,7 @@ func TestUninstallRestoresSettingsAcrossRoots(t *testing.T) {
 	if err := e.machine().Uninstall(false, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
-	if _, found := settingValue(t, e.settingsPath()); found {
+	if _, found := settingValue(t, e.projectSettings()); found {
 		t.Error("uninstall left trajector's write in the first project")
 	}
 	if _, found := settingValue(t, secondSettings); found {
@@ -621,7 +598,7 @@ func TestDoctorCompletesTheWithdrawalOfAWrittenSetting(t *testing.T) {
 	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
-	if _, found := settingValue(t, e.settingsPath()); found {
+	if _, found := settingValue(t, e.projectSettings()); found {
 		t.Error("doctor removed the stale injection but left trajector's setting write")
 	}
 	if _, ok := settingDecision(t, e, e.status().Hash); ok {

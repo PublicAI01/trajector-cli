@@ -170,6 +170,13 @@ func (e *Env) Layout() userdirs.Layout {
 // CLI shares with a proxy.
 func (e *Env) Sandbox() *proxytest.Sandbox { return proxytest.Open(e.t, e.Layout()) }
 
+// ProjectSettings is the settings file Claude Code reads in this
+// environment's project, the one an enable writes into.
+func (e *Env) ProjectSettings() *proxytest.Settings {
+	e.t.Helper()
+	return proxytest.ProjectSettings(e.t, e.ProjectRoot())
+}
+
 // Proxy is one in-process `trajector proxy serve` run, started through
 // the CLI's own entry point so tests exercise the production assembly.
 type Proxy struct {

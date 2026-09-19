@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
@@ -184,7 +183,7 @@ func TestStatusReportsAMissingGitSnapshotHookThatDoctorAdds(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.enable(proxytest.WithProxy)
-	e.dropHook(claudesettings.GitSnapshotMarker)
+	e.dropHook(proxytest.GitSnapshotMarker)
 	e.stdout.Reset()
 
 	if out := e.statusOutput(); !strings.Contains(out, "A session hook is missing from "+e.settingsPath()) {
@@ -194,7 +193,7 @@ func TestStatusReportsAMissingGitSnapshotHookThatDoctorAdds(t *testing.T) {
 	if _, out := e.doctor(); !strings.Contains(out, "session hooks restored") {
 		t.Errorf("doctor = %q, want the hook restored", out)
 	}
-	if !claudesettings.HasHook(e.settingsPath(), claudesettings.GitSnapshotMarker) {
+	if !e.projectSettings().HasHook(proxytest.GitSnapshotMarker) {
 		t.Error("doctor reported the injection restored without the hook it lacked")
 	}
 }
@@ -362,7 +361,7 @@ func TestStatusAndDoctorReportARegistryTheyCannotRead(t *testing.T) {
 func TestStatusReportsTheDiscoveryHookClaudeCodeNoLongerReadsAndRemovesNothing(t *testing.T) {
 	e := newEnv(t)
 	e.movedConfigDir()
-	path := e.hookInDefaultConfigDir()
+	settings := e.hookInDefaultConfigDir()
 
 	out := e.statusOutput()
 	for _, want := range []string{
@@ -373,7 +372,7 @@ func TestStatusReportsTheDiscoveryHookClaudeCodeNoLongerReadsAndRemovesNothing(t
 			t.Errorf("status = %q, want it to contain %q", out, want)
 		}
 	}
-	if !claudesettings.HasHook(path, claudesettings.DiscoveryMarker) {
+	if !settings.HasHook(proxytest.DiscoveryMarker) {
 		t.Error("status removed the hook instead of reporting it")
 	}
 }

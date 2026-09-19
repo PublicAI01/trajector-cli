@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
@@ -467,8 +466,7 @@ func enabledOverAUsersOwnRelay(t *testing.T) *env {
 // names once trajector's own injection is out of the way.
 func ownBaseURL(t *testing.T, e *env) string {
 	t.Helper()
-	value, _, _ := claudesettings.ExternalBaseURL(e.canonicalRoot(), e.claude(), e.deps.Getenv)
-	return value
+	return e.claude().ExternalBaseURL(e.canonicalRoot())
 }
 
 // TestUninstallPutsBackAUsersOwnBaseURL is the uninstall half of what
@@ -498,7 +496,7 @@ func TestUninstallPutsBackAUsersOwnBaseURL(t *testing.T) {
 // quiet for a reason of its own. Once uninstall started coming through
 // removeInjection on 2026-08-21 it walked every root the routing table
 // ever held and wrote that relay into projects it had nothing injected
-// in — creating .claude/settings.local.json, and through MkdirAll a whole
+// in — creating the project-local settings file, and through MkdirAll a whole
 // project tree the user had deleted, in the one command whose job is to
 // take our files back out.
 func TestUninstallDoesNotWriteABaseURLIntoAProjectItNeverDisplacedOneIn(t *testing.T) {
@@ -588,7 +586,7 @@ func TestRemovalRestoresTheBaseURLTheInjectionItselfNamed(t *testing.T) {
 		Upstream:      rotatedRelay,
 		GrantedAt:     "2026-08-20T00:00:00Z",
 	})
-	if got, _ := claudesettings.TokenFromBaseURL(e.status().InjectedBaseURL); got != injectedToken {
+	if got, _ := proxytest.TokenFromBaseURL(e.status().InjectedBaseURL); got != injectedToken {
 		t.Fatalf("test setup: injection now names %q, want the pre-rotation token %q", got, injectedToken)
 	}
 

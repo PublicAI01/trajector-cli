@@ -79,7 +79,10 @@ func (s *Sandbox) RevokeProject(root, at string) {
 // ActiveGrant reports the live grant for a project root, if any.
 func (s *Sandbox) ActiveGrant(root string) (Grant, bool) {
 	s.t.Helper()
-	g, ok, err := routing.OpenStore(s.layout.RoutingTable()).Active(root)
+	// A grant is stored under the consent root, with symbolic links
+	// resolved; a test names the directory it made, which on macOS and
+	// Windows is not that spelling.
+	g, ok, err := routing.OpenStore(s.layout.RoutingTable()).Active(CanonicalRoot(s.t, root))
 	if err != nil {
 		s.t.Fatal(err)
 	}

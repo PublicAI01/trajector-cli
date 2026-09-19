@@ -1,12 +1,11 @@
 package cli_test
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 func TestEnable_SecondRunKeepsAnOptionalSettingOnByDefault(t *testing.T) {
@@ -20,11 +19,8 @@ func TestEnable_SecondRunKeepsAnOptionalSettingOnByDefault(t *testing.T) {
 			if got := e.InProjectInput("yes\ny\n", "enable"); got.Exit != 0 {
 				t.Fatalf("enable = exit %d\nstdout: %s\nstderr: %s", got.Exit, got.Stdout, got.Stderr)
 			}
-			path := filepath.Join(e.Project(), ".claude", "settings.local.json")
-			before, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			settings := e.ProjectSettings()
+			before := settings.Contents()
 
 			got := e.InProjectInput(input, "enable")
 			if got.Exit != 0 {
@@ -33,14 +29,11 @@ func TestEnable_SecondRunKeepsAnOptionalSettingOnByDefault(t *testing.T) {
 			if !strings.Contains(got.Stdout, "Keep it on? [Y/n]") {
 				t.Errorf("stdout misses the keep-it-on question:\n%s", got.Stdout)
 			}
-			after, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(after) != string(before) {
+			after := settings.Contents()
+			if after != before {
 				t.Errorf("keeping the setting rewrote the file:\n%s\nwant:\n%s", after, before)
 			}
-			if !strings.Contains(string(after), `"showThinkingSummaries": true`) {
+			if value, found := settings.TopLevelBool(proxytest.KeyShowThinkingSummaries); !found || !value {
 				t.Errorf("the setting is no longer on:\n%s", after)
 			}
 		})
@@ -64,11 +57,8 @@ func TestEnable_SecondRunAnswerNoRestoresTheOptionalSetting(t *testing.T) {
 	if !strings.Contains(got.Stdout, "Set showThinkingSummaries back to what it was before trajector wrote it.") {
 		t.Errorf("stdout misses the undo line:\n%s", got.Stdout)
 	}
-	data, err := os.ReadFile(filepath.Join(e.Project(), ".claude", "settings.local.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "showThinkingSummaries") {
-		t.Errorf("the key survived being turned back off:\n%s", data)
+	settings := e.ProjectSettings()
+	if _, found := settings.TopLevelBool(proxytest.KeyShowThinkingSummaries); found {
+		t.Errorf("the key survived being turned back off:\n%s", settings.Contents())
 	}
 }
