@@ -148,6 +148,37 @@ func (f *fixture) storeRawcallFor(t *testing.T, id, projectIDHash string, at tim
 	}
 }
 
+// writePending pins a batch id to the records it holds, in the shape
+// the uploader writes today: every record by its spool id and the kind
+// it declares. The pending file is this package's documented on-disk
+// contract, so a test may state the lease it wants rather than stage a
+// failed upload to get one.
+func writePending(t *testing.T, dir, batchID string, records ...spool.Entry) {
+	t.Helper()
+	held := make([]map[string]string, 0, len(records))
+	for _, e := range records {
+		held = append(held, map[string]string{"id": e.ID, "source": e.Kind.Source, "record_kind": e.Kind.RecordKind})
+	}
+	data, err := json.Marshal(map[string]any{"batch_id": batchID, "records": held})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePendingBytes(t, dir, data)
+}
+
+// writePendingBytes puts bytes where the pending file goes, for the
+// cases that state what no current build writes: the shape an earlier
+// build left behind, or bytes that cannot be read back at all.
+func writePendingBytes(t *testing.T, dir string, data []byte) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pending.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // echoAck acknowledges whatever batch id the request carries, plus any
 // handshake fields.
 //

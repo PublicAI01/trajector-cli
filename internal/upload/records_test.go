@@ -561,13 +561,7 @@ func TestFlush_APendingFileFromAnEarlierBuildKeepsItsID(t *testing.T) {
 	f := newFixture(t)
 	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
 	f.storeRawcall(t, "req-1", f.now)
-	if err := os.MkdirAll(f.dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	earlier := []byte(`{"batch_id":"b-from-an-earlier-build","request_ids":["req-1"]}`)
-	if err := os.WriteFile(filepath.Join(f.dir, "pending.json"), earlier, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writePendingBytes(t, f.dir, []byte(`{"batch_id":"b-from-an-earlier-build","request_ids":["req-1"]}`))
 
 	res, err := f.uploader.Flush(true)
 	if err != nil || res.Records != 1 {

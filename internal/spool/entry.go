@@ -70,17 +70,9 @@ func (s *Spool) EachEntry(visit func(Entry) error) error {
 // record came from still settles that on the Entry itself; the match is
 // the cheap half, and is allowed to be a superset.
 //
-// resendPending is why this exists, and it read every stored record
-// until 2026-09-14. It looks for at most one batch's worth, so every
-// automatic flush that met a standing pending lease re-read the whole
-// spool: up to the entire quota, once a minute, for as long as the
-// lease stood. That is not a corner — an offline machine fails its
-// uploads with a network error, which sets no pause at all, so the
-// lease stands and the cadence keeps its full minute rate. The same
-// scan also made Uploader.Close's budget unenforceable, since the
-// deadline is first consulted after it, and let one unreadable record
-// anywhere in the spool block the resend of every pending batch for
-// good.
+// A record deleted while the walk is in flight is skipped, in either
+// slot, so a caller looking for one batch's records is not held back by
+// what another process is deleting.
 func (s *Spool) EachEntryWhere(match func(id string) bool, visit func(Entry) error) error {
 	if err := s.EachWhere(match, func(r Rawcall) error { return visit(r.entry()) }); err != nil {
 		return err

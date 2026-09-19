@@ -148,3 +148,53 @@ func writeRecordFile(t *testing.T, dir string, at time.Time, id string, data []b
 		t.Fatal(err)
 	}
 }
+
+func TestEachEntryCompletesWhenRecordsVanishMidWalk(t *testing.T) {
+	dir := t.TempDir()
+	s, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 9, 11, 9, 0, 0, 0, time.UTC)
+	day := at.Format("20060102")
+	for _, id := range []string{"req-1", "req-2"} {
+		if err := s.Write(rawcallOfSession(t, id, sessionA, "hash-p1", at)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	segments := []envelope.Segment{segment(sessionA, "hash-p1", 0, at), segment(sessionA, "hash-p1", 1, at)}
+	for _, seg := range segments {
+		if err := s.WriteSegment(seg); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var visited []string
+	err = s.EachEntry(func(e spool.Entry) error {
+		visited = append(visited, e.ID)
+		if e.ID == "req-1" {
+			removeStoredFile(t, filepath.Join(dir, day, "req-2.json"))
+			return nil
+		}
+		for _, seg := range segments {
+			if seg.RecordID != e.ID {
+				removeStoredFile(t, filepath.Join(dir, recordsDir, day, seg.RecordID+".json"))
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("EachEntry = %v, want the walk to complete over the records still on disk", err)
+	}
+	if len(visited) != 2 || visited[0] != "req-1" || visited[1] == "req-2" {
+		t.Fatalf("visited %v, want the rawcall that stayed and one segment", visited)
+	}
+}
+
+func removeStoredFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+}

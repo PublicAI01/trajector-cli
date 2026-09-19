@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
-	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
 // Rawcall is one stored record as a reader sees it.
@@ -36,7 +35,7 @@ type rawcallFile struct {
 }
 
 func rawcallFiles(dayDir string) ([]rawcallFile, error) {
-	entries, err := os.ReadDir(dayDir)
+	entries, err := listDir(dayDir)
 	if err != nil {
 		return nil, err
 	}
@@ -61,10 +60,7 @@ func rawcallFiles(dayDir string) ([]rawcallFile, error) {
 // the day directories and is skipped by name, so it is never read as a
 // day of rawcalls.
 func (s *Spool) days() ([]string, error) {
-	entries, err := os.ReadDir(s.dir)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+	entries, err := listDir(s.dir)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +79,9 @@ func (s *Spool) days() ([]string, error) {
 // The index leads and the day directory settles the result: an index
 // entry naming a file that is no longer there is ignored, and a file the
 // index never mentioned is visited anyway. Rawcall files are the source
-// of truth, so a lost or corrupt index costs metadata, never records.
+// of truth, so a lost or corrupt index costs metadata, never records. A
+// file that goes while the walk is in flight reads as the index entry
+// with no file does: the walk skips it and visits the rest.
 func (s *Spool) Each(visit func(Rawcall) error) error {
 	return s.EachWhere(func(string) bool { return true }, visit)
 }
@@ -92,18 +90,8 @@ func (s *Spool) Each(visit func(Rawcall) error) error {
 // Only a matching record's bytes are read: the id is the file name, so
 // selecting on it costs a directory listing rather than a read of every
 // rawcall on the machine — the same reason DeleteWhere matches on the id
-// alone.
-//
-// resendPending is why this exists, and it used Each until 2026-09-14.
-// It looks for at most one batch's worth of records, so every automatic
-// flush that met a standing pending lease re-read the whole spool: up to
-// the entire quota, once a minute, for as long as the lease stood. That
-// is not a corner — an offline machine fails its uploads with a network
-// error, which sets no pause at all, so the lease stands and the cadence
-// keeps its full minute rate. The same scan also made Uploader.Close's
-// budget unenforceable, since the deadline is first consulted after it,
-// and let one unreadable rawcall anywhere in the spool block the resend
-// of every pending batch for good.
+// alone. A rawcall the walk does not read cannot block it, so an
+// unreadable rawcall the match does not name costs nothing.
 func (s *Spool) EachWhere(match func(requestID string) bool, visit func(Rawcall) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -124,9 +112,12 @@ func (s *Spool) EachWhere(match func(requestID string) bool, visit func(Rawcall)
 			if !match(f.id) {
 				continue
 			}
-			data, err := fsatomic.ReadFile(f.path)
+			data, ok, err := openRecordFile(f.path)
 			if err != nil {
 				return err
+			}
+			if !ok {
+				continue
 			}
 			r := Rawcall{RequestID: f.id, Size: int64(len(data)), Data: data}
 			if line, ok := indexed[f.id]; ok {
@@ -173,8 +164,8 @@ func (s *Spool) DeleteProject(projectIDHash string) (int, error) {
 		if line, ok := indexed[f.id]; ok && line.ProjectIDHash != "" {
 			return line.ProjectIDHash == projectIDHash, nil
 		}
-		data, err := fsatomic.ReadFile(f.path)
-		if err != nil {
+		data, present, err := openRecordFile(f.path)
+		if err != nil || !present {
 			return false, err
 		}
 		hash, ok := envelope.ProjectIDHashOf(data)
@@ -230,7 +221,13 @@ func (s *Spool) deleteRawcallsLocked(match func(f rawcallFile, indexed map[strin
 			if !ok {
 				continue
 			}
+			// A record another handle removed first is that handle's to
+			// count, and the index line it left behind names no file, which
+			// every reader here already ignores.
 			if err := os.Remove(f.path); err != nil {
+				if vanished(err) {
+					continue
+				}
 				return deleted, err
 			}
 			s.usage -= f.size
@@ -292,15 +289,12 @@ func (s *Spool) Oldest() (time.Time, bool) {
 // rebuild-from-disk case, not a failure, and an unreadable line costs
 // only the metadata it carried.
 func readIndex(dayDir string) (map[string]indexLine, error) {
-	data, err := fsatomic.ReadFile(filepath.Join(dayDir, indexName))
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
+	data, ok, err := openRecordFile(filepath.Join(dayDir, indexName))
+	if err != nil || !ok {
 		return nil, err
 	}
 	indexed := map[string]indexLine{}
-	for _, raw := range bytes.Split(data, []byte("\n")) {
+	for raw := range bytes.SplitSeq(data, []byte("\n")) {
 		if len(raw) == 0 {
 			continue
 		}

@@ -3,14 +3,15 @@
 package upload_test
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 // TestResendPendingReadsOnlyItsOwnBatchsRecords pins the scan
@@ -38,7 +39,7 @@ func TestResendPendingReadsOnlyItsOwnBatchsRecords(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
 	f.storeRawcall(t, "aaa-unrelated", time.Now().UTC())
 	f.storeRawcall(t, "req-pending", time.Now().UTC().Add(time.Second))
-	writePending(t, f.dir, "b-pinned", []string{"req-pending"})
+	writePending(t, f.dir, "b-pinned", spool.Entry{Kind: envelope.KindRawcall, ID: "req-pending"})
 	denyRead(t, f.spoolDir, "aaa-unrelated")
 
 	// The flush still stops later, when collect reaches the unreadable
@@ -66,23 +67,6 @@ func TestResendPendingReadsOnlyItsOwnBatchsRecords(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(f.dir, "pending.json")); !os.IsNotExist(err) {
 		t.Errorf("the acknowledged lease was not released: %v", err)
-	}
-}
-
-// writePending pins a batch id to its records the way openLease does. The
-// file is the uploader's documented on-disk contract, so a test may state
-// the state it wants directly rather than staging a failed upload first.
-func writePending(t *testing.T, dir, batchID string, ids []string) {
-	t.Helper()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.Marshal(map[string]any{"batch_id": batchID, "request_ids": ids})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "pending.json"), data, 0o600); err != nil {
-		t.Fatal(err)
 	}
 }
 

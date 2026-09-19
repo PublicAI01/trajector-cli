@@ -217,10 +217,7 @@ func (s *Spool) recordExistsLocked(id string) bool {
 // that never stored a record has none.
 func (s *Spool) recordDays() ([]string, error) {
 	root := filepath.Join(s.dir, recordsDirName)
-	entries, err := os.ReadDir(root)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+	entries, err := listDir(root)
 	if err != nil {
 		return nil, err
 	}
@@ -245,15 +242,12 @@ func recordFiles(dayDir string) ([]rawcallFile, error) {
 // is the rebuild-from-disk case, not a failure, and an unreadable line
 // costs only the metadata it carried.
 func readRecordIndex(dayDir string) (map[string]recordIndexLine, error) {
-	data, err := fsatomic.ReadFile(filepath.Join(dayDir, indexName))
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
+	data, ok, err := openRecordFile(filepath.Join(dayDir, indexName))
+	if err != nil || !ok {
 		return nil, err
 	}
 	indexed := map[string]recordIndexLine{}
-	for _, raw := range bytes.Split(data, []byte("\n")) {
+	for raw := range bytes.SplitSeq(data, []byte("\n")) {
 		if len(raw) == 0 {
 			continue
 		}
@@ -269,10 +263,11 @@ func readRecordIndex(dayDir string) (map[string]recordIndexLine, error) {
 // recordFromIndex builds the reader's view of a file from its index
 // line, or from the record's own bytes when the index missed it. read
 // supplies those bytes on demand so an indexed record is never opened
-// just to be described. A record that cannot be parsed still comes
-// back, described only by its id and file time, so nothing on disk is
-// ever invisible to a reader.
-func recordFromIndex(f rawcallFile, indexed map[string]recordIndexLine, read func() ([]byte, error)) (Record, error) {
+// just to be described. A record read finds already gone is reported
+// gone here too. A record that cannot be parsed still comes back,
+// described only by its id and file time, so nothing on disk is ever
+// invisible to a reader.
+func recordFromIndex(f rawcallFile, indexed map[string]recordIndexLine, read func() ([]byte, bool, error)) (Record, bool, error) {
 	r := Record{ID: f.id}
 	if line, ok := indexed[f.id]; ok {
 		r.Kind = line.RecordKind
@@ -283,16 +278,16 @@ func recordFromIndex(f rawcallFile, indexed map[string]recordIndexLine, read fun
 			r.Timestamp = ts
 		}
 	} else {
-		data, err := read()
-		if err != nil {
-			return Record{}, err
+		data, present, err := read()
+		if err != nil || !present {
+			return Record{}, false, err
 		}
 		r = describeRecord(f.id, data)
 	}
 	if r.Timestamp.IsZero() {
 		r.Timestamp = f.mod
 	}
-	return r, nil
+	return r, true, nil
 }
 
 // recordSource is the source of a record whose index line named only
@@ -362,11 +357,14 @@ func (s *Spool) EachRecordWhere(match func(recordID string) bool, visit func(Rec
 			if !match(f.id) {
 				continue
 			}
-			data, err := fsatomic.ReadFile(f.path)
+			data, present, err := openRecordFile(f.path)
 			if err != nil {
 				return err
 			}
-			r, err := recordFromIndex(f, indexed, func() ([]byte, error) { return data, nil })
+			if !present {
+				continue
+			}
+			r, _, err := recordFromIndex(f, indexed, func() ([]byte, bool, error) { return data, true, nil })
 			if err != nil {
 				return err
 			}
@@ -456,14 +454,20 @@ func (s *Spool) deleteRecordsLocked(match func(Record) bool) (int, error) {
 		}
 		removed := map[string]bool{}
 		for _, f := range files {
-			r, err := recordFromIndex(f, indexed, func() ([]byte, error) { return fsatomic.ReadFile(f.path) })
+			r, present, err := recordFromIndex(f, indexed, func() ([]byte, bool, error) { return openRecordFile(f.path) })
 			if err != nil {
 				return deleted, err
 			}
-			if !match(r) {
+			if !present || !match(r) {
 				continue
 			}
+			// A record another handle removed first is that handle's to
+			// count, and the index line it left behind names no file, which
+			// every reader here already ignores.
 			if err := os.Remove(f.path); err != nil {
+				if vanished(err) {
+					continue
+				}
 				return deleted, err
 			}
 			s.usage -= f.size
@@ -505,8 +509,8 @@ func (s *Spool) DeleteSession(sessionID string) (rawcalls, records int, err erro
 		if line, ok := indexed[f.id]; ok && line.SessionKey != "" {
 			key = line.SessionKey
 		} else {
-			data, err := fsatomic.ReadFile(f.path)
-			if err != nil {
+			data, present, err := openRecordFile(f.path)
+			if err != nil || !present {
 				return false, err
 			}
 			env, err := envelope.Parse(data)

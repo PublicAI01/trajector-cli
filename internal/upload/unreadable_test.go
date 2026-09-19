@@ -134,19 +134,14 @@ func TestAnUnreadablePendingRecordIsSetAsideAndUploadsResume(t *testing.T) {
 	}{
 		{"empty file", []byte{}},
 		{"torn json", []byte(`{"batch_id":"b-torn`)},
-		{"no batch id", []byte(`{"request_ids":["req-1"]}`)},
+		{"no batch id", []byte(`{"records":[{"id":"req-1","source":"proxy","record_kind":"rawcall"}]}`)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
 			f.storeRawcall(t, "req-1", time.Now().UTC())
-			if err := os.MkdirAll(f.dir, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(f.dir, "pending.json"), tc.pending, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writePendingBytes(t, f.dir, tc.pending)
 
 			res, err := f.uploader.Flush(true)
 			if err != nil {

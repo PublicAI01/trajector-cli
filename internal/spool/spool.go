@@ -150,7 +150,7 @@ func (s *Spool) sweepStaleTempsLocked() {
 		return
 	}
 	for _, dayDir := range append(days, recordDays...) {
-		entries, err := os.ReadDir(dayDir)
+		entries, err := listDir(dayDir)
 		if err != nil {
 			continue
 		}
@@ -168,36 +168,59 @@ func (s *Spool) sweepStaleTempsLocked() {
 	}
 }
 
-// skipVanished turns "this entry is already gone" into "keep walking".
+// vanished reports that what was to be opened is already gone.
 //
-// A record or a whole day directory disappearing while a walk is in
-// flight is ordinary, not damage: `trajector disable` deletes a
-// project's records from another process, and the uploader's own
-// DeleteWhere runs against a live spool. What is already gone
-// contributes zero bytes, so the walk skips it and keeps counting.
+// A record, an index, or a whole day directory disappearing while a
+// walk is in flight is ordinary, not damage: `trajector disable`
+// deletes a project's records from another process, and the uploader's
+// own DeleteWhere runs against a live spool. What is gone holds no
+// record and costs no bytes, so every walk here skips it and completes
+// over the rest; any other error is still the walk's failure.
 //
-// Until 2026-09-13 both of these returned the error instead, which
-// aborted the whole walk; the partial total was then handed back with a
-// nil error, because the os.IsNotExist tolerance that stood here — meant
-// only for a spool root that does not exist yet — swallowed the abort.
-// rederiveLocked took that truncated figure as authority and stamped the
-// signature with it, so the undercount stuck until the next signature
-// change and the quota stopped binding. A missing root still reads as
-// "nothing stored yet": WalkDir reports it through this same callback.
-func skipVanished(err error) error {
-	if os.IsNotExist(err) {
-		return nil
+// The rule has one executor per step a walk takes to reach disk —
+// listDir and openRecordFile — so a walk cannot hold an opinion of its
+// own about it.
+func vanished(err error) bool {
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// listDir lists one directory of the spool. A directory that is not
+// there lists as empty: it either was never written or has just been
+// deleted, and a walk treats the two the same.
+func listDir(dir string) ([]fs.DirEntry, error) {
+	entries, err := os.ReadDir(dir)
+	if vanished(err) {
+		return nil, nil
 	}
-	return err
+	return entries, err
+}
+
+// openRecordFile reads one file a walk visits. It reports false for a
+// file that is already gone, which is the walk's signal to skip it, and
+// an error only for a file that is there and cannot be read.
+func openRecordFile(path string) ([]byte, bool, error) {
+	data, err := fsatomic.ReadFile(path)
+	if vanished(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
 }
 
 // walkUsage derives total spool size from disk, the authority the
-// in-memory figure must always converge on.
+// in-memory figure must always converge on. A spool root that does not
+// exist yet reads as nothing stored: WalkDir reports it through the
+// same callback a vanished record arrives on.
 func walkUsage(dir string) (int64, error) {
 	var usage int64
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return skipVanished(err)
+			if vanished(err) {
+				return nil
+			}
+			return err
 		}
 		if d.IsDir() {
 			return nil
@@ -206,7 +229,10 @@ func walkUsage(dir string) (int64, error) {
 		// deleted since fails here rather than above.
 		info, err := d.Info()
 		if err != nil {
-			return skipVanished(err)
+			if vanished(err) {
+				return nil
+			}
+			return err
 		}
 		usage += info.Size()
 		return nil
@@ -404,7 +430,7 @@ func (s *Spool) rewriteIndexLocked(dayDir string, removed map[string]bool) error
 // and from short-lived CLI processes at once, so it runs under
 // fsatomic.Update rather than the in-process mutex alone.
 func (s *Spool) rewriteIndexFileLocked(path string, drop func(line []byte) bool) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := os.Stat(path); vanished(err) {
 		return nil
 	} else if err != nil {
 		return err
@@ -523,7 +549,7 @@ func (s *Spool) Summary() ([]DaySummary, error) {
 	}
 	for _, dayDir := range days {
 		d := dayOf(dayDir)
-		files, err := os.ReadDir(dayDir)
+		files, err := listDir(dayDir)
 		if err != nil {
 			return nil, err
 		}
@@ -564,7 +590,7 @@ func (s *Spool) Summary() ([]DaySummary, error) {
 // bytes, and one that describes itself as nothing known is counted in
 // the bytes and in neither kind.
 func summarizeRecordDay(dayDir string, d *DaySummary) error {
-	entries, err := os.ReadDir(dayDir)
+	entries, err := listDir(dayDir)
 	if err != nil {
 		return err
 	}
@@ -585,9 +611,12 @@ func summarizeRecordDay(dayDir string, d *DaySummary) error {
 		return err
 	}
 	for _, f := range files {
-		r, err := recordFromIndex(f, indexed, func() ([]byte, error) { return fsatomic.ReadFile(f.path) })
+		r, ok, err := recordFromIndex(f, indexed, func() ([]byte, bool, error) { return openRecordFile(f.path) })
 		if err != nil {
 			return err
+		}
+		if !ok {
+			continue
 		}
 		d.Add(r.kind())
 	}
