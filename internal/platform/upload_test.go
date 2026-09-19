@@ -19,12 +19,14 @@ import (
 
 func ackStub(status int, batchID string) fakeplatform.Response {
 	return fakeplatform.JSON(status, map[string]any{
-		"batch_id":           batchID,
-		"min_client_version": "0.9.0",
-		"flush_bytes":        1024,
-		"flush_age_seconds":  3600,
-		"spool_quota_bytes":  4096,
-		"notice":             "please upgrade",
+		"batch_id":                  batchID,
+		"min_client_version":        "0.9.0",
+		"flush_bytes":               1024,
+		"flush_age_seconds":         3600,
+		"segment_flush_bytes":       512,
+		"segment_flush_age_seconds": 120,
+		"spool_quota_bytes":         4096,
+		"notice":                    "please upgrade",
 	})
 }
 
@@ -78,8 +80,13 @@ func TestUploadBatchPostsEnvelopeAndRecordsAsMultipart(t *testing.T) {
 		MinClientVersion: "0.9.0",
 		FlushBytes:       1024,
 		FlushAgeSeconds:  3600,
-		SpoolQuotaBytes:  4096,
-		Notice:           "please upgrade",
+		// The thresholds for the records read from session files are
+		// their own pair of figures, so a service that sets only them
+		// must not be read as setting the ones beside them.
+		SegmentFlushBytes:      512,
+		SegmentFlushAgeSeconds: 120,
+		SpoolQuotaBytes:        4096,
+		Notice:                 "please upgrade",
 	}
 	if ack.Handshake != want {
 		t.Errorf("handshake = %+v, want %+v", ack.Handshake, want)

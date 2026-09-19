@@ -7,6 +7,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/conformance"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -138,11 +139,49 @@ func assertContractRow(t *testing.T, f *fixture, c conformance.Case, res upload.
 	if quarantined := rejectedRecords(t, f.rejected) > 0; quarantined != want.quarantined {
 		t.Errorf("records in the quarantine = %v, want %v", quarantined, want.quarantined)
 	}
+	// A fixture's handshake figures exist to be consumed: an
+	// acknowledgement that sets a threshold and leaves the client on its
+	// own defaults is a setting the service believes it made and this
+	// client never took.
+	if c.Meta.Expect == upload.Ack {
+		assertHandshakeStored(t, f, c)
+	}
 	// The address is the whole of what the authorize row adds over the
 	// pause above it: without it the user is told to go somewhere unnamed.
 	if c.Meta.Expect == upload.PauseUploadsAuthorize {
 		if url, ok := c.Response.Body["authorize_url"].(string); ok && url != "" && res.Standing.AuthorizeURL != url {
 			t.Errorf("authorize URL = %q, want %q", res.Standing.AuthorizeURL, url)
+		}
+	}
+}
+
+// handshakeFigures is every numeric handshake field, by the name the
+// contract spells it with. One entry per field rather than a comparison
+// of whole handshakes: a fixture names only the settings its case is
+// about, and everything it leaves out must keep meaning "the service
+// left this alone".
+var handshakeFigures = map[string]func(platform.Handshake) int64{
+	"flush_bytes":               func(h platform.Handshake) int64 { return h.FlushBytes },
+	"flush_age_seconds":         func(h platform.Handshake) int64 { return h.FlushAgeSeconds },
+	"segment_flush_bytes":       func(h platform.Handshake) int64 { return h.SegmentFlushBytes },
+	"segment_flush_age_seconds": func(h platform.Handshake) int64 { return h.SegmentFlushAgeSeconds },
+	"spool_quota_bytes":         func(h platform.Handshake) int64 { return h.SpoolQuotaBytes },
+}
+
+// assertHandshakeStored checks that every figure the fixture's answer
+// carries reached the handshake this client kept, so the next flush is
+// run on the service's numbers rather than on the ones this binary
+// shipped with.
+func assertHandshakeStored(t *testing.T, f *fixture, c conformance.Case) {
+	t.Helper()
+	stored := upload.LoadHandshake(f.dir)
+	for key, read := range handshakeFigures {
+		sent, ok := c.Response.Body[key].(float64)
+		if !ok || sent == 0 {
+			continue
+		}
+		if got := read(stored); got != int64(sent) {
+			t.Errorf("stored %s = %d, the service sent %d", key, got, int64(sent))
 		}
 	}
 }
