@@ -2,10 +2,12 @@ package report_test
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
@@ -95,4 +97,104 @@ func TestTheBundleNamesTheBuildAndTheProxyItDiagnosed(t *testing.T) {
 		`"proxy_addr": "127.0.0.1:41100"`,
 		`"generated_at": "2026-08-02T12:00:00Z"`,
 	)
+}
+
+func TestTheBundleCarriesWhatTheOtherSurfacesReportAboutTheDevice(t *testing.T) {
+	d := device()
+	d.Project = contributing()
+	d.StaleDiscoveryHook = true
+	d.ProxyIdleBetweenSessions = true
+	d.OptionalSettings = []report.OptionalSettingStatus{{
+		Key:      claudesettings.KeyShowThinkingSummaries,
+		State:    claudesettings.OffByUser,
+		Declined: true,
+	}}
+
+	wants(t, "diagnosis.json", string(report.DiagnosisJSON(d)),
+		`"stale_discovery_hook": true`,
+		`"idle_between_sessions": true`,
+		`"`+claudesettings.KeyShowThinkingSummaries+`"`,
+		`"state": "off_by_user"`,
+		`"declined": true`,
+	)
+}
+
+// bundleOmits names each Diagnosis field the bundle leaves out, with
+// why leaving it out keeps the archive answerable.
+var bundleOmits = map[string]string{
+	"RejectedDir": "the directory is this build's own layout, not an observation about the device, and the batches waiting in it are carried in full",
+}
+
+func TestTheBundleCarriesEveryFactADiagnosisHolds(t *testing.T) {
+	generatedAt := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	written := func(d report.Diagnosis) string {
+		return string(report.DiagnosisJSON(d)) + string(report.InfoJSON(d, generatedAt))
+	}
+	nothing := written(report.Diagnosis{})
+
+	diagnosis := reflect.TypeFor[report.Diagnosis]()
+	for i := range diagnosis.NumField() {
+		field := diagnosis.Field(i)
+		t.Run(field.Name, func(t *testing.T) {
+			if why, omitted := bundleOmits[field.Name]; omitted {
+				t.Skip(why)
+			}
+			var d report.Diagnosis
+			fillForTheBundle(t, reflect.ValueOf(&d).Elem().Field(i))
+			if got := written(d); got == nothing {
+				t.Errorf("%s reached nothing in the bundle:\n%s", field.Name, got)
+			}
+		})
+	}
+}
+
+// fillForTheBundle gives a field a value no zero Diagnosis has, so that
+// a field the bundle drops leaves the archive unchanged.
+func fillForTheBundle(t *testing.T, v reflect.Value) {
+	t.Helper()
+	switch v.Kind() {
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.String:
+		v.SetString("carried")
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v.SetInt(7)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		v.SetUint(7)
+	case reflect.Float32, reflect.Float64:
+		v.SetFloat(7)
+	case reflect.Pointer:
+		held := reflect.New(v.Type().Elem())
+		fillForTheBundle(t, held.Elem())
+		v.Set(held)
+	case reflect.Slice:
+		held := reflect.New(v.Type().Elem())
+		fillForTheBundle(t, held.Elem())
+		v.Set(reflect.Append(v, held.Elem()))
+	case reflect.Map:
+		key := reflect.New(v.Type().Key()).Elem()
+		fillForTheBundle(t, key)
+		held := reflect.New(v.Type().Elem()).Elem()
+		fillForTheBundle(t, held)
+		filled := reflect.MakeMap(v.Type())
+		filled.SetMapIndex(key, held)
+		v.Set(filled)
+	case reflect.Interface:
+		if !v.Type().Implements(reflect.TypeFor[error]()) {
+			t.Fatalf("no value for a %s field; teach this test the type", v.Type())
+		}
+		v.Set(reflect.ValueOf(errors.New("carried")))
+	case reflect.Struct:
+		if v.Type() == reflect.TypeFor[time.Time]() {
+			v.Set(reflect.ValueOf(time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)))
+			return
+		}
+		for i := range v.NumField() {
+			if v.Field(i).CanSet() {
+				fillForTheBundle(t, v.Field(i))
+			}
+		}
+	default:
+		t.Fatalf("no value for a %s field; teach this test the kind", v.Kind())
+	}
 }

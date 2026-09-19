@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -51,6 +52,12 @@ type diagnosisWire struct {
 	// Selfcheck is the live proxy's answer for the current project,
 	// present only when a proxy of ours answered one.
 	Selfcheck any `json:"selfcheck,omitempty"`
+	// StaleDiscoveryHook says a discovery hook of ours stands in a
+	// settings file Claude Code does not read on this device. It is a
+	// fact about the device, not about the current project: the hook
+	// belongs to the default configuration directory while the device
+	// names another one.
+	StaleDiscoveryHook bool `json:"stale_discovery_hook"`
 }
 
 type projectWire struct {
@@ -73,10 +80,20 @@ type projectWire struct {
 	// reading of whether its hooks load, and the setting that decided
 	// against it.
 	HookPolicy *hookPolicyWire `json:"hook_policy,omitempty"`
+	// OptionalSettings is each optional Claude Code setting's state for
+	// this project. It is keys and states: the settings are trajector's
+	// own list, and no value the user set is read out of them.
+	OptionalSettings []optionalSettingWire `json:"optional_settings,omitempty"`
 	// SessionFiles is counts and sizes only. A session id or a session
 	// file's path would name what the user worked on, and the bundle
 	// is handed to someone else.
 	SessionFiles sessionFilesWire `json:"session_files"`
+}
+
+type optionalSettingWire struct {
+	Key      string `json:"key"`
+	State    string `json:"state"`
+	Declined bool   `json:"declined"`
 }
 
 type hookPolicyWire struct {
@@ -115,6 +132,11 @@ type proxyWire struct {
 	Reason string `json:"reason,omitempty"`
 	// Health is present only when the holder is ours.
 	Health any `json:"health,omitempty"`
+	// IdleBetweenSessions says an absent proxy is the healthy state on
+	// this device, because every enabled project records without one.
+	// Without it a reader cannot tell that holder apart from a proxy
+	// that should be running and is not.
+	IdleBetweenSessions bool `json:"idle_between_sessions"`
 }
 
 type spoolWire struct {
@@ -162,7 +184,12 @@ func DiagnosisJSON(d Diagnosis) []byte {
 	if days == nil {
 		days = []spool.DaySummary{}
 	}
-	proxy := proxyWire{Addr: d.Proxy.Addr, Holder: d.Proxy.Holder.String(), Reason: errString(d.Proxy.Reason)}
+	proxy := proxyWire{
+		Addr:                d.Proxy.Addr,
+		Holder:              d.Proxy.Holder.String(),
+		Reason:              errString(d.Proxy.Reason),
+		IdleBetweenSessions: d.ProxyIdleBetweenSessions,
+	}
 	if d.Proxy.Holder == proxylife.HolderOurs {
 		proxy.Health = d.Proxy.Health
 	}
@@ -184,6 +211,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			NoProxy:          d.Project.Shape == routing.WithoutProxy,
 			WindowsSide:      d.Project.WindowsSideClaude,
 			HookPolicy:       hookPolicyValue(d),
+			OptionalSettings: optionalSettingValues(d),
 			SessionFiles: sessionFilesWire{
 				Err:          errString(d.SessionFiles.Err),
 				Sessions:     d.SessionFiles.Sessions,
@@ -214,6 +242,8 @@ func DiagnosisJSON(d Diagnosis) []byte {
 		Standings:   d.Standings,
 		TokenStore:  tokenStoreWire{Paired: d.TokenStore.Paired, Err: errString(d.TokenStore.Err)},
 		Selfcheck:   selfcheckValue(d),
+
+		StaleDiscoveryHook: d.StaleDiscoveryHook,
 	})
 }
 
@@ -223,6 +253,33 @@ func hookPolicyValue(d Diagnosis) *hookPolicyWire {
 		return nil
 	}
 	return &hookPolicyWire{Runs: d.HookPolicy.Runs, Reason: d.HookPolicy.Reason}
+}
+
+// settingStateNames spells each optional setting state for the wire. A
+// state this table does not name reaches the bundle as unknown rather
+// than as one of the states it does name.
+var settingStateNames = map[claudesettings.SettingState]string{
+	claudesettings.Unset:     "unset",
+	claudesettings.OnByUs:    "on_by_us",
+	claudesettings.OnByUser:  "on_by_user",
+	claudesettings.OffByUser: "off_by_user",
+}
+
+// optionalSettingValues carries each optional setting's state, nil when
+// the diagnosis resolved none.
+func optionalSettingValues(d Diagnosis) []optionalSettingWire {
+	if len(d.OptionalSettings) == 0 {
+		return nil
+	}
+	out := make([]optionalSettingWire, 0, len(d.OptionalSettings))
+	for _, s := range d.OptionalSettings {
+		name, ok := settingStateNames[s.State]
+		if !ok {
+			name = "unknown"
+		}
+		out = append(out, optionalSettingWire{Key: s.Key, State: name, Declined: s.Declined})
+	}
+	return out
 }
 
 // selfcheckValue keeps a nil *Selfcheck out of the JSON instead of

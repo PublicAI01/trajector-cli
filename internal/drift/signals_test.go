@@ -13,6 +13,8 @@ func TestSignalsAddSumsCountsAndMergesNamesWithoutRepeats(t *testing.T) {
 		AssistantLines:                   3,
 		AssistantLinesWithoutMessageID:   1,
 		AssistantLinesWithEmptyReasoning: 2,
+		NewAttachmentTypes:               []string{"holo-sketch"},
+		NewSystemSubtypes:                []string{"weather-note"},
 		NewTopLevelTypes:                 []string{"mood-ring"},
 	}
 	second := drift.Signals{
@@ -25,6 +27,7 @@ func TestSignalsAddSumsCountsAndMergesNamesWithoutRepeats(t *testing.T) {
 		AgentLines:                          4,
 		AgentLinesWithoutParent:             1,
 		NewLaunchSurfaces:                   []string{"claude-holodeck"},
+		NewAttachmentTypes:                  []string{"mood-board"},
 		NewTopLevelTypes:                    []string{"aurora"},
 	}
 	want := drift.Signals{
@@ -38,6 +41,8 @@ func TestSignalsAddSumsCountsAndMergesNamesWithoutRepeats(t *testing.T) {
 		AgentLines:                          4,
 		AgentLinesWithoutParent:             1,
 		NewLaunchSurfaces:                   []string{"claude-holodeck"},
+		NewAttachmentTypes:                  []string{"holo-sketch", "mood-board"},
+		NewSystemSubtypes:                   []string{"weather-note"},
 		NewTopLevelTypes:                    []string{"aurora", "mood-ring"},
 	}
 	if got := first.Add(second); !reflect.DeepEqual(got, want) {
@@ -104,4 +109,36 @@ func TestSignalsCallAShapeThisBuildExpectsToMeetExpected(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEverySignalsFieldIsSummedOrMergedByAdd(t *testing.T) {
+	signals := reflect.TypeFor[drift.Signals]()
+	for i := range signals.NumField() {
+		field := signals.Field(i)
+		t.Run(field.Name, func(t *testing.T) {
+			var first, second, want drift.Signals
+			switch field.Type.Kind() {
+			case reflect.Int:
+				valueIn(&first, i).SetInt(1)
+				valueIn(&second, i).SetInt(2)
+				valueIn(&want, i).SetInt(3)
+			case reflect.Slice:
+				if field.Type.Elem().Kind() != reflect.String {
+					t.Fatalf("no rule for a slice of %s; teach this test the kind", field.Type.Elem().Kind())
+				}
+				valueIn(&first, i).Set(reflect.ValueOf([]string{"first-name"}))
+				valueIn(&second, i).Set(reflect.ValueOf([]string{"second-name"}))
+				valueIn(&want, i).Set(reflect.ValueOf([]string{"first-name", "second-name"}))
+			default:
+				t.Fatalf("no rule for a %s field; teach this test the kind", field.Type.Kind())
+			}
+			if got := first.Add(second); !reflect.DeepEqual(got, want) {
+				t.Errorf("Add = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func valueIn(s *drift.Signals, field int) reflect.Value {
+	return reflect.ValueOf(s).Elem().Field(field)
 }
