@@ -30,12 +30,14 @@ import (
 // treated as one that cannot be placed.
 //
 // The fallback below narrows who ends up in that position. `go install
-// <module>@<version>` records the version it resolved, and a build made
-// that way is as identifiable as a released one — reporting "dev" for it
-// would gate a user who is demonstrably on a real release. What is left
-// unstamped after that is a plain `go build` from an unknown tree, and
-// for that one "dev" is the honest answer: nothing here knows which
-// release it is, and the service must not assume.
+// <module>@<version>` records the version it resolved, and a build from
+// a git checkout records the tag or pseudo-version the toolchain derived
+// from it; a build made either way is as identifiable as a released one,
+// and reporting "dev" for it would gate a user who is demonstrably on a
+// real release. What is left unstamped after that is a build with no
+// version control information at all, and for that one "dev" is the
+// honest answer: nothing here knows which release it is, and the service
+// must not assume.
 var version = unstampedVersion
 
 // unstampedVersion is what version holds when the linker did not stamp
