@@ -46,10 +46,16 @@ const (
 	// QuarantineOnly: the spool holds nothing to send and every rawcall
 	// left on this machine is waiting in quarantine.
 	QuarantineOnly Reason = "quarantine_only"
+	// CredentialRefused: the device holds a pairing token and the service
+	// will not accept it. It is not SignedOut, which is this machine
+	// holding no token at all: a user reading that would go looking for a
+	// local state that is not what went wrong. Captured data is kept.
+	CredentialRefused Reason = "credential_refused"
 	// AccessRefused: the service — or something answering in front of it,
 	// a proxy or a gateway — refused this client access to the upload
-	// endpoint. It is not SignedOut because the pairing may be perfectly
-	// good, and not a rejection because it says nothing about the batch.
+	// endpoint. It is not CredentialRefused because the pairing may be
+	// perfectly good, and not a rejection because it says nothing about
+	// the batch.
 	AccessRefused Reason = "access_refused"
 )
 
@@ -126,8 +132,10 @@ func (s Standing) Explain() string {
 		return fmt.Sprintf("Uploads are paused until %s: the last attempt ran out of time.", s.pauseUntil())
 	case QuarantineOnly:
 		return "Uploads have nothing to send: every record left on this machine is quarantined."
+	case CredentialRefused:
+		return "Uploads are paused: the service refused this device's credential. Captured data is kept."
 	case AccessRefused:
-		return fmt.Sprintf("Uploads are paused until %s: the upload endpoint refused this client access. Captured data is kept.", s.pauseUntil())
+		return "Uploads are paused: the service refused this client access to the upload endpoint. Captured data is kept."
 	default:
 		return string(s.Reason)
 	}
@@ -164,6 +172,8 @@ func (s Standing) Remedy() string {
 		return "Complete your data authorization at " + s.AuthorizeURL + " — then uploads resume."
 	case RateLimited, TimedOut:
 		return "Uploads resume automatically; `trajector upload --force` offers them now."
+	case CredentialRefused:
+		return "Run `trajector login` to pair this device again; uploads resume at the next flush."
 	case AccessRefused:
 		// No local setting produces this, so nothing here names a command
 		// that would clear it; a forced retry is still offered, because a

@@ -166,6 +166,50 @@ func (e *DataAuthorizationRequiredError) Unwrap() error {
 	return e.status
 }
 
+// CredentialRefusedError reports a 401: the service does not accept the
+// credential this device offered — revoked, or expired. Nothing is
+// wrong with the data or with this build, so the caller keeps
+// everything and stops offering it until the device is paired again.
+// Like the two gates above it refines the underlying StatusError.
+//
+// It carries no field of its own: the status is the whole of what the
+// service said, and what the user reads is built from what this client
+// does next. It is still a class rather than a predicate on the status,
+// because reading a status for its meaning is this package's job and a
+// predicate would move half of that decision to the caller.
+type CredentialRefusedError struct{ status *StatusError }
+
+func (e *CredentialRefusedError) Error() string {
+	return "the service refused this device's credential"
+}
+
+func (e *CredentialRefusedError) Unwrap() error {
+	if e.status == nil {
+		return nil
+	}
+	return e.status
+}
+
+// AccessRefusedError reports a 403: the service, or something answering
+// in front of it, refuses this client the upload endpoint outright. It
+// is a class apart from CredentialRefusedError because it says nothing
+// about the pairing — a proxy or a gateway answers this way as readily
+// as the service does — and apart from BatchRejectedError because it
+// says nothing about the batch. It carries no field of its own, for the
+// reason CredentialRefusedError carries none.
+type AccessRefusedError struct{ status *StatusError }
+
+func (e *AccessRefusedError) Error() string {
+	return "the service refused this client access to the upload endpoint"
+}
+
+func (e *AccessRefusedError) Unwrap() error {
+	if e.status == nil {
+		return nil
+	}
+	return e.status
+}
+
 // MaxRetryAfter caps how long a Retry-After can silence automatic
 // flushes, so a service misconfiguration cannot mute every client
 // indefinitely. The cap is applied once, where the 429 is classified,
@@ -298,9 +342,11 @@ func uploadFailure(err error, bodyBytes int64, budget time.Duration) error {
 }
 
 // classifyUploadFailure maps a non-2xx batch upload response onto the
-// failure classes the uploader acts on. Auth failures stay plain errors
-// — transient, keep and retry — matching how every other failure
-// without its own class is treated.
+// failure classes the uploader acts on. Every answer this client
+// answers differently has a class here, so what a status means is
+// decided once, in this package; a status named by no arm reaches the
+// caller as the bare StatusError, which is the answer this client has
+// no particular reading of.
 func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, budget time.Duration) error {
 	status := newStatusError(resp, http.MethodPost, BatchesPath, body)
 	switch {
@@ -345,19 +391,14 @@ func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, bu
 		// condition as the client's own deadline firing; one error class
 		// covers both.
 		return &UploadTimeoutError{BatchBytes: bodyBytes, Budget: budget, cause: status}
-	case resp.StatusCode == http.StatusUnauthorized,
-		// 403 joined 401 on 2026-09-16, for the reason 401 was lifted out
-		// on 2026-09-13: the arm below reads a status as a verdict on the
-		// batch, and neither of these is one. A forbidden answer is about
-		// who is asking, not about what they sent — a descoped credential,
-		// or a proxy or gateway in front of the service, which answers 403
-		// as readily as the service itself. Read as a rejection it
-		// quarantined the batch, and since that arm sets no pause the
-		// cadence took the next batch a minute later and quarantined it
-		// too, walking the whole spool into a store the tool describes as
-		// not retried automatically.
-		resp.StatusCode == http.StatusForbidden:
-		return status
+	// Both of these must stay above the generic 4xx arm below. That arm
+	// reads a status as a verdict on the batch, and neither of these is
+	// one: they are about who is asking, not about what was sent. Read
+	// as rejections they quarantine records the service never judged.
+	case resp.StatusCode == http.StatusUnauthorized:
+		return &CredentialRefusedError{status: status}
+	case resp.StatusCode == http.StatusForbidden:
+		return &AccessRefusedError{status: status}
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		// status.Status, never resp.Status: settleFailure copies this field
 		// straight into the Rejection it writes to disk and into the error
@@ -371,25 +412,6 @@ func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, bu
 // retryAfter reads a Retry-After value in either of its two forms:
 // delta-seconds or an HTTP date. Absent or unreadable reads as zero —
 // no requested pause.
-// Unauthorized reports whether err is the service refusing this
-// device's credential. It is a predicate rather than a distinct error
-// type because a 401 needs no detail carried with it: the status is the
-// whole message, and the caller's response to it is a pause, not a
-// sentence built from the body.
-func Unauthorized(err error) bool {
-	var status *StatusError
-	return errors.As(err, &status) && status.StatusCode == http.StatusUnauthorized
-}
-
-// Forbidden reports whether err is the service, or something answering
-// in front of it, refusing this client access outright. Like
-// Unauthorized it is a predicate rather than an error type: the status
-// is the whole message and the caller's response to it is a pause.
-func Forbidden(err error) bool {
-	var status *StatusError
-	return errors.As(err, &status) && status.StatusCode == http.StatusForbidden
-}
-
 func retryAfter(value string) time.Duration {
 	if value == "" {
 		return 0

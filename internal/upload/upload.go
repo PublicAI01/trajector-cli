@@ -80,8 +80,12 @@ const (
 	// BelowThreshold means an unforced flush found the spool under both
 	// thresholds.
 	BelowThreshold Outcome = "below_threshold"
-	// Paused means no device token is stored; nothing was attempted.
-	// Capture continues — pairing again resumes uploads.
+	// Paused means uploads are held back by a refusal about who is
+	// asking: no device token is stored, the service will not take the
+	// one this device holds, or it refuses this client the endpoint
+	// outright. Capture continues and the data is untouched; the
+	// standing beside this outcome names which of the three it is, and a
+	// forced flush may still try.
 	Paused Outcome = "paused"
 	// UpgradeRequired means the service refused this client version;
 	// automatic flushes stop for this process. Data is untouched, and a
@@ -175,20 +179,30 @@ type Uploader struct {
 	// closed refuses every flush after Close ran its last one.
 	closed bool
 
-	// Both gates suppress automatic flushes only; a forced flush walks
-	// straight past them. They reset on any acknowledged upload and are
-	// deliberately not read back from disk: a fresh process
-	// (post-upgrade, or just restarted) gets to find out for itself. The
-	// pause a 429 or a timeout leaves is read back — see loadBackoff for
-	// why the two are treated differently.
+	// The three gates suppress automatic flushes only; a forced flush
+	// walks straight past them. They reset on any acknowledged upload and
+	// are deliberately not read back from disk: every one of them is
+	// answered by a person or by another machine, never by time, so a
+	// fresh process gets to find out for itself instead of inheriting a
+	// refusal that may already be over. The pause a 429 or a timeout
+	// leaves is read back — see loadBackoff for why those are different.
 	//
 	// authorizationGate is a gate of its own rather than a second meaning
 	// for upgradeGate: an old build whose account is also unauthorized
 	// holds both conditions at once, and sharing one carrier would let
 	// status and doctor name only one of them — which is the whole of
 	// what this gate buys the user.
+	//
+	// accessGate carries both refusals of the asker — the credential
+	// refused, or the endpoint refused outright — because one answer can
+	// only be one of them. refusedToken is the token that was refused, so
+	// the gate opens for a different one: pairing again is the remedy for
+	// the first, and asking with a new credential is a new question in
+	// either case.
 	upgradeGate       Standing
 	authorizationGate Standing
+	accessGate        Standing
+	refusedToken      string
 	// timeouts counts consecutive timed-out upload attempts. Each one
 	// widens the next attempt's budget and lengthens the pause before
 	// it, so the batch at the head of the queue is never retried forever
@@ -269,24 +283,43 @@ func (u *Uploader) reportDisposition(res *Result) {
 	case Quarantine:
 		res.Outcome = Rejected
 	case RetrySameID:
-		// Nothing on disk changed, so the only thing left to report is a
-		// pause the attempt left behind — which is exactly what the next
-		// automatic flush will refuse to start on.
-		u.reportBackoff(res)
+		// Nothing on disk changed, so the only thing left to report is
+		// what the attempt left behind — a gate, or a pause — which is
+		// exactly what the next automatic flush will refuse to start on.
+		if !u.reportAccessGate(res) {
+			u.reportBackoff(res)
+		}
 	}
 }
 
-// reportUpgradeGate, reportAuthorizationGate, and reportBackoff are the
-// one reading of each condition: what it is called and what the service
-// said when it was raised. The flush that raises a condition and the
-// flush that is stopped by one report through the same trio, so the
-// user is never told two different things about one refusal.
+// reportUpgradeGate, reportAuthorizationGate, reportAccessGate, and
+// reportBackoff are the one reading of each condition: what it is
+// called and what the service said when it was raised. The flush that
+// raises a condition and the flush that is stopped by one report
+// through the same four, so the user is never told two different
+// things about one refusal.
 func (u *Uploader) reportUpgradeGate(res *Result) {
 	res.Outcome, res.Standing = UpgradeRequired, u.upgradeGate
 }
 
 func (u *Uploader) reportAuthorizationGate(res *Result) {
 	res.Outcome, res.Standing = AuthorizationRequired, u.authorizationGate
+}
+
+func (u *Uploader) reportAccessGate(res *Result) bool {
+	if !u.accessGate.Held() {
+		return false
+	}
+	res.Outcome, res.Standing = Paused, u.accessGate
+	return true
+}
+
+// refuseAccess raises the gate the service's refusal of the asker
+// leaves behind, against the token that was refused. Nothing is
+// written: the remedy is off this process, so a successor must be
+// allowed to ask once rather than inherit the answer this one got.
+func (u *Uploader) refuseAccess(token string, reason Reason) {
+	u.accessGate, u.refusedToken = Standing{Reason: reason}, token
 }
 
 func (u *Uploader) reportBackoff(res *Result) bool {
@@ -335,6 +368,13 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 		res.Outcome, res.Standing = Paused, Standing{Reason: SignedOut}
 		return res, nil
 	}
+	// The token is read on every flush, so a device paired again while
+	// this process runs is offering a different credential by the next
+	// automatic flush — and the refusal that was answered about the old
+	// one stops standing there and then.
+	if u.accessGate.Held() && token != u.refusedToken {
+		u.accessGate, u.refusedToken = Standing{}, ""
+	}
 	if !force {
 		if u.upgradeGate.Held() {
 			u.reportUpgradeGate(&res)
@@ -346,6 +386,9 @@ func (u *Uploader) flush(force bool, deadline time.Time) (Result, error) {
 		// something that changes nothing until they also upgrade.
 		if u.authorizationGate.Held() {
 			u.reportAuthorizationGate(&res)
+			return res, nil
+		}
+		if u.reportAccessGate(&res) {
 			return res, nil
 		}
 		if u.reportBackoff(&res) {
@@ -514,11 +557,12 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 	ack, err := u.deps.Service.UploadBatch(token, b.ID, b.Envelope, b.Records, budget)
 	u.noteAttempt(err)
 	if err != nil {
-		res.Disposition, err = u.settleFailure(l, b.Packed, err)
+		res.Disposition, err = u.settleFailure(token, l, b.Packed, err)
 		return err
 	}
 	res.Disposition = Ack
-	u.upgradeGate, u.authorizationGate = Standing{}, Standing{}
+	u.upgradeGate, u.authorizationGate, u.accessGate = Standing{}, Standing{}, Standing{}
+	u.refusedToken = ""
 	u.timeouts = 0
 
 	if err := l.settle(u.deps.Spool, b.Packed); err != nil {
@@ -620,20 +664,26 @@ func unmaskable(refused []batch.Refusal) bool {
 // settleFailure reads one failed upload as the contract reads it: every
 // answer the service can give is one row of the closed Disposition set,
 // and this is the single place that maps an answer to its row and
-// carries the row out. The row a reader does not find here is
-// RetrySameID, which is also the default — for auth failures, timeouts,
-// and network errors — and which changes nothing: the spool and the
-// pending record stay, and the next flush retries under the same id.
+// carries the row out. RetrySameID is the widest row: it is the default
+// — for network errors and for anything else without an arm — and it is
+// also what the arms below return whenever nothing on disk may change.
+// The disposition is a promise about the data, so it holds for all of
+// them: the spool and the pending record stay, and the next flush
+// retries under the same id. What separates those arms from the default
+// is what they leave in this process: a pause to wait out, or a gate
+// only a person can open.
 //
 // The authorization row stays above the rejection row, the same order
 // the answer classes are decided in: a refusal for want of a completed
 // data authorization that reached the rejection row would quarantine a
 // user's data over a condition they resolve elsewhere, which is the one
 // mistake that row exists to prevent.
-func (u *Uploader) settleFailure(l lease, packed spool.Entries, err error) (Disposition, error) {
+func (u *Uploader) settleFailure(token string, l lease, packed spool.Entries, err error) (Disposition, error) {
 	id := l.id()
 	var upgrade *platform.UpgradeRequiredError
 	var unauthorized *platform.DataAuthorizationRequiredError
+	var credential *platform.CredentialRefusedError
+	var access *platform.AccessRefusedError
 	var limited *platform.RateLimitedError
 	var rejected *platform.BatchRejectedError
 	var timedOut *platform.UploadTimeoutError
@@ -665,30 +715,21 @@ func (u *Uploader) settleFailure(l lease, packed spool.Entries, err error) (Disp
 		}
 		u.noteAuthorizationRequired(unauthorized.AuthorizeURL, unauthorized.Message)
 		return PauseUploadsAuthorize, fmt.Errorf("upload: batch %s: %w", id, err)
-	case platform.Unauthorized(err):
-		// The service does not accept this device's credential — revoked
-		// server-side, or expired. Nothing about that clears on its own
-		// within a minute, and until 2026-09-13 this fell through to the
-		// default arm, which sets no pause at all: periodicFlush
-		// re-assembled, re-compressed and re-POSTed the whole batch every
-		// minute for the life of the process. It was the only failure
-		// class that was both lasting and unpaced. The pause is reported
-		// as signed out because that is what it is from the service's side
-		// and `trajector login` is what ends it; the batch id stays
-		// pinned, so nothing is re-ingested when it does.
-		u.noteBackoff(SignedOut, u.deps.Now().Add(unauthorizedPause))
-		return RetrySameID, fmt.Errorf("upload: batch %s: %w; automatic flushes wait %s", id, err, unauthorizedPause)
-	case platform.Forbidden(err):
-		// Access refused outright. Like the 401 above this says nothing
-		// about the batch, so nothing is quarantined and the id stays
-		// pinned; unlike it, the remedy is not necessarily this device's
-		// pairing — a proxy or gateway in front of the service answers the
-		// same way — so it carries its own reason rather than borrowing
-		// the signed-out one. The pause is the unauthorized one because
-		// the remedy is the same shape: a person, not time passing.
-		// 2026-09-16.
-		u.noteBackoff(AccessRefused, u.deps.Now().Add(unauthorizedPause))
-		return RetrySameID, fmt.Errorf("upload: batch %s: %w; automatic flushes wait %s", id, err, unauthorizedPause)
+	// Neither of the next two answers is about the batch, so nothing is
+	// quarantined and the id stays pinned; and neither is about time — a
+	// refused credential is answered by `trajector login`, a refused
+	// endpoint by whatever sits in front of the service — so automatic
+	// flushes stop at a gate rather than at a timer that would expire
+	// and re-offer the same batch to the same refusal. The cost is that
+	// a gate needs something to open it: it is held against the token
+	// that was refused, so the next flush under a new pairing walks
+	// through, and an acknowledged forced flush clears it.
+	case errors.As(err, &credential):
+		u.refuseAccess(token, CredentialRefused)
+		return RetrySameID, fmt.Errorf("upload: batch %s: %w", id, err)
+	case errors.As(err, &access):
+		u.refuseAccess(token, AccessRefused)
+		return RetrySameID, fmt.Errorf("upload: batch %s: %w", id, err)
 	case errors.As(err, &limited):
 		// RetryAfter arrives already capped at platform.MaxRetryAfter. A
 		// rate limit that names no pause still demanded one: without a
@@ -784,11 +825,6 @@ const maxTimeoutBackoff = 15 * time.Minute
 // load, short enough to resume promptly once the limit lifts. A service
 // wanting a different pause names one.
 const defaultRateLimitPause = 5 * time.Minute
-
-// unauthorizedPause is how long automatic flushes hold off after the
-// service refused this device's credential. It is long because the
-// remedy is a person running `trajector login`, not time passing.
-const unauthorizedPause = 15 * time.Minute
 
 // timeoutBackoff is how long automatic flushes hold off after the nth
 // consecutive timed-out attempt: doubling from a minute, so a

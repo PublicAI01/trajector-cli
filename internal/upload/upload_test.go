@@ -1177,13 +1177,7 @@ func TestPurgeRejectedRemovesOnlyThatProject(t *testing.T) {
 	}
 }
 
-// TestAnUnauthorizedUploadPausesAutomaticFlushes pins the fix for the
-// unpaced 401 retry: a device token revoked or expired server-side used
-// to fall through to the default arm, which sets no pause at all, so
-// periodicFlush re-assembled, re-compressed and re-POSTed the whole
-// batch every minute for the life of the process. Every other lasting
-// failure persists a pause; this one did not.
-func TestAnUnauthorizedUploadPausesAutomaticFlushes(t *testing.T) {
+func TestARefusedCredentialStopsAutomaticFlushesAndIsNotASignedOutDevice(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
@@ -1199,29 +1193,39 @@ func TestAnUnauthorizedUploadPausesAutomaticFlushes(t *testing.T) {
 	}
 	before := f.uploadCount()
 
-	// The next automatic flush must take the pause rather than re-offer
-	// the same batch a minute later.
 	res, err := f.uploader.Flush(false)
 	if err != nil {
 		t.Fatalf("automatic flush after a 401 = %v", err)
 	}
 	if got := f.uploadCount(); got != before {
-		t.Errorf("automatic flush made %d more attempts, want 0: a 401 must persist a pause", got-before)
+		t.Errorf("automatic flush made %d more attempts, want 0", got-before)
 	}
-	if res.Standing.Reason != upload.SignedOut {
-		t.Errorf("standing = %q, want %q so status and doctor name the credential", res.Standing.Reason, upload.SignedOut)
+	if res.Outcome != upload.Paused || res.Standing.Reason != upload.CredentialRefused {
+		t.Errorf("outcome, standing = %q, %q; want %q, %q", res.Outcome, res.Standing.Reason, upload.Paused, upload.CredentialRefused)
+	}
+	if held := upload.LoadStandings(f.dir, "1.0.0", f.now); len(held) != 0 {
+		t.Errorf("the refusal was written to disk as %v; a successor process must be free to ask once", held)
 	}
 }
 
-// TestAForbiddenUploadKeepsTheBatchAndPauses pins the 2026-09-16 fix.
-// Every 4xx except the ones with an arm of their own was read as "the
-// service will never take this batch" and quarantined. 403 is not a
-// verdict on the batch — a descoped credential, or a proxy or gateway
-// answering in front of the service, produces it — and the quarantine
-// arm sets no pause, so the flush cadence took the next batch a minute
-// later and quarantined that one too, walking the whole spool into a
-// store the tool describes as not retried automatically.
-func TestAForbiddenUploadKeepsTheBatchAndPauses(t *testing.T) {
+func TestPairingAgainAfterARefusedCredentialResumesTheNextAutomaticFlush(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+
+	f.token = "dev-tok-fake-2"
+
+	res, err := f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.Uploaded || res.Records != 1 {
+		t.Fatalf("automatic flush under the new pairing = %+v, %v; want the waiting record uploaded", res, err)
+	}
+}
+
+func TestARefusedEndpointKeepsTheBatchAndStopsAutomaticFlushes(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
@@ -1242,9 +1246,32 @@ func TestAForbiddenUploadKeepsTheBatchAndPauses(t *testing.T) {
 		t.Fatalf("automatic flush after a 403 = %v", err)
 	}
 	if got := f.uploadCount(); got != before {
-		t.Errorf("automatic flush made %d more attempts, want 0: a 403 must persist a pause", got-before)
+		t.Errorf("automatic flush made %d more attempts, want 0", got-before)
 	}
-	if res.Standing.Reason != upload.AccessRefused {
-		t.Errorf("standing = %q, want %q: the pairing may be fine, so this must not read as signed out", res.Standing.Reason, upload.AccessRefused)
+	if res.Outcome != upload.Paused || res.Standing.Reason != upload.AccessRefused {
+		t.Errorf("outcome, standing = %q, %q; want %q, %q", res.Outcome, res.Standing.Reason, upload.Paused, upload.AccessRefused)
+	}
+	if held := upload.LoadStandings(f.dir, "1.0.0", f.now); len(held) != 0 {
+		t.Errorf("the refusal was written to disk as %v; a successor process must be free to ask once", held)
+	}
+}
+
+func TestAnAcknowledgedForcedFlushOpensTheRefusedEndpointGate(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
+	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+
+	if res, err := f.uploader.Flush(true); err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("forced flush past the gate = %+v, %v", res, err)
+	}
+
+	f.storeRawcall(t, "req-2", time.Now().UTC())
+	res, err := f.uploader.Flush(false)
+	if err != nil || res.Outcome != upload.BelowThreshold {
+		t.Fatalf("automatic flush after the acknowledgement = %+v, %v; want %q", res, err, upload.BelowThreshold)
 	}
 }

@@ -223,9 +223,12 @@ func (h storedHandshake) backoff(now time.Time) (Standing, bool) {
 // restarted inside the wait honours what is left of it: a restart is
 // routine here — idle exit, version handover, reboot — and a pause the
 // next process ignores puts back exactly the load the service asked to
-// shed. The two refusal gates are not read back this way on purpose: a
-// 426 is answered by replacing this binary and a 451 off this machine
-// entirely, so a fresh process must be allowed to find out for itself.
+// shed. What is read back this way is exactly what time answers. The
+// refusal gates are not, on purpose: a 426 is answered by replacing
+// this binary, a 451 off this machine entirely, a 401 by pairing again
+// and a 403 by whatever sits in front of the service — none of them by
+// waiting, so a fresh process must be allowed to find out for itself
+// rather than inherit an answer that may already be stale.
 func loadBackoff(dir string, now time.Time) (Standing, bool) {
 	var h storedHandshake
 	readJSON(filepath.Join(dir, handshakeName), &h)

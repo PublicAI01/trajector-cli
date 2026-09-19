@@ -297,15 +297,26 @@ func TestUploadBatchOther4xxReportsRejection(t *testing.T) {
 	}
 }
 
-func TestUploadBatchAuthAndTimeoutFailuresStayTransient(t *testing.T) {
-	for _, status := range []int{401, 408} {
-		err := upload4xx(t, status, nil, map[string]any{})
-		var rejected *platform.BatchRejectedError
-		var upgrade *platform.UpgradeRequiredError
-		var limited *platform.RateLimitedError
-		if errors.As(err, &rejected) || errors.As(err, &upgrade) || errors.As(err, &limited) {
-			t.Fatalf("status %d error = %v, want a plain transient error", status, err)
+func TestUploadBatchRefusalsOfTheAskerAreNotBatchRejections(t *testing.T) {
+	credential := upload4xx(t, 401, nil, map[string]any{"error": "token revoked"})
+	if _, ok := errors.AsType[*platform.CredentialRefusedError](credential); !ok {
+		t.Errorf("status 401 = %v, want a CredentialRefusedError", credential)
+	}
+	access := upload4xx(t, 403, nil, map[string]any{"error": "forbidden"})
+	if _, ok := errors.AsType[*platform.AccessRefusedError](access); !ok {
+		t.Errorf("status 403 = %v, want an AccessRefusedError", access)
+	}
+	for _, err := range []error{credential, access} {
+		if _, ok := errors.AsType[*platform.BatchRejectedError](err); ok {
+			t.Errorf("%v reads as a rejection of the batch, which would quarantine records the service never judged", err)
 		}
+	}
+}
+
+func TestUploadBatchTimeoutStatusReadsAsATimeout(t *testing.T) {
+	timedOut := upload4xx(t, 408, nil, map[string]any{})
+	if _, ok := errors.AsType[*platform.UploadTimeoutError](timedOut); !ok {
+		t.Errorf("status 408 = %v, want an UploadTimeoutError", timedOut)
 	}
 }
 

@@ -157,6 +157,18 @@ func TestEveryStandingNamesWhatIsTrueAndTheGatesNameWhatEndsThem(t *testing.T) {
 			explain:  "Uploads are paused: this account's data authorization is not complete.",
 			remedy:   "Complete your data authorization in the Trajector dashboard, then uploads resume.",
 		},
+		{
+			name:     "a refused credential",
+			standing: upload.Standing{Reason: upload.CredentialRefused},
+			explain:  "Uploads are paused: the service refused this device's credential. Captured data is kept.",
+			remedy:   "Run `trajector login` to pair this device again; uploads resume at the next flush.",
+		},
+		{
+			name:     "a refused endpoint",
+			standing: upload.Standing{Reason: upload.AccessRefused},
+			explain:  "Uploads are paused: the service refused this client access to the upload endpoint. Captured data is kept.",
+			remedy:   "If this persists, check whether a proxy or firewall sits between this machine and the service; `trajector upload --force` retries now.",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.standing.Explain(); got != tc.explain {
