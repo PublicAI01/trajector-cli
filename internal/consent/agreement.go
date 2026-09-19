@@ -64,15 +64,15 @@ machine.
    one of the sources above may be rewarded less than one that came
    from more of them. It also depends on whether the local proxy
    witnessed the call the record is of. A call is witnessed when the
-   proxy handled its request and its response on your machine, or
-   when trajector read it from the session file while the session
-   was running, as it does for a project enabled without the proxy;
-   a call it did not witness — every session a project had before
-   you enabled it, and every session whose file was read only after
-   it ended — is rewarded at a lower rate than a witnessed one. The
-   tokens are counted in full either way; only the amount is reduced.
-   The rates themselves are set by trajector and are not fixed by
-   this agreement.
+   proxy handled its request and its response on your machine. A
+   call trajector read from the session file while the session was
+   running, as it does for a project enabled without the proxy, may
+   also count as witnessed; a call not witnessed — every session a
+   project had before you enabled it, and every session whose file
+   was read only after it ended — is rewarded at a lower rate than a
+   witnessed one. The tokens are counted in full either way; only
+   the amount is reduced. The rates themselves are set by trajector
+   and are not fixed by this agreement.
 
 4. Third-party relays. If this project routes traffic through a
    non-official base URL, its records are marked as third-party
