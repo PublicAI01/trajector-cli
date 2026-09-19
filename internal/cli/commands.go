@@ -175,6 +175,16 @@ func (a *app) hookCmd(args []string) int {
 			m.ToolUsed(cwd, hook)
 		}
 		return 0
+	case claudesettings.HookProgress:
+		if len(rest) != 0 {
+			hookUsage(a.stderr)
+			return 2
+		}
+		hook := a.hookInput()
+		if m, cwd, err := a.prelude(); err == nil {
+			m.SessionProgressed(cwd, hook)
+		}
+		return 0
 	case claudesettings.HookDiscovery:
 		if len(rest) != 0 {
 			hookUsage(a.stderr)
@@ -205,10 +215,10 @@ func (a *app) hookCmd(args []string) int {
 }
 
 func hookUsage(w io.Writer) {
-	fmt.Fprintf(w, "usage: trajector hook <%s [%s]|%s|%s|%s|%s>\n",
+	fmt.Fprintf(w, "usage: trajector hook <%s [%s]|%s|%s|%s|%s|%s>\n",
 		claudesettings.HookEnsureProxy, claudesettings.NoProxyMarker,
 		claudesettings.HookSessionEnd, claudesettings.HookGitSnapshot,
-		claudesettings.HookDiscovery, claudesettings.HookRead)
+		claudesettings.HookProgress, claudesettings.HookDiscovery, claudesettings.HookRead)
 }
 
 // hookInput decodes what the session wrote on stdin. A terminal is not

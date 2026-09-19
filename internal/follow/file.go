@@ -41,6 +41,55 @@ type File struct {
 	// field holds no retired entry, and a build that does not know the
 	// field reads a retired entry as one still to read.
 	Retired Retirement `json:"retired,omitempty"`
+	// LastEvent is when a session hook last named this file, in RFC
+	// 3339, and absent for a file no hook named since it was
+	// registered. PID is the process the session runs in, as the hook
+	// that named the file reported it, and 0 when unknown. Together
+	// they say whether the file is hot: one a session is writing right
+	// now, worth observing between hooks. Both are local state like
+	// the cursor and never leave the registry.
+	LastEvent string `json:"last_event,omitempty"`
+	PID       int    `json:"pid,omitzero"`
+}
+
+// hotWindow is how long a hook event keeps a file hot on its own,
+// with no process to vouch for the session: a session that says
+// nothing for a day is over, whatever its process is doing.
+const hotWindow = 24 * time.Hour
+
+// Hot reports whether f is being written by a session right now, as
+// far as the registry can tell: the process the last hook reported is
+// alive, or a hook named the file within the last day. A cold file is
+// never observed between hooks; a hook naming it again makes it hot.
+// alive answers whether a process id names a running process.
+func (f File) Hot(now time.Time, alive func(pid int) bool) bool {
+	if f.Retired != "" {
+		return false
+	}
+	if f.PID > 0 && alive(f.PID) {
+		return true
+	}
+	at, err := time.Parse(readAtLayout, f.LastEvent)
+	return err == nil && now.Sub(at) < hotWindow
+}
+
+// Attended reports whether the process the last hook reported for f
+// is still running. A file with no process is unattended.
+func (f File) Attended(alive func(pid int) bool) bool {
+	return f.Retired == "" && f.PID > 0 && alive(f.PID)
+}
+
+// Split parts files into the hot ones and the cold ones, each in the
+// order given.
+func Split(files []File, now time.Time, alive func(pid int) bool) (hot, cold []File) {
+	for _, f := range files {
+		if f.Hot(now, alive) {
+			hot = append(hot, f)
+		} else {
+			cold = append(cold, f)
+		}
+	}
+	return hot, cold
 }
 
 // Retirement is why an entry's cursor can never advance again. Its

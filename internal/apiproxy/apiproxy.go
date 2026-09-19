@@ -81,6 +81,32 @@ const HealthzPath = "/trajector/healthz"
 // newer binary uses it to take over the port.
 const DrainPath = "/trajector/drain"
 
+// ProgressPath is where a session hook tells the resident process that
+// a session's file just gained lines, so the file is read now rather
+// than at the next hook or the next sweep. The composition root mounts
+// the handler; the path is named here beside its siblings.
+const ProgressPath = "/trajector/progress"
+
+// Progress is what a session hook reports on ProgressPath: which
+// file of which project gained lines, from which process, and whether
+// the session is over. Both the hook that writes it and the resident
+// process that reads it use this type.
+type Progress struct {
+	ProjectIDHash string `json:"project_id_hash"`
+	Path          string `json:"path"`
+	PID           int    `json:"pid,omitzero"`
+	End           bool   `json:"end,omitzero"`
+}
+
+// Liveness is what the resident process knows about sessions beyond
+// the traffic it forwards: when a registered file last gained lines or
+// was named by a hook, and whether a process that writes one is still
+// running. Idle exit reads it beside the forwarding clock.
+type Liveness struct {
+	LastActivity time.Time
+	Attended     bool
+}
+
 // SelfcheckPath, requested under a token prefix (/t/<token> +
 // SelfcheckPath), reports whether that token would be routed and
 // recorded. It exercises the exact injected base URL shape without
@@ -160,6 +186,12 @@ const ServiceName = "trajector-proxy"
 const (
 	defaultIdleTimeout  = 30 * time.Minute
 	defaultDrainTimeout = 15 * time.Second
+	// attendedIdleFactor stretches the idle timeout while a session
+	// process is still running: an unattended agent can be quiet for
+	// well over half an hour between turns. It is a factor and not
+	// forever, so a process that lives on with nothing to say still
+	// lets this one exit.
+	attendedIdleFactor = 4
 )
 
 // Config wires the proxy's collaborators.
@@ -180,8 +212,15 @@ type Config struct {
 	// enters it — not whether an exchange is recorded, not whether its
 	// token resolves, not whether the routing table could be read: every
 	// exchange this proxy forwards is it being in use, and silence is
-	// the absence of exchanges. Zero selects a default.
+	// the absence of exchanges — or, when Liveness is set, of session
+	// files gaining lines. Zero selects a default.
 	IdleTimeout time.Duration
+	// Liveness, when set, is read on every idle check beside the
+	// forwarding clock: activity it reports keeps the proxy up as
+	// traffic does, and while it reports a session process still
+	// running the idle timeout stretches by attendedIdleFactor. Nil
+	// leaves forwarding the only sign of life.
+	Liveness func() Liveness
 	// DrainTimeout bounds how long shutdown waits for in-flight
 	// requests. Zero selects a default.
 	DrainTimeout time.Duration
@@ -464,8 +503,22 @@ func hostLimited(next http.Handler, bound string) http.Handler {
 
 func (s *Server) idle() bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.inflight == 0 && time.Since(s.lastForwarded) >= s.cfg.IdleTimeout
+	inflight, last := s.inflight, s.lastForwarded
+	s.mu.Unlock()
+	if inflight != 0 {
+		return false
+	}
+	timeout := s.cfg.IdleTimeout
+	if s.cfg.Liveness != nil {
+		l := s.cfg.Liveness()
+		if l.LastActivity.After(last) {
+			last = l.LastActivity
+		}
+		if l.Attended {
+			timeout *= attendedIdleFactor
+		}
+	}
+	return time.Since(last) >= timeout
 }
 
 func (s *Server) trackInflight(serve func()) {

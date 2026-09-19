@@ -6,7 +6,8 @@
 //
 // A registry is one JSON object: {"version":1,"files":[...]}, each
 // element carrying path, inode, size, offset, next_segment, and
-// message_ids, and optionally read_at, subpath, and retired. The path
+// message_ids, and optionally read_at, subpath, retired, last_event,
+// and pid. The path
 // is the entry's identity. Inode, size, and offset describe the file as it
 // was last observed locally: they steer reading and never leave it.
 // An optional "gaps" object records what the one-time search for the
@@ -35,6 +36,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
@@ -222,6 +224,55 @@ func (r *Registry) Update(projectIDHash string, f File) error {
 			return nil, ErrNotRegistered
 		}
 		reg.Files[i] = f
+		return encode(reg)
+	})
+}
+
+// Warm records that a session hook named path at at, from the process
+// pid, so the entry reads as hot from now on. A pid of 0 keeps the
+// process the entry already carries: a hook that cannot tell which
+// process runs the session must not erase one that could. A path
+// that is not registered is refused, as an update to it is.
+func (r *Registry) Warm(projectIDHash, path string, pid int, at time.Time) error {
+	return r.mark(projectIDHash, path, func(f *File) {
+		f.LastEvent = at.UTC().Format(readAtLayout)
+		if pid > 0 {
+			f.PID = pid
+		}
+	})
+}
+
+// Cool records that the session writing path is over: the entry
+// reads as cold until a hook names it again. A path that is not
+// registered is refused, as an update to it is.
+func (r *Registry) Cool(projectIDHash, path string) error {
+	return r.mark(projectIDHash, path, func(f *File) {
+		f.LastEvent = ""
+		f.PID = 0
+	})
+}
+
+// mark changes one entry in place, leaving its cursor as the reader
+// left it. It is how the hot state is written: the cursor and the
+// heat have different writers, and neither may take the other's
+// fields back in time.
+func (r *Registry) mark(projectIDHash, path string, change func(*File)) error {
+	if err := checkProjectIDHash(projectIDHash); err != nil {
+		return err
+	}
+	if _, err := os.Stat(r.dir); os.IsNotExist(err) {
+		return ErrNotRegistered
+	}
+	return fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
+		reg, err := parse(old)
+		if err != nil {
+			return nil, err
+		}
+		i, ok := find(reg.Files, path)
+		if !ok {
+			return nil, ErrNotRegistered
+		}
+		change(&reg.Files[i])
 		return encode(reg)
 	})
 }

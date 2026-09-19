@@ -8,20 +8,25 @@
 package proxyserve
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/sessionread"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
@@ -66,6 +71,10 @@ type Assembly struct {
 	ExecPath string
 	// Addr is the loopback address the proxy listens on.
 	Addr string
+	// SweepInterval is how often the served proxy looks at the hot
+	// session files on its own. Zero selects sweepInterval; a test
+	// shortens it.
+	SweepInterval time.Duration
 }
 
 func (a Assembly) proxy() *proxylife.Proxy {
@@ -159,6 +168,29 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		return err
 	}
 
+	// The served proxy reads session files too: one file when a hook
+	// reports it gained lines, and the hot set on a cadence. It shares
+	// the spool, the routing store, and the uploader with the capture
+	// path, so what a read stores is flushed by the one flusher.
+	tail := &tailer{
+		reader: sessionread.Reader{
+			Registry:  follow.Open(layout.FollowDir()),
+			Routes:    routing.OpenStore(layout.RoutingTable()),
+			Spool:     sp,
+			Version:   a.Version,
+			ReaderLog: layout.ReaderLog(),
+			Now:       time.Now,
+		},
+		routes:   routing.OpenStore(layout.RoutingTable()),
+		uploader: uploader,
+		alive:    follow.ProcessAlive,
+		logf:     logf,
+		nudge:    newFlushNudge(),
+	}
+	internal := http.NewServeMux()
+	internal.Handle(upload.FlushPath, uploader.Handler(apiproxy.ServiceName))
+	internal.Handle("POST "+apiproxy.ProgressPath, tail.handler())
+
 	server, err = apiproxy.New(apiproxy.Config{
 		Version:         a.Version,
 		Table:           routing.New(layout.RoutingTable(), 0),
@@ -166,8 +198,9 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		DefaultUpstream: capture.Anthropic.OfficialUpstream,
 		Spool:           sp,
 		IdleTimeout:     idle,
+		Liveness:        tail.liveness,
 		Logf:            logf,
-		Internal:        uploader.Handler(apiproxy.ServiceName),
+		Internal:        internal,
 		AdminTokens:     layout,
 		// One last flush on the way out, past the byte and age
 		// thresholds and behind every gate, run while this process still
@@ -206,17 +239,88 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 	}
 
 	served := make(chan struct{})
-	go periodicFlush(ctx, served, uploader, logf)
+	go periodicFlush(ctx, served, uploader, tail.nudge, logf)
+	go periodicSweep(ctx, served, tail, cmp.Or(a.SweepInterval, sweepInterval))
 	err = server.Serve(ctx, l)
 	close(served)
 	return err
 }
 
+// flushNudge is how a reader that may not upload asks the flush
+// cadence to upload for it. It holds one pending ask: two asks
+// between two flushes are one flush, and an ask for every record at
+// once outlives an ask for a threshold check, because the session
+// that made it has no later ask coming.
+type flushNudge struct {
+	signal chan struct{}
+	atOnce atomic.Bool
+}
+
+func newFlushNudge() *flushNudge {
+	return &flushNudge{signal: make(chan struct{}, 1)}
+}
+
+// ask never blocks and never fails: the caller is answering a hook
+// that a session waits on.
+func (n *flushNudge) ask(atOnce bool) {
+	if atOnce {
+		n.atOnce.Store(true)
+	}
+	select {
+	case n.signal <- struct{}{}:
+	default:
+	}
+}
+
+// takeAtOnce reports whether the flush now starting must send every
+// record, and clears the ask.
+func (n *flushNudge) takeAtOnce() bool { return n.atOnce.Swap(false) }
+
 // periodicFlush checks the upload thresholds on a cadence while the
-// proxy serves. Failures are logged and retried on the next tick; the
-// spool keeps everything until a batch is acknowledged.
-func periodicFlush(ctx context.Context, served chan struct{}, uploader *upload.Uploader, logf func(string, ...any)) {
+// proxy serves, and on the nudges the reading of session files leaves
+// for it. Failures are logged and retried on the next tick; the spool
+// keeps everything until a batch is acknowledged.
+func periodicFlush(ctx context.Context, served chan struct{}, uploader *upload.Uploader, nudge *flushNudge, logf func(string, ...any)) {
 	ticker := time.NewTicker(flushInterval)
+	defer ticker.Stop()
+	for {
+		atOnce := false
+		select {
+		case <-ctx.Done():
+			return
+		case <-served:
+			return
+		case <-ticker.C:
+		case <-nudge.signal:
+			// A nudge the cadence never reached is dropped when the
+			// proxy ends: the exit flush sends what it asked for.
+			if ctx.Err() != nil {
+				return
+			}
+			atOnce = nudge.takeAtOnce()
+		}
+		var err error
+		if atOnce {
+			_, err = uploader.FlushRecords()
+		} else {
+			_, err = uploader.Flush(false)
+		}
+		if err != nil {
+			if errors.Is(err, upload.ErrClosed) {
+				// The exit flush already ran; the cadence is done.
+				return
+			}
+			logf("flush: %v", err)
+		}
+	}
+}
+
+// periodicSweep looks at the hot session files on a cadence while the
+// proxy serves, and once on the way in: a proxy that starts after a
+// session did meets the file the session's earlier hooks left hot.
+func periodicSweep(ctx context.Context, served chan struct{}, tail *tailer, every time.Duration) {
+	tail.sweep(true)
+	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	for {
 		select {
@@ -225,13 +329,7 @@ func periodicFlush(ctx context.Context, served chan struct{}, uploader *upload.U
 		case <-served:
 			return
 		case <-ticker.C:
-			if _, err := uploader.Flush(false); err != nil {
-				if errors.Is(err, upload.ErrClosed) {
-					// The exit flush already ran; the cadence is done.
-					return
-				}
-				logf("flush: %v", err)
-			}
+			tail.sweep(false)
 		}
 	}
 }

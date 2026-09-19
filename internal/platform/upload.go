@@ -78,8 +78,13 @@ type Handshake struct {
 	MinClientVersion string `json:"min_client_version,omitempty"`
 	FlushBytes       int64  `json:"flush_bytes,omitempty"`
 	FlushAgeSeconds  int64  `json:"flush_age_seconds,omitempty"`
-	SpoolQuotaBytes  int64  `json:"spool_quota_bytes,omitempty"`
-	Notice           string `json:"notice,omitempty"`
+	// SegmentFlushBytes and SegmentFlushAgeSeconds are the thresholds
+	// for the records read from session files, which leave sooner than
+	// recorded calls: they describe a session still running.
+	SegmentFlushBytes      int64  `json:"segment_flush_bytes,omitempty"`
+	SegmentFlushAgeSeconds int64  `json:"segment_flush_age_seconds,omitempty"`
+	SpoolQuotaBytes        int64  `json:"spool_quota_bytes,omitempty"`
+	Notice                 string `json:"notice,omitempty"`
 }
 
 // Safe returns the handshake with its free text made printable. Both

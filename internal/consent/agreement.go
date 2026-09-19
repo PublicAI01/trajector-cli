@@ -3,7 +3,7 @@ package consent
 // AgreementVersion identifies the agreement text below. Bumping it
 // makes every earlier acceptance stale: capture pauses until the user
 // reconfirms, so recorded consent always matches the current terms.
-const AgreementVersion = "2026-09-19"
+const AgreementVersion = "2026-09-20"
 
 // AgreementText is shown in full before the explicit yes/no prompt.
 // It states the actual client behavior and must be kept truthful to
@@ -64,13 +64,15 @@ machine.
    one of the sources above may be rewarded less than one that came
    from more of them. It also depends on whether the local proxy
    witnessed the call the record is of. A call is witnessed when the
-   proxy handled its request and its response on your machine; a
-   call it did not witness — every session a project had before you
-   enabled it, and every session that runs while the proxy does not
-   — is rewarded at a lower rate than a witnessed one. The tokens
-   are counted in full either way; only the amount is reduced. The
-   rates themselves are set by trajector and are not fixed by this
-   agreement.
+   proxy handled its request and its response on your machine, or
+   when trajector read it from the session file while the session
+   was running, as it does for a project enabled without the proxy;
+   a call it did not witness — every session a project had before
+   you enabled it, and every session whose file was read only after
+   it ended — is rewarded at a lower rate than a witnessed one. The
+   tokens are counted in full either way; only the amount is reduced.
+   The rates themselves are set by trajector and are not fixed by
+   this agreement.
 
 4. Third-party relays. If this project routes traffic through a
    non-official base URL, its records are marked as third-party

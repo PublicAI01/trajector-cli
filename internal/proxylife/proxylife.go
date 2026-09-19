@@ -8,6 +8,7 @@
 package proxylife
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -389,6 +390,47 @@ func (p *Proxy) Stop() error {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
 		return p.answered(resp, "a drain request")
+	}
+	return nil
+}
+
+// ErrNoProxy reports a progress report with no proxy to deliver it to:
+// nothing of ours holds the port right now. The caller falls back to
+// reading the file itself.
+var ErrNoProxy = errors.New("no proxy is serving")
+
+// Progress tells a running proxy that a session's file gained lines,
+// so it reads the file now. The report carries the admin token, so it
+// goes only to a holder that proved it knows that token; nothing
+// listening is ErrNoProxy, and an unproven holder is its verdict's
+// reason. Progress pays no startup grace: a session hook is on the
+// session's critical path, and a sibling still publishing its token
+// is met again at the next hook.
+func (p *Proxy) Progress(ev apiproxy.Progress) error {
+	token, holder, why := p.verify()
+	switch holder {
+	case HolderNone:
+		return ErrNoProxy
+	case HolderForeign:
+		return why
+	}
+	body, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+apiproxy.ProgressPath, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	authorize(req, token)
+	resp, err := adminClient(adminTimeout).Do(req)
+	if err != nil {
+		return fmt.Errorf("proxy at %s: %w", p.addr, transportCause(err))
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		return p.answered(resp, "a progress report")
 	}
 	return nil
 }

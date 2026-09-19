@@ -57,6 +57,7 @@ const (
 	EnsureProxyMarker = claudesettings.EnsureProxyMarker
 	SessionEndMarker  = claudesettings.SessionEndMarker
 	GitSnapshotMarker = claudesettings.GitSnapshotMarker
+	ProgressMarker    = claudesettings.ProgressMarker
 	DiscoveryMarker   = claudesettings.DiscoveryMarker
 )
 

@@ -254,6 +254,12 @@ func mergeHandshake(stored, update platform.Handshake) platform.Handshake {
 	if update.FlushAgeSeconds > 0 {
 		stored.FlushAgeSeconds = update.FlushAgeSeconds
 	}
+	if update.SegmentFlushBytes > 0 {
+		stored.SegmentFlushBytes = update.SegmentFlushBytes
+	}
+	if update.SegmentFlushAgeSeconds > 0 {
+		stored.SegmentFlushAgeSeconds = update.SegmentFlushAgeSeconds
+	}
 	if update.SpoolQuotaBytes > 0 {
 		stored.SpoolQuotaBytes = update.SpoolQuotaBytes
 	}
