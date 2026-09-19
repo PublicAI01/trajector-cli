@@ -1,7 +1,6 @@
 package lifecycle_test
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -61,10 +60,10 @@ func TestEnsureProxyPausesRecordingOnAStaleAgreement(t *testing.T) {
 		t.Fatalf("ensure-proxy: %v", err)
 	}
 	if reason := e.sandbox.PausedReason(); reason != proxytest.PauseConsentReconfirm {
-		t.Errorf("pause = %q, want the reconfirmation pause", reason)
+		t.Errorf("pause = %q, want %q", reason, proxytest.PauseConsentReconfirm)
 	}
-	if !strings.Contains(e.stderr.String(), "agreement changed") {
-		t.Errorf("stderr = %q, want the reason explained", e.stderr)
+	if !strings.Contains(e.stderr.String(), proxytest.PauseConsentReconfirm.Explain()) {
+		t.Errorf("stderr = %q, want the pause reason's own sentence", e.stderr)
 	}
 }
 
@@ -152,10 +151,7 @@ func TestEnsureProxyPausesRecordingWhenConsentCannotBeRead(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.acceptCurrentAgreement()
-	// Truncated mid-write is what a crash or an OOM kill leaves behind.
-	if err := os.WriteFile(e.deps.Layout.ConsentFile(), []byte(`{"agreement":{"vers`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.CorruptConsent()
 
 	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
 		t.Fatalf("ensure-proxy: %v", err)
@@ -165,5 +161,8 @@ func TestEnsureProxyPausesRecordingWhenConsentCannotBeRead(t *testing.T) {
 	}
 	if !strings.Contains(e.stderr.String(), "could not be read") {
 		t.Errorf("stderr = %q, want the unreadable consent store explained", e.stderr)
+	}
+	if !strings.Contains(e.stderr.String(), proxytest.PauseConsentReconfirm.Explain()) {
+		t.Errorf("stderr = %q, want the pause reason's own sentence", e.stderr)
 	}
 }

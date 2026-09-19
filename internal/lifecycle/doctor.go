@@ -38,7 +38,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	// Doctor is the one command that pays for the second reading: it
 	// acts on the session files no hook reported, and it repairs from
 	// the same value it reports.
-	d, err := m.Diagnose(dir, FromTree)
+	d, err := m.diagnose(dir, fromTree)
 	if err != nil {
 		return 0, err
 	}

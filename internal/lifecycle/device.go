@@ -30,11 +30,11 @@ func (m *Machine) Login(io IO) error {
 		fmt.Fprintln(io.Out, "This device is already paired.")
 		return m.finishLogin(io)
 	}
-	return m.Pair(io)
+	return m.pair(io)
 }
 
-// Pair runs the browser pairing flow and signs the device in.
-func (m *Machine) Pair(io IO) error {
+// pair runs the browser pairing flow and signs the device in.
+func (m *Machine) pair(io IO) error {
 	pairing, err := m.service.StartPairing(m.deps.Version)
 	if err != nil {
 		return fmt.Errorf("starting pairing: %w", err)

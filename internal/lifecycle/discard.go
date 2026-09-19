@@ -14,20 +14,9 @@ import (
 // a caller that has not already decided (confirmed false) is asked
 // here, before anything is removed.
 func (m *Machine) DiscardRejected(batchID string, all, confirmed bool, io IO) error {
-	ids := []string{batchID}
-	if all {
-		rejected, err := upload.ListRejected(m.deps.Layout.RejectedDir())
-		if err != nil {
-			return err
-		}
-		if len(rejected) == 0 {
-			fmt.Fprintln(io.Out, "No rejected batches; nothing to discard.")
-			return nil
-		}
-		ids = ids[:0]
-		for _, b := range rejected {
-			ids = append(ids, b.BatchID)
-		}
+	ids, err := m.quarantinedBatches(batchID, all, "discard", io)
+	if err != nil || len(ids) == 0 {
+		return err
 	}
 	if !confirmed {
 		yes, _ := askYesNo(io, discardPrompt(ids), false)

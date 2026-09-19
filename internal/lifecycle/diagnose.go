@@ -14,30 +14,30 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
-// SessionFileReading says how much a diagnosis pays to learn about the
+// sessionFileReading says how much a diagnosis pays to learn about the
 // current project's session files.
-type SessionFileReading int
+type sessionFileReading int
 
 const (
-	// FromRegistry reads the registry alone: the files it holds, and
+	// fromRegistry reads the registry alone: the files it holds, and
 	// what it recorded about the search that ran when the project was
 	// enabled. Every surface can afford this reading.
-	FromRegistry SessionFileReading = iota
-	// FromTree adds a second, more expensive reading: a walk of the
+	fromRegistry sessionFileReading = iota
+	// fromTree adds a second, more expensive reading: a walk of the
 	// project's directory tree as it stands now. It finds the session
 	// files no hook of trajector's ever reported, and what it could not
 	// cover supersedes the registry's older record of the same. Only a
 	// caller that acts on the difference asks for it.
-	FromTree
+	fromTree
 )
 
-// Diagnose resolves the device's full state, the one value status,
+// diagnose resolves the device's full state, the one value status,
 // doctor, and the bundle each render. Stores that fail to open or read
 // surface inside the value where a surface can present them; only the
 // project resolution itself can fail the call. The reading decides how
 // the session files are learned about, and the value says which one it
 // carries, so a surface never has to ask again.
-func (m *Machine) Diagnose(dir string, reading SessionFileReading) (report.Diagnosis, error) {
+func (m *Machine) diagnose(dir string, reading sessionFileReading) (report.Diagnosis, error) {
 	d := report.Diagnosis{Version: m.deps.Version}
 	st, err := m.Project(dir)
 	if err != nil {
@@ -180,7 +180,7 @@ func injectionAgrees(st report.ProjectStatus, onFile routing.Shape) bool {
 // sizes: it stats the registered files to measure what is not read yet
 // and opens none of them. The registry is opened once here, whichever
 // reading was asked for, so one run can never hold two accounts of it.
-func (m *Machine) sessionFilesState(st report.ProjectStatus, reading SessionFileReading) report.SessionFilesState {
+func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFileReading) report.SessionFilesState {
 	registered := m.sessionFiles(st.Hash)
 	state := report.SessionFilesState{Err: registered.Err, Gaps: registered.Gaps, Signals: registered.Signals}
 	for _, f := range registered.Files {
@@ -198,7 +198,7 @@ func (m *Machine) sessionFilesState(st report.ProjectStatus, reading SessionFile
 	// held against, and a project Claude Code opens from the Windows
 	// side keeps its session files on that side, where this process
 	// cannot reach; the diagnosis already says so.
-	if reading == FromRegistry || state.Err != nil || st.WindowsSideClaude {
+	if reading == fromRegistry || state.Err != nil || st.WindowsSideClaude {
 		return state
 	}
 	return m.readProjectTree(state, st, registered.Files)

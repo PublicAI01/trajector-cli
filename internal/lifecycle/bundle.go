@@ -42,7 +42,7 @@ func (m *Machine) DoctorBundle(projectDir string, io IO) (string, error) {
 	// The bundle takes the second reading too: the question doctor
 	// reports — sessions written without a hook — is one whoever reads
 	// the archive must be able to answer from it.
-	d, err := m.Diagnose(projectDir, FromTree)
+	d, err := m.diagnose(projectDir, fromTree)
 	if err != nil {
 		return "", err
 	}

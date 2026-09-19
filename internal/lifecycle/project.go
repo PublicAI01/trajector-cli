@@ -67,7 +67,7 @@ func (m *Machine) Enable(projectDir string, shape routing.Shape, io IO) error {
 	m.warnNonDefaultEndpoint(io.Out)
 	if !m.Paired() {
 		fmt.Fprintln(io.Out, "This device is not paired yet; starting pairing first.")
-		if err := m.Pair(io); err != nil {
+		if err := m.pair(io); err != nil {
 			return err
 		}
 	}
@@ -244,15 +244,17 @@ func (m *Machine) pauseIfAgreementStale(io IO) {
 		// depends on, so it fails closed, the way routing's own loader
 		// does for a table it cannot read.
 		if perr := m.routes.Pause(routing.PauseConsentReconfirm); perr == nil {
-			fmt.Fprintf(io.Err, "trajector: your accepted data agreement could not be read (%v); recording is paused until you reconfirm with `trajector enable`\n", err)
+			fmt.Fprintf(io.Err, "trajector: your accepted data agreement could not be read (%v); %s\n", err, routing.PauseConsentReconfirm.Explain())
 		}
 		return
 	}
 	if accepted == "" || accepted == consent.AgreementVersion {
 		return
 	}
+	// The remedy sentence is the pause reason's own: routing owns the
+	// stored value, so it owns what the user is told to do about it.
 	if err := m.routes.Pause(routing.PauseConsentReconfirm); err == nil {
-		fmt.Fprintln(io.Err, "trajector: the data agreement changed; recording is paused until you reconfirm with `trajector enable`")
+		fmt.Fprintln(io.Err, "trajector: "+routing.PauseConsentReconfirm.Explain())
 	}
 }
 

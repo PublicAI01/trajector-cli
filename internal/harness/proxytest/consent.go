@@ -1,6 +1,7 @@
 package proxytest
 
 import (
+	"os"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
@@ -106,4 +107,15 @@ func (s *Sandbox) SettingDecisions(projectIDHash string) map[string]SettingDecis
 		s.t.Fatal(err)
 	}
 	return decisions
+}
+
+// CorruptConsent leaves the consent store unreadable, the way a crash
+// or a kill partway through a write leaves it: the bytes on disk are a
+// JSON document that stops mid-key. Tests that ask what the device
+// does with a store it cannot parse share this one spelling of it.
+func (s *Sandbox) CorruptConsent() {
+	s.t.Helper()
+	if err := os.WriteFile(s.layout.ConsentFile(), []byte(`{"agreement":{"vers`), 0o600); err != nil {
+		s.t.Fatal(err)
+	}
 }

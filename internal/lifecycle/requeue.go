@@ -10,20 +10,9 @@ import (
 // RequeueRejected moves quarantined batches back into the spool so the
 // next flush uploads them again.
 func (m *Machine) RequeueRejected(batchID string, all bool, io IO) error {
-	ids := []string{batchID}
-	if all {
-		rejected, err := upload.ListRejected(m.deps.Layout.RejectedDir())
-		if err != nil {
-			return err
-		}
-		if len(rejected) == 0 {
-			fmt.Fprintln(io.Out, "No rejected batches; nothing to requeue.")
-			return nil
-		}
-		ids = ids[:0]
-		for _, b := range rejected {
-			ids = append(ids, b.BatchID)
-		}
+	ids, err := m.quarantinedBatches(batchID, all, "requeue", io)
+	if err != nil || len(ids) == 0 {
+		return err
 	}
 
 	sp, err := m.spoolUnbounded()
@@ -50,6 +39,30 @@ func (m *Machine) RequeueRejected(batchID string, all bool, io IO) error {
 		fmt.Fprintln(io.Out, "They will upload with the next flush; run `trajector upload --force` to try now.")
 	}
 	return errors.Join(failed...)
+}
+
+// quarantinedBatches resolves which batches a quarantine command acts
+// on: the one the user named, or every batch held. It returns no ids
+// when there is nothing held, having already said so under the verb of
+// the command that asked, so no two commands can describe an empty
+// quarantine differently.
+func (m *Machine) quarantinedBatches(batchID string, all bool, verb string, io IO) ([]string, error) {
+	if !all {
+		return []string{batchID}, nil
+	}
+	rejected, err := upload.ListRejected(m.deps.Layout.RejectedDir())
+	if err != nil {
+		return nil, err
+	}
+	if len(rejected) == 0 {
+		fmt.Fprintf(io.Out, "No rejected batches; nothing to %s.\n", verb)
+		return nil, nil
+	}
+	ids := make([]string, 0, len(rejected))
+	for _, b := range rejected {
+		ids = append(ids, b.BatchID)
+	}
+	return ids, nil
 }
 
 // rejectionSuffix names the recorded reason on the line a command

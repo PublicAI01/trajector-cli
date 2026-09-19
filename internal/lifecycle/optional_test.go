@@ -2,7 +2,6 @@ package lifecycle_test
 
 import (
 	"io"
-	"os"
 	"strings"
 	"testing"
 
@@ -270,11 +269,7 @@ func TestEnableRecordFailureLeavesTheSettingUnwritten(t *testing.T) {
 	}
 
 	in := &editThenAnswer{
-		edit: func() {
-			if err := os.WriteFile(e.deps.Layout.ConsentFile(), []byte("{ not json"), 0o600); err != nil {
-				t.Error(err)
-			}
-		},
+		edit:   e.sandbox.CorruptConsent,
 		answer: strings.NewReader("y\n"),
 	}
 	if err := e.machine().Enable(e.project, proxytest.WithProxy, lifecycle.IO{In: in, Out: e.stdout, Err: e.stderr}); err != nil {

@@ -9,7 +9,7 @@ import (
 // fixing to doctor, never starts a proxy just to look at one, and pays
 // only for what the registry already holds.
 func (m *Machine) Status(dir string, io IO) error {
-	d, err := m.Diagnose(dir, FromRegistry)
+	d, err := m.diagnose(dir, fromRegistry)
 	if err != nil {
 		return err
 	}

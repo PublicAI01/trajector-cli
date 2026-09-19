@@ -16,7 +16,7 @@ func TestEnableExplainsWhyRecordingIsPaused(t *testing.T) {
 		want   string
 	}{
 		{"signed out", proxytest.PauseSignedOut, "trajector login"},
-		{"agreement needs reconfirming", proxytest.PauseConsentReconfirm, "data agreement changed"},
+		{"the agreement changed", proxytest.PauseConsentReconfirm, "data agreement changed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -44,7 +44,7 @@ func TestReadSessionFilesStoresNothingWhileRecordingIsPaused(t *testing.T) {
 		pause func(e *env)
 	}{
 		{
-			name:  "the data agreement needs reconfirming",
+			name:  "the data agreement changed",
 			pause: func(e *env) { e.sandbox.Pause(proxytest.PauseConsentReconfirm) },
 		},
 		{

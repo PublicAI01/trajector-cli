@@ -139,7 +139,7 @@ func TestEnableStaleAgreementRepromptsAndResumesCapture(t *testing.T) {
 		t.Errorf("accepted version = %q", version)
 	}
 	if reason := e.sandbox.PausedReason(); reason != "" {
-		t.Errorf("pause %q still active after reconfirmation", reason)
+		t.Errorf("pause %q still active after the agreement was accepted again", reason)
 	}
 }
 

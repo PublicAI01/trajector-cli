@@ -76,7 +76,7 @@ func projectHooks(execPath string) claudesettings.HookCommands {
 //
 // Two writes stand outside the ledger, both made before the first
 // change to any of the five: accepting the data agreement, and
-// resuming capture that was paused for reconfirmation. They are the
+// lifting the device-wide pause a changed agreement set. They are the
 // answer the user gave about this device, not an edit enable made to
 // this project, and a failure in this project does not withdraw it.
 //
@@ -207,7 +207,7 @@ func (m *Machine) enableProject(projectDir string, shape routing.Shape, io IO) e
 // change. Each value carries the whole of what one undo needs, so an
 // undo recorded on the ledger stands on its own.
 type priorState struct {
-	settings snapshots
+	settings fileSnapshot
 	grants   routing.GrantSnapshot
 	decision consent.ProjectSnapshot
 }
@@ -215,7 +215,7 @@ type priorState struct {
 func (m *Machine) readBeforeChanging(st report.ProjectStatus) (priorState, error) {
 	var prior priorState
 	var err error
-	if prior.settings, err = takeSnapshots(st.SettingsPath()); err != nil {
+	if prior.settings, err = takeSnapshot(st.SettingsPath()); err != nil {
 		return prior, err
 	}
 	if prior.grants, err = m.routes.SnapshotGrants(st.Root); err != nil {
@@ -411,7 +411,7 @@ func (m *Machine) confirmAgreement(io IO) error {
 	if err := m.consent.AcceptAgreement(consent.AgreementVersion, m.now()); err != nil {
 		return err
 	}
-	// Capture paused for reconfirmation may resume now that the
+	// Recording the changed agreement paused may resume now that the
 	// current terms are accepted.
 	return m.routes.Resume(routing.PauseConsentReconfirm)
 }
