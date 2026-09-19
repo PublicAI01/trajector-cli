@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -51,8 +52,19 @@ type tree struct {
 	root, configDir string
 }
 
+// requireSessionSources repeats what proxytest.RequireSessionSources
+// states for the tests that can reach the harness. This package is
+// below the harness and cannot import it.
+func requireSessionSources(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the session-file and git sources do not work on native Windows, which is no release target (proxytest.RequireSessionSources)")
+	}
+}
+
 func newTree(t *testing.T) tree {
 	t.Helper()
+	requireSessionSources(t)
 	return tree{root: canonicalTempDir(t), configDir: t.TempDir()}
 }
 

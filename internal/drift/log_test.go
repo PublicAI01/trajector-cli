@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -44,6 +45,9 @@ func TestLogKeepsEveryEntryInTheOrderItWasAppended(t *testing.T) {
 }
 
 func TestLogAndItsDirectoryAreOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the session-file and git sources do not work on native Windows, which is no release target (proxytest.RequireSessionSources)")
+	}
 	dir := filepath.Join(t.TempDir(), "state")
 	path := filepath.Join(dir, "reader.log")
 	if err := drift.AppendLog(path, "2026-09-11T08:00:00Z", "hash-a", drift.Signals{AgentLines: 1, AgentLinesWithoutParent: 1}); err != nil {

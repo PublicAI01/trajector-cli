@@ -41,6 +41,7 @@ func truncatedLine() string {
 // for this project, with the given modification time.
 func (e *env) sessionFile(sid string, mtime time.Time) string {
 	e.t.Helper()
+	proxytest.RequireSessionSources(e.t)
 	dir := filepath.Join(e.sessionFilesRoot(), discover.Encode(e.canonicalRoot()))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		e.t.Fatal(err)
@@ -760,6 +761,7 @@ func TestEnable_RollsBackWhenSessionFilesCannotBeRegistered(t *testing.T) {
 }
 
 func TestEnable_FailsWhenTheProjectTreeCannotBeListed(t *testing.T) {
+	proxytest.RequireSessionSources(t)
 	if os.Geteuid() == 0 {
 		t.Skip("permissions do not bind root")
 	}

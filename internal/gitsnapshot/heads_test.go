@@ -3,6 +3,7 @@ package gitsnapshot_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -54,6 +55,9 @@ func TestHeadsRememberTheLastCommitPerProject(t *testing.T) {
 }
 
 func TestHeadsAreReadableOnlyByTheirOwner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the session-file and git sources do not work on native Windows, which is no release target (proxytest.RequireSessionSources)")
+	}
 	h, path := newHeads(t)
 	if err := h.See(hashA, commitA); err != nil {
 		t.Fatal(err)

@@ -3,6 +3,7 @@ package report_test
 import (
 	"bytes"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -209,8 +210,9 @@ func TestStatusNamesAMissingSessionHookWhileStillContributing(t *testing.T) {
 			d := enabledDevice()
 			d.Project.Hooks = hooksWithout(missing)
 			out := dashboard(d)
+			settings := filepath.Join("/home/dev/sample-project", ".claude", "settings.local.json")
 			wants(t, "status", out, "Contributing",
-				"A session hook is missing from /home/dev/sample-project/.claude/settings.local.json; run `trajector doctor` to add it.")
+				"A session hook is missing from "+settings+"; run `trajector doctor` to add it.")
 			rejects(t, "status", out, "disagree")
 		})
 	}

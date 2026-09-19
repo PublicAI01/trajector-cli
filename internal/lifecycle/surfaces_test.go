@@ -338,6 +338,7 @@ func TestDoctorBundleCarriesTheSessionsNoHookReported(t *testing.T) {
 }
 
 func TestStatusAndDoctorReportARegistryTheyCannotRead(t *testing.T) {
+	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.startProxy()
 	e.enable(proxytest.WithProxy)

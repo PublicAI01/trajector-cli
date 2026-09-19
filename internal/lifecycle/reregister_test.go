@@ -46,6 +46,7 @@ func sentRecordIDs(t *testing.T, e *env) [][]string {
 }
 
 func TestEnableAfterASessionLeftTheProjectLeavesItRetiredAndSendsItsSegmentOnce(t *testing.T) {
+	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.service.StubFunc("POST", "/v1/batches", ackBatch(nil))
 	servedProxy(t, e)

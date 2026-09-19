@@ -11,6 +11,7 @@ import (
 )
 
 func TestEnable_NoProxyFlagInstallsHooksWithoutABaseURL(t *testing.T) {
+	proxytest.RequireSessionSources(t)
 	e := clitest.New(t)
 	e.Paired()
 	p := e.StartProxy()
