@@ -1,44 +1,20 @@
 package lifecycle_test
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/cli"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
-	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
-	"github.com/PublicAI01/trajector-cli/internal/proxylife"
-	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
-// exitFileEnv names the file a spawned CLI writes its exit code and
-// arguments to, since a detached process is released, never awaited.
-const exitFileEnv = "TRAJECTOR_TEST_EXIT_FILE"
-
-func TestMain(m *testing.M) {
-	procbin.Main(m, map[string]func(args []string) int{
-		"cli": func(args []string) int {
-			exit := cli.Run(args, strings.NewReader(""), io.Discard, io.Discard)
-			if path := os.Getenv(exitFileEnv); path != "" {
-				record := fmt.Sprintf("%d\n%s", exit, strings.Join(args, " "))
-				if err := os.WriteFile(path+".tmp", []byte(record), 0o600); err != nil {
-					return 98
-				}
-				if err := os.Rename(path+".tmp", path); err != nil {
-					return 98
-				}
-			}
-			return exit
-		},
-	})
-}
+func TestMain(m *testing.M) { proxytest.Main(m) }
 
 func (e *env) enableProject() {
 	e.t.Helper()
@@ -255,29 +231,16 @@ func TestSessionStartingFollowsTheSessionAndObservesTheRepository(t *testing.T) 
 
 func TestSessionEndedStartsAReaderThatExitsCleanly(t *testing.T) {
 	e := newEnv(t)
-	userdirs.Isolate(t.Setenv, e.deps.Home)
-	e.deps.ExecPath = procbin.Self(t, "cli")
-	exitFile := filepath.Join(t.TempDir(), "exit")
-	t.Setenv(exitFileEnv, exitFile)
+	trajector := proxytest.InstalledTrajector(t, e.deps.Home)
+	e.deps.ExecPath = trajector.Path()
 	e.enableProject()
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", "")
 
 	e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
 
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		record, err := os.ReadFile(exitFile)
-		if err == nil {
-			want := "0\nhook read " + e.project
-			if string(record) != want {
-				t.Errorf("spawned process recorded %q, want %q", record, want)
-			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the spawned reader never recorded an exit")
-		}
-		time.Sleep(20 * time.Millisecond)
+	args, exit := trajector.AwaitRun(10 * time.Second)
+	if want := "hook read " + e.project; args != want || exit != 0 {
+		t.Errorf("the spawned reader ran %q and exited %d, want %q and 0", args, exit, want)
 	}
 }
 
@@ -532,13 +495,7 @@ func TestReadSessionFiles_KeepsReadingPastAFileThatFails(t *testing.T) {
 		t.Fatalf("records = %+v, want the good file's segment despite the failing one", recs)
 	}
 	// The failing file keeps its entry: its cursor never advanced.
-	var kept bool
-	for _, f := range e.registeredFiles(root) {
-		if f.Path == bad {
-			kept = true
-		}
-	}
-	if !kept {
+	if !slices.Contains(e.registeredPaths(root), bad) {
 		t.Error("the failing file's entry was dropped, want it kept for the next run")
 	}
 }
@@ -620,11 +577,7 @@ func TestReadSessionFiles_KilledReaderIsIdempotentOnRerun(t *testing.T) {
 		t.Fatalf("records after the first run = %d, want 1", len(got))
 	}
 
-	// A reader killed after storing the segment but before it advanced
-	// the cursor leaves the entry as it was: rewind it to that state.
-	f := e.registeredFiles(root)[0]
-	f.Offset, f.Size, f.Inode, f.NextSegment, f.MessageIDs = 0, 0, 0, 0, nil
-	e.sandbox.PutRegisteredFile(proxytest.ProjectIDHash(root), f)
+	e.sandbox.RewindCursor(proxytest.ProjectIDHash(root), main)
 
 	e.machine().ReadSessionFiles(e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 1 {
@@ -632,25 +585,16 @@ func TestReadSessionFiles_KilledReaderIsIdempotentOnRerun(t *testing.T) {
 	}
 }
 
-// isolateForSpawn re-homes the device onto one directory a spawned
-// process can resolve for itself, so a proxy this test starts writes the
-// same stores the machine reads. It returns that layout and arranges for
-// whatever proxy comes up to be drained with the test.
-func (e *env) isolateForSpawn() userdirs.Layout {
+// isolateForSpawn re-homes the device onto files a spawned process
+// resolves for itself, so a proxy this test starts writes the same
+// stores the machine reads.
+func (e *env) isolateForSpawn() *proxytest.SpawnedDevice {
 	e.t.Helper()
-	layout := proxytest.ResolvableLayout(e.t, e.deps.Home, e.t.TempDir())
-	e.deps.Layout = layout
-	e.sandbox = proxytest.Open(e.t, layout)
+	device := proxytest.SpawnDevice(e.t, e.deps.Home, e.deps.Version, e.service.URL())
+	e.deps.Layout, e.deps.ExecPath, e.deps.ProxyAddr = device.Layout, device.ExecPath, device.ProxyAddr
+	e.sandbox = device.Sandbox
 	e.seedDeviceToken()
-	e.deps.ExecPath = procbin.Self(e.t, "cli")
-	e.deps.ProxyAddr = freeAddr(e.t)
-	e.t.Setenv(cli.ProxyAddrEnv, e.deps.ProxyAddr)
-	e.sandbox.PointAtService(e.service.URL())
-	addr := e.deps.ProxyAddr
-	e.t.Cleanup(func() {
-		_ = proxylife.For(layout, e.deps.Version, e.deps.ExecPath, addr).StopGone()
-	})
-	return layout
+	return device
 }
 
 func TestReadSessionFiles_BringsUpTheResidentProcess(t *testing.T) {
@@ -664,7 +608,7 @@ func TestReadSessionFiles_BringsUpTheResidentProcess(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newEnv(t)
-			layout := e.isolateForSpawn()
+			device := e.isolateForSpawn()
 			e.enableProject()
 			tt.inject(e)
 			root := e.canonicalRoot()
@@ -674,9 +618,8 @@ func TestReadSessionFiles_BringsUpTheResidentProcess(t *testing.T) {
 			e.machine().ReadSessionFiles(e.project, discardIO())
 
 			waitHealthy(t, e, e.deps.ProxyAddr)
-			v := proxylife.For(layout, e.deps.Version, e.deps.ExecPath, e.deps.ProxyAddr).Observe()
-			if v.Holder != proxylife.HolderOurs {
-				t.Fatalf("resident process holder = %v, want a healthy proxy of ours", v.Holder)
+			if !device.ResidentProcessIsOurs() {
+				t.Fatal("the proxy address is held by something other than a healthy proxy of ours")
 			}
 		})
 	}

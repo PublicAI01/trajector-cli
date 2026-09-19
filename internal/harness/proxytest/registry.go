@@ -1,6 +1,8 @@
 package proxytest
 
 import (
+	"slices"
+
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
@@ -49,14 +51,26 @@ func (s *Sandbox) RegisteredPaths(projectIDHash string) []string {
 	return paths
 }
 
-// PutRegisteredFile replaces one entry behind the back of whatever
-// else reads it, so a test can leave the cursor where an interrupted
-// reading run would have left it.
-func (s *Sandbox) PutRegisteredFile(projectIDHash string, f RegisteredFile) {
+// RewindCursor puts one entry back to where a reader killed after it
+// stored a segment but before it advanced the cursor left it: the file
+// is still registered, and nothing counts as read from it.
+func (s *Sandbox) RewindCursor(projectIDHash, path string) {
 	s.t.Helper()
+	f := s.registered(projectIDHash, path)
+	f.Offset, f.Size, f.Inode, f.NextSegment, f.MessageIDs = 0, 0, 0, 0, nil
 	if err := s.registry().Update(projectIDHash, f); err != nil {
 		s.t.Fatal(err)
 	}
+}
+
+func (s *Sandbox) registered(projectIDHash, path string) RegisteredFile {
+	s.t.Helper()
+	files := s.RegisteredFiles(projectIDHash)
+	i := slices.IndexFunc(files, func(f RegisteredFile) bool { return f.Path == path })
+	if i < 0 {
+		s.t.Fatalf("no file registered at %s", path)
+	}
+	return files[i]
 }
 
 // ProjectsWithRegistry lists every project this device holds a
