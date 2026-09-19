@@ -218,14 +218,15 @@ third-party origin; reward terms are the same regardless of origin.
 
 What a record is worth does depend on whether the local proxy witnessed the
 call it is of. A call is witnessed when the proxy handled its request and
-its response on your machine, or when trajector read it from the session
-file while the session was still running — which is how a project enabled
-with `--no-proxy` is recorded: the session hooks tell the resident process
-each time the file gains a turn, and it reads that file then. The sessions
-a project had before you enabled it, and any session whose file was read
-only after it ended, are not witnessed. Calls that were not witnessed are
-rewarded at a lower rate than witnessed ones; the tokens are counted in
-full either way, and only the amount is reduced. This page states the rule and no figure: the current
+its response on your machine. A call trajector read from the session file
+while the session was still running — which is how a project enabled with
+`--no-proxy` is recorded: the session hooks tell the resident process each
+time the file gains a turn, and it reads that file then — may also count
+as witnessed. The sessions a project had before you enabled it, and any
+session whose file was read only after it ended, are not witnessed. Calls
+that were not witnessed are rewarded at a lower rate than witnessed ones;
+the tokens are counted in full either way, and only the amount is reduced.
+This page states the rule and no figure: the current
 rates are published at
 [docs.publicai.io](https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/rewards)
 and are not fixed by the client.
