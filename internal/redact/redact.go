@@ -64,29 +64,26 @@ var (
 	// boundary, so APP_DB_PASSWORD matches via the leading `_` but mydbpassword
 	// does not.
 	//
-	// The unquoted value runs to whitespace. Until 2026-09-13 it stopped at
-	// the first `,`, `;` or `&` as well — a character class borrowed from
-	// query-string parsing, while this rule also fires on bare env-var
-	// assignments where all three are legal password bytes. Only the
-	// matched span becomes a region, so DB_PASSWORD=Xk7q,mQ2vR was masked
-	// to REDACTED,mQ2vR and the rest of the password went out in the clear.
-	// Deciding which of the three is a separator is assignmentTail's job,
-	// which needs to see what follows and so cannot be done here.
+	// The separator is `=` or `:`, and the key may close with a quote:
+	// this is the text rule, and text spells an assignment both ways —
+	// an env file, a YAML block, a prose line naming the key, or a JSON
+	// document with prose around it. It is not a second JSON rule. JSON
+	// has one home: a string value that is itself a whole document is
+	// walked as one (see collectJSONLReplacements), which is where the
+	// key normalization (`-`, ` `, `.`) and the credential-shaped
+	// enclosing object are decided. The two do not fight, because a
+	// value this rule reaches after that walk already reads REDACTED and
+	// placeholder values are not masked again.
 	//
-	// The separator is `=` or `:`, and the key may close with a quote.
-	// Until 2026-09-14 only `=` was recognized, which left this rule —
-	// the one that masks a value for what its key is called rather than
-	// for how random it looks — blind to the spelling that dominates this
-	// traffic. A rawcall carries JSON inside JSON constantly: a
-	// tool_result's `content`, an MCP answer, a `Read` of a .json config
-	// all arrive as a *string* holding a JSON document, and
-	// collectJSONLReplacements does not re-parse a string, so
-	// isCredentialJSONSecretKey never sees those keys either. The result
-	// was that {"db_password":"hunter2hunter"} was masked whole when it
-	// was real JSON and shipped in the clear when it was the same bytes
-	// inside a string: entropy 2.78 is under every threshold, and layers
-	// 4-6 all demanded an `=`. Same shape as the 2026-09-04 fix on the
-	// structured side, one spelling over.
+	// The whole matched span becomes one region, so the value has to run
+	// to the end of the password: it stops at whitespace and nothing
+	// else. Until 2026-09-13 it stopped at the first `,`, `;` or `&` as
+	// well — a character class borrowed from query-string parsing, while
+	// this rule also fires on bare env-var assignments where all three
+	// are legal password bytes — so DB_PASSWORD=Xk7q,mQ2vR was masked to
+	// REDACTED,mQ2vR and the rest of the password went out in the clear.
+	// Which of the three is a separator is assignmentTail's decision; it
+	// needs to see what follows and so cannot be made here.
 	credentialValuePattern = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9])(` + dbPasswordKeyShape + `)["']?\s*[=:]\s*("[^"]*"|'[^']*'|[^\s]+)`)
 
 	// assignmentTail matches a separator that genuinely separates: one
@@ -613,6 +610,28 @@ func isCredentialJSONObject(obj map[string]any) bool {
 	return false
 }
 
+// embeddedJSONDocument parses a string value that is itself a JSON
+// object or array, so the walk can enter it. The brace test comes first:
+// most string values are prose, and a parse attempt on every one of them
+// is the whole cost of this decision.
+func embeddedJSONDocument(value string) (any, bool) {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) < 2 {
+		return nil, false
+	}
+	switch {
+	case trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}':
+	case trimmed[0] == '[' && trimmed[len(trimmed)-1] == ']':
+	default:
+		return nil, false
+	}
+	var document any
+	if err := json.Unmarshal([]byte(trimmed), &document); err != nil {
+		return nil, false
+	}
+	return document, true
+}
+
 func normalizeCredentialJSONKey(key string) string {
 	key = strings.ToLower(strings.TrimSpace(key))
 	key = strings.ReplaceAll(key, "-", "_")
@@ -1046,11 +1065,32 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 				walk("", credentialContext, child)
 			}
 		case string:
-			redacted := redactString(val)
+			// A string value that is itself a JSON document is walked as
+			// one document, so every rule the structured side owns — key
+			// normalization, the credential-shaped enclosing object, the
+			// field policies — reaches the values inside it. A rawcall
+			// carries JSON inside JSON constantly: a tool_result's
+			// content, an MCP answer, a `Read` of a .json config file all
+			// arrive as a string holding a document, and its keys are the
+			// same keys. The text layers still run afterwards over what
+			// the document walk left, which is what covers the key names
+			// themselves and anything spanning two tokens.
+			//
+			// The re-entry terminates: every string reached inside the
+			// document is strictly shorter than the string that holds it.
+			// A document the walk cannot re-apply falls back to the
+			// string as it arrived, which the text layers still scan.
+			text := val
+			if document, ok := embeddedJSONDocument(val); ok {
+				if masked, err := applyJSONReplacements(val, collectJSONLReplacements(document)); err == nil {
+					text = masked
+				}
+			}
+			redacted := redactString(text)
 			// Both readings are collected because the applying side, not
 			// this one, knows which a given occurrence gets: the same value
 			// can sit in a protected field and an ordinary one at once.
-			deterministic := redactDeterministic(val)
+			deterministic := redactDeterministic(text)
 			// The key itself says this value is a password, so the whole
 			// value goes — never just the parts the pattern layers caught.
 			// Until 2026-08-14 this ran only when redactString had changed

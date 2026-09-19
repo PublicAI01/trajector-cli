@@ -30,6 +30,12 @@ func BenchmarkRedactJSONLBytes(b *testing.B) {
 			name: "Synthetic/RawText",
 			data: generateBenchmarkRawText(2500),
 		},
+		{
+			// Every line carries a JSON document inside a string value, so
+			// this is the worst case for the walk that re-enters one.
+			name: "Synthetic/EmbeddedDocument",
+			data: generateBenchmarkEmbeddedJSONL(b, 2500),
+		},
 	}
 
 	for _, tc := range cases {
@@ -66,6 +72,45 @@ func generateBenchmarkJSONL(b *testing.B, lines int) []byte {
 				"cwd":       "/tmp/trajector-redact-benchmark/repo",
 				"tool_id":   fmt.Sprintf("toolu_%06d", i),
 				"file_path": fmt.Sprintf("src/generated/file_%04d.go", i%200),
+			},
+		}
+		encoded, err := json.Marshal(entry)
+		if err != nil {
+			b.Fatalf("marshal benchmark line: %v", err)
+		}
+		out.Write(encoded)
+		out.WriteByte('\n')
+	}
+	return []byte(out.String())
+}
+
+func generateBenchmarkEmbeddedJSONL(b *testing.B, lines int) []byte {
+	b.Helper()
+
+	var out strings.Builder
+	for i := range lines {
+		document, err := json.Marshal(map[string]any{
+			"service": fmt.Sprintf("svc-%04d", i%50),
+			"database": map[string]any{
+				"host":        "db.internal.example.com",
+				"user":        "app",
+				"db-password": "hunter2hunter",
+			},
+			"notes": benchmarkLineContent(i),
+		})
+		if err != nil {
+			b.Fatalf("marshal embedded document: %v", err)
+		}
+		entry := map[string]any{
+			"type":       "user",
+			"session_id": fmt.Sprintf("bench-session-%06d", i),
+			"message": map[string]any{
+				"role": "user",
+				"content": []any{map[string]any{
+					"type":        "tool_result",
+					"tool_use_id": fmt.Sprintf("toolu_%06d", i),
+					"content":     string(document),
+				}},
 			},
 		}
 		encoded, err := json.Marshal(entry)

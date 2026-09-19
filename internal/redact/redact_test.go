@@ -1878,11 +1878,8 @@ func TestDatabaseURLPasswordWithPercent(t *testing.T) {
 //
 // A rawcall carries JSON inside JSON constantly: a tool_result's
 // content, an MCP answer, a Read of a .json config file all arrive as a
-// *string* holding a JSON document, and collectJSONLReplacements does
-// not re-parse a string — so isCredentialJSONSecretKey never sees those
-// keys. The text-side rule was the only cover left, and it demanded an
-// `=`, which no JSON document writes. The same bytes were therefore
-// masked whole as real JSON and shipped in the clear as a string.
+// *string* holding a JSON document, and the keys inside it are the same
+// keys. The walk therefore enters such a string as a document.
 //
 // The password is deliberately low entropy (2.78, well under the 4.5
 // threshold): a random-looking one is caught by layer 1 and would prove
@@ -1905,6 +1902,66 @@ func TestJSONLBytes_CredentialKeyInsideAnEmbeddedJSONString(t *testing.T) {
 	// being held to.
 	if structured := redactedString(t, embedded); strings.Contains(structured, password) {
 		t.Errorf("structured spelling regressed: %s", structured)
+	}
+}
+
+func TestJSONLBytes_CredentialKeyVerdictAgreesInStructureAndInAnEmbeddedString(t *testing.T) {
+	t.Parallel()
+	const password = "hunter2hunter"
+	cases := []struct {
+		name     string
+		document string
+		masked   bool
+	}{
+		{name: "UnderscoredVendorKey", document: `{"db_password":"` + password + `"}`, masked: true},
+		{name: "DottedVendorKey", document: `{"database.password":"` + password + `"}`, masked: true},
+		{name: "SpacedVendorKey", document: `{"db password":"` + password + `"}`, masked: true},
+		{name: "HyphenatedVendorKey", document: `{"mysql-root-pwd":"` + password + `"}`, masked: true},
+		{name: "SeparatedPrefixBeforeVendorKey", document: `{"APP_DB_PASSWORD":"` + password + `"}`, masked: true},
+		{name: "GenericKeyBesideHostAndUser", document: `{"host":"db.internal","user":"svc","password":"` + password + `"}`, masked: true},
+		{name: "GenericKeyWithNoCredentialSiblings", document: `{"note":"deploy the service","password":"` + password + `"}`, masked: false},
+		{name: "VendorTokenWithoutSeparator", document: `{"mydbpassword":"` + password + `"}`, masked: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			structured := redactedString(t, tc.document)
+			if masked := !strings.Contains(structured, password); masked != tc.masked {
+				t.Errorf("structured spelling masked = %t, want %t: %s", masked, tc.masked, structured)
+			}
+			embedded := redactedField(t, tc.document)
+			if masked := !strings.Contains(embedded, password); masked != tc.masked {
+				t.Errorf("embedded spelling masked = %t, want %t: %s", masked, tc.masked, embedded)
+			}
+			if embedded != structured {
+				t.Errorf("the document walk and the text rule read one document differently: %s against %s", structured, embedded)
+			}
+		})
+	}
+}
+
+func TestJSONLBytes_CredentialKeyInTextSpellings(t *testing.T) {
+	t.Parallel()
+	const password = "hunter2hunter"
+	cases := []struct {
+		name string
+		text string
+	}{
+		{name: "EnvironmentAssignment", text: "DB_PASSWORD=" + password},
+		{name: "YAMLBlock", text: "database:\n  db_password: " + password + "\n  host: db.internal\n"},
+		{name: "ProseNamingTheKey", text: "the db_password: " + password + " was rotated"},
+		{name: "DocumentWrappedInProse", text: `tool said {"db_password": "` + password + `"} and stopped`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := redactedField(t, tc.text)
+			if strings.Contains(got, password) {
+				t.Errorf("a value under a db_password key left unmasked: %s", got)
+			}
+		})
 	}
 }
 
