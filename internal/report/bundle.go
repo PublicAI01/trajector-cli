@@ -145,10 +145,22 @@ type spoolWire struct {
 	QuotaBytes  int64              `json:"quota_bytes"`
 	WritableErr string             `json:"writable_err,omitempty"`
 	Days        []spool.DaySummary `json:"days"`
+	// Held is what the spool keeps back from upload because its shape
+	// is new to this build.
+	Held heldWire `json:"held"`
 	// OldestRecordAt is when the oldest record of either slot still
 	// waiting was captured; with the day summaries it says how far
 	// behind uploading is.
 	OldestRecordAt time.Time `json:"oldest_record_at,omitzero"`
+}
+
+// heldWire counts what waits in the held slot. Its bytes are the
+// user's own disk and no part of the spool quota, so they are named
+// apart from usage_bytes rather than added to it.
+type heldWire struct {
+	Records  int   `json:"records"`
+	Sessions int   `json:"sessions"`
+	Bytes    int64 `json:"bytes"`
 }
 
 type rejectedWire struct {
@@ -233,6 +245,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			QuotaBytes:     d.Spool.Quota,
 			WritableErr:    errString(d.Spool.WritableErr),
 			Days:           days,
+			Held:           heldWire(d.Spool.Held),
 			OldestRecordAt: d.Spool.OldestRecord,
 		},
 		Uploads:     d.Uploads,

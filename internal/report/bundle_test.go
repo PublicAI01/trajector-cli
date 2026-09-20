@@ -119,6 +119,17 @@ func TestTheBundleCarriesWhatTheOtherSurfacesReportAboutTheDevice(t *testing.T) 
 	)
 }
 
+func TestTheBundleCountsWhatTheSpoolHoldsBack(t *testing.T) {
+	d := device()
+	d.Spool.Held = report.HeldRecords{Records: 3, Sessions: 2, Bytes: 4096}
+
+	wants(t, "diagnosis.json", string(report.DiagnosisJSON(d)),
+		`"records": 3`,
+		`"sessions": 2`,
+		`"bytes": 4096`,
+	)
+}
+
 // bundleOmits names each Diagnosis field the bundle leaves out, with
 // why leaving it out keeps the archive answerable.
 var bundleOmits = map[string]string{

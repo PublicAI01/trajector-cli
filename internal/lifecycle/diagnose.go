@@ -82,6 +82,7 @@ func (m *Machine) diagnose(dir string, reading sessionFileReading) (report.Diagn
 			Days:        days,
 		}
 		d.Spool.OldestRecord = oldestWaiting(sp)
+		d.Spool.Held = heldRecords(sp)
 	}
 
 	d.Uploads = upload.LoadState(m.deps.Layout.UploadDir())
@@ -104,6 +105,19 @@ func (m *Machine) diagnose(dir string, reading sessionFileReading) (report.Diagn
 	_, paired, err := m.tokens.DeviceToken()
 	d.TokenStore = report.TokenStoreState{Paired: paired, Err: err}
 	return d, nil
+}
+
+// heldRecords counts what the spool keeps on this machine because
+// this build could not mask it. It is the one reading of the held
+// slot: a slot that cannot be read counts as empty, because it holds
+// nothing a surface must act on and a reading failure there is not a
+// diagnosis of its own.
+func heldRecords(sp *spool.Spool) report.HeldRecords {
+	held, err := sp.Held()
+	if err != nil {
+		return report.HeldRecordsOf(nil)
+	}
+	return report.HeldRecordsOf(held)
 }
 
 // oldestWaiting is when the oldest record still in the spool was

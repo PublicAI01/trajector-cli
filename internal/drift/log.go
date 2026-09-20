@@ -32,6 +32,9 @@ type LogEntry struct {
 	// Stop repeats what Signals.Stop reports, so a line states the
 	// outcome it belongs to on its own.
 	Stop bool `json:"stop,omitempty"`
+	// Held repeats what Signals.Quarantine reports: the segment this
+	// entry belongs to stays on this machine and is not uploaded.
+	Held bool `json:"held,omitempty"`
 	Signals
 }
 
@@ -52,7 +55,7 @@ func AppendLog(path, at, projectIDHash string, s Signals) error {
 	if err := userdirs.EnsureOwnerDir(filepath.Dir(path)); err != nil {
 		return err
 	}
-	line, err := json.Marshal(LogEntry{At: at, ProjectIDHash: projectIDHash, Stop: s.Stop(), Signals: s})
+	line, err := json.Marshal(LogEntry{At: at, ProjectIDHash: projectIDHash, Stop: s.Stop(), Held: s.Quarantine(), Signals: s})
 	if err != nil {
 		return err
 	}

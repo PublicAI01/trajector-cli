@@ -39,10 +39,38 @@ type SpoolState struct {
 	// WritableErr is nil while the spool accepts writes within quota.
 	WritableErr error
 	Days        []spool.DaySummary
+	// Held is what the spool holds back from upload because its shape
+	// is new to this build.
+	Held HeldRecords
 	// OldestRecord is when the oldest record of either slot still
 	// waiting in the spool was captured, zero when none waits. With the
 	// day summaries it is how far behind uploading the records are.
 	OldestRecord time.Time
+}
+
+// HeldRecords counts what waits in the held slot: records kept on
+// this machine, the sessions they came from, and the bytes they
+// occupy. Those bytes are the user's disk and no part of the spool
+// quota, so a surface that names them says so.
+type HeldRecords struct {
+	Records  int
+	Sessions int
+	Bytes    int64
+}
+
+// HeldRecordsOf counts a set of held records. Every surface that says
+// what this machine holds back counts it here, so two of them can
+// never answer the same question differently; a slot that could not be
+// read reaches this as no records, which is what it is worth acting
+// on.
+func HeldRecordsOf(held []spool.Record) HeldRecords {
+	sessions := map[string]bool{}
+	var bytes int64
+	for _, r := range held {
+		sessions[r.SessionID] = true
+		bytes += r.Size
+	}
+	return HeldRecords{Records: len(held), Sessions: len(sessions), Bytes: bytes}
 }
 
 // recordsWaiting counts the records the spool still holds, which is

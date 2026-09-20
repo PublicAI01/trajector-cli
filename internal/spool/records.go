@@ -51,7 +51,11 @@ type Record struct {
 	SessionID     string
 	ProjectIDHash string
 	Timestamp     time.Time
-	Raw           []byte
+	// Size is what the record occupies on disk. It is read from the
+	// file itself, so it is the figure a caller adding up a slot gets
+	// whether or not an index accounted for the record.
+	Size int64
+	Raw  []byte
 	// source is the other half of the record's kind. It is not exported
 	// because a reader addresses a record by its id and describes it by
 	// its kind; which source a kind belongs to is this package's own
@@ -111,11 +115,26 @@ func (s *Spool) WriteRecord(data []byte) error {
 	return s.writeDeclaredRecord(data, envelope.Kind{})
 }
 
-// writeDeclaredRecord stores one record under the kind its own bytes
-// declare. want, where it names a kind, is the kind the caller means to
-// store: bytes declaring anything else are refused rather than stored
-// as something the caller did not ask for.
+// writeDeclaredRecord stores one record in the records slot under the
+// kind its own bytes declare. want, where it names a kind, is the kind
+// the caller means to store: bytes declaring anything else are refused
+// rather than stored as something the caller did not ask for.
 func (s *Spool) writeDeclaredRecord(data []byte, want envelope.Kind) error {
+	return s.storeRecord(recordSlot, data, want)
+}
+
+// storeRecord is the write sequence every record of every slot but the
+// rawcall one goes through: the same refusals, the same day, the same
+// atomic write, and the same idempotence by record id. What the slot
+// changes is only what the table says about it — whether an index line
+// is written beside the record, and whether its bytes are charged to
+// the quota.
+//
+// The refusals are the slot's guard and not the caller's: a record
+// that names no session or no capture time can never be addressed for
+// deletion afterwards, so refusing it beats storing something the user
+// could not later take back.
+func (s *Spool) storeRecord(sl slot, data []byte, want envelope.Kind) error {
 	header, err := envelope.ReadHeader(data)
 	if err != nil {
 		return fmt.Errorf("spool: %w", err)
@@ -142,47 +161,56 @@ func (s *Spool) writeDeclaredRecord(data []byte, want envelope.Kind) error {
 	if err != nil || at.IsZero() {
 		return fmt.Errorf("spool: record %s carries no capture timestamp", id)
 	}
-	line, err := json.Marshal(recordIndexLine{
-		RecordID:      id,
-		RecordKind:    header.Kind.RecordKind,
-		Source:        header.Kind.Source,
-		SessionID:     header.SessionID,
-		ProjectIDHash: capture.ProjectIDHash,
-		Size:          int64(len(data)),
-		Timestamp:     at.UTC().Format(time.RFC3339Nano),
-	})
-	if err != nil {
-		return err
+	var line []byte
+	if sl.indexed {
+		line, err = json.Marshal(recordIndexLine{
+			RecordID:      id,
+			RecordKind:    header.Kind.RecordKind,
+			Source:        header.Kind.Source,
+			SessionID:     header.SessionID,
+			ProjectIDHash: capture.ProjectIDHash,
+			Size:          int64(len(data)),
+			Timestamp:     at.UTC().Format(time.RFC3339Nano),
+		})
+		if err != nil {
+			return err
+		}
+		line = append(line, '\n')
 	}
-	line = append(line, '\n')
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refreshLocked()
 
 	// The same id resent later may carry a later capture timestamp and
-	// so name a different day, so existence is checked across every
-	// record day rather than only the one this write would land in.
-	if s.recordExistsLocked(id) {
+	// so name a different day, so existence is checked across every day
+	// of the slot rather than only the one this write would land in.
+	if s.recordExistsLocked(sl, id) {
 		return nil
 	}
-	if s.wouldExceedLocked(int64(len(data)) + int64(len(line))) {
+	if sl.counted && s.wouldExceedLocked(int64(len(data))+int64(len(line))) {
 		return ErrQuotaExceeded
 	}
 
-	dayDir := filepath.Join(s.dir, recordsDirName, at.UTC().Format(dayLayout))
+	dayDir := filepath.Join(sl.root(s.dir), at.UTC().Format(dayLayout))
 	if err := os.MkdirAll(dayDir, 0o700); err != nil {
 		return err
 	}
 	if err := fsatomic.WriteFile(filepath.Join(dayDir, id+".json"), data, 0o600); err != nil {
 		return err
 	}
-	s.usage += int64(len(data))
-
-	if err := appendLine(filepath.Join(dayDir, indexName), line); err != nil {
-		return err
+	if sl.counted {
+		s.usage += int64(len(data))
 	}
-	s.usage += int64(len(line))
+
+	if sl.indexed {
+		if err := appendLine(filepath.Join(dayDir, indexName), line); err != nil {
+			return err
+		}
+		if sl.counted {
+			s.usage += int64(len(line))
+		}
+	}
 	s.sig = dirSignature(s.dir)
 	return nil
 }
@@ -200,8 +228,8 @@ func appendLine(path string, line []byte) error {
 	return cerr
 }
 
-func (s *Spool) recordExistsLocked(id string) bool {
-	days, err := s.recordDays()
+func (s *Spool) recordExistsLocked(sl slot, id string) bool {
+	days, err := s.slotDays(sl)
 	if err != nil {
 		return false
 	}
@@ -211,23 +239,6 @@ func (s *Spool) recordExistsLocked(id string) bool {
 		}
 	}
 	return false
-}
-
-// recordDays lists the record day directories, oldest first. A spool
-// that never stored a record has none.
-func (s *Spool) recordDays() ([]string, error) {
-	root := filepath.Join(s.dir, recordsDirName)
-	entries, err := listDir(root)
-	if err != nil {
-		return nil, err
-	}
-	var days []string
-	for _, e := range entries {
-		if e.IsDir() {
-			days = append(days, filepath.Join(root, e.Name()))
-		}
-	}
-	return days, nil
 }
 
 // recordFiles lists a record day's files, in record id order. The same
@@ -287,6 +298,7 @@ func recordFromIndex(f rawcallFile, indexed map[string]recordIndexLine, read fun
 	if r.Timestamp.IsZero() {
 		r.Timestamp = f.mod
 	}
+	r.Size = f.size
 	return r, true, nil
 }
 
@@ -340,7 +352,7 @@ func (s *Spool) EachRecord(visit func(Record) error) error {
 func (s *Spool) EachRecordWhere(match func(recordID string) bool, visit func(Record) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	days, err := s.recordDays()
+	days, err := s.slotDays(recordSlot)
 	if err != nil {
 		return err
 	}
@@ -383,7 +395,7 @@ func (s *Spool) EachRecordWhere(match func(recordID string) bool, visit func(Rec
 func (s *Spool) OldestRecord() (time.Time, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	days, err := s.recordDays()
+	days, err := s.slotDays(recordSlot)
 	if err != nil {
 		return time.Time{}, false
 	}
@@ -439,7 +451,7 @@ func (s *Spool) DeleteRecordsWhere(match func(Record) bool) (int, error) {
 // hold s.mu and refresh the signature afterwards.
 func (s *Spool) deleteRecordsLocked(match func(Record) bool) (int, error) {
 	deleted := 0
-	days, err := s.recordDays()
+	days, err := s.slotDays(recordSlot)
 	if err != nil {
 		return 0, err
 	}
@@ -526,7 +538,13 @@ func (s *Spool) DeleteSession(sessionID string) (rawcalls, records int, err erro
 		return rawcalls, 0, err
 	}
 	records, err = s.deleteRecordsLocked(func(r Record) bool { return r.SessionID == sessionID })
-	return rawcalls, records, err
+	if err != nil {
+		return rawcalls, records, err
+	}
+	// Held records are the session's unuploaded data like any other,
+	// so forgetting the session takes them too.
+	heldGone, err := s.deleteHeldLocked(func(r Record) bool { return r.SessionID == sessionID })
+	return rawcalls, records + heldGone, err
 }
 
 // SessionIDFromUserID extracts the session id Claude Code embeds in

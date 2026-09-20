@@ -5,10 +5,14 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/drift"
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
+	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 // Doctor diagnoses the device and the current project, repairs what is
@@ -50,6 +54,9 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 		f.Fixed("recording resumed after upgrade: it was paused by %s, and this build is %s", pausedBy, m.deps.Version)
 		f.Detail("Session files are read again from where reading stopped.")
 	}
+	// Before anything is rendered, so the count the data section
+	// prints is what is still held after this run.
+	d.Spool.Held = m.releaseHeldSegments(f, d.Spool.Held)
 	report.DoctorDevice(f, d)
 	m.doctorProxy(f, d)
 	if err := m.doctorInjection(f, d.Project); err != nil {
@@ -70,6 +77,60 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 		fmt.Fprintf(io.Out, "%d problem(s) need attention.\n", f.Problems())
 	}
 	return f.Problems(), nil
+}
+
+// releaseHeldSegments reads the segments kept on this machine through
+// this build's detector again and moves the ones it can mask into the
+// slot a batch reads. A build whose anchored list covers a shape an
+// earlier build did not is how a held segment reaches the service;
+// doctor is where that build looks, because it is the command a user
+// runs after an upgrade. A segment this build still cannot mask stays
+// where it is, and nothing is ever rewritten to make it pass.
+func (m *Machine) releaseHeldSegments(f *report.Findings, was report.HeldRecords) report.HeldRecords {
+	sp, err := m.spool()
+	if err != nil {
+		return was
+	}
+	held, err := sp.Held()
+	if err != nil || len(held) == 0 {
+		return report.HeldRecords{}
+	}
+	// The project each segment came from is the cwd its own lines
+	// carry, which the detector reads from the line; the home
+	// directory is the part only this process knows.
+	location := redact.SessionLocation{Home: m.deps.Home}
+	released := 0
+	for _, r := range held {
+		seg, err := envelope.ParseSegment(r.Raw)
+		if err != nil {
+			continue
+		}
+		found, err := drift.Scan([]byte(seg.Lines), location)
+		if err != nil || found.Quarantine() || found.Stop() {
+			continue
+		}
+		if err := sp.Release(r.ID); err != nil {
+			continue
+		}
+		released++
+	}
+	if released > 0 {
+		f.Fixed("%d held segment(s) read cleanly under this build and will be uploaded", released)
+	}
+	remaining, err := sp.Held()
+	if err != nil {
+		return was
+	}
+	return report.HeldRecords{Records: len(remaining), Sessions: heldSessions(remaining)}
+}
+
+// heldSessions counts the sessions a set of held records came from.
+func heldSessions(held []spool.Record) int {
+	sessions := map[string]bool{}
+	for _, r := range held {
+		sessions[r.SessionID] = true
+	}
+	return len(sessions)
 }
 
 // doctorProxy checks who holds the proxy port. An unproven holder is

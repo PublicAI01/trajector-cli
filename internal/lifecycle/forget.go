@@ -31,9 +31,10 @@ const forgetIntro = "Forgetting session %s: deleting its records that have not b
 // Forget deletes what this machine still holds for one coding session
 // and has not uploaded, wherever it waits: the session's recorded API
 // calls and the records read from its session file — including those
-// of its sub-agents, which carry the same session id — in both spool
-// slots, and the same records in every quarantined batch, which are
-// unuploaded local data as well. Acknowledged uploads are no longer in
+// of its sub-agents, which carry the same session id — in every slot
+// the spool keeps, the records held back from upload among them, and
+// the same records in every quarantined batch, which are unuploaded
+// local data as well. Acknowledged uploads are no longer in
 // the spool, so they are out of reach here by construction; the session
 // file itself is never touched; and the reader's position is already
 // past what is deleted, so recording carries on without re-reading it.

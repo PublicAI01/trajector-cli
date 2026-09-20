@@ -55,24 +55,6 @@ func rawcallFiles(dayDir string) ([]rawcallFile, error) {
 	return files, nil
 }
 
-// days lists the rawcall day directories, oldest first. A spool that
-// was never written to has none. The record slot lives in a sibling of
-// the day directories and is skipped by name, so it is never read as a
-// day of rawcalls.
-func (s *Spool) days() ([]string, error) {
-	entries, err := listDir(s.dir)
-	if err != nil {
-		return nil, err
-	}
-	var days []string
-	for _, e := range entries {
-		if e.IsDir() && e.Name() != recordsDirName {
-			days = append(days, filepath.Join(s.dir, e.Name()))
-		}
-	}
-	return days, nil
-}
-
 // Each visits every stored rawcall, oldest day first, stopping at the
 // first error the visitor returns.
 //
@@ -95,7 +77,7 @@ func (s *Spool) Each(visit func(Rawcall) error) error {
 func (s *Spool) EachWhere(match func(requestID string) bool, visit func(Rawcall) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	days, err := s.days()
+	days, err := s.slotDays(rawcallSlot)
 	if err != nil {
 		return err
 	}
@@ -148,7 +130,7 @@ func (s *Spool) DeleteWhere(match func(requestID string) bool) (int, error) {
 }
 
 // DeleteProject removes every stored record belonging to one project,
-// in both slots, and reports how many went. It exists for consent
+// in every slot the spool keeps, and reports how many went. It exists for consent
 // withdrawal, which must work even on records it cannot read: the
 // index attributes each record, a record the index missed is
 // attributed from its own bytes, and a record attributable to no
@@ -174,10 +156,17 @@ func (s *Spool) DeleteProject(projectIDHash string) (int, error) {
 	if err != nil {
 		return rawcalls, err
 	}
-	records, err := s.deleteRecordsLocked(func(r Record) bool {
+	byProject := func(r Record) bool {
 		return r.ProjectIDHash != "" && r.ProjectIDHash == projectIDHash
-	})
-	return rawcalls + records, err
+	}
+	records, err := s.deleteRecordsLocked(byProject)
+	if err != nil {
+		return rawcalls + records, err
+	}
+	// Records held back from upload are the project's data like any
+	// other, so a withdrawal takes them too.
+	held, err := s.deleteHeldLocked(byProject)
+	return rawcalls + records + held, err
 }
 
 func (s *Spool) deleteMatching(match func(f rawcallFile, indexed map[string]indexLine) (bool, error)) (int, error) {
@@ -199,7 +188,7 @@ func (s *Spool) deleteMatching(match func(f rawcallFile, indexed map[string]inde
 // hold s.mu and refresh the signature afterwards.
 func (s *Spool) deleteRawcallsLocked(match func(f rawcallFile, indexed map[string]indexLine) (bool, error)) (int, error) {
 	deleted := 0
-	days, err := s.days()
+	days, err := s.slotDays(rawcallSlot)
 	if err != nil {
 		return 0, err
 	}
@@ -250,7 +239,7 @@ func (s *Spool) deleteRawcallsLocked(match func(f rawcallFile, indexed map[strin
 func (s *Spool) Oldest() (time.Time, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	days, err := s.days()
+	days, err := s.slotDays(rawcallSlot)
 	if err != nil {
 		return time.Time{}, false
 	}

@@ -671,7 +671,7 @@ func TestSpool_DeleteProjectCoversBothSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 	if deleted != 3 {
-		t.Errorf("DeleteProject = %d, want 3 across both slots", deleted)
+		t.Errorf("DeleteProject = %d, want 3 across every slot", deleted)
 	}
 	for _, path := range []string{
 		filepath.Join(dir, "20260801", "msg_a1.json"),
@@ -1023,7 +1023,7 @@ func TestSpool_StoresObservationsBesideTheOtherRecordsOfTheirSlot(t *testing.T) 
 		t.Errorf("records = %v, want the observation stored under its own kind", kinds)
 	}
 	if len(kinds) != 2 {
-		t.Errorf("records = %v, want both slots' records", kinds)
+		t.Errorf("records = %v, want the records of each slot a batch reads", kinds)
 	}
 }
 

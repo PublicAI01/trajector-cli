@@ -1,11 +1,26 @@
 package lifecycle_test
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
+
+// jsonString is s as a session file carries it: a JSON string, so a
+// Windows path's backslashes are escaped the way Claude Code writes
+// them rather than read as escape sequences.
+func jsonString(t *testing.T, s string) string {
+	t.Helper()
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
 
 // signals is what the registry accumulated about root's session files.
 func (e *env) signals(root string) proxytest.Signals {
@@ -13,7 +28,76 @@ func (e *env) signals(root string) proxytest.Signals {
 	return e.sandbox.Signals(proxytest.ProjectIDHash(root))
 }
 
-func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
+// appendSessionLines adds lines to a session file already on disk,
+// the way a running session gains them between two reads.
+func (e *env) appendSessionLines(path, lines string) {
+	e.t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := f.WriteString(lines); err != nil {
+		f.Close()
+		e.t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func TestReadSessionFiles_HoldsOnlyTheSegmentWhoseShapeIsNew(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	plain := `{"type":"user","cwd":"/srv/work/sample","message":{"role":"user","content":"hi"}}` + "\n"
+	unanchored := `{"type":"user","cwd":"/srv/work/sample","message":{"role":"user","content":"hi"},"someNewPath":"/srv/work/sample/elsewhere/thing"}` + "\n"
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", plain)
+	e.registerFile(root, main, "")
+
+	// One read per segment: a read consumes what the file gained since
+	// the cursor, so three reads over a growing file are three
+	// segments, the middle one of a shape this build cannot mask.
+	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.appendSessionLines(main, unanchored)
+	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.appendSessionLines(main, plain)
+	e.machine().ReadSessionFiles(e.project, discardIO())
+
+	if got := e.storedRecords(); len(got) != 2 {
+		t.Errorf("records = %d, want the two segments this build can mask", len(got))
+	}
+	held := e.sandbox.HeldRecords()
+	if len(held) != 1 {
+		t.Fatalf("held records = %d, want the one segment of a new shape", len(held))
+	}
+	if !strings.Contains(string(held[0].Raw), "someNewPath") {
+		t.Errorf("held record = %s, want the segment that carries the new field", held[0].ID)
+	}
+	if f := e.registeredFiles(root)[0]; f.NextSegment != 3 || f.Offset != int64(len(plain)*2+len(unanchored)) {
+		t.Errorf("cursor = %+v, want it past all three segments", f)
+	}
+	if got := e.sandbox.PausedReason(); got != "" {
+		t.Errorf("PausedReason = %q, want recording to go on", got)
+	}
+	s := e.signals(root)
+	if strings.Join(s.UnanchoredPathFields, ",") != "$.someNewPath" {
+		t.Errorf("signals = %+v, want the field name recorded", s)
+	}
+	log := e.sandbox.ReaderLog()
+	if len(log) != 1 || log[0].Stop || !log[0].Held || log[0].ProjectIDHash != proxytest.ProjectIDHash(root) {
+		t.Fatalf("reader log = %+v, want one held entry for the project", log)
+	}
+	raw := e.sandbox.ReaderLogText()
+	for _, unwanted := range []string{"/srv/work/sample", "0f1e2d3c", main} {
+		if strings.Contains(raw, unwanted) {
+			t.Errorf("reader log = %s, want no %q", raw, unwanted)
+		}
+	}
+}
+
+func TestStatusAndDoctorReportTheSegmentsHeldOnThisMachine(t *testing.T) {
 	e := newEnv(t)
 	e.aProxylessTarget()
 	e.enableProject()
@@ -22,34 +106,79 @@ func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl",
 		`{"type":"user","cwd":"/srv/work/sample","message":{"role":"user","content":"hi"},"someNewPath":"/srv/work/sample/elsewhere/thing"}`+"\n")
 	e.registerFile(root, main, "")
-
 	e.machine().ReadSessionFiles(e.project, discardIO())
 
-	if got := e.storedRecords(); len(got) != 0 {
-		t.Errorf("records = %d, want none stored from lines this build cannot mask", len(got))
+	const want = "1 segment(s) from 1 session(s) are held on this machine because their shape is new to this build; they are not uploaded"
+	e.stdout.Reset()
+	if err := e.machine().Status(e.project, e.io()); err != nil {
+		t.Fatal(err)
 	}
-	if f := e.registeredFiles(root)[0]; f.Offset != 0 || f.NextSegment != 0 {
-		t.Errorf("cursor = %+v, want left where it was", f)
+	if !strings.Contains(e.stdout.String(), want) {
+		t.Errorf("status = %s, want the held line", e.stdout.String())
 	}
-	if got := e.sandbox.PausedReason(); got != proxytest.PauseRedactionDrift {
-		t.Errorf("PausedReason = %q, want %q", got, proxytest.PauseRedactionDrift)
+	e.stdout.Reset()
+	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+		t.Fatal(err)
 	}
-	if e.sandbox.ResumeOtherBuild(proxytest.PauseRedactionDrift, e.deps.Version) {
-		t.Errorf("this build lifted the pause it set, want it attributed to build %q", e.deps.Version)
+	if !strings.Contains(e.stdout.String(), want) {
+		t.Errorf("doctor = %s, want the held line", e.stdout.String())
 	}
-	s := e.signals(root)
-	if strings.Join(s.UnanchoredPathFields, ",") != "$.someNewPath" {
-		t.Errorf("signals = %+v, want the field name recorded", s)
+}
+
+func TestForgetDeletesTheSegmentsHeldForThatSession(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	main := e.putSessionFile("-work-sample/"+sessionOne+".jsonl",
+		`{"type":"user","cwd":"/srv/work/sample","sessionId":"`+sessionOne+`","message":{"role":"user","content":"hi"},"someNewPath":"/srv/work/sample/elsewhere/thing"}`+"\n")
+	e.registerFile(root, main, "")
+	e.machine().ReadSessionFiles(e.project, discardIO())
+	if len(e.sandbox.HeldRecords()) != 1 {
+		t.Fatalf("held records = %d, want one before forgetting", len(e.sandbox.HeldRecords()))
 	}
-	log := e.sandbox.ReaderLog()
-	if len(log) != 1 || !log[0].Stop || log[0].ProjectIDHash != proxytest.ProjectIDHash(root) {
-		t.Fatalf("reader log = %+v, want one stop entry for the project", log)
+
+	if err := e.machine().Forget(sessionOne, e.io()); err != nil {
+		t.Fatal(err)
 	}
-	raw := e.sandbox.ReaderLogText()
-	for _, unwanted := range []string{"/srv/work/sample", "0f1e2d3c", main} {
-		if strings.Contains(raw, unwanted) {
-			t.Errorf("reader log = %s, want no %q", raw, unwanted)
-		}
+
+	if got := e.sandbox.HeldRecords(); len(got) != 0 {
+		t.Errorf("held records = %d, want the session's held segments deleted", len(got))
+	}
+}
+
+func TestDoctorUploadsAHeldSegmentOnceTheBuildKnowsItsShape(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl",
+		`{"type":"user","cwd":"/srv/work/sample","message":{"role":"user","content":"hi"},"someNewPath":`+jsonString(t, filepath.Join(e.deps.Home, "notes", "plan.md"))+`}`+"\n")
+	e.registerFile(root, main, "")
+	e.machine().ReadSessionFiles(e.project, discardIO())
+	if len(e.sandbox.HeldRecords()) != 1 {
+		t.Fatalf("held records = %d, want the segment held by the reading build", len(e.sandbox.HeldRecords()))
+	}
+
+	// A build that does not report this shape stands in for the one
+	// that covers it: doctor reads the held segments through its own
+	// detector, not through the one that held them.
+	e.deps.Home = filepath.Join(e.deps.Home, "moved")
+	e.stdout.Reset()
+	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := e.sandbox.HeldRecords(); len(got) != 0 {
+		t.Errorf("held records = %d, want the segment released", len(got))
+	}
+	if got := e.storedRecords(); len(got) != 1 {
+		t.Errorf("records = %d, want the released segment waiting for upload", len(got))
+	}
+	if !strings.Contains(e.stdout.String(), "1 held segment(s) read cleanly under this build") {
+		t.Errorf("doctor = %s, want it to say what it released", e.stdout.String())
 	}
 }
 

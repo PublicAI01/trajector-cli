@@ -1,19 +1,23 @@
 // Package spool stores captured records on disk until upload. It has
-// two slots under one directory and one quota. The layout is a
-// documented product contract:
+// three slots under one directory and one quota, which two of them
+// count against. The layout is a documented product contract:
 //
-//	<dir>/<YYYYMMDD>/<request_id>.json           one serialized rawcall envelope
-//	<dir>/<YYYYMMDD>/index.jsonl                 advisory sidecar index of that day
-//	<dir>/records/<YYYYMMDD>/<record_id>.json    one serialized segment or snapshot
-//	<dir>/records/<YYYYMMDD>/index.jsonl         advisory sidecar index of that day
+//	<dir>/<YYYYMMDD>/<request_id>.json                one serialized rawcall envelope
+//	<dir>/<YYYYMMDD>/index.jsonl                      advisory sidecar index of that day
+//	<dir>/records/<YYYYMMDD>/<record_id>.json         one serialized segment or snapshot
+//	<dir>/records/<YYYYMMDD>/index.jsonl              advisory sidecar index of that day
+//	<dir>/records-held/<YYYYMMDD>/<record_id>.json    one record kept on this machine
 //
-// The two slots never share a directory: rawcall readers skip the
-// records subdirectory by name, and record readers begin inside it. In
-// both slots the files are the source of truth; each index only
-// accelerates batching and deletion and can always be rebuilt by
-// rescanning its day directory. Directories are 0700 and files 0600:
-// stored records hold unredacted data and must stay private to the
-// user until masked and uploaded.
+// No slot shares a directory with another: rawcall readers skip the
+// subdirectories by name, and each other slot's readers begin inside
+// its own. In every slot the files are the source of truth; where a
+// slot keeps an index, that index only accelerates batching and
+// deletion and can always be rebuilt by rescanning its day directory.
+// Which directory a slot uses, whether it keeps an index, and whether
+// its bytes count against the quota are stated once, in the slot
+// table, so no walk decides any of the three by name. Directories are
+// 0700 and files 0600: stored records hold unredacted data and must
+// stay private to the user until masked and uploaded.
 package spool
 
 import (
@@ -24,6 +28,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -41,19 +46,85 @@ const DefaultQuota = 2 << 30
 // spool past its quota. Callers must treat this as stop-recording, not
 // as a reason to delete anything.
 //
-// The two slots bear the refusal differently. A rawcall exists only in
-// the moment it crosses the proxy: refused, it is gone. A segment is
-// read from a file that stays on disk: refused, its reader leaves its
-// position where it was and the segment is merely late. The spool
-// refuses both all the same; what a caller does next is its own.
+// The slots the quota counts bear the refusal differently. A rawcall
+// exists only in the moment it crosses the proxy: refused, it is
+// gone. A segment is read from a file that stays on disk: refused,
+// its reader leaves its position where it was and the segment is
+// merely late. The spool refuses both all the same; what a caller does
+// next is its own.
 var ErrQuotaExceeded = errors.New("spool: quota exceeded")
 
 // indexName is the per-day sidecar index file name.
 const indexName = "index.jsonl"
 
 // dayLayout names the day directory a record is stored under, in UTC,
-// in both slots.
+// in every slot.
 const dayLayout = "20060102"
+
+// slot is one of the places the spool keeps records, and everything
+// about the place that a walk would otherwise have to know by name:
+// where its day directories are, whether it keeps a sidecar index
+// beside them, and whether what it holds is charged to the quota.
+type slot struct {
+	// dir is the slot's directory under the spool root. The rawcall
+	// slot names none: its day directories are the root's own children,
+	// which is why every other slot's directory has to be skipped
+	// wherever the root is listed.
+	dir string
+	// indexed says the slot keeps a per-day sidecar index. A slot
+	// without one attributes every record from its own bytes.
+	indexed bool
+	// counted says the slot's bytes are charged to the quota. What the
+	// quota counts is what recording can still be stopped for; a slot
+	// nothing uploads has no way to drain itself, so charging it would
+	// let records this build cannot mask stop recording device-wide.
+	counted bool
+}
+
+var (
+	rawcallSlot = slot{indexed: true, counted: true}
+	recordSlot  = slot{dir: recordsDirName, indexed: true, counted: true}
+	heldSlot    = slot{dir: heldDirName}
+
+	// slots is the whole table, and the only statement of which
+	// directories the spool root holds. Nothing here is ever written
+	// to after this package is loaded.
+	slots = []slot{rawcallSlot, recordSlot, heldSlot}
+)
+
+// isSlotDir reports whether a directory of the spool root belongs to a
+// slot of its own rather than being a day of rawcalls.
+func isSlotDir(name string) bool {
+	return slices.ContainsFunc(slots, func(sl slot) bool { return sl.dir != "" && sl.dir == name })
+}
+
+// root is where the slot's day directories live.
+func (sl slot) root(dir string) string {
+	if sl.dir == "" {
+		return dir
+	}
+	return filepath.Join(dir, sl.dir)
+}
+
+// days lists a slot's day directories, oldest first. A slot that was
+// never written to has none. The rawcall slot's days are the spool
+// root's own children, so the directories of the other slots are
+// skipped there.
+func (s *Spool) slotDays(sl slot) ([]string, error) {
+	root := sl.root(s.dir)
+	entries, err := listDir(root)
+	if err != nil {
+		return nil, err
+	}
+	var days []string
+	for _, e := range entries {
+		if !e.IsDir() || (sl.dir == "" && isSlotDir(e.Name())) {
+			continue
+		}
+		days = append(days, filepath.Join(root, e.Name()))
+	}
+	return days, nil
+}
 
 // indexLine is one record in the sidecar index. SessionKey groups
 // records of the same coding session so upload batching can lay them
@@ -106,7 +177,7 @@ func Open(dir string, quota int64) (*Spool, error) {
 	// after a crash, which is the only thing that strands these.
 	s.sweepStaleTempsLocked()
 	s.sig = dirSignature(dir)
-	usage, err := walkUsage(dir)
+	usage, err := quotaUsage(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -137,33 +208,31 @@ func Open(dir string, quota int64) (*Spool, error) {
 // what readers cannot see is what nothing else will ever reclaim.
 //
 // Record files are written the same way and stranded the same way, so
-// both slots are swept.
+// every slot is swept.
 //
 // Callers hold s.mu, or hold the spool before it is published.
 func (s *Spool) sweepStaleTempsLocked() {
-	days, err := s.days()
-	if err != nil {
-		return
-	}
-	recordDays, err := s.recordDays()
-	if err != nil {
-		return
-	}
-	for _, dayDir := range append(days, recordDays...) {
-		entries, err := listDir(dayDir)
+	for _, sl := range slots {
+		days, err := s.slotDays(sl)
 		if err != nil {
-			continue
+			return
 		}
-		for _, e := range entries {
-			name := e.Name()
-			if e.IsDir() || name == indexName || filepath.Ext(name) == ".json" {
+		for _, dayDir := range days {
+			entries, err := listDir(dayDir)
+			if err != nil {
 				continue
 			}
-			info, err := e.Info()
-			if err != nil || !fsatomic.StaleTempName(name, info.ModTime()) {
-				continue
+			for _, e := range entries {
+				name := e.Name()
+				if e.IsDir() || name == indexName || filepath.Ext(name) == ".json" {
+					continue
+				}
+				info, err := e.Info()
+				if err != nil || !fsatomic.StaleTempName(name, info.ModTime()) {
+					continue
+				}
+				os.Remove(filepath.Join(dayDir, name))
 			}
-			os.Remove(filepath.Join(dayDir, name))
 		}
 	}
 }
@@ -209,11 +278,28 @@ func openRecordFile(path string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-// walkUsage derives total spool size from disk, the authority the
-// in-memory figure must always converge on. A spool root that does not
+// quotaUsage derives the spool size the quota is measured against: the
+// slots the table marks counted, and no other. The held slot is left
+// out because nothing uploads it — the records there leave only when a
+// later build can mask them or the user deletes them — so charging
+// them would let a shape this build cannot read stop all recording.
+func quotaUsage(dir string) (int64, error) {
+	var skip []string
+	for _, sl := range slots {
+		if !sl.counted {
+			skip = append(skip, sl.root(dir))
+		}
+	}
+	return walkUsage(dir, skip...)
+}
+
+// walkUsage derives total size under dir from disk, the authority the
+// in-memory figure must always converge on. A directory that does not
 // exist yet reads as nothing stored: WalkDir reports it through the
-// same callback a vanished record arrives on.
-func walkUsage(dir string) (int64, error) {
+// same callback a vanished record arrives on. The directories named in
+// skip are not descended into: their bytes are on disk all the same,
+// and are simply not part of the question being asked.
+func walkUsage(dir string, skip ...string) (int64, error) {
 	var usage int64
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -223,6 +309,9 @@ func walkUsage(dir string) (int64, error) {
 			return err
 		}
 		if d.IsDir() {
+			if slices.Contains(skip, path) {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		// DirEntry.Info lstats lazily, so a file listed a moment ago and
@@ -243,27 +332,31 @@ func walkUsage(dir string) (int64, error) {
 	return usage, nil
 }
 
-// dirSignature fingerprints the day directories of both slots by name
-// and mtime. It is deliberately cheap — two directory listings plus one
-// stat per day — so quota decisions can verify it without walking every
-// record. The records directory itself is listed rather than stamped:
-// a write inside one of its days changes that day's mtime, not its own.
+// dirSignature fingerprints the day directories of every slot by name
+// and mtime. It is deliberately cheap — one directory listing per slot
+// plus one stat per day — so quota decisions can verify it without
+// walking every record. A slot's own directory is listed rather than
+// stamped: a write inside one of its days changes that day's mtime,
+// not its own.
 func dirSignature(dir string) string {
 	var b []byte
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return ""
-	}
-	b = appendDaySignatures(b, "", entries)
-	if recordEntries, err := os.ReadDir(filepath.Join(dir, recordsDirName)); err == nil {
-		b = appendDaySignatures(b, recordsDirName+"/", recordEntries)
+	for _, sl := range slots {
+		entries, err := os.ReadDir(sl.root(dir))
+		if err != nil {
+			continue
+		}
+		prefix := ""
+		if sl.dir != "" {
+			prefix = sl.dir + "/"
+		}
+		b = appendDaySignatures(b, prefix, entries)
 	}
 	return string(b)
 }
 
 func appendDaySignatures(b []byte, prefix string, entries []fs.DirEntry) []byte {
 	for _, e := range entries {
-		if !e.IsDir() || e.Name() == recordsDirName {
+		if !e.IsDir() || isSlotDir(e.Name()) {
 			continue
 		}
 		info, err := e.Info()
@@ -307,7 +400,7 @@ func (s *Spool) rederiveLocked() {
 	// refresh re-derives. Snapshotting after would fold that change into
 	// the signature and strand the stale figure.
 	sig := dirSignature(s.dir)
-	usage, err := walkUsage(s.dir)
+	usage, err := quotaUsage(s.dir)
 	if err != nil {
 		return
 	}
@@ -528,9 +621,12 @@ func (d DaySummary) MarshalJSON() ([]byte, error) {
 	return fmt.Appendf(out, `,"bytes":%d,"record_bytes":%d}`, d.Bytes, d.RecordBytes), nil
 }
 
-// Summary walks the day directories of both slots and reports each
-// day. It reads the same tree Usage derives from, so the two can never
-// disagree about what is on disk: the day sizes sum to Usage.
+// Summary walks the day directories of the slots the quota counts and
+// reports each day. It reads the same tree Usage derives from, so the
+// two can never disagree about what is on disk: the day sizes sum to
+// Usage. The held slot is in neither figure — it is charged to no
+// quota and waits for no upload, so what it holds is reported as what
+// it is and not as part of the wait.
 func (s *Spool) Summary() ([]DaySummary, error) {
 	byDay := map[string]*DaySummary{}
 	dayOf := func(dayDir string) *DaySummary {
@@ -543,7 +639,7 @@ func (s *Spool) Summary() ([]DaySummary, error) {
 		return d
 	}
 
-	days, err := s.days()
+	days, err := s.slotDays(rawcallSlot)
 	if err != nil {
 		return nil, err
 	}
@@ -566,7 +662,7 @@ func (s *Spool) Summary() ([]DaySummary, error) {
 		}
 	}
 
-	recordDays, err := s.recordDays()
+	recordDays, err := s.slotDays(recordSlot)
 	if err != nil {
 		return nil, err
 	}
@@ -623,7 +719,8 @@ func summarizeRecordDay(dayDir string, d *DaySummary) error {
 	return nil
 }
 
-// Usage reports current spool size in bytes.
+// Usage reports the spool size the quota is measured against, in
+// bytes.
 func (s *Spool) Usage() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -637,7 +734,7 @@ func (s *Spool) Usage() int64 {
 // re-derived, because a threshold that reads it is checked once a
 // minute and never on a write.
 func (s *Spool) RecordsUsage() int64 {
-	usage, err := walkUsage(filepath.Join(s.dir, recordsDirName))
+	usage, err := walkUsage(recordSlot.root(s.dir))
 	if err != nil {
 		return 0
 	}

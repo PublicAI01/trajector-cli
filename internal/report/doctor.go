@@ -242,6 +242,17 @@ func doctorSpool(f *Findings, s SpoolState) {
 		return
 	}
 	f.OK("capture spool writable (%s of %s used)", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota))
+	if s.Held.Records > 0 {
+		f.note("%s", HeldHeadline(s.Held))
+	}
+}
+
+// HeldHeadline is the one sentence both status and doctor use for the
+// records kept on this machine, so the two surfaces cannot drift
+// apart.
+func HeldHeadline(h HeldRecords) string {
+	return fmt.Sprintf("%d segment(s) from %d session(s) are held on this machine because their shape is new to this build; they are not uploaded",
+		h.Records, h.Sessions)
 }
 
 // doctorRejected surfaces quarantined batches. They are never deleted

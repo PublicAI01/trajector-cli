@@ -13,9 +13,9 @@ import (
 // rather than once per kind.
 //
 // Kind names the slot as well as the record. The source decides which
-// of the two directories holds the record, so an entry addresses
-// itself: an id that happens to be spelled the same in both slots
-// still names one entry. A record whose bytes name no kind keeps the
+// directory holds the record, so an entry addresses itself: an id that
+// happens to be spelled the same in each of them still names one
+// entry. A record whose bytes name no kind keeps the
 // source of the slot it sits in, or it could never be deleted.
 type Entry struct {
 	Kind envelope.Kind
@@ -49,8 +49,12 @@ func (r Record) entry() Entry {
 	return Entry{Kind: r.kind(), ID: r.ID, Timestamp: r.Timestamp, Raw: r.Raw}
 }
 
-// inRawcallSlot reports which of the two directories holds an entry.
-// It is the only mapping from a record's kind to its slot.
+// inRawcallSlot reports whether an entry's kind puts it in the rawcall
+// slot rather than the records slot. It is the only mapping from a
+// record's kind to its slot, and it reaches no further: no kind names
+// the held slot, because what puts a record there is a scan of the
+// record's own lines and not anything the record declares about
+// itself.
 func (e Entry) inRawcallSlot() bool { return e.Kind.Source == envelope.KindRawcall.Source }
 
 // EachEntry visits every stored record of every kind, stopping at the
@@ -81,7 +85,7 @@ func (s *Spool) EachEntryWhere(match func(id string) bool, visit func(Entry) err
 }
 
 // DeleteEntries removes the named records, each from the slot its own
-// kind names. An id spelled the same in both slots is deleted only
+// kind names. An id spelled the same in each of them is deleted only
 // from the slot the entry named, so deleting one record never takes
 // another record with it.
 func (s *Spool) DeleteEntries(entries Entries) error {

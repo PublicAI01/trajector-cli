@@ -108,6 +108,10 @@ func Dashboard(w io.Writer, d Diagnosis) {
 		fmt.Fprintf(w, "  %s of %s used.\n", platform.HumanBytes(d.Spool.Usage), platform.HumanBytes(d.Spool.Quota))
 	}
 
+	if d.Spool.OpenErr == nil && d.Spool.Held.Records > 0 {
+		fmt.Fprintf(w, "  %s.\n", HeldHeadline(d.Spool.Held))
+	}
+
 	fmt.Fprintln(w, "\nUploads")
 	if r := d.Uploads.LastUpload; r != nil {
 		fmt.Fprintf(w, "  Last upload: %d record(s) (%s) at %s.\n",

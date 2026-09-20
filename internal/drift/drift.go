@@ -6,7 +6,7 @@
 // content is where earlier attempts at this kind of check produced
 // false alarms.
 //
-// Every finding belongs to one of three groups, told apart by what
+// Every finding belongs to one of four groups, told apart by what
 // happens once the finding is made:
 //
 //   - Stop. The reader contradicted itself: a line cut short of its
@@ -35,8 +35,8 @@
 // list is recorded, not judged.
 //
 // Whoever adds a field or a line kind to what is read must place its
-// check in one of the three groups above at the same time, and say
-// why there: the groups are defined by what a wrong shape costs, and a
+// check in one of the four groups above at the same time, and say why
+// there: the groups are defined by what a wrong shape costs, and a
 // check that is not placed is a check that is not run.
 //
 // What a scan found is one value, Signals, and this package holds the

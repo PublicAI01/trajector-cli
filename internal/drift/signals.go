@@ -63,10 +63,18 @@ type Signals struct {
 	NewTopLevelTypes   []string `json:"new_top_level_types,omitempty"`
 }
 
-// Stop reports a finding after which these lines must not be stored.
-func (s Signals) Stop() bool {
-	return len(s.UnanchoredPathFields) > 0 || s.IncompleteSegments > 0
-}
+// Stop reports a finding after which nothing of this read may be
+// stored: the reader contradicted itself, so what it hands over says
+// nothing about what the file holds. Recording pauses device-wide
+// until a build that reads the file correctly is installed.
+func (s Signals) Stop() bool { return s.IncompleteSegments > 0 }
+
+// Quarantine reports a finding that belongs to the segment it was made
+// in: a field names where the session ran and this build does not know
+// to mask it. That segment stays on this machine and is never
+// uploaded; every other segment is read and stored as usual, because
+// nothing about them is in doubt.
+func (s Signals) Quarantine() bool { return len(s.UnanchoredPathFields) > 0 }
 
 // Alerts reports a finding to show and log while reading goes on.
 func (s Signals) Alerts() bool {
@@ -85,7 +93,7 @@ func (s Signals) Logs() bool {
 // Any reports whether anything was found at all. Lines counted beside
 // nothing found are not a finding: what a store keeps is what some
 // scan found, and the lines it was out of.
-func (s Signals) Any() bool { return s.Stop() || s.Alerts() || s.Logs() }
+func (s Signals) Any() bool { return s.Stop() || s.Quarantine() || s.Alerts() || s.Logs() }
 
 // Unexpected reports a finding of a shape this build did not expect to
 // meet. It is the one rule for what the log of what reading noticed
@@ -95,7 +103,7 @@ func (s Signals) Any() bool { return s.Stop() || s.Alerts() || s.Logs() }
 // count of assistant lines whose reasoning field holds nothing, which
 // a setting of Claude Code's decides. A count added to the log group
 // answers the same question here: is it a shape this build expects?
-func (s Signals) Unexpected() bool { return s.Stop() || s.Alerts() || s.newValues() }
+func (s Signals) Unexpected() bool { return s.Stop() || s.Quarantine() || s.Alerts() || s.newValues() }
 
 // newValues reports a value outside this build's known lists.
 func (s Signals) newValues() bool {

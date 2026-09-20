@@ -14,11 +14,11 @@ import (
 func TestLogKeepsEveryEntryInTheOrderItWasAppended(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "reader.log")
 	alert := drift.Signals{AssistantLines: 4, AssistantLinesWithoutMessageID: 1}
-	stopped := drift.Signals{UnanchoredPathFields: []string{"$.someNewPath"}}
+	held := drift.Signals{UnanchoredPathFields: []string{"$.someNewPath"}}
 	if err := drift.AppendLog(path, "2026-09-11T08:00:00Z", "hash-a", alert); err != nil {
 		t.Fatal(err)
 	}
-	if err := drift.AppendLog(path, "2026-09-11T08:00:01Z", "hash-b", stopped); err != nil {
+	if err := drift.AppendLog(path, "2026-09-11T08:00:01Z", "hash-b", held); err != nil {
 		t.Fatal(err)
 	}
 
@@ -36,8 +36,8 @@ func TestLogKeepsEveryEntryInTheOrderItWasAppended(t *testing.T) {
 	if first.AssistantLinesWithoutMessageID != 1 || first.AssistantLines != 4 {
 		t.Errorf("first entry = %+v, want the counts it was appended with", first)
 	}
-	if second.ProjectIDHash != "hash-b" || !second.Stop {
-		t.Errorf("second entry = %+v, want the stop of hash-b", second)
+	if second.ProjectIDHash != "hash-b" || second.Stop || !second.Held {
+		t.Errorf("second entry = %+v, want the held segment of hash-b", second)
 	}
 	if strings.Join(second.UnanchoredPathFields, ",") != "$.someNewPath" {
 		t.Errorf("second entry = %+v, want the field name it was appended with", second)

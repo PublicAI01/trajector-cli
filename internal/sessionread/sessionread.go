@@ -90,17 +90,17 @@ func (rd Reader) Read(p Project, files []follow.File) bool {
 // the whole of what storing means here, and the reader moves a cursor
 // only on the answer it gives.
 func (rd Reader) store(p Project, res follow.ReadResult) follow.Storing {
-	hold, err := rd.inspectSegments(p, res.Segments)
+	pause, held, err := rd.inspectSegments(p, res.Segments)
 	if err != nil {
 		return follow.NotStored
 	}
-	if hold {
+	if pause {
 		// Nothing of this read is stored: the same lines are met again
 		// by whichever build reads next, and only one that can mask
 		// them may store them.
 		return follow.Held
 	}
-	full, err := storeRecords(rd.Spool, res)
+	full, err := storeRecords(rd.Spool, res, held)
 	switch {
 	case full:
 		// The spool is full: it dropped nothing, and neither does the
@@ -117,20 +117,24 @@ func (rd Reader) store(p Project, res follow.ReadResult) follow.Storing {
 // inspectSegments holds each segment's lines against the shape this
 // build masks and reads by, before anything is stored, and keeps what
 // it noticed with the project's registry, and in the reader log the
-// part of it the scan calls unexpected. Lines this build cannot mask
-// hold the run and pause recording device-wide until a different build
-// reads them; everything else is counted and reading goes on. This is
-// the one place a line's fields are read before the spool, so it is
-// where the shape is checked; the reader itself interprets nothing,
-// and what a finding is called is stated where the scan happens, not
-// here. A registry or a log that cannot be written is let go: what
-// was noticed is worth keeping and never worth stopping a read for.
-func (rd Reader) inspectSegments(p Project, segments []envelope.Segment) (hold bool, err error) {
+// part of it the scan calls unexpected. It reports the two outcomes a
+// finding can have. A reader that contradicted itself pauses the run
+// and recording device-wide until a different build reads the files:
+// nothing it handed over can be trusted. A segment carrying a field
+// this build cannot mask is named in held: that one segment stays on
+// this machine, and every other segment of the read is stored and
+// uploaded as usual. This is the one place a line's fields are read
+// before the spool, so it is where the shape is checked; the reader
+// itself interprets nothing, and what a finding is called is stated
+// where the scan happens, not here. A registry or a log that cannot be
+// written is let go: what was noticed is worth keeping and never worth
+// stopping a read for.
+func (rd Reader) inspectSegments(p Project, segments []envelope.Segment) (pause bool, held map[string]bool, err error) {
 	location := redact.SessionLocation{Home: rd.Home, Project: p.Root}
 	for _, seg := range segments {
 		found, err := drift.Scan([]byte(seg.Lines), location)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if !found.Any() {
 			continue
@@ -141,10 +145,16 @@ func (rd Reader) inspectSegments(p Project, segments []envelope.Segment) (hold b
 		}
 		if found.Stop() {
 			_ = rd.Routes.PauseByBuild(routing.PauseRedactionDrift, rd.Version)
-			return true, nil
+			return true, nil, nil
+		}
+		if found.Quarantine() {
+			if held == nil {
+				held = map[string]bool{}
+			}
+			held[seg.RecordID] = true
 		}
 	}
-	return false, nil
+	return false, held, nil
 }
 
 // storeRecords writes a read result's records to the spool. full
@@ -153,8 +163,8 @@ func (rd Reader) inspectSegments(p Project, segments []envelope.Segment) (hold b
 // past records that were never stored. One pass answers for every
 // record a read produced, so that outcome is decided once and not once
 // per kind.
-func storeRecords(sp *spool.Spool, res follow.ReadResult) (full bool, err error) {
-	for _, write := range recordWrites(sp, res) {
+func storeRecords(sp *spool.Spool, res follow.ReadResult, held map[string]bool) (full bool, err error) {
+	for _, write := range recordWrites(sp, res, held) {
 		if err := write(); err != nil {
 			if errors.Is(err, spool.ErrQuotaExceeded) {
 				return true, nil
@@ -167,16 +177,33 @@ func storeRecords(sp *spool.Spool, res follow.ReadResult) (full bool, err error)
 
 // recordWrites is the writes one read result asks of the spool, in the
 // order it asks for them. It is the one place that pairs a record with
-// the spool method its own kind names.
-func recordWrites(sp *spool.Spool, res follow.ReadResult) []func() error {
+// the spool method its own kind names, and the one place that sends a
+// held segment to the slot nothing uploads.
+func recordWrites(sp *spool.Spool, res follow.ReadResult, held map[string]bool) []func() error {
 	writes := make([]func() error, 0, len(res.Segments)+len(res.Snapshots))
 	for _, seg := range res.Segments {
+		if held[seg.RecordID] {
+			// The held slot is not a slot a batch reads, so a segment
+			// this build cannot mask stays on the machine while the
+			// cursor moves past it like any other.
+			writes = append(writes, func() error { return holdSegment(sp, seg) })
+			continue
+		}
 		writes = append(writes, func() error { return sp.WriteSegment(seg) })
 	}
 	for _, snap := range res.Snapshots {
 		writes = append(writes, func() error { return sp.WriteMetaSnapshot(snap) })
 	}
 	return writes
+}
+
+// holdSegment stores one segment where nothing uploads it.
+func holdSegment(sp *spool.Spool, seg envelope.Segment) error {
+	data, err := seg.Bytes()
+	if err != nil {
+		return err
+	}
+	return sp.Hold(data)
 }
 
 // InjectionValue names, for a record, what this client did with the

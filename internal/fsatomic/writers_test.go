@@ -39,6 +39,7 @@ var plainWriteFiles = map[string]bool{
 	"internal/spool/spool.go":   true,
 	"internal/spool/read.go":    true,
 	"internal/spool/records.go": true,
+	"internal/spool/held.go":    true,
 	// Deleting a stored secret unlinks it; a secret is replaced by
 	// writing the new one, never by editing the file in place.
 	"internal/tokenstore/file.go": true,

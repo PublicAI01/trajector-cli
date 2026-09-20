@@ -500,9 +500,22 @@ func TestSummaryReportsDaysWithoutFileNames(t *testing.T) {
 		}
 		total += d.Bytes
 	}
-	// The summary and Usage read the same tree; they must agree.
+	// The summary and Usage read the same tree; they must agree, and a
+	// record held on this machine is in neither.
+	holdSegment(t, s, segment(sessionA, "hash-a", 0, noon))
 	if total != s.Usage() {
 		t.Errorf("summary bytes = %d, Usage() = %d, want them equal", total, s.Usage())
+	}
+	days, err = s.Summary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var after int64
+	for _, d := range days {
+		after += d.Bytes + d.RecordBytes
+	}
+	if after != total {
+		t.Errorf("summary bytes with a held record = %d, want the held slot in no day at %d", after, total)
 	}
 }
 

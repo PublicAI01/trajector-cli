@@ -102,6 +102,22 @@ func (s *Sandbox) Records() []Record {
 	return stored
 }
 
+// HeldRecords reports every record the spool keeps on this machine and
+// never uploads, each with its bytes and its size, so a test can
+// assert both what is held and what it occupies.
+func (s *Sandbox) HeldRecords() []Record {
+	s.t.Helper()
+	sp, err := spool.Open(s.layout.SpoolDir(), 0)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	held, err := sp.Held()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return held
+}
+
 // GitSnapshots is every observation of a repository the spool holds,
 // read back from its own bytes and in the order the observations were
 // made. The spool addresses a record by an id that is a digest, so the

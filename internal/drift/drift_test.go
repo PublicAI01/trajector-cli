@@ -47,8 +47,11 @@ func TestScan_ReportsAPathFieldOutsideTheAnchoredList(t *testing.T) {
 			if !reflect.DeepEqual(r.UnanchoredPathFields, tc.want) {
 				t.Errorf("UnanchoredPathFields = %v, want %v", r.UnanchoredPathFields, tc.want)
 			}
-			if r.Stop() != (tc.want != nil) {
-				t.Errorf("Stop() = %v, want %v", r.Stop(), tc.want != nil)
+			if r.Quarantine() != (tc.want != nil) {
+				t.Errorf("Quarantine() = %v, want %v", r.Quarantine(), tc.want != nil)
+			}
+			if r.Stop() {
+				t.Error("Stop() = true, want an unmaskable field to hold its own segment and not the device")
 			}
 		})
 	}
