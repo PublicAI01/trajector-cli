@@ -560,3 +560,19 @@ func TestLogoutStaysRetryableWhenPausingFails(t *testing.T) {
 		t.Errorf("pause = %q, want signed_out", reason)
 	}
 }
+
+func TestLoginClearsARefusedCredentialRecordedByAnEarlierUpload(t *testing.T) {
+	e := newUnpairedEnv(t)
+	e.pairable()
+	refusedAt := time.Date(2026, 8, 30, 14, 32, 0, 0, time.UTC)
+	e.sandbox.SeedCredentialRefusal(refusedAt)
+
+	if err := e.machine().Login(e.io()); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	for _, s := range e.sandbox.HeldStandings(refusedAt.Add(time.Hour)) {
+		if s.Reason == proxytest.CredentialRefused {
+			t.Error("the refused credential survived a new pairing")
+		}
+	}
+}

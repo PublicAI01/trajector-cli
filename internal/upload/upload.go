@@ -186,12 +186,15 @@ type Uploader struct {
 	closed bool
 
 	// The three gates suppress automatic flushes only; a forced flush
-	// walks straight past them. They reset on any acknowledged upload and
-	// are deliberately not read back from disk: every one of them is
-	// answered by a person or by another machine, never by time, so a
-	// fresh process gets to find out for itself instead of inheriting a
-	// refusal that may already be over. The pause a 429 or a timeout
-	// leaves is read back — see loadBackoff for why those are different.
+	// walks straight past them. They reset on any acknowledged upload,
+	// and none of them is inherited: every one is answered by a person or
+	// by another machine, never by time, so a fresh process gets to find
+	// out for itself instead of standing on a refusal that may already be
+	// over. A refusal a flusher met is still written down, so a surface
+	// in another process can say why uploads stopped — but what that
+	// process reads back is a record to report, never a gate it takes
+	// over. The wait a 429, a timeout or a refused endpoint leaves is
+	// read back — see loadBackoff for why those are different.
 	//
 	// authorizationGate is a gate of its own rather than a second meaning
 	// for upgradeGate: an old build whose account is also unauthorized
@@ -199,21 +202,26 @@ type Uploader struct {
 	// status and doctor name only one of them — which is the whole of
 	// what this gate buys the user.
 	//
-	// accessGate carries both refusals of the asker — the credential
-	// refused, or the endpoint refused outright — because one answer can
-	// only be one of them. refusedToken is the token that was refused, so
-	// the gate opens for a different one: pairing again is the remedy for
-	// the first, and asking with a new credential is a new question in
-	// either case.
+	// credentialGate carries the refusal of the credential this device
+	// pairs with. refusedToken is the token that was refused, so the
+	// gate opens for a different one: pairing again is the remedy, and
+	// asking with a new credential is a new question. A refused
+	// endpoint is not a gate at all — nothing on this machine answers
+	// it — so it takes a widening wait instead.
 	upgradeGate       Standing
 	authorizationGate Standing
-	accessGate        Standing
+	credentialGate    Standing
 	refusedToken      string
-	// timeouts counts consecutive timed-out upload attempts. Each one
-	// widens the next attempt's budget and lengthens the pause before
-	// it, so the batch at the head of the queue is never retried forever
-	// on the terms that just failed. Any acknowledged upload resets it.
+	// timeouts counts consecutive timed-out upload attempts and refusals
+	// consecutive refused-endpoint answers. Each one lengthens the wait
+	// before the next automatic attempt, and a timeout also widens that
+	// attempt's budget, so the batch at the head of the queue is never
+	// retried forever on the terms that just failed. Both count this
+	// process's own attempts and neither goes to disk: a process that did
+	// not make the refused attempt starts its own count. Any
+	// acknowledged upload resets them.
 	timeouts int
+	refusals int
 }
 
 // New validates the wiring and builds an uploader.
@@ -308,7 +316,7 @@ func (u *Uploader) reportDisposition(res *Result) {
 		// Nothing on disk changed, so the only thing left to report is
 		// what the attempt left behind — a gate, or a pause — which is
 		// exactly what the next automatic flush will refuse to start on.
-		if !u.reportAccessGate(res) {
+		if !u.reportCredentialGate(res) {
 			u.reportBackoff(res)
 		}
 	}
@@ -328,20 +336,36 @@ func (u *Uploader) reportAuthorizationGate(res *Result) {
 	res.Outcome, res.Standing = AuthorizationRequired, u.authorizationGate
 }
 
-func (u *Uploader) reportAccessGate(res *Result) bool {
-	if !u.accessGate.Held() {
+func (u *Uploader) reportCredentialGate(res *Result) bool {
+	if !u.credentialGate.Held() {
 		return false
 	}
-	res.Outcome, res.Standing = Paused, u.accessGate
+	res.Outcome, res.Standing = Paused, u.credentialGate
 	return true
 }
 
-// refuseAccess raises the gate the service's refusal of the asker
-// leaves behind, against the token that was refused. Nothing is
-// written: the remedy is off this process, so a successor must be
-// allowed to ask once rather than inherit the answer this one got.
-func (u *Uploader) refuseAccess(token string, reason Reason) {
-	u.accessGate, u.refusedToken = Standing{Reason: reason}, token
+// refuseCredential and refuseAccess raise what one refused attempt
+// leaves behind and record it where a surface in another process reads
+// what stops uploads. One attempt gets one answer, so each drops what
+// the other left: a device reading that it is both refused a credential
+// and waiting out an endpoint refusal would be reading one of the two
+// off an attempt that is no longer the latest word.
+//
+// refuseCredential holds its gate against the token that was refused,
+// so asking with a new credential is a new question. Nothing here
+// retries it: the remedy is `trajector login`.
+func (u *Uploader) refuseCredential(token string) {
+	u.credentialGate, u.refusedToken = Standing{Reason: CredentialRefused}, token
+	u.refusals = 0
+	u.noteCredentialRefused()
+}
+
+// refuseAccess lengthens the wait with each consecutive refusal, so
+// asking again is bounded rather than abandoned.
+func (u *Uploader) refuseAccess() {
+	u.credentialGate, u.refusedToken = Standing{}, ""
+	u.refusals++
+	u.noteAccessRefused(doublingBackoff(u.refusals))
 }
 
 func (u *Uploader) reportBackoff(res *Result) bool {
@@ -423,8 +447,11 @@ func (u *Uploader) flush(mode flushMode, deadline time.Time) (Result, error) {
 	// this process runs is offering a different credential by the next
 	// automatic flush — and the refusal that was answered about the old
 	// one stops standing there and then.
-	if u.accessGate.Held() && token != u.refusedToken {
-		u.accessGate, u.refusedToken = Standing{}, ""
+	if u.credentialGate.Held() && token != u.refusedToken {
+		u.credentialGate, u.refusedToken = Standing{}, ""
+		if err := ClearCredentialRefusal(u.deps.Dir); err != nil {
+			u.deps.Logf("upload: clearing the credential refusal: %v", err)
+		}
 	}
 	if !mode.ignoreGates {
 		if u.upgradeGate.Held() {
@@ -439,7 +466,7 @@ func (u *Uploader) flush(mode flushMode, deadline time.Time) (Result, error) {
 			u.reportAuthorizationGate(&res)
 			return res, nil
 		}
-		if u.reportAccessGate(&res) {
+		if u.reportCredentialGate(&res) {
 			return res, nil
 		}
 		if u.reportBackoff(&res) {
@@ -612,9 +639,9 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 		return err
 	}
 	res.Disposition = Ack
-	u.upgradeGate, u.authorizationGate, u.accessGate = Standing{}, Standing{}, Standing{}
+	u.upgradeGate, u.authorizationGate, u.credentialGate = Standing{}, Standing{}, Standing{}
 	u.refusedToken = ""
-	u.timeouts = 0
+	u.timeouts, u.refusals = 0, 0
 
 	if err := l.settle(u.deps.Spool, b.Packed); err != nil {
 		return fmt.Errorf("upload: %w", err)
@@ -745,7 +772,7 @@ func (u *Uploader) settleFailure(token string, l lease, packed spool.Entries, er
 		// timeout doubles the next attempt's budget and the pause before
 		// an automatic flush tries again.
 		u.timeouts++
-		pause := timeoutBackoff(u.timeouts)
+		pause := doublingBackoff(u.timeouts)
 		u.noteBackoff(TimedOut, u.deps.Now().Add(pause))
 		return RetrySameID, fmt.Errorf("upload: batch %s: %w; the next attempt waits %s and allows more time", id, err, pause)
 	case errors.As(err, &upgrade):
@@ -767,19 +794,24 @@ func (u *Uploader) settleFailure(token string, l lease, packed spool.Entries, er
 		u.noteAuthorizationRequired(unauthorized.AuthorizeURL, unauthorized.Message)
 		return PauseUploadsAuthorize, fmt.Errorf("upload: batch %s: %w", id, err)
 	// Neither of the next two answers is about the batch, so nothing is
-	// quarantined and the id stays pinned; and neither is about time — a
-	// refused credential is answered by `trajector login`, a refused
-	// endpoint by whatever sits in front of the service — so automatic
-	// flushes stop at a gate rather than at a timer that would expire
-	// and re-offer the same batch to the same refusal. The cost is that
-	// a gate needs something to open it: it is held against the token
-	// that was refused, so the next flush under a new pairing walks
-	// through, and an acknowledged forced flush clears it.
+	// quarantined and the id stays pinned. They part on where the remedy
+	// is. A refused credential is answered on this machine and nowhere
+	// else, by `trajector login`, so it takes a gate held against the
+	// token that was refused: the next flush under a new pairing walks
+	// through, and an acknowledged forced flush clears it. A refused
+	// endpoint is answered by whatever sits in front of the service,
+	// which can stop refusing without anything here changing, so it takes
+	// a widening wait: the client has no way to learn the refusal ended
+	// except by asking again. The wait costs the user up to a quarter of
+	// an hour of delay after the refusal really ends; a gate there cost
+	// far more — one transient refusal stopped every upload for as long
+	// as the process lived, until the spool filled and recording stopped
+	// with it (2026-09-20).
 	case errors.As(err, &credential):
-		u.refuseAccess(token, CredentialRefused)
+		u.refuseCredential(token)
 		return RetrySameID, fmt.Errorf("upload: batch %s: %w", id, err)
 	case errors.As(err, &access):
-		u.refuseAccess(token, AccessRefused)
+		u.refuseAccess()
 		return RetrySameID, fmt.Errorf("upload: batch %s: %w", id, err)
 	case errors.As(err, &limited):
 		// RetryAfter arrives already capped at platform.MaxRetryAfter. A
@@ -888,9 +920,13 @@ func (u *Uploader) recordsDue(handshake platform.Handshake, mode flushMode) bool
 	return u.deps.Spool.RecordsUsage() >= bytes || u.deps.Now().Sub(oldest) >= age
 }
 
-// maxTimeoutBackoff caps the pause between timed-out attempts, so
-// backing off can never mute automatic uploads for good.
-const maxTimeoutBackoff = 15 * time.Minute
+// backoffStart and backoffCap bound every wait this client doubles: the
+// first one, and the longest the doubling reaches. The cap is what keeps
+// backing off from muting automatic uploads for good.
+const (
+	backoffStart = time.Minute
+	backoffCap   = 15 * time.Minute
+)
 
 // defaultRateLimitPause is how long automatic flushes hold off after a
 // rate limit that names no Retry-After: long enough to actually shed
@@ -898,15 +934,19 @@ const maxTimeoutBackoff = 15 * time.Minute
 // wanting a different pause names one.
 const defaultRateLimitPause = 5 * time.Minute
 
-// timeoutBackoff is how long automatic flushes hold off after the nth
-// consecutive timed-out attempt: doubling from a minute, so a
-// struggling link is not hammered every flush tick.
-func timeoutBackoff(timeouts int) time.Duration {
-	pause := time.Minute
-	for ; timeouts > 1 && pause < maxTimeoutBackoff; timeouts-- {
+// doublingBackoff is how long automatic flushes hold off after the nth
+// consecutive answer of one kind: doubling from backoffStart, so
+// neither a struggling link nor something refusing in front of the
+// service is asked again every flush tick. A timed-out attempt and a
+// refused endpoint share it because they are the same shape of answer —
+// nothing on this machine ends either, so the only move left is to ask
+// again later, and the only cost worth bounding is how often.
+func doublingBackoff(n int) time.Duration {
+	pause := backoffStart
+	for ; n > 1 && pause < backoffCap; n-- {
 		pause *= 2
 	}
-	return min(pause, maxTimeoutBackoff)
+	return min(pause, backoffCap)
 }
 
 // newBatchID mints the idempotency key for one batch. Unlike a capture,

@@ -66,9 +66,10 @@ const (
 // three ways.
 //
 // A flush carries the one standing that stopped it; a diagnosis carries
-// every standing currently held, because the two refusal gates can
-// stand at the same time and a user told about only one of them would
-// go and fix half of what is wrong.
+// every standing currently held, because more than one can stand at the
+// same time — an old build whose account is also unauthorized — and a
+// user told about only one of them would go and fix half of what is
+// wrong.
 type Standing struct {
 	Reason Reason `json:"reason"`
 	// MinClientVersion is the stated minimum this build does not
@@ -87,9 +88,13 @@ type Standing struct {
 	// empty when the service named no usable address.
 	AuthorizeURL string `json:"authorize_url,omitempty"`
 	// NotBefore is when automatic uploads may attempt again. Set on the
-	// two pauses that expire; zero on the gates, which end when the
+	// pauses that expire; zero on the gates, which end when the
 	// condition behind them does.
 	NotBefore time.Time `json:"not_before,omitzero"`
+	// Since is when this condition was first met, for the standings a
+	// surface reads off disk: a refusal that has stood for an hour and
+	// one answered a moment ago read the same otherwise.
+	Since time.Time `json:"since,omitzero"`
 	// Upgradable reports that installing the newest release is known to
 	// answer this version gate. It is decided once, where the standing is
 	// built, so no renderer repeats the comparison.
@@ -133,9 +138,9 @@ func (s Standing) Explain() string {
 	case QuarantineOnly:
 		return "Uploads have nothing to send: every record left on this machine is quarantined."
 	case CredentialRefused:
-		return "Uploads are paused: the service refused this device's credential. Captured data is kept."
+		return fmt.Sprintf("Uploads are paused%s: the service refused this device's credential. Captured data is kept.", s.pausedSince())
 	case AccessRefused:
-		return "Uploads are paused: the service refused this client access to the upload endpoint. Captured data is kept."
+		return fmt.Sprintf("Uploads are paused%s until %s: the service refused this client access. Captured data is kept.", s.pausedSince(), s.pauseUntil())
 	default:
 		return string(s.Reason)
 	}
@@ -175,17 +180,28 @@ func (s Standing) Remedy() string {
 	case CredentialRefused:
 		return "Run `trajector login` to pair this device again; uploads resume at the next flush."
 	case AccessRefused:
-		// No local setting produces this, so nothing here names a command
-		// that would clear it; a forced retry is still offered, because a
-		// refusal from something in front of the service can end without
-		// anything on this machine changing.
-		return "If this persists, check whether a proxy or firewall sits between this machine and the service; `trajector upload --force` retries now."
+		// Worded as the other waiting reasons are, because it is one: no
+		// local setting produces this, so nothing here names a command
+		// that would clear it. The second sentence is what only this
+		// reason can say — the refusal may be coming from something the
+		// user, and no one at the service, can look at.
+		return "Uploads resume automatically; `trajector upload --force` offers them now. If this persists, check whether a proxy or firewall sits between this machine and the service."
 	default:
 		return ""
 	}
 }
 
 func (s Standing) pauseUntil() string { return s.NotBefore.UTC().Format(time.RFC3339) }
+
+// pausedSince is the " since <time>" a standing read off disk can say
+// and one raised by the attempt in hand cannot: the clause is left out
+// entirely rather than filled with a zero time.
+func (s Standing) pausedSince() string {
+	if s.Since.IsZero() {
+		return ""
+	}
+	return " since " + s.Since.UTC().Format(time.RFC3339)
+}
 
 // versionStanding is the one derivation of whether the service's stated
 // minimum client version stands against this build. Every surface reads

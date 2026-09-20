@@ -37,6 +37,17 @@ All notable changes to trajector are documented here. The format follows
   the file, the failure, and `trajector enable` as the way out. Running
   `trajector enable` and accepting the agreement writes a new record
   and resumes recording.
+- A service that refuses this client access to the upload endpoint no
+  longer stops uploads for as long as the process lives. The refusal
+  now waits and asks again — one minute, then double, up to fifteen.
+  When the next attempt is due is kept on disk, so a restart waits out
+  what is left of it; how far the doubling has gone is not kept, so a
+  restarted process counts its own refusals from one minute again. A
+  refused device credential is kept on disk too, and is still never
+  retried by itself: `trajector login` ends it. Only one of the two
+  stands at a time — the later refusal replaces the earlier — and
+  `status` and `doctor` state whichever holds, with when uploads
+  stopped and, for a refused endpoint, when the next attempt is due.
 
 ## [0.3.1] - 2026-09-20
 

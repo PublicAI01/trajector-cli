@@ -1256,8 +1256,12 @@ func TestARefusedCredentialStopsAutomaticFlushesAndIsNotASignedOutDevice(t *test
 	if res.Outcome != upload.Paused || res.Standing.Reason != upload.CredentialRefused {
 		t.Errorf("outcome, standing = %q, %q; want %q, %q", res.Outcome, res.Standing.Reason, upload.Paused, upload.CredentialRefused)
 	}
-	if held := upload.LoadStandings(f.dir, "1.0.0", f.now); len(held) != 0 {
-		t.Errorf("the refusal was written to disk as %v; a successor process must be free to ask once", held)
+	held := upload.LoadStandings(f.dir, "1.0.0", f.now)
+	if len(held) != 1 || held[0].Reason != upload.CredentialRefused {
+		t.Fatalf("standings on disk = %v, want the refused credential reported", held)
+	}
+	if held[0].Since.IsZero() {
+		t.Error("the recorded credential refusal names no time it started")
 	}
 }
 
@@ -1301,15 +1305,19 @@ func TestARefusedEndpointKeepsTheBatchAndStopsAutomaticFlushes(t *testing.T) {
 	if got := f.uploadCount(); got != before {
 		t.Errorf("automatic flush made %d more attempts, want 0", got-before)
 	}
-	if res.Outcome != upload.Paused || res.Standing.Reason != upload.AccessRefused {
-		t.Errorf("outcome, standing = %q, %q; want %q, %q", res.Outcome, res.Standing.Reason, upload.Paused, upload.AccessRefused)
+	if res.Outcome != upload.Deferred || res.Standing.Reason != upload.AccessRefused {
+		t.Errorf("outcome, standing = %q, %q; want %q, %q", res.Outcome, res.Standing.Reason, upload.Deferred, upload.AccessRefused)
 	}
-	if held := upload.LoadStandings(f.dir, "1.0.0", f.now); len(held) != 0 {
-		t.Errorf("the refusal was written to disk as %v; a successor process must be free to ask once", held)
+	held := upload.LoadStandings(f.dir, "1.0.0", f.now)
+	if len(held) != 1 || held[0].Reason != upload.AccessRefused {
+		t.Fatalf("standings on disk = %v, want the refused access reported", held)
+	}
+	if want := f.now.Add(time.Minute); !held[0].NotBefore.Equal(want) {
+		t.Errorf("next try at %s, want %s", held[0].NotBefore, want)
 	}
 }
 
-func TestAnAcknowledgedForcedFlushOpensTheRefusedEndpointGate(t *testing.T) {
+func TestAnAcknowledgedForcedFlushEndsTheRefusedEndpointWait(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
 	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
@@ -1326,5 +1334,170 @@ func TestAnAcknowledgedForcedFlushOpensTheRefusedEndpointGate(t *testing.T) {
 	res, err := f.uploader.Flush(false)
 	if err != nil || res.Outcome != upload.BelowThreshold {
 		t.Fatalf("automatic flush after the acknowledgement = %+v, %v; want %q", res, err, upload.BelowThreshold)
+	}
+}
+
+func TestARefusedEndpointWidensItsWaitAndRetriesWhenItExpires(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
+	f.storeRawcall(t, "req-1", f.now)
+
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+	for i, want := range []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute} {
+		if got := f.standing(upload.AccessRefused).NotBefore; !got.Equal(f.now.Add(want)) {
+			t.Fatalf("refusal %d: next try at %s, want %s after a wait of %s", i+1, got, f.now.Add(want), want)
+		}
+		before := f.uploadCount()
+		if _, err := f.uploader.Flush(false); err != nil {
+			t.Fatalf("refusal %d: automatic flush inside the wait = %v", i+1, err)
+		}
+		if got := f.uploadCount(); got != before {
+			t.Fatalf("refusal %d: automatic flush inside the wait made %d more attempts, want 0", i+1, got-before)
+		}
+		f.now = f.now.Add(want + time.Second)
+		if _, err := f.uploader.Flush(false); err == nil {
+			t.Fatalf("refusal %d: the automatic flush after the wait did not attempt again", i+1)
+		}
+		if f.uploadCount() != before+1 {
+			t.Fatalf("refusal %d: the wait expired without exactly one new attempt", i+1)
+		}
+	}
+}
+
+func TestARestartWaitsOutTheRecordedRefusalAndThenCountsFromTheStart(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
+	f.storeRawcall(t, "req-1", f.now)
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+	f.now = f.now.Add(time.Minute + time.Second)
+	if _, err := f.uploader.Flush(false); err == nil {
+		t.Fatal("the automatic flush after the first wait did not attempt again")
+	}
+	recorded := f.now.Add(2 * time.Minute)
+	if got := f.standing(upload.AccessRefused).NotBefore; !got.Equal(recorded) {
+		t.Fatalf("the second refusal waits until %s, want %s", got, recorded)
+	}
+
+	f.uploader = f.newUploader(t)
+	before := f.uploadCount()
+	res, err := f.uploader.Flush(false)
+	if err != nil {
+		t.Fatalf("automatic flush after a restart = %v", err)
+	}
+	if got := f.uploadCount(); got != before {
+		t.Errorf("the restarted uploader made %d more attempts inside the recorded wait, want 0", got-before)
+	}
+	if res.Outcome != upload.Deferred || res.Standing.Reason != upload.AccessRefused {
+		t.Errorf("outcome, standing = %q, %q; want %q, %q", res.Outcome, res.Standing.Reason, upload.Deferred, upload.AccessRefused)
+	}
+
+	f.now = recorded.Add(time.Second)
+	if _, err := f.uploader.Flush(false); err == nil {
+		t.Fatal("the automatic flush after the recorded wait did not attempt again")
+	}
+	if got, want := f.standing(upload.AccessRefused).NotBefore, f.now.Add(time.Minute); !got.Equal(want) {
+		t.Errorf("the restarted uploader's own first refusal waits until %s, want %s", got, want)
+	}
+}
+
+func TestARefusedCredentialSurvivesARestartAndIsNeverRetriedOnItsOwn(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
+	f.storeRawcall(t, "req-1", f.now)
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+
+	f.uploader = f.newUploader(t)
+	f.now = f.now.Add(24 * time.Hour)
+	if got := f.standing(upload.CredentialRefused).Reason; got != upload.CredentialRefused {
+		t.Errorf("standing after a restart = %q, want the refused credential still reported", got)
+	}
+}
+
+func TestPairingAgainClearsTheRecordedCredentialRefusal(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
+	f.storeRawcall(t, "req-1", f.now)
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+
+	if err := upload.ClearCredentialRefusal(f.dir); err != nil {
+		t.Fatalf("clearing the credential refusal: %v", err)
+	}
+	if got := f.standing(upload.CredentialRefused).Reason; got != upload.Flowing {
+		t.Errorf("standing after pairing again = %q, want none", got)
+	}
+}
+
+func TestAnAcknowledgedUploadClearsBothRecordedAccessRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		reason upload.Reason
+	}{
+		{"a refused credential", 401, upload.CredentialRefused},
+		{"a refused endpoint", 403, upload.AccessRefused},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(tc.status, map[string]any{"error": "refused"}))
+			f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+			f.storeRawcall(t, "req-1", f.now)
+			if _, err := f.uploader.Flush(true); err == nil {
+				t.Fatal("the refusal did not surface as an error")
+			}
+			if got := f.standing(tc.reason).Reason; got != tc.reason {
+				t.Fatalf("standing after the refusal = %q, want %q", got, tc.reason)
+			}
+
+			if _, err := f.uploader.Flush(true); err != nil {
+				t.Fatalf("forced flush after the refusal = %v", err)
+			}
+			if held := upload.LoadStandings(f.dir, "1.0.0", f.now); len(held) != 0 {
+				t.Errorf("standings after an acknowledged upload = %v, want none", held)
+			}
+		})
+	}
+}
+
+func TestTheLaterRefusalReplacesTheEarlierOne(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		first, second  int
+		gone, standing upload.Reason
+	}{
+		{"a refused endpoint after a refused credential", 401, 403, upload.CredentialRefused, upload.AccessRefused},
+		{"a refused credential after a refused endpoint", 403, 401, upload.AccessRefused, upload.CredentialRefused},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(tc.first, map[string]any{"error": "refused"}))
+			f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(tc.second, map[string]any{"error": "refused"}))
+			f.storeRawcall(t, "req-1", f.now)
+
+			if _, err := f.uploader.Flush(true); err == nil {
+				t.Fatal("the first refusal did not surface as an error")
+			}
+			if got := f.standing(tc.gone).Reason; got != tc.gone {
+				t.Fatalf("standing after the first refusal = %q, want %q", got, tc.gone)
+			}
+			if _, err := f.uploader.Flush(true); err == nil {
+				t.Fatal("the second refusal did not surface as an error")
+			}
+
+			held := upload.LoadStandings(f.dir, "1.0.0", f.now)
+			if len(held) != 1 || held[0].Reason != tc.standing {
+				t.Fatalf("standings = %v, want only %q", held, tc.standing)
+			}
+			if held[0].Since.IsZero() {
+				t.Errorf("standing %q names no time it started", held[0].Reason)
+			}
+		})
 	}
 }

@@ -130,13 +130,24 @@ type storedHandshake struct {
 	AuthorizationRequired bool   `json:"authorization_required,omitempty"`
 	AuthorizeURL          string `json:"authorize_url,omitempty"`
 	AuthorizationMessage  string `json:"authorization_message,omitempty"`
+	// CredentialRefusedSince is when the service last refused the
+	// credential this device pairs with, zero when it did not. It is a
+	// record and not a gate: a surface in another process must be able
+	// to say why uploads stopped, but a flusher that did not meet the
+	// refusal asks once for itself rather than standing on it. Only a
+	// new pairing — or an acknowledgement — ends it.
+	CredentialRefusedSince time.Time `json:"credential_refused_since,omitzero"`
 	// NotBefore is when automatic uploads may attempt again, and
-	// BackoffReason which of the two pauses set it. Kept on disk rather
-	// than in the flusher's memory alone so that a surface in another
-	// process can say how long the wait has left, and so that a proxy
-	// restarted inside the wait honours what is left of it.
+	// BackoffReason which of the waits set it. BackoffSince is when that
+	// wait first started. Kept on disk rather than in the flusher's
+	// memory alone so that a surface in another process can say how long
+	// the wait has left, and so that a proxy restarted inside the wait
+	// honours what is left of it. How far a doubling wait has escalated
+	// is not kept beside it: that budgets one process's next attempt,
+	// and the disk holds instructions, not budgets.
 	NotBefore     time.Time `json:"not_before,omitzero"`
 	BackoffReason Reason    `json:"backoff_reason,omitempty"`
+	BackoffSince  time.Time `json:"backoff_since,omitzero"`
 	ReceivedAt    time.Time `json:"received_at,omitzero"`
 }
 
@@ -174,10 +185,12 @@ func LoadHandshake(dir string) platform.Handshake {
 // status and doctor to report from a process that never made the upload
 // itself. A pause that has elapsed by now is not a standing.
 //
-// All of them are returned, never just the first: both refusal gates
-// can stand at the same time — an old build whose account is also
+// All of them are returned, never just the first: more than one can
+// stand at the same time — an old build whose account is also
 // unauthorized — and a surface that could name only one of them would
-// send the user to fix half of what is wrong.
+// send the user to fix half of what is wrong. The two answers to "may
+// this client upload right now" are the exception: one attempt gets one
+// answer, so recording either clears the other.
 //
 // The service's free text is cleaned again on the way out: this file
 // may have been written by a build that predates the cleaning, or
@@ -201,6 +214,9 @@ func LoadStandings(dir, version string, now time.Time) []Standing {
 			Message:      platform.SafeServiceText(h.AuthorizationMessage),
 		})
 	}
+	if !h.CredentialRefusedSince.IsZero() {
+		standings = append(standings, Standing{Reason: CredentialRefused, Since: h.CredentialRefusedSince})
+	}
 	if s, ok := h.backoff(now); ok {
 		standings = append(standings, s)
 	}
@@ -215,20 +231,26 @@ func (h storedHandshake) backoff(now time.Time) (Standing, bool) {
 	if h.BackoffReason == Flowing || !now.Before(h.NotBefore) {
 		return Standing{}, false
 	}
-	return Standing{Reason: h.BackoffReason, NotBefore: h.NotBefore}, true
+	return Standing{Reason: h.BackoffReason, NotBefore: h.NotBefore, Since: h.BackoffSince}, true
 }
 
-// loadBackoff reads the pause the uploader is holding to. The flusher
+// loadBackoff reads the wait the uploader is holding to. The flusher
 // reads it off disk rather than out of its own memory so that a proxy
 // restarted inside the wait honours what is left of it: a restart is
-// routine here — idle exit, version handover, reboot — and a pause the
+// routine here — idle exit, version handover, reboot — and a wait the
 // next process ignores puts back exactly the load the service asked to
-// shed. What is read back this way is exactly what time answers. The
-// refusal gates are not, on purpose: a 426 is answered by replacing
-// this binary, a 451 off this machine entirely, a 401 by pairing again
-// and a 403 by whatever sits in front of the service — none of them by
-// waiting, so a fresh process must be allowed to find out for itself
-// rather than inherit an answer that may already be stale.
+// shed. What is read back this way is what nothing on this machine can
+// shorten: a 429, an attempt of this client's own that ran out of time,
+// and an endpoint refusal that something in front of the service may
+// already have stopped making.
+//
+// The refusals a person answers are not read back, on purpose: a 426 is
+// answered by replacing this binary, a 451 off this machine entirely,
+// and a 401 by pairing again, so a fresh process must be allowed to ask
+// once rather than inherit an answer that may already be stale. Neither
+// is how far a doubling wait has escalated: the wait itself is an
+// instruction the next process honours, while the count behind it
+// budgets the attempts of the process that was refused.
 func loadBackoff(dir string, now time.Time) (Standing, bool) {
 	var h storedHandshake
 	readJSON(filepath.Join(dir, handshakeName), &h)
@@ -391,16 +413,74 @@ func (u *Uploader) noteAuthorizationRequired(authorizeURL, message string) {
 // service another attempt but never costs the user a rawcall.
 func (u *Uploader) noteBackoff(reason Reason, notBefore time.Time) {
 	u.noteRefusal(func(h *storedHandshake) {
-		h.BackoffReason = reason
+		h.startBackoff(reason, u.deps.Now().UTC())
 		h.NotBefore = notBefore
 	}, "the upload pause")
 }
 
+// noteAccessRefused keeps the wait a refused endpoint imposes where
+// every surface reads what stops uploads, and drops the record of a
+// refused credential. How long the wait is belongs to the flusher that
+// counts the refusals; this records only when it ends, because that is
+// what a process which did not make the attempt has to honour.
+// Best-effort, like the rest of this bookkeeping.
+func (u *Uploader) noteAccessRefused(wait time.Duration) {
+	now := u.deps.Now().UTC()
+	u.noteRefusal(func(h *storedHandshake) {
+		h.CredentialRefusedSince = time.Time{}
+		h.startBackoff(AccessRefused, now)
+		h.NotBefore = now.Add(wait)
+	}, "the access refusal")
+}
+
+// noteCredentialRefused keeps a refused credential where every surface
+// reads what stops uploads, and drops the wait a refused endpoint left.
+// Nothing here retries the credential: only a new pairing or an
+// acknowledgement ends it. An earlier refusal keeps its own start, so
+// the time a surface states is how long uploads have really been
+// stopped. Best-effort.
+func (u *Uploader) noteCredentialRefused() {
+	now := u.deps.Now().UTC()
+	u.noteRefusal(func(h *storedHandshake) {
+		if h.BackoffReason == AccessRefused {
+			h.BackoffReason, h.BackoffSince, h.NotBefore = Flowing, time.Time{}, time.Time{}
+		}
+		if h.CredentialRefusedSince.IsZero() {
+			h.CredentialRefusedSince = now
+		}
+	}, "the credential refusal")
+}
+
+// ClearCredentialRefusal drops a refused credential from the stored
+// handshake. The pairing command calls it: a credential the service
+// refused says nothing about the one this device has just been given,
+// and no flush is needed to establish that.
+func ClearCredentialRefusal(dir string) error {
+	var h storedHandshake
+	readJSON(filepath.Join(dir, handshakeName), &h)
+	if h.CredentialRefusedSince.IsZero() {
+		return nil
+	}
+	h.CredentialRefusedSince = time.Time{}
+	return saveHandshake(dir, h)
+}
+
+// startBackoff opens a pause, keeping the start of one already running
+// for the same reason: a surface states how long uploads have been
+// stopped, not how long ago the last attempt was refused.
+func (h *storedHandshake) startBackoff(reason Reason, now time.Time) {
+	if h.BackoffReason != reason || h.BackoffSince.IsZero() {
+		h.BackoffSince = now
+	}
+	h.BackoffReason = reason
+}
+
 // noteRefusal records one kind of refusal into the stored handshake
-// without disturbing the other. Both kinds can stand at the same time —
-// an old build whose account is also unauthorized — so neither writer
-// may build its record from scratch, or noting one would silently clear
-// the other and leave a surface reporting half of what is wrong.
+// without disturbing the others. Several can stand at the same time —
+// an old build whose account is also unauthorized — so no writer may
+// build its record from scratch, or noting one would silently clear
+// another and leave a surface reporting half of what is wrong. A writer
+// that does mean to drop another's record clears that field itself.
 func (u *Uploader) noteRefusal(apply func(*storedHandshake), what string) {
 	var h storedHandshake
 	readJSON(filepath.Join(u.deps.Dir, handshakeName), &h)

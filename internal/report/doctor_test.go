@@ -224,3 +224,30 @@ func TestStatusAndDoctorPresentAnUnwritableSpoolAlike(t *testing.T) {
 		rejects(t, surface, out, "The spool is full")
 	}
 }
+
+// A full spool is what a refused endpoint leads to when nothing
+// uploads for long enough, so the two stand together and both surfaces
+// have to say both: the spool that stopped recording, and the refusal
+// that filled it.
+func TestStatusAndDoctorReportAFullSpoolBesideARefusedEndpoint(t *testing.T) {
+	at := time.Date(2026, 8, 30, 14, 32, 0, 0, time.UTC)
+	d := device()
+	d.Spool = full()
+	d.Standings = []upload.Standing{{
+		Reason:    upload.AccessRefused,
+		Since:     at,
+		NotBefore: at.Add(time.Minute),
+	}}
+
+	problems, doctorOut := doctorText(d)
+	if problems == 0 {
+		t.Fatalf("problems = 0 with a full spool and a refused endpoint, output:\n%s", doctorOut)
+	}
+	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
+		wants(t, surface, out,
+			"The spool is full. Run `trajector upload --force`",
+			// Doctor states the clause in its own casing, so both
+			// surfaces are held to the clause itself.
+			"paused since 2026-08-30T14:32:00Z until 2026-08-30T14:33:00Z: the service refused this client access")
+	}
+}

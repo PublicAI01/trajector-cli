@@ -9,6 +9,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 // defaultPairingWindow bounds how long Login waits for browser approval
@@ -95,6 +96,12 @@ func (m *Machine) pair(io IO) error {
 func (m *Machine) finishLogin(io IO) error {
 	if err := m.routes.Resume(routing.PauseSignedOut); err != nil {
 		return err
+	}
+	// A credential the service refused says nothing about the one this
+	// device has just been given, so the refusal goes with the pairing
+	// it was answered about rather than waiting for a flush to find out.
+	if err := upload.ClearCredentialRefusal(m.deps.Layout.UploadDir()); err != nil {
+		fmt.Fprintf(io.Err, "trajector: warning: could not clear the recorded upload refusal: %v\n", err)
 	}
 	userSettings := m.claude().UserSettingsPath()
 	if !claudesettings.HasHook(userSettings, claudesettings.DiscoveryMarker) {

@@ -164,10 +164,22 @@ func TestEveryStandingNamesWhatIsTrueAndTheGatesNameWhatEndsThem(t *testing.T) {
 			remedy:   "Run `trajector login` to pair this device again; uploads resume at the next flush.",
 		},
 		{
+			name:     "a refused credential read off disk",
+			standing: upload.Standing{Reason: upload.CredentialRefused, Since: at},
+			explain:  "Uploads are paused since 2026-08-30T14:32:00Z: the service refused this device's credential. Captured data is kept.",
+			remedy:   "Run `trajector login` to pair this device again; uploads resume at the next flush.",
+		},
+		{
 			name:     "a refused endpoint",
-			standing: upload.Standing{Reason: upload.AccessRefused},
-			explain:  "Uploads are paused: the service refused this client access to the upload endpoint. Captured data is kept.",
-			remedy:   "If this persists, check whether a proxy or firewall sits between this machine and the service; `trajector upload --force` retries now.",
+			standing: upload.Standing{Reason: upload.AccessRefused, NotBefore: at.Add(time.Minute)},
+			explain:  "Uploads are paused until 2026-08-30T14:33:00Z: the service refused this client access. Captured data is kept.",
+			remedy:   "Uploads resume automatically; `trajector upload --force` offers them now. If this persists, check whether a proxy or firewall sits between this machine and the service.",
+		},
+		{
+			name:     "a refused endpoint read off disk",
+			standing: upload.Standing{Reason: upload.AccessRefused, Since: at, NotBefore: at.Add(time.Minute)},
+			explain:  "Uploads are paused since 2026-08-30T14:32:00Z until 2026-08-30T14:33:00Z: the service refused this client access. Captured data is kept.",
+			remedy:   "Uploads resume automatically; `trajector upload --force` offers them now. If this persists, check whether a proxy or firewall sits between this machine and the service.",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

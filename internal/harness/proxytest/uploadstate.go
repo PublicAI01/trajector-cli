@@ -97,9 +97,36 @@ func (s *Sandbox) SeedAuthorizationRefusal(authorizeURL, message string) {
 type Reason = upload.Reason
 
 const (
-	RateLimited = upload.RateLimited
-	TimedOut    = upload.TimedOut
+	RateLimited       = upload.RateLimited
+	TimedOut          = upload.TimedOut
+	CredentialRefused = upload.CredentialRefused
+	AccessRefused     = upload.AccessRefused
 )
+
+// credentialRefusal is what the file records about a refused
+// credential: when the service first refused it. Nothing here retries
+// it, so the file holds no expiry for it.
+type credentialRefusal struct {
+	Since time.Time `json:"credential_refused_since"`
+}
+
+// SeedCredentialRefusal persists the service refusing the credential
+// this device pairs with, as an upload that met a 401 would have left
+// it. Like the other seeders it leaves the rest of the file alone.
+func (s *Sandbox) SeedCredentialRefusal(since time.Time) {
+	s.t.Helper()
+	s.overlayHandshake(credentialRefusal{Since: since})
+	if got := s.standing(upload.CredentialRefused, since); !got.Since.Equal(since) {
+		s.t.Fatalf("the uploader reads the seeded refusal back as starting %s, want %s", got.Since, since)
+	}
+}
+
+// HeldStandings reports every reason the uploader's own files give for
+// holding uploads back, read through the uploader's own reader.
+func (s *Sandbox) HeldStandings(now time.Time) []upload.Standing {
+	s.t.Helper()
+	return upload.LoadStandings(s.layout.UploadDir(), "", now)
+}
 
 // SeedUploadPause persists the last "do not upload before" instruction
 // this device was given — the service asking it to slow down, or its
