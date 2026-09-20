@@ -272,8 +272,19 @@ func TestLogoutStatesTheDevicePauseInTheWordsStatusUses(t *testing.T) {
 	said := pauseSentenceIn(t, e.stdout.String())
 	e.stdout.Reset()
 
-	if out := e.statusOutput(); !strings.Contains(out, said) {
-		t.Errorf("logout says %q; status = %q", said, out)
+	// status lays the same pause out over three lines — what stopped,
+	// why, and the one command — so logout's single sentence is not in
+	// it word for word. What must hold is that joining the three back
+	// gives logout's sentence exactly.
+	out := e.statusOutput()
+	reason := proxytest.PauseSignedOut
+	if !strings.Contains(said, reason.Explain()) {
+		t.Errorf("logout says %q, want it to state %q", said, reason.Explain())
+	}
+	for _, want := range []string{"Recording is paused everywhere", reason.Why(), reason.Fix()[0]} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want it to name %q", out, want)
+		}
 	}
 }
 

@@ -86,7 +86,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	report.DoctorEnvironment(f)
 	m.doctorSelfcheck(f, d)
 
-	f.Render(io.Out)
+	f.Render(io.Out, io.OutStyle)
 	fmt.Fprintln(io.Out)
 	if f.Problems() == 0 {
 		fmt.Fprintln(io.Out, "Everything checks out.")
@@ -226,10 +226,7 @@ func (m *Machine) doctorProxy(f *report.Findings, d report.Diagnosis) {
 		}
 		f.OK("proxy running at %s (version %s, up %s)", d.Proxy.Addr, h.Version, up)
 	case d.Proxy.Holder == proxylife.HolderForeign:
-		f.Problem("%v", d.Proxy.Reason)
-		if remedy := report.ProxyRemedy(d.Proxy.Reason); remedy != "" {
-			f.Detail("%s", remedy)
-		}
+		f.ProxyProblem(d.Proxy.Reason)
 	default:
 		if !d.Project.Enabled {
 			f.OK("proxy not running; it starts on demand with the next session")

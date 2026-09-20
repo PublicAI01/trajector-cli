@@ -1,8 +1,10 @@
 package routing_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,5 +170,67 @@ func TestDeviceWidePauseKeepsGrantsButStopsRecording(t *testing.T) {
 	}
 	if !verdict.Resolves() || route.Upstream != "https://relay.example.com" {
 		t.Errorf("route = %+v, want the grant intact so forwarding is unchanged", route)
+	}
+}
+
+func TestEveryPauseNamesAStopAndTheCommandsThatEndIt(t *testing.T) {
+	seen := map[routing.PauseReason]bool{}
+	for _, reason := range routing.AllPauseReasons() {
+		if seen[reason] {
+			t.Fatalf("%s listed twice", reason)
+		}
+		seen[reason] = true
+		explained := reason.Explain()
+		if why := reason.Why(); why == "" || !strings.HasPrefix(explained, why) {
+			t.Errorf("%s: why = %q, explained as %q", reason, why, explained)
+		}
+		fix := reason.Fix()
+		if len(fix) == 0 {
+			t.Fatalf("%s names no command", reason)
+		}
+		for _, command := range fix {
+			if !strings.HasPrefix(command, "trajector ") {
+				t.Errorf("%s: fix %q, want a command a user can run", reason, command)
+			}
+			if !strings.Contains(explained, command) {
+				t.Errorf("%s: explained as %q, want it to name %q", reason, explained, command)
+			}
+		}
+	}
+}
+
+func TestAPauseFromANewerBuildIsPassedThroughUntouched(t *testing.T) {
+	future := routing.PauseReason("something_this_build_never_heard_of")
+	if got := future.Why(); got != string(future) {
+		t.Errorf("why = %q, want the stored value", got)
+	}
+	if got := future.Fix(); got != nil {
+		t.Errorf("fix = %q, want no command guessed at", got)
+	}
+	if got := future.Explain(); got != string(future) {
+		t.Errorf("explained as %q, want the stored value", got)
+	}
+	if got := future.ExplainAfterUpgrade(); got != "" {
+		t.Errorf("after an upgrade it says %q, want nothing claimed for a reason this build cannot read", got)
+	}
+}
+
+func TestOnlyTheReaderOfTheConsentRecordNamesTheFileAndTheFailure(t *testing.T) {
+	const path = "/home/dev/.trajector/consent.json"
+	failure := errors.New("permission denied")
+
+	reason := routing.PauseConsentUnreadable
+	why := reason.WhyAt(path, failure)
+	if !strings.Contains(why, path) || !strings.Contains(why, failure.Error()) {
+		t.Errorf("why = %q, want the file and the failure in it", why)
+	}
+	if explained := reason.ExplainAt(path, failure); !strings.HasPrefix(explained, why) || !strings.Contains(explained, reason.Fix()[0]) {
+		t.Errorf("explained as %q, want %q and the command that ends it", explained, why)
+	}
+	if got := reason.WhyAt("", nil); got != reason.Why() {
+		t.Errorf("with nothing read, why = %q, want %q", got, reason.Why())
+	}
+	if got := routing.PauseSignedOut.WhyAt(path, failure); got != routing.PauseSignedOut.Why() {
+		t.Errorf("a signed-out pause says %q, want %q", got, routing.PauseSignedOut.Why())
 	}
 }

@@ -15,7 +15,7 @@ import (
 
 func (e *env) statusOutput() string {
 	e.t.Helper()
-	if err := e.machine().Status(e.project, e.io()); err != nil {
+	if _, err := e.machine().Status(e.project, e.io()); err != nil {
 		e.t.Fatalf("status: %v\nstdout: %s", err, e.stdout)
 	}
 	return e.stdout.String()
@@ -131,7 +131,7 @@ func TestStatusReportsAHealthzCopyingPortHolder(t *testing.T) {
 	im := e.occupyPortWithHealthzCopy()
 	out := e.statusOutput()
 
-	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "not the trajector proxy") {
+	if !strings.Contains(out, "error: ") || !strings.Contains(out, "not the trajector proxy") {
 		t.Errorf("status = %q, want a loud warning for a holder that only copies the health payload", out)
 	}
 	if strings.Contains(out, "Running at") {
@@ -147,7 +147,7 @@ func TestStatusDoesNotWaitOutAHolderStillPublishingItsToken(t *testing.T) {
 	im := e.occupyPortStillPublishing()
 	out := e.statusOutput()
 
-	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "not the trajector proxy") {
+	if !strings.Contains(out, "error: ") || !strings.Contains(out, "not the trajector proxy") {
 		t.Errorf("status = %q, want the unproven holder reported as it stands", out)
 	}
 	if strings.Contains(out, "Running at") {
@@ -182,8 +182,11 @@ func TestStatusWarnsWhenTheSpoolIsFull(t *testing.T) {
 	e.sandbox.SeedRawcall("req-1", "hash-project", e.deps.Now())
 	out := e.statusOutput()
 
-	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "full") {
+	if !strings.Contains(out, "error: ") || !strings.Contains(out, "full") {
 		t.Errorf("status = %q, want a loud spool-full warning", out)
+	}
+	if first, _, _ := strings.Cut(out, "\n"); first != "Recording: STOPPED on this device (spool full)" {
+		t.Errorf("status opened with %q; a spool that takes no more stops every project on the device, and the line it opens with must not say otherwise", first)
 	}
 }
 
@@ -192,7 +195,7 @@ func TestStatusReportsRecordingStoppedByAnUnwritableSpool(t *testing.T) {
 	readOnly(t, e.layout().SpoolDir())
 	out := e.statusOutput()
 
-	for _, want := range []string{"WARNING", "not writable, so recording is stopped", "`trajector doctor`"} {
+	for _, want := range []string{"error: ", "not writable, so recording is stopped", "fix:  trajector doctor"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status = %q, want it to contain %q", out, want)
 		}

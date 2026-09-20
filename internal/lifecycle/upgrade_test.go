@@ -245,7 +245,10 @@ func TestUpgradeAndStatusNameOneRemedyForARedactionDriftPause(t *testing.T) {
 	step := commandTheUpgradeHintNames(t, e.stdout.String())
 	e.stdout.Reset()
 
-	if out := e.statusOutput(); !strings.Contains(out, "`"+step+"`") {
+	// status puts the command on the fix line, where it stands alone
+	// so it can be copied; the backticks upgrade writes it in belong to
+	// a sentence, not to a line of its own.
+	if out := e.statusOutput(); !strings.Contains(out, "fix:  ") || !strings.Contains(out, step) {
 		t.Errorf("upgrade sends the user to %q; status explains the pause as %q", step, out)
 	}
 }

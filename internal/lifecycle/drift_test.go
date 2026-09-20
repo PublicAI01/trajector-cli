@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
 // jsonString is s as a session file carries it: a JSON string, so a
@@ -108,9 +109,14 @@ func TestStatusAndDoctorReportTheSegmentsHeldOnThisMachine(t *testing.T) {
 	e.registerFile(root, main, "")
 	e.machine().ReadSessionFiles(e.project, discardIO())
 
-	const want = "1 segment(s) from 1 session(s) are held on this machine because their shape is new to this build; they are not uploaded"
+	held := e.sandbox.HeldRecords()
+	if len(held) != 1 {
+		t.Fatalf("held records = %d, want the one segment of a new shape", len(held))
+	}
+	want := "1 segment(s) from 1 session(s) (" + platform.HumanBytes(held[0].Size) +
+		") are held on this machine because their shape is new to this build; they are not uploaded"
 	e.stdout.Reset()
-	if err := e.machine().Status(e.project, e.io()); err != nil {
+	if _, err := e.machine().Status(e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), want) {

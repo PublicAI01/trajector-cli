@@ -88,20 +88,28 @@ const (
 	pausedEverywhere = "Recording is paused everywhere"
 
 	// windowsSideClaudeFact names the one arrangement across a WSL
-	// boundary that records nothing, and windowsSideWayOut what makes
-	// it record.
-	windowsSideClaudeFact = "this project is on a Windows drive mounted into WSL, so Claude Code runs on the Windows side there and its hooks cannot reach this trajector; nothing is recorded from it"
+	// boundary that records nothing, windowsSideClaudeWhy what makes it
+	// record nothing, and windowsSideWayOut what makes it record.
+	windowsSideClaudeFact = "this project is on a Windows drive mounted into WSL, so nothing is recorded from it"
+	windowsSideClaudeWhy  = "Claude Code runs on the Windows side there, and its hooks cannot reach this trajector"
 	windowsSideWayOut     = "Run both on the same side: open the project from inside WSL with a Claude Code installed there, or run trajector on the side Claude Code runs on."
 
 	// staleDiscoveryHookFact names a hook trajector wrote into the
 	// settings file of the default configuration directory of a device
-	// that now names another one: nothing reads it there, so it never
-	// runs. staleDiscoveryHookRemoved says the same about a hook this
-	// run took out. The well-known spelling of the default directory is
-	// the whole of the path either sentence carries, so neither states
-	// a path of the user's.
-	staleDiscoveryHookFact    = "a trajector hook is left in ~/.claude/settings.json and never runs; Claude Code reads the directory " + claudesettings.ConfigDirEnv + " names instead"
+	// that now names another one, and staleDiscoveryHookWhy says what
+	// leaves it unread. staleDiscoveryHookRemoved says the same about a
+	// hook this run took out. The well-known spelling of the default
+	// directory is the whole of the path any of these sentences
+	// carries, so none of them states a path of the user's.
+	staleDiscoveryHookFact    = "a trajector hook is left in ~/.claude/settings.json and never runs"
+	staleDiscoveryHookWhy     = "Claude Code reads the directory " + claudesettings.ConfigDirEnv + " names instead"
 	staleDiscoveryHookRemoved = "removed a trajector hook left in ~/.claude/settings.json; Claude Code reads the directory " + claudesettings.ConfigDirEnv + " names instead"
+
+	// fixDoctor is the command a surface names when what is wrong is
+	// looked into by this device itself. The spelling belongs to the
+	// table that stores the pause this command lifts; every surface
+	// here reads it from there.
+	fixDoctor = routing.DoctorCommand
 )
 
 // HookOutlook is what a static reading of Claude Code's configuration
@@ -170,6 +178,44 @@ func ExplainHooks(policy claudesettings.HookPolicy, shape routing.Shape) HookOut
 	}
 	outlook.consequence = proxyHalfOnly
 	return outlook
+}
+
+// RecordingStoppedNotice is the one line a running session is told
+// when nothing of it is being recorded. It names the command that says
+// why, and nothing else: a hook has one line of the user's attention
+// and must spend it on where to look, not on which of several reasons
+// holds.
+const RecordingStoppedNotice = "trajector: recording is paused on this device; run trajector status"
+
+// pauseWhyFixFor lays a device-wide pause out for a surface with room
+// for three lines: what stopped recording, and the first command that
+// ends it, with nothing else on that line. The reason owns both
+// spellings and joins them into the single sentence a surface with one
+// line prints; all that is added here is what only the reader of the
+// consent record knows — the file and the failure. A pause lifted by
+// two commands states the second as detail, which is why the fix line
+// is the first command rather than both.
+func pauseWhyFixFor(st ProjectStatus) (why, fix string) {
+	why = st.PauseReason.WhyAt(st.ConsentPath, st.ConsentErr)
+	if steps := st.PauseReason.Fix(); len(steps) > 0 {
+		fix = steps[0]
+	}
+	return why, fix
+}
+
+// pauseNextSteps is what the fix line leaves out: every command after
+// the first, each on a line of its own and in the order they run. A
+// pause with a single command has none.
+func pauseNextSteps(r routing.PauseReason) []string {
+	steps := r.Fix()
+	if len(steps) < 2 {
+		return nil
+	}
+	next := make([]string, 0, len(steps)-1)
+	for _, command := range steps[1:] {
+		next = append(next, "then run `"+command+"`")
+	}
+	return next
 }
 
 // PausedEverywhere is the sentence a surface states for a device-wide

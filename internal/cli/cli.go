@@ -86,11 +86,47 @@ type app struct {
 	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
+	// Each stream carries how much of a terminal it can show. They are
+	// detected once and apart, because a terminal is a property of the
+	// stream and not of the invocation: a user who reads the output on
+	// screen and keeps the errors in a file must find plain text in
+	// that file.
+	outStyle report.Style
+	errStyle report.Style
+}
+
+// noColorFlag turns colour off wherever it stands on the command line.
+// It is accepted for every command because a user who pipes trajector
+// into a pager does not want to learn which commands colour their
+// output.
+const noColorFlag = "--no-color"
+
+// takeAnywhere strips flag from args wherever it stands, and reports
+// whether it was there. A global flag is not an argument of the command
+// that follows it, so the command's own argument count never sees it.
+func takeAnywhere(args []string, flag string) ([]string, bool) {
+	kept := make([]string, 0, len(args))
+	found := false
+	for _, arg := range args {
+		if arg == flag {
+			found = true
+			continue
+		}
+		kept = append(kept, arg)
+	}
+	return kept, found
 }
 
 // Run executes the CLI and returns the process exit code.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	args, noColor := takeAnywhere(args, noColorFlag)
 	a := &app{stdin: stdin, stdout: stdout, stderr: stderr}
+	a.outStyle = report.DetectStyle(stdout, os.LookupEnv)
+	a.errStyle = report.DetectStyle(stderr, os.LookupEnv)
+	if noColor {
+		a.outStyle = a.outStyle.WithoutColor()
+		a.errStyle = a.errStyle.WithoutColor()
+	}
 	if len(args) == 0 {
 		usage(stderr)
 		return 2
@@ -153,6 +189,9 @@ commands:
   version      print the trajector version
   proxy run    run the local proxy (internal; started automatically)
   hook         session hook entry points (internal; injected by enable)
+
+flags:
+  --no-color   print no colour, whatever the terminal takes
 `)
 }
 
@@ -286,7 +325,7 @@ func machineAt(addr string) (*lifecycle.Machine, error) {
 
 // io hands the machine this invocation's streams.
 func (a *app) io() lifecycle.IO {
-	return lifecycle.IO{In: a.stdin, Out: a.stdout, Err: a.stderr}
+	return lifecycle.IO{In: a.stdin, Out: a.stdout, Err: a.stderr, OutStyle: a.outStyle}
 }
 
 func (a *app) fail(err error) int {
@@ -375,10 +414,7 @@ func (a *app) exit(err error) int {
 		fmt.Fprintln(a.stdout, "Agreement declined; nothing was changed.")
 		return 1
 	case errors.Is(err, lifecycle.ErrPortOccupied), errors.Is(err, lifecycle.ErrProxyUnverified):
-		fmt.Fprintf(a.stderr, "trajector: WARNING: %v\n", err)
-		if remedy := report.ProxyRemedy(err); remedy != "" {
-			fmt.Fprintf(a.stderr, "trajector: %s\n", remedy)
-		}
+		report.ProxyProblem(a.stderr, a.errStyle, err)
 		return 1
 	default:
 		return a.fail(err)

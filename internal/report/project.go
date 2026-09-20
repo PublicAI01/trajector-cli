@@ -84,15 +84,6 @@ type ProjectStatus struct {
 	WindowsSideClaude bool
 }
 
-// PauseExplanation is the device-wide pause as one sentence, with what
-// only the reader of the consent record can add to it.
-func (s ProjectStatus) PauseExplanation() string {
-	if s.PauseReason == routing.PauseConsentUnreadable && s.ConsentErr != nil {
-		return routing.ExplainUnreadableConsent(s.ConsentPath, s.ConsentErr)
-	}
-	return s.PauseReason.Explain()
-}
-
 // Consistent reports the fully healthy enabled state: a standing grant
 // with every session hook in place, in the shape the grant records —
 // and, in the shape with a base URL, a token exactly what the settings

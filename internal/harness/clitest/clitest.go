@@ -306,6 +306,28 @@ func (e *Env) RunInput(input string, args ...string) Result {
 	return Result{Exit: exit, Stdout: stdout.String(), Stderr: stderr.String()}
 }
 
+// RunToATerminal executes the root command with stdout on a character
+// device — what the CLI reads as a terminal — and stderr in a buffer,
+// so a test can observe what each stream was allowed to show. Nothing
+// written to stdout is kept: the point of the run is what the other
+// stream received.
+func (e *Env) RunToATerminal(args ...string) Result {
+	e.t.Helper()
+	terminal, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer terminal.Close()
+	if info, err := terminal.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		e.t.Skip("this platform's null device is not a character device")
+	}
+	e.t.Setenv("TERM", "xterm-256color")
+	e.t.Setenv("LC_ALL", "en_US.UTF-8")
+	var stderr bytes.Buffer
+	exit := cli.Run(args, strings.NewReader(""), terminal, &stderr)
+	return Result{Exit: exit, Stderr: stderr.String()}
+}
+
 // InProject runs the command with the working directory set to the
 // project dir, matching how users invoke project-scoped commands.
 func (e *Env) InProject(args ...string) Result {

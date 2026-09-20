@@ -247,7 +247,7 @@ func (m *Machine) pauseIfAgreementStale(io IO) {
 		// different facts, and telling the user the first when the
 		// second happened names a change that never occurred.
 		if perr := m.routes.Pause(routing.PauseConsentUnreadable); perr == nil {
-			fmt.Fprintf(io.Err, "trajector: %s\n", routing.ExplainUnreadableConsent(m.consent.Path(), err))
+			fmt.Fprintf(io.Err, "trajector: %s\n", routing.PauseConsentUnreadable.ExplainAt(m.consent.Path(), err))
 		}
 		return
 	}

@@ -37,7 +37,7 @@ func device() report.Diagnosis {
 // dashboard is what `trajector status` prints for a diagnosis.
 func dashboard(d report.Diagnosis) string {
 	var b bytes.Buffer
-	report.Dashboard(&b, d)
+	report.Dashboard(&b, report.Style{}, d)
 	return b.String()
 }
 
@@ -51,7 +51,7 @@ func doctorText(d report.Diagnosis) (int, string) {
 	report.DoctorData(f, d)
 	report.DoctorEnvironment(f)
 	var b bytes.Buffer
-	f.Render(&b)
+	f.Render(&b, report.Style{})
 	return f.Problems(), b.String()
 }
 

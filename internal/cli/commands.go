@@ -41,10 +41,21 @@ func (a *app) disableCmd(args []string) int {
 	})
 }
 
+// statusCmd prints the dashboard. A dashboard that named something
+// broken exits non-zero: a user who runs status from a script must be
+// able to tell a device that records from one that stopped, without
+// reading the text.
 func (a *app) statusCmd(args []string) int {
-	return a.with("usage: trajector status", args, 0, func(m *lifecycle.Machine, cwd string) error {
-		return m.Status(cwd, a.io())
+	problems := 0
+	exit := a.with("usage: trajector status", args, 0, func(m *lifecycle.Machine, cwd string) error {
+		var err error
+		problems, err = m.Status(cwd, a.io())
+		return err
 	})
+	if exit == 0 && problems > 0 {
+		return 1
+	}
+	return exit
 }
 
 func (a *app) doctorCmd(args []string) int {

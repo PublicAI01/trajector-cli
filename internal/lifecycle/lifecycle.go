@@ -26,6 +26,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/gitsnapshot"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
@@ -77,6 +78,13 @@ type IO struct {
 	In  io.Reader
 	Out io.Writer
 	Err io.Writer
+	// OutStyle is how much of a terminal Out can show. It is named for
+	// the one stream it was detected from: what Err can show is that
+	// stream's own answer, and nothing the machine writes there is
+	// styled. Its zero value is plain ASCII, so a caller that hands the
+	// machine a buffer — every test does — reads text with nothing in
+	// it that a terminal would have to interpret.
+	OutStyle report.Style
 }
 
 // askYesNo puts one yes/no question to the user. Empty input takes

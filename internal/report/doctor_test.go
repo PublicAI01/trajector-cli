@@ -1,14 +1,18 @@
 package report_test
 
 import (
+	"bytes"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -33,7 +37,7 @@ func TestDoctorReportsAnUnreadableTokenStore(t *testing.T) {
 	if problems == 0 {
 		t.Error("doctor found no problem with an unreadable token store")
 	}
-	wants(t, "doctor", out, "token store could not be read", "Pairing state is unknown")
+	wants(t, "doctor", out, "token store could not be read", "pairing state is unknown")
 }
 
 // An optional setting left off is not a fault, so doctor never
@@ -205,8 +209,8 @@ func TestStatusAndDoctorPresentAFullSpoolAlike(t *testing.T) {
 	}
 	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
 		wants(t, surface, out,
-			"not writable, so recording is stopped",
-			"The spool is full. Run `trajector upload --force`")
+			"recording is stopped: the capture spool is full",
+			"fix:  trajector upload --force")
 	}
 }
 
@@ -221,7 +225,7 @@ func TestStatusAndDoctorPresentAnUnwritableSpoolAlike(t *testing.T) {
 	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
 		wants(t, surface, out, "not writable, so recording is stopped")
 		// No quota remedy for a spool that is not full.
-		rejects(t, surface, out, "The spool is full")
+		rejects(t, surface, out, "the capture spool is full", "trajector upload --force")
 	}
 }
 
@@ -249,5 +253,83 @@ func TestStatusAndDoctorReportAFullSpoolBesideARefusedEndpoint(t *testing.T) {
 			// Doctor states the clause in its own casing, so both
 			// surfaces are held to the clause itself.
 			"paused since 2026-08-30T14:32:00Z until 2026-08-30T14:33:00Z: the service refused this client access")
+	}
+}
+
+// Everything a surface offers as a fix, in every shape a device can
+// reach one: a pause of each kind, a store and a spool that refuse, a
+// quarantine, a project short a hook, and a port this device could not
+// take.
+func everyFixOffered() []string {
+	var printed []string
+	surfaces := func(d report.Diagnosis) {
+		f := &report.Findings{}
+		report.DoctorDevice(f, d)
+		report.DoctorProject(f, d)
+		report.DoctorData(f, d)
+		var b bytes.Buffer
+		f.Render(&b, report.Style{})
+		printed = append(printed, b.String(), dashboard(d))
+	}
+	for _, reason := range routing.AllPauseReasons() {
+		d := enabledDevice()
+		d.Project.PauseReason = reason
+		d.Project.ConsentPath, d.Project.ConsentErr = "/home/dev/consent.json", errors.New("unexpected end of JSON input")
+		surfaces(d)
+	}
+	unreadableStore := device()
+	unreadableStore.TokenStore.Err = errors.New("the keyring is locked")
+	surfaces(unreadableStore)
+
+	fullSpool := device()
+	fullSpool.Spool.Usage, fullSpool.Spool.WritableErr = fullSpool.Spool.Quota, spool.ErrQuotaExceeded
+	surfaces(fullSpool)
+
+	quarantined := device()
+	quarantined.Rejected = []upload.RejectedBatch{{BatchID: "b-1", Records: 2}}
+	surfaces(quarantined)
+
+	shortAHook := enabledDevice()
+	shortAHook.Project.Injected = true
+	shortAHook.Project.Hooks = claudesettings.InstalledHooks{claudesettings.HookEnsureProxy}
+	shortAHook.StaleDiscoveryHook = true
+	shortAHook.Project.WindowsSideClaude = true
+	surfaces(shortAHook)
+
+	foreignPort := device()
+	foreignPort.Proxy.Holder, foreignPort.Proxy.Reason = proxylife.HolderForeign, proxylife.ErrPortOccupied
+	f := &report.Findings{}
+	f.ProxyProblem(foreignPort.Proxy.Reason)
+	var b bytes.Buffer
+	f.Render(&b, report.Style{})
+	printed = append(printed, b.String(), dashboard(foreignPort))
+
+	var fixes []string
+	for _, out := range printed {
+		for _, line := range strings.Split(out, "\n") {
+			if command, ok := strings.CutPrefix(line, "    fix:  "); ok {
+				fixes = append(fixes, command)
+			}
+		}
+	}
+	return fixes
+}
+
+func TestEveryFixLineIsACommandAUserCanCopyWhole(t *testing.T) {
+	fixes := everyFixOffered()
+	if len(fixes) < len(routing.AllPauseReasons()) {
+		t.Fatalf("%d fix line(s) offered, want at least one for every pause", len(fixes))
+	}
+	for _, fix := range fixes {
+		command := fix
+		if key, rest, ok := strings.Cut(fix, "="); ok && !strings.Contains(key, " ") {
+			_, command, _ = strings.Cut(rest, " ")
+		}
+		if !strings.HasPrefix(command, "trajector ") {
+			t.Errorf("fix line %q, want the command itself or one environment variable before it", fix)
+		}
+		if strings.ContainsAny(fix, "`()") {
+			t.Errorf("fix line %q, want nothing on it but the command", fix)
+		}
 	}
 }

@@ -15,123 +15,176 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
-// Dashboard prints the device dashboard: pairing, the current project's
-// consent, the proxy, the spool, uploads, and what the service last
-// said. It renders a Diagnosis and nothing else — it never repairs
-// anything, always leaves the fixing to doctor, and never starts a
-// proxy just to look at one. A store that could not be read is that
-// section's warning, never a reason to cut the sections after it.
-func Dashboard(w io.Writer, d Diagnosis) {
+// Dashboard prints the device dashboard: the one-line verdict, then
+// pairing, the current project's consent, the proxy, the spool,
+// uploads, and what the service last said. It renders a Diagnosis and
+// nothing else — it never repairs anything, always leaves the fixing to
+// doctor, and never starts a proxy just to look at one. A store that
+// could not be read is that section's own line, never a reason to cut
+// the sections after it. It returns how many lines said something
+// stopped working, which is what the command exits on.
+func Dashboard(w io.Writer, style Style, d Diagnosis) int {
+	fmt.Fprintln(w, Verdict(Recording(d), d.EnabledProjects))
 	fmt.Fprintf(w, "trajector %s\n", d.Version)
-	st := d.Project
 
-	fmt.Fprintln(w, "\nDevice")
+	sections := []*section{
+		deviceSection(d),
+		projectSection(d),
+		proxySection(d),
+		spoolSection(d),
+		uploadsSection(d),
+	}
+	if d.Handshake.Notice != "" {
+		service := &section{name: "Service"}
+		service.linef("Notice from the service: %s", d.Handshake.Notice)
+		sections = append(sections, service)
+	}
+	errors := 0
+	for _, s := range sections {
+		s.render(w, style)
+		errors += s.errors()
+	}
+	return errors
+}
+
+// deviceSection states what holds for every project on this machine:
+// whether the device is paired, whether a pause stops all of them, and
+// a hook of trajector's that is left where nothing reads it.
+func deviceSection(d Diagnosis) *section {
+	s := &section{name: "Device"}
 	switch {
 	case d.TokenStore.Err != nil:
-		fmt.Fprintln(w, "  WARNING: the device token store could not be read. Run `trajector doctor`.")
+		s.problem(tokenStoreUnreadableHeadline, tokenStoreUnreadableWhy(d.TokenStore.Err), tokenStoreUnreadableFix)
 	case d.TokenStore.Paired:
-		fmt.Fprintln(w, "  Signed in.")
+		s.linef("Signed in.")
 	default:
-		fmt.Fprintln(w, "  Not signed in. Run `trajector login` to pair this device.")
+		s.linef("Not signed in. Run `trajector login` to pair this device.")
 	}
-	if st.PauseReason != "" {
-		fmt.Fprintf(w, "  %s\n", PausedEverywhere(st.PauseExplanation()))
+	if d.Project.PauseReason != "" {
+		why, fix := pauseWhyFixFor(d.Project)
+		s.problem(pausedEverywhere, why, fix)
+		for _, next := range pauseNextSteps(d.Project.PauseReason) {
+			s.detail("%s", next)
+		}
 	}
 	if d.StaleDiscoveryHook {
-		fmt.Fprintf(w, "  WARNING: %s. Run `trajector doctor` to remove it.\n", staleDiscoveryHookFact)
+		s.warnFix(staleDiscoveryHookFact, staleDiscoveryHookWhy, fixDoctor)
 	}
+	return s
+}
 
-	fmt.Fprintf(w, "\nProject %s\n", st.Root)
+// projectSection states what holds for the project status was run in.
+func projectSection(d Diagnosis) *section {
+	st := d.Project
+	s := &section{name: "Project " + st.Root}
 	switch {
 	case st.InjectionAgrees:
 		if st.PauseReason != "" {
-			fmt.Fprintln(w, "  Contributing; recording is paused for now (see Device above).")
+			s.linef("Contributing; recording is paused for now (see Device above).")
 		} else {
-			fmt.Fprintln(w, "  Contributing; recording is on for this project.")
+			s.linef("Contributing; recording is on for this project.")
+		}
+		if st.WindowsSideClaude {
+			s.warnFix(windowsSideClaudeFact, windowsSideClaudeWhy, fixDoctor)
+			s.detail("%s", windowsSideWayOut)
+		}
+		if st.MissingSessionHooks() {
+			s.problem(sessionHooksMissingHeadline, sessionHooksMissingWhy(st.SettingsPath()), fixDoctor)
 		}
 		for _, line := range projectLines(d) {
-			fmt.Fprintf(w, "  %s\n", line)
+			s.linef("%s", line)
+		}
+		if d.SessionFiles.Err != nil {
+			s.warnf("the session file registry could not be read: %v. Run `trajector doctor`.", d.SessionFiles.Err)
 		}
 		for _, line := range optionalSettingLines(d.OptionalSettings) {
-			fmt.Fprintf(w, "  %s\n", line)
+			s.linef("%s", line)
 		}
 	case !st.Enabled && !st.Injected:
-		fmt.Fprintln(w, "  Not enabled. Run `trajector enable` to contribute from this project.")
+		s.linef("Not enabled. Run `trajector enable` to contribute from this project.")
 	default:
-		fmt.Fprintln(w, "  WARNING: the injected settings and the routing table disagree. Run `trajector doctor`.")
+		s.warnf("the injected settings and the routing table disagree. Run `trajector doctor`.")
 	}
+	return s
+}
 
-	fmt.Fprintln(w, "\nProxy")
+// proxySection states who holds the proxy port and what the running
+// proxy has recorded since it started.
+func proxySection(d Diagnosis) *section {
+	s := &section{name: "Proxy"}
 	switch d.Proxy.Holder {
 	case proxylife.HolderOurs:
 		h := d.Proxy.Health
 		up := time.Duration(h.UptimeSeconds) * time.Second
-		fmt.Fprintf(w, "  Running at %s: version %s, up %s.\n", d.Proxy.Addr, h.Version, up)
+		s.linef("Running at %s: version %s, up %s.", d.Proxy.Addr, h.Version, up)
 		// These counters live in the running proxy's memory, so they
 		// begin at the uptime printed on the line above — not at
 		// midnight. The proxy restarts often enough (idle exit, version
 		// handover, reboot) that calling them a day's work made the
 		// number read low, in the one direction a user reads as "it is
 		// not recording". They are named for what they actually count.
-		fmt.Fprintf(w, "  Recorded since it started: %d (SSE degraded: %d, dropped: %d).\n",
+		s.linef("Recorded since it started: %d (SSE degraded: %d, dropped: %d).",
 			h.RecordedToday, h.SSEDegradedToday, h.CapturesDropped)
 		if n := len(h.RecentRecordingErrors); n > 0 {
-			fmt.Fprintf(w, "  Recent recording errors: %d (last: %s)\n", n, h.RecentRecordingErrors[n-1])
+			s.warnf("Recent recording errors: %d (last: %s)", n, h.RecentRecordingErrors[n-1])
 		}
 	case proxylife.HolderForeign:
-		fmt.Fprintf(w, "  WARNING: %v.\n", d.Proxy.Reason)
-		if remedy := ProxyRemedy(d.Proxy.Reason); remedy != "" {
-			fmt.Fprintf(w, "  %s\n", remedy)
-		}
+		s.take(proxyProblem(d.Proxy.Reason))
 	default:
 		if d.ProxyIdleBetweenSessions {
-			fmt.Fprintln(w, "  Not running; on this device it runs only while a session is open, because every enabled project records without it.")
+			s.linef("Not running; on this device it runs only while a session is open, because every enabled project records without it.")
 		} else {
-			fmt.Fprintln(w, "  Not running; it starts on demand with the next session.")
+			s.linef("Not running; it starts on demand with the next session.")
 		}
 	}
+	return s
+}
 
-	fmt.Fprintln(w, "\nSpool")
+// spoolSection states how much of the spool is used and every reason it
+// would refuse a write.
+func spoolSection(d Diagnosis) *section {
+	s := &section{name: "Spool"}
 	switch {
 	case d.Spool.OpenErr != nil:
-		fmt.Fprintf(w, "  WARNING: %s.\n", spoolUnusableHeadline(d.Spool))
-		fmt.Fprintln(w, "  Run `trajector doctor`.")
+		s.problem(trimPeriod(spoolUnusableHeadline(d.Spool)), "nothing can be recorded while the spool cannot be read", fixDoctor)
 	case d.Spool.WritableErr != nil:
-		fmt.Fprintf(w, "  %s of %s used.\n", platform.HumanBytes(d.Spool.Usage), platform.HumanBytes(d.Spool.Quota))
-		fmt.Fprintf(w, "  WARNING: %s.\n", spoolUnwritableHeadline(d.Spool.WritableErr))
+		s.linef("%s of %s used.", platform.HumanBytes(d.Spool.Usage), platform.HumanBytes(d.Spool.Quota))
 		if d.Spool.full() {
-			fmt.Fprintf(w, "  %s\n", spoolFullRemedy)
+			s.problem(spoolFullHeadline, spoolFullWhy, spoolFullFix)
 		} else {
-			fmt.Fprintln(w, "  Run `trajector doctor`.")
+			s.problem(trimPeriod(spoolUnwritableHeadline(d.Spool.WritableErr)), "the spool refused a write, so nothing is recorded", fixDoctor)
 		}
 	default:
-		fmt.Fprintf(w, "  %s of %s used.\n", platform.HumanBytes(d.Spool.Usage), platform.HumanBytes(d.Spool.Quota))
+		s.linef("%s of %s used.", platform.HumanBytes(d.Spool.Usage), platform.HumanBytes(d.Spool.Quota))
 	}
-
 	if d.Spool.OpenErr == nil && d.Spool.Held.Records > 0 {
-		fmt.Fprintf(w, "  %s.\n", HeldHeadline(d.Spool.Held))
+		s.linef("%s.", heldHeadline(d.Spool.Held))
 	}
+	return s
+}
 
-	fmt.Fprintln(w, "\nUploads")
+// uploadsSection states what left this machine, what waits, and every
+// reason nothing is leaving right now.
+func uploadsSection(d Diagnosis) *section {
+	s := &section{name: "Uploads"}
 	if r := d.Uploads.LastUpload; r != nil {
-		fmt.Fprintf(w, "  Last upload: %d record(s) (%s) at %s.\n",
+		s.linef("Last upload: %d record(s) (%s) at %s.",
 			r.Records, platform.HumanBytes(r.Bytes), r.At.UTC().Format(time.RFC3339))
 	} else {
-		fmt.Fprintln(w, "  Never uploaded.")
+		s.linef("Never uploaded.")
 	}
 	if d.Uploads.LastError != "" {
-		fmt.Fprintf(w, "  Last error: %s (%s).\n", d.Uploads.LastError, d.Uploads.LastErrorAt.UTC().Format(time.RFC3339))
+		s.linef("Last error: %s (%s).", d.Uploads.LastError, d.Uploads.LastErrorAt.UTC().Format(time.RFC3339))
 	}
 	if d.Spool.OpenErr == nil {
-		fmt.Fprintf(w, "  %s\n", recordsWaitingLine(d.Spool))
+		s.linef("%s", recordsWaitingLine(d.Spool))
 	}
 	switch {
 	case d.RejectedErr != nil:
-		fmt.Fprintf(w, "  WARNING: %s.\n", rejectedUnreadableHeadline(d))
-		fmt.Fprintln(w, "  Run `trajector doctor`.")
+		s.problem(trimPeriod(rejectedUnreadableHeadline(d)), "quarantined batches cannot be listed, so what waits there is unknown", fixDoctor)
 	case len(d.Rejected) > 0:
-		fmt.Fprintf(w, "  WARNING: %s.\n", quarantineHeadline(d.Rejected))
-		fmt.Fprintln(w, "  Run `trajector doctor` to inspect them, then requeue or discard them.")
+		s.problem(quarantineHeadline(d.Rejected), quarantineWhy, quarantineFix)
+		s.detail("%s", quarantineAllNote)
 	}
 
 	// Every reason uploads are held back is printed here, in the order
@@ -139,20 +192,16 @@ func Dashboard(w io.Writer, d Diagnosis) {
 	// The service's own words come between them: they may say why, or by
 	// when, and a user who reads only one more line should read the
 	// reason rather than the remedy.
-	for _, s := range d.Standings {
-		fmt.Fprintf(w, "  %s\n", s.Explain())
-		if s.Message != "" {
-			fmt.Fprintf(w, "  %s\n", ServiceWords(s.Message))
+	for _, st := range d.Standings {
+		s.linef("%s", st.Explain())
+		if st.Message != "" {
+			s.linef("%s", ServiceWords(st.Message))
 		}
-		if remedy := s.Remedy(); remedy != "" {
-			fmt.Fprintf(w, "  %s\n", remedy)
+		if remedy := st.Remedy(); remedy != "" {
+			s.linef("%s", remedy)
 		}
 	}
-
-	if d.Handshake.Notice != "" {
-		fmt.Fprintln(w, "\nService")
-		fmt.Fprintf(w, "  Notice from the service: %s\n", d.Handshake.Notice)
-	}
+	return s
 }
 
 // projectLines follows the contributing line with everything else
@@ -164,9 +213,6 @@ func Dashboard(w io.Writer, d Diagnosis) {
 func projectLines(d Diagnosis) []string {
 	st := d.Project
 	var lines []string
-	if st.WindowsSideClaude {
-		lines = append(lines, "WARNING: "+windowsSideClaudeFact+". Run `trajector doctor`.")
-	}
 	if st.Shape != routing.WithoutProxy {
 		// The upstream is where the proxy forwards to; a project whose
 		// traffic never reaches the proxy has none to speak of.
@@ -180,9 +226,6 @@ func projectLines(d Diagnosis) []string {
 	lines = append(lines, ShapeNotice(st.Shape))
 	lines = append(lines, UnwitnessedReward)
 	lines = append(lines, hookJudgementLines(d)...)
-	if st.MissingSessionHooks() {
-		lines = append(lines, sessionHooksMissingLine(st.SettingsPath()))
-	}
 	lines = append(lines, sessionFileLines(d.SessionFiles)...)
 	return append(lines, signalLines(d)...)
 }
@@ -256,10 +299,14 @@ func hookJudgementLines(d Diagnosis) []string {
 	return ExplainHooks(*d.HookPolicy, d.Project.Shape).Lines()
 }
 
-// sessionHooksMissingLine says that an injection made before a hook
-// existed lacks it, and names the command that adds it.
-func sessionHooksMissingLine(settingsPath string) string {
-	return fmt.Sprintf("A session hook is missing from %s; run `trajector doctor` to add it.", settingsPath)
+// An injection made before a hook existed lacks it, which is stated in
+// the three parts every problem with one command is stated in. The path
+// belongs in the why: it says which file is short a hook, and the fix
+// line carries the command alone.
+const sessionHooksMissingHeadline = "a session hook is missing from this project's injected settings"
+
+func sessionHooksMissingWhy(settingsPath string) string {
+	return fmt.Sprintf("%s was injected before this hook existed, so part of this project is not reported", settingsPath)
 }
 
 // sessionFileLines is the registry's account of the project's session
@@ -269,7 +316,7 @@ func sessionHooksMissingLine(settingsPath string) string {
 // line names a session or a session file.
 func sessionFileLines(s SessionFilesState) []string {
 	if s.Err != nil {
-		return []string{fmt.Sprintf("WARNING: the session file registry could not be read: %v. Run `trajector doctor`.", s.Err)}
+		return nil
 	}
 	var lines []string
 	if s.Sessions == 0 {

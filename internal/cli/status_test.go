@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 func TestStatusRunsOnAFreshDevice(t *testing.T) {
@@ -93,5 +94,55 @@ func TestStatusWarnsAboutTheHookLeftInTheDirectoryClaudeCodeNoLongerReads(t *tes
 	}
 	if !strings.Contains(string(data), "hook discovery") {
 		t.Errorf("settings file = %s, want status to have removed nothing", data)
+	}
+}
+
+// TestStatusLeadsWithTheVerdictAndExitsOnWhatIsBroken pins the two
+// things a caller reads without parsing the sections: the first line,
+// and the exit code.
+func TestStatusLeadsWithTheVerdictAndExitsOnWhatIsBroken(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+
+	got := e.InProject("status")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d, want 0 on a device with nothing broken (stderr: %q)", got.Exit, got.Stderr)
+	}
+	if first, _, _ := strings.Cut(got.Stdout, "\n"); first != "Recording: off in this project" {
+		t.Errorf("first line = %q, want the verdict", first)
+	}
+
+	e.Sandbox().Pause(proxytest.PauseSignedOut)
+	got = e.InProject("status")
+	if got.Exit != 1 {
+		t.Errorf("exit = %d, want 1 while a pause stops recording (stdout: %q)", got.Exit, got.Stdout)
+	}
+	if first, _, _ := strings.Cut(got.Stdout, "\n"); first != "Recording: PAUSED on this device" {
+		t.Errorf("first line = %q, want the verdict", first)
+	}
+	if !strings.Contains(got.Stdout, "error: ") || !strings.Contains(got.Stdout, "fix:  trajector login") {
+		t.Errorf("stdout = %q, want the pause stated as an error with its one command", got.Stdout)
+	}
+}
+
+// Whatever the terminal, nothing written to a pipe may need
+// interpreting: a status output piped into a file is read by people and
+// by scripts, and an escape sequence would be read by neither.
+func TestStatusWritesNoEscapeSequenceToAPipe(t *testing.T) {
+	e := clitest.New(t)
+	e.Paired()
+	e.Sandbox().Pause(proxytest.PauseSignedOut)
+
+	for _, args := range [][]string{{"status"}, {"status", "--no-color"}} {
+		got := e.InProject(args...)
+		if strings.ContainsRune(got.Stdout, '\x1b') {
+			t.Errorf("%v: stdout = %q, want no escape sequence", args, got.Stdout)
+		}
+		for _, r := range got.Stdout {
+			if r > 0x7e {
+				t.Errorf("%v: stdout = %q, want pure ASCII", args, got.Stdout)
+				break
+			}
+		}
 	}
 }

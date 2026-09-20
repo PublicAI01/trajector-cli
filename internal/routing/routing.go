@@ -7,6 +7,7 @@ package routing
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,9 +46,10 @@ const (
 )
 
 // PauseReason is the device-wide pause written into the routing table.
-// Exactly four values are legal; each writer resumes only its own, so
-// accepting a new agreement can never silently lift a signed-out pause.
-// The machine is the only thing that sets and clears them.
+// The legal values are the ones AllPauseReasons returns; each writer
+// resumes only its own, so accepting a new agreement can never silently
+// lift a signed-out pause. The machine is the only thing that sets and
+// clears them.
 type PauseReason string
 
 const (
@@ -70,43 +72,99 @@ const (
 	PauseRedactionDrift PauseReason = "redaction_drift"
 )
 
-// A redaction-drift pause is lifted by two commands in order, and both
-// halves of that promise are spelled from these two names: the build is
-// replaced first, and only the second command reads the session files
-// and decides whether the new build covers them.
+// DoctorCommand is the command that looks into this device and repairs
+// what it can. Every surface that sends a user to it reads this one
+// spelling, and it is spelled here because the pause this table stores
+// is lifted by it.
+const DoctorCommand = "trajector doctor"
+
+// The commands that lift a pause are named once here. A redaction-drift
+// pause is lifted by two of them in order, and both halves of that
+// promise are spelled from these names: the build is replaced first,
+// and only the second command reads the session files and decides
+// whether the new build covers them. consentWayOut writes a new consent
+// record, and so is the one way out of a record that cannot be read.
 const (
+	signedOutWayOut = "trajector login"
+	consentWayOut   = "trajector enable"
 	driftFirstStep  = "trajector upgrade"
-	driftSecondStep = "trajector doctor"
+	driftSecondStep = DoctorCommand
 )
 
-// consentWayOut is the command that writes a new consent record, and
-// so the one way out of a record that cannot be read.
-const consentWayOut = "trajector enable"
-
-// ExplainUnreadableConsent is the consent_unreadable sentence for a
-// surface that read the record itself. The stored reason is one word:
-// only the reader of the file can name the file and the failure, so
-// the sentence is completed here rather than guessed at by Explain.
-func ExplainUnreadableConsent(path string, err error) string {
-	return "the consent record at " + path + " could not be read (" + err.Error() + "); run `" + consentWayOut + "` to accept the agreement again"
+// AllPauseReasons returns every pause value this build knows, in the
+// order a surface that answers for all of them should read. It is what
+// makes "the legal values" countable: a new reason is one constant, one
+// entry here, and every surface that enumerates picks it up.
+func AllPauseReasons() []PauseReason {
+	return []PauseReason{
+		PauseSignedOut, PauseConsentReconfirm, PauseConsentUnreadable, PauseRedactionDrift,
+	}
 }
 
-// Explain returns the pause as one user-readable sentence naming the
-// command that lifts it. A reason this build does not know (written by
-// a newer one) is returned verbatim rather than hidden.
-func (r PauseReason) Explain() string {
+// Why states what stopped recording and nothing about how to end it: a
+// surface with room for three lines prints this one and the commands
+// separately. A reason this build does not know (written by a newer
+// one) is returned verbatim rather than hidden.
+func (r PauseReason) Why() string {
 	switch r {
 	case PauseSignedOut:
-		return "this device is signed out; run `trajector login` to resume recording"
+		return "this device is signed out"
 	case PauseConsentReconfirm:
-		return "the data agreement changed; run `trajector enable` to reconfirm it"
+		return "the data agreement changed and has not been reconfirmed"
 	case PauseConsentUnreadable:
-		return "the consent record could not be read; run `" + consentWayOut + "` to accept the agreement again"
+		return "the consent record could not be read"
 	case PauseRedactionDrift:
-		return "session records changed shape in a way this build's redaction does not cover; run `" + driftFirstStep + "`, then `" + driftSecondStep + "`"
+		return "session records changed shape in a way this build's redaction does not cover"
 	default:
 		return string(r)
 	}
+}
+
+// WhyAt is Why with what only the surface that read the consent record
+// can add: the file and the failure. The stored reason is one word, so
+// the sentence is completed by its reader rather than guessed at here.
+// Every other reason needs nothing added and answers as Why does.
+func (r PauseReason) WhyAt(path string, err error) string {
+	if r != PauseConsentUnreadable || err == nil {
+		return r.Why()
+	}
+	return "the consent record at " + path + " could not be read (" + err.Error() + ")"
+}
+
+// Fix returns the commands that lift the pause, in the order they must
+// be run. Each element is a whole command line the user can copy: a
+// surface with room for one command prints the first and states the
+// rest as detail. An unknown reason names no command.
+func (r PauseReason) Fix() []string {
+	switch r {
+	case PauseSignedOut:
+		return []string{signedOutWayOut}
+	case PauseConsentReconfirm, PauseConsentUnreadable:
+		return []string{consentWayOut}
+	case PauseRedactionDrift:
+		return []string{driftFirstStep, driftSecondStep}
+	default:
+		return nil
+	}
+}
+
+// Explain returns the pause as one user-readable sentence naming the
+// commands that lift it: what a surface with room for a single line
+// prints. It is Why and Fix joined, so the one-line form and the
+// three-line form cannot come to say different things.
+func (r PauseReason) Explain() string { return explain(r.Why(), r.Fix()) }
+
+// ExplainAt is Explain for a surface that read the consent record
+// itself, in the sentence Explain uses.
+func (r PauseReason) ExplainAt(path string, err error) string {
+	return explain(r.WhyAt(path, err), r.Fix())
+}
+
+func explain(why string, fix []string) string {
+	if len(fix) == 0 {
+		return why
+	}
+	return why + "; run `" + strings.Join(fix, "`, then `") + "`"
 }
 
 // ExplainAfterUpgrade returns what this pause still owes the user once

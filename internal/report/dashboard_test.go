@@ -31,7 +31,7 @@ func TestStatusOnAFreshDevice(t *testing.T) {
 		"0 B of 2.0 GiB used",
 		"Never uploaded",
 	)
-	rejects(t, "status", out, "WARNING")
+	rejects(t, "status", out, "error:", "warning:")
 }
 
 func TestStatusShowsAnEnabledProjectAndRunningProxy(t *testing.T) {
@@ -82,8 +82,8 @@ func TestStatusExplainsADeviceWidePause(t *testing.T) {
 		reason routing.PauseReason
 		want   []string
 	}{
-		{"signed out", routing.PauseSignedOut, []string{"paused", "`trajector login`"}},
-		{"agreement needs reconfirming", routing.PauseConsentReconfirm, []string{"paused", "`trajector enable`"}},
+		{"signed out", routing.PauseSignedOut, []string{"paused", "fix:  trajector login"}},
+		{"agreement needs reconfirming", routing.PauseConsentReconfirm, []string{"paused", "fix:  trajector enable"}},
 		// A pause reason this build does not know (say, written by a
 		// newer one) must still be shown, not hidden.
 		{"unrecognized", "some_future_reason", []string{"some_future_reason"}},
@@ -104,7 +104,7 @@ func TestStatusWarnsWhenInjectionAndRoutingDisagree(t *testing.T) {
 	d.Project.Token = "tok-orphaned-grant"
 	out := dashboard(d)
 
-	wants(t, "status", out, "WARNING", "`trajector doctor`")
+	wants(t, "status", out, "warning: ", "`trajector doctor`")
 }
 
 func TestStatusReportsAForeignPortHolder(t *testing.T) {
@@ -112,7 +112,7 @@ func TestStatusReportsAForeignPortHolder(t *testing.T) {
 	d.Proxy = foreign(proxylife.ErrPortOccupied)
 	out := dashboard(d)
 
-	wants(t, "status", out, "WARNING", "not the trajector proxy", "find and stop the process")
+	wants(t, "status", out, "error: ", "not the trajector proxy", "fix:  trajector doctor", "find and stop the process")
 	rejects(t, "status", out, "Running at")
 }
 
@@ -121,7 +121,7 @@ func TestStatusPresentsAnUnverifiableProxyAsAuthentication(t *testing.T) {
 	d.Proxy = foreign(proxylife.ErrProxyUnverified)
 	out := dashboard(d)
 
-	wants(t, "status", out, "WARNING", "could not verify the proxy", "authentication problem")
+	wants(t, "status", out, "error: ", "could not verify the proxy", "authentication problem")
 	// Never advise hunting a process that may be our own proxy.
 	rejects(t, "status", out, "find and stop the process")
 }
@@ -151,8 +151,8 @@ func TestStatusWarnsAboutRejectedBatches(t *testing.T) {
 	out := dashboard(d)
 
 	wants(t, "status", out,
-		"WARNING", "2 record(s)", "1 rejected batch(es)",
-		"not be retried automatically", "`trajector doctor`")
+		"error: ", "2 record(s)", "1 rejected batch(es)",
+		"not be retried automatically", "fix:  trajector doctor requeue")
 }
 
 func TestStatusCountsWaitingRawcallsOnADeviceThatRecordsOnlyThroughTheProxy(t *testing.T) {
@@ -190,7 +190,7 @@ func TestStatusRendersEverySectionWhenTheSpoolCannotOpen(t *testing.T) {
 
 	wants(t, "status", out,
 		"the capture spool at "+spoolDir+" is not usable",
-		"Uploads", "Never uploaded", "scheduled maintenance on Friday", "`trajector doctor`")
+		"Uploads", "Never uploaded", "scheduled maintenance on Friday", "fix:  trajector doctor")
 	// No writability verdict for a spool that never opened.
 	rejects(t, "status", out, "full", "not writable")
 }
@@ -211,7 +211,7 @@ func TestStatusWarnsWhenTheRejectedBatchesCannotBeRead(t *testing.T) {
 
 	wants(t, "status", out,
 		"the rejected batches at "+rejectedDir+" could not be read",
-		"`trajector doctor`")
+		"fix:  trajector doctor")
 }
 
 // Every reason uploads are held back reads the same way: what is true,

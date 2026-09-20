@@ -35,13 +35,18 @@ func errString(err error) string {
 // everything else in a Diagnosis is identities, counters, timestamps,
 // and reasons.
 type diagnosisWire struct {
-	Project     projectWire    `json:"project"`
-	Proxy       proxyWire      `json:"proxy"`
-	Spool       spoolWire      `json:"spool"`
-	Uploads     upload.State   `json:"uploads"`
-	Rejected    []rejectedWire `json:"rejected"`
-	RejectedErr string         `json:"rejected_err,omitempty"`
-	Handshake   any            `json:"handshake"`
+	// EnabledProjects counts the projects contributing from the device
+	// the bundle was written on. It is the one number that says how
+	// much of this device records, which a bundle holding the current
+	// project alone cannot answer.
+	EnabledProjects int            `json:"enabled_projects"`
+	Project         projectWire    `json:"project"`
+	Proxy           proxyWire      `json:"proxy"`
+	Spool           spoolWire      `json:"spool"`
+	Uploads         upload.State   `json:"uploads"`
+	Rejected        []rejectedWire `json:"rejected"`
+	RejectedErr     string         `json:"rejected_err,omitempty"`
+	Handshake       any            `json:"handshake"`
 	// Standings is every reason uploads were held back when the bundle
 	// was written, omitted when they were flowing. Support reads it to
 	// tell a paused uploader apart from a broken one — both look like
@@ -75,7 +80,12 @@ type projectWire struct {
 	AgreementVersion string      `json:"agreement_version"`
 	ConsentState     string      `json:"consent_state"`
 	PauseReason      string      `json:"pause_reason"`
-	WindowsSide      bool        `json:"windows_side_claude"`
+	// PauseExplanation is the pause as the sentence the other surfaces
+	// say it, completed with what only the reader of the consent record
+	// can add. The stored reason is one word, so a bundle carrying that
+	// word alone cannot name the file that failed or how it failed.
+	PauseExplanation string `json:"pause_explanation,omitempty"`
+	WindowsSide      bool   `json:"windows_side_claude"`
 	// HookPolicy is present for an enabled project: the static
 	// reading of whether its hooks load, and the setting that decided
 	// against it.
@@ -206,6 +216,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 		proxy.Health = d.Proxy.Health
 	}
 	return mustJSON(diagnosisWire{
+		EnabledProjects: d.EnabledProjects,
 		Project: projectWire{
 			Root:             d.Project.Root,
 			ProjectIDHash:    d.Project.Hash,
@@ -220,6 +231,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			AgreementVersion: d.Project.AgreementVersion,
 			ConsentState:     string(d.Project.ConsentState),
 			PauseReason:      string(d.Project.PauseReason),
+			PauseExplanation: d.Project.PauseReason.ExplainAt(d.Project.ConsentPath, d.Project.ConsentErr),
 			NoProxy:          d.Project.Shape == routing.WithoutProxy,
 			WindowsSide:      d.Project.WindowsSideClaude,
 			HookPolicy:       hookPolicyValue(d),

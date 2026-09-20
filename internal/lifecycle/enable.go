@@ -301,6 +301,7 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 	fmt.Fprintln(io.Out, report.ShapeNotice(shape))
 	fmt.Fprintln(io.Out, report.UnwitnessedReward)
 	fmt.Fprintln(io.Out, contributesNow)
+	fmt.Fprintln(io.Out, m.verdict(st.Root))
 	return nil
 }
 

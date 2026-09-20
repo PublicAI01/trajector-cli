@@ -99,7 +99,7 @@ func TestUpstreamDriftLeavesAVisibleTrace(t *testing.T) {
 	}
 
 	e.stdout.Reset()
-	if err := e.machine().Status(e.project, e.io()); err != nil {
+	if _, err := e.machine().Status(e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if out := e.stdout.String(); !strings.Contains(out, "moved from "+official) {

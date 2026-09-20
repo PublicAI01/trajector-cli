@@ -131,8 +131,11 @@ type SessionFilesState struct {
 // full reports a spool that refuses writes because usage reached the
 // quota, the one writability failure with a distinct remedy. It reads
 // the refusal the spool itself returned rather than re-deriving the
-// comparison, so the two surfaces that print a refusal can never
-// disagree with the spool about why a write would be refused.
+// comparison, so a surface that prints a refusal can never disagree
+// with the spool about why a write would be refused. It is the spool's
+// own question, which is why a device-wide pause does not answer it;
+// what a full spool means for the device as a whole is decided once,
+// in Recording.
 func (s SpoolState) full() bool { return errors.Is(s.WritableErr, spool.ErrQuotaExceeded) }
 
 // TokenStoreState is the pairing state with its failure mode kept
@@ -152,6 +155,12 @@ type Diagnosis struct {
 	// surface leads with and the version gates are judged against.
 	Version string
 	Project ProjectStatus
+	// EnabledProjects counts the projects contributing from this
+	// device, which is what the verdict line states when recording is
+	// on. It is the whole device's count and not this project's, so a
+	// user reads how much of their work is recorded, not only the
+	// directory they happen to stand in.
+	EnabledProjects int
 	// HookPolicy is the static reading, taken fresh for this
 	// diagnosis, of whether Claude Code will load the hooks the
 	// project injection installs. It is nil for a project that is not

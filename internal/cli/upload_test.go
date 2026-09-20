@@ -136,6 +136,31 @@ func TestUploadRefusesAHealthzCopyingPortHolder(t *testing.T) {
 	}
 }
 
+// A terminal on one stream says nothing about the other: a user who
+// reads the output on screen and keeps the errors in a file must find
+// plain text in that file.
+func TestAProblemWrittenToARedirectedStderrStaysPlainWhileStdoutIsATerminal(t *testing.T) {
+	e := newUploadEnv(t)
+	seedRawcall(e, "req-1", time.Now().UTC())
+	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "dev"})
+	proxytest.PublishAdminToken(t, e.Layout(), im.Addr(), "feedfacefeedfacefeedfacefeedface")
+	t.Setenv(cli.ProxyAddrEnv, im.Addr())
+
+	got := e.RunToATerminal("upload", "--force")
+	if got.Exit != 1 {
+		t.Fatalf("exit = %d (stderr: %q), want a loud refusal", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stderr, "not the trajector proxy") {
+		t.Fatalf("stderr = %q, want the refusal stated", got.Stderr)
+	}
+	for _, r := range got.Stderr {
+		if r > 0x7e {
+			t.Errorf("stderr = %q, want pure ASCII", got.Stderr)
+			break
+		}
+	}
+}
+
 func TestUploadWithoutForceRespectsThresholds(t *testing.T) {
 	e := newUploadEnv(t)
 	seedRawcall(e, "req-1", time.Now().UTC())

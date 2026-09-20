@@ -44,6 +44,9 @@ func (m *Machine) diagnose(dir string, reading sessionFileReading) (report.Diagn
 		return d, err
 	}
 	d.Project = st
+	if grants, err := m.routes.All(); err == nil {
+		d.EnabledProjects = len(grants)
+	}
 	if st.Enabled {
 		d.OptionalSettings = m.optionalSettingStatuses(st)
 		// Read fresh every time: the configuration it reads is the

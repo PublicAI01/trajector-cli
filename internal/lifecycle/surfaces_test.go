@@ -94,7 +94,7 @@ func TestDoctorWalksTheProjectWithoutRegistering(t *testing.T) {
 	problems, out := e.doctor()
 
 	for _, want := range []string{
-		"problem: " + workspaceTrustLine,
+		"error: " + workspaceTrustLine,
 		"1 session(s) of this project were written without a hook of trajector's reporting them",
 		"note: Not looked at: " + locked + " could not be listed",
 	} {
@@ -157,7 +157,7 @@ func TestStatusReportsAMissingSessionHookThatDoctorAdds(t *testing.T) {
 	e.stdout.Reset()
 
 	out := e.statusOutput()
-	for _, want := range []string{"Contributing", "A session hook is missing from " + e.settingsPath() + "; run `trajector doctor` to add it."} {
+	for _, want := range []string{"Contributing", "a session hook is missing", e.settingsPath(), "fix:  trajector doctor"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status = %q, want it to contain %q", out, want)
 		}
@@ -186,7 +186,7 @@ func TestStatusReportsAMissingGitSnapshotHookThatDoctorAdds(t *testing.T) {
 	e.dropHook(proxytest.GitSnapshotMarker)
 	e.stdout.Reset()
 
-	if out := e.statusOutput(); !strings.Contains(out, "A session hook is missing from "+e.settingsPath()) {
+	if out := e.statusOutput(); !strings.Contains(out, "a session hook is missing") || !strings.Contains(out, e.settingsPath()) {
 		t.Errorf("status = %q, want the missing hook named", out)
 	}
 	e.stdout.Reset()
@@ -346,7 +346,7 @@ func TestStatusAndDoctorReportARegistryTheyCannotRead(t *testing.T) {
 	e.stdout.Reset()
 
 	out := e.statusOutput()
-	if !strings.Contains(out, "WARNING: the session file registry could not be read") {
+	if !strings.Contains(out, "warning: the session file registry could not be read") {
 		t.Errorf("status = %q, want the unreadable registry reported, not an empty one", out)
 	}
 	if strings.Contains(out, "Session files: none registered yet") {
@@ -354,7 +354,7 @@ func TestStatusAndDoctorReportARegistryTheyCannotRead(t *testing.T) {
 	}
 	e.stdout.Reset()
 	problems, out := e.doctor()
-	if problems == 0 || !strings.Contains(out, "problem: the session file registry could not be read") {
+	if problems == 0 || !strings.Contains(out, "error: the session file registry could not be read") {
 		t.Errorf("problems = %d, doctor = %q; want the unreadable registry counted", problems, out)
 	}
 }
@@ -367,7 +367,7 @@ func TestStatusReportsTheDiscoveryHookClaudeCodeNoLongerReadsAndRemovesNothing(t
 	out := e.statusOutput()
 	for _, want := range []string{
 		"a trajector hook is left in ~/.claude/settings.json and never runs",
-		"Run `trajector doctor` to remove it.",
+		"fix:  trajector doctor",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status = %q, want it to contain %q", out, want)

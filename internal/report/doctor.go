@@ -13,50 +13,13 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
-// severity orders what a doctor run found. Only problems count toward
-// the exit code: repairs already happened and notes carry no action.
-type severity int
-
-const (
-	severityOK severity = iota
-	severityFixed
-	severityNote
-	severityProblem
-)
-
-func (s severity) label() string {
-	switch s {
-	case severityFixed:
-		return "fixed"
-	case severityNote:
-		return "note"
-	case severityProblem:
-		return "problem"
-	default:
-		return "ok"
-	}
-}
-
-// finding is one fact a doctor run established, as a value: severity,
-// the sentence, and any follow-up lines. The exit count derives from
-// the severities, not from counting as text is printed.
-type finding struct {
-	severity severity
-	text     string
-	details  []string
-}
-
-// Findings accumulates what a doctor run establishes. What a Diagnosis
-// alone answers is written by this package; what a repair did is the
-// machine's own sentence, said by nothing else, and the machine writes
-// it here so that one run reads as one report whichever half produced a
-// line.
+// Findings accumulates what a doctor run establishes, in the lines
+// every surface states its facts in. What a Diagnosis alone answers is
+// written by this package; what a repair did is the machine's own
+// sentence, said by nothing else, and the machine writes it here so
+// that one run reads as one report whichever half produced a line.
 type Findings struct {
-	found []finding
-}
-
-func (f *Findings) add(sev severity, format string, a ...any) {
-	f.found = append(f.found, finding{severity: sev, text: fmt.Sprintf(format, a...)})
+	lines
 }
 
 // OK records a check that passed.
@@ -65,8 +28,17 @@ func (f *Findings) OK(format string, a ...any) { f.add(severityOK, format, a...)
 // Fixed records a repair this run already made.
 func (f *Findings) Fixed(format string, a ...any) { f.add(severityFixed, format, a...) }
 
-// Problem records something the user still has to act on.
-func (f *Findings) Problem(format string, a ...any) { f.add(severityProblem, format, a...) }
+// Problem records something the user still has to act on, where no one
+// command resolves it. A problem that has one is stated by ProblemFix
+// instead, so that the command is never buried in the sentence.
+func (f *Findings) Problem(format string, a ...any) { f.add(severityError, format, a...) }
+
+// ProblemFix records something the user has to act on, split into the
+// three things they need: what is wrong, why it is wrong, and the one
+// command that ends it. The fix carries the command and nothing else —
+// no explanation belongs on a line meant to be copied — and the
+// headline carries no command, so the two never state it twice.
+func (f *Findings) ProblemFix(headline, why, fix string) { f.problemFix(headline, why, fix) }
 
 // note records something the user should read that doctor can neither
 // verify nor fix, so it never counts toward the exit code. Every note a
@@ -75,30 +47,16 @@ func (f *Findings) Problem(format string, a ...any) { f.add(severityProblem, for
 func (f *Findings) note(format string, a ...any) { f.add(severityNote, format, a...) }
 
 // Detail attaches a follow-up line to the most recent finding.
-func (f *Findings) Detail(format string, a ...any) {
-	last := &f.found[len(f.found)-1]
-	last.details = append(last.details, fmt.Sprintf(format, a...))
-}
+func (f *Findings) Detail(format string, a ...any) { f.detail(format, a...) }
 
 // Problems counts the findings the user still must act on.
-func (f *Findings) Problems() int {
-	n := 0
-	for _, found := range f.found {
-		if found.severity == severityProblem {
-			n++
-		}
-	}
-	return n
-}
+func (f *Findings) Problems() int { return f.count(severityError) }
 
-// Render writes every finding in the order it was established.
-func (f *Findings) Render(out io.Writer) {
-	for _, found := range f.found {
-		fmt.Fprintf(out, "  %s: %s\n", found.severity.label(), found.text)
-		for _, d := range found.details {
-			fmt.Fprintf(out, "      %s\n", d)
-		}
-	}
+// Render writes every finding in the order it was established. doctor
+// marks every line it prints, including the ones that passed: a run
+// that repairs nothing still has to show that each check was made.
+func (f *Findings) Render(out io.Writer, style Style) {
+	render(out, style, f.all, layout{markEvery: true})
 }
 
 // DoctorDevice reports the two device-wide facts a doctor run opens
@@ -116,6 +74,7 @@ func DoctorDevice(f *Findings, d Diagnosis) {
 func DoctorStaleDiscoveryHook(f *Findings, err error) {
 	if err != nil {
 		f.Problem("%s, and it could not be removed: %v", staleDiscoveryHookFact, err)
+		f.Detail("%s", staleDiscoveryHookWhy)
 		return
 	}
 	f.Fixed("%s", staleDiscoveryHookRemoved)
@@ -138,9 +97,21 @@ func doctorTokenStore(f *Findings, ts TokenStoreState) {
 	if ts.Err == nil {
 		return
 	}
-	f.Problem("the device token store could not be read: %v", ts.Err)
-	f.Detail("Pairing state is unknown; this is not the signed-out state. If the OS")
-	f.Detail("keyring is unavailable here, set %s=file and run `trajector login`.", tokenstore.BackendEnv)
+	f.ProblemFix(tokenStoreUnreadableHeadline, tokenStoreUnreadableWhy(ts.Err), tokenStoreUnreadableFix)
+	f.Detail("Set the backend that way only where the OS keyring is unavailable on this device.")
+}
+
+// The three parts of an unreadable token store. The distinction the why
+// carries is the whole point of the finding: an unreadable store leaves
+// the pairing state unknown, and unknown must never present as the
+// signed-out state.
+const (
+	tokenStoreUnreadableHeadline = "the device token store could not be read"
+	tokenStoreUnreadableFix      = tokenstore.BackendEnv + "=file trajector login"
+)
+
+func tokenStoreUnreadableWhy(err error) string {
+	return fmt.Sprintf("%v, so the pairing state is unknown, which is not the signed-out state", err)
 }
 
 // doctorPause reports a device-wide pause. Doctor never lifts one —
@@ -150,7 +121,11 @@ func doctorPause(f *Findings, st ProjectStatus) {
 	if st.PauseReason == "" {
 		return
 	}
-	f.Problem("%s: %s", strings.ToLower(pausedEverywhere), st.PauseExplanation())
+	why, fix := pauseWhyFixFor(st)
+	f.ProblemFix(strings.ToLower(pausedEverywhere), why, fix)
+	for _, next := range pauseNextSteps(st.PauseReason) {
+		f.Detail("%s", next)
+	}
 }
 
 // DoctorProject reports what a diagnosis establishes about the current
@@ -167,6 +142,7 @@ func DoctorProject(f *Findings, d Diagnosis) {
 	}
 	if st.WindowsSideClaude {
 		f.Problem("%s", windowsSideClaudeFact)
+		f.Detail("%s", windowsSideClaudeWhy)
 		f.Detail("%s", windowsSideWayOut)
 	}
 	doctorHookPolicy(f, d)
@@ -234,25 +210,28 @@ func doctorSpool(f *Findings, s SpoolState) {
 		return
 	}
 	if s.WritableErr != nil {
-		f.Problem("%s", spoolUnwritableHeadline(s.WritableErr))
-		f.Detail("Spool: %s of %s used at %s.", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota), s.Dir)
 		if s.full() {
-			f.Detail("%s", spoolFullRemedy)
+			f.ProblemFix(spoolFullHeadline, spoolFullWhy, spoolFullFix)
+		} else {
+			f.Problem("%s", spoolUnwritableHeadline(s.WritableErr))
 		}
+		f.Detail("Spool: %s of %s used at %s.", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota), s.Dir)
 		return
 	}
 	f.OK("capture spool writable (%s of %s used)", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota))
 	if s.Held.Records > 0 {
-		f.note("%s", HeldHeadline(s.Held))
+		f.note("%s", heldHeadline(s.Held))
 	}
 }
 
-// HeldHeadline is the one sentence both status and doctor use for the
+// heldHeadline is the one sentence both status and doctor use for the
 // records kept on this machine, so the two surfaces cannot drift
-// apart.
-func HeldHeadline(h HeldRecords) string {
-	return fmt.Sprintf("%d segment(s) from %d session(s) are held on this machine because their shape is new to this build; they are not uploaded",
-		h.Records, h.Sessions)
+// apart. The size is stated with the count because held records sit on
+// the user's disk without counting toward the spool quota, and a count
+// alone does not say how much that is.
+func heldHeadline(h HeldRecords) string {
+	return fmt.Sprintf("%d segment(s) from %d session(s) (%s) are held on this machine because their shape is new to this build; they are not uploaded",
+		h.Records, h.Sessions, platform.HumanBytes(h.Bytes))
 }
 
 // doctorRejected surfaces quarantined batches. They are never deleted
@@ -271,7 +250,8 @@ func doctorRejected(f *Findings, d Diagnosis) {
 		f.OK("no rejected batches quarantined")
 		return
 	}
-	f.Problem("%s:", quarantineHeadline(d.Rejected))
+	f.ProblemFix(quarantineHeadline(d.Rejected), quarantineWhy, quarantineFix)
+	f.Detail("%s", quarantineAllNote)
 	refused, unreadable := false, false
 	for _, b := range d.Rejected {
 		line := fmt.Sprintf("%s: %d record(s)", b.BatchID, b.Records)
@@ -294,8 +274,7 @@ func doctorRejected(f *Findings, d Diagnosis) {
 		f.Detail("%s", line)
 	}
 	if refused {
-		f.Detail("Run `trajector doctor requeue <batch-id>` (or `--all`) to upload them again,")
-		f.Detail("or `trajector doctor discard <batch-id>` (or `--all`) to delete them for good.")
+		f.Detail("Requeue uploads them again; `trajector doctor discard <batch-id>` (or `--all`) deletes them for good.")
 	}
 	if unreadable {
 		f.Detail("Unreadable records cannot be requeued; `trajector doctor discard <batch-id>` deletes them for good.")
@@ -365,9 +344,27 @@ func spoolUnwritableHeadline(err error) string {
 	return fmt.Sprintf("the capture spool is not writable, so recording is stopped: %v", err)
 }
 
-// spoolFullRemedy is the follow-up both surfaces print under the one
-// writability refusal that has a way out of its own.
-const spoolFullRemedy = "The spool is full. Run `trajector upload --force` to upload and free it."
+// The one writability refusal that has a way out of its own, in the
+// three parts every surface states it in: what is wrong, why nothing
+// records, and the one command that frees it. Both surfaces read these,
+// so the two cannot drift apart.
+const (
+	spoolFullHeadline = "recording is stopped: the capture spool is full"
+	spoolFullWhy      = "captured data fills the spool to its quota, so nothing more can be written"
+	spoolFullFix      = "trajector upload --force"
+)
+
+// The three parts of what a quarantined batch asks of the user. The
+// headline counts them and is written beside this; the fix names the
+// command that ends the wait, and the other exit is stated under it,
+// because choosing between them is the whole question. What takes every
+// batch at once is stated below the fix rather than on it: that line is
+// copied whole, so it holds a command and nothing else.
+const (
+	quarantineWhy     = "the service refused them or this machine could not read them, and neither is retried on its own"
+	quarantineFix     = fixDoctor + " requeue <batch-id>"
+	quarantineAllNote = "Name --all in place of a batch id to take every quarantined batch at once."
+)
 
 // rejectedUnreadableHeadline is the one sentence both status and doctor
 // use for a quarantine directory that could not be read.

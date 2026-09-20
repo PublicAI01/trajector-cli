@@ -9,6 +9,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/report"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -116,6 +117,18 @@ func TestTheBundleCarriesWhatTheOtherSurfacesReportAboutTheDevice(t *testing.T) 
 		`"`+claudesettings.KeyShowThinkingSummaries+`"`,
 		`"state": "off_by_user"`,
 		`"declined": true`,
+	)
+}
+
+func TestTheBundleExplainsAPauseTheWayTheOtherSurfacesDo(t *testing.T) {
+	d := device()
+	d.Project.PauseReason = routing.PauseConsentUnreadable
+	d.Project.ConsentPath = "/home/dev/.config/trajector/consent.json"
+	d.Project.ConsentErr = errors.New("unexpected end of JSON input")
+
+	wants(t, "diagnosis.json", string(report.DiagnosisJSON(d)),
+		`"pause_reason": "consent_unreadable"`,
+		`"pause_explanation": "the consent record at /home/dev/.config/trajector/consent.json could not be read (unexpected end of JSON input)`,
 	)
 }
 

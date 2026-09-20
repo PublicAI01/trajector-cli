@@ -23,7 +23,7 @@ func doctorProjectText(d report.Diagnosis) (int, string) {
 	f := &report.Findings{}
 	report.DoctorProject(f, d)
 	var b bytes.Buffer
-	f.Render(&b)
+	f.Render(&b, report.Style{})
 	return f.Problems(), b.String()
 }
 
@@ -117,7 +117,7 @@ func TestStatusStatesEverySessionFileFact(t *testing.T) {
 		{
 			name:   "a registry that cannot be read",
 			state:  report.SessionFilesState{Err: errors.New("permission denied")},
-			want:   []string{"WARNING: the session file registry could not be read: permission denied. Run `trajector doctor`."},
+			want:   []string{"warning: the session file registry could not be read: permission denied. Run `trajector doctor`."},
 			reject: []string{"Session files:"},
 		},
 	} {
@@ -212,7 +212,7 @@ func TestStatusNamesAMissingSessionHookWhileStillContributing(t *testing.T) {
 			out := dashboard(d)
 			settings := filepath.Join("/home/dev/sample-project", ".claude", "settings.local.json")
 			wants(t, "status", out, "Contributing",
-				"A session hook is missing from "+settings+"; run `trajector doctor` to add it.")
+				"error: a session hook is missing", settings, "fix:  trajector doctor")
 			rejects(t, "status", out, "disagree")
 		})
 	}
@@ -221,7 +221,7 @@ func TestStatusNamesAMissingSessionHookWhileStillContributing(t *testing.T) {
 func TestStatusReportsClaudeOnTheWindowsSideAsAFact(t *testing.T) {
 	d := enabledDevice()
 	d.Project.WindowsSideClaude = true
-	wants(t, "status", dashboard(d), "Windows side", "cannot reach this trajector", "`trajector doctor`")
+	wants(t, "status", dashboard(d), "Windows side", "cannot reach this trajector", "fix:  trajector doctor")
 }
 
 func TestStatusTellsTheTwoRecordingPausesApart(t *testing.T) {
@@ -231,8 +231,8 @@ func TestStatusTellsTheTwoRecordingPausesApart(t *testing.T) {
 	redaction.Project.PauseReason = routing.PauseRedactionDrift
 
 	a, b := dashboard(agreement), dashboard(redaction)
-	wants(t, "status", a, "Recording is paused everywhere", "the data agreement changed", "`trajector enable`")
-	wants(t, "status", b, "Recording is paused everywhere", "redaction does not cover", "`trajector upgrade`")
+	wants(t, "status", a, "Recording is paused everywhere", "the data agreement changed", "fix:  trajector enable")
+	wants(t, "status", b, "Recording is paused everywhere", "redaction does not cover", "fix:  trajector upgrade")
 	paused := enabledDevice()
 	paused.Project.PauseReason = routing.PauseRedactionDrift
 	wants(t, "status", dashboard(paused), "Contributing; recording is paused for now (see Device above).")
@@ -251,7 +251,7 @@ func TestDoctorTellsTheTwoRecordingPausesApart(t *testing.T) {
 	if problems != 1 {
 		t.Errorf("problems = %d, want the pause counted once", problems)
 	}
-	wants(t, "doctor", out, "problem: recording is paused everywhere", "redaction does not cover", "`trajector upgrade`")
+	wants(t, "doctor", out, "error: recording is paused everywhere", "redaction does not cover", "fix:  trajector upgrade")
 	rejects(t, "doctor", out, "agreement")
 }
 
@@ -285,7 +285,7 @@ func TestDoctorSendsAnUntrustedWorkspaceToTheDialog(t *testing.T) {
 	if problems != 1 {
 		t.Errorf("problems = %d, want the untrusted workspace counted once", problems)
 	}
-	wants(t, "doctor", out, "problem: "+workspaceTrustLine, "2 session(s) of this project were written without a hook of trajector's reporting them")
+	wants(t, "doctor", out, "error: "+workspaceTrustLine, "2 session(s) of this project were written without a hook of trajector's reporting them")
 	rejects(t, "doctor", out, ".jsonl", remoteControlLine)
 }
 
@@ -361,7 +361,7 @@ func TestDoctorReportsClaudeOnTheWindowsSideWithAWayOut(t *testing.T) {
 		t.Errorf("problems = %d, want the arrangement counted once and the unreported sessions not counted again", problems)
 	}
 	wants(t, "doctor", out,
-		"problem: this project is on a Windows drive mounted into WSL",
+		"error: this project is on a Windows drive mounted into WSL",
 		"Run both on the same side")
 	rejects(t, "doctor", out, workspaceTrustLine, "every session file of this project is registered")
 }
@@ -387,11 +387,11 @@ func TestDoctorReportsASearchOrARegistryItCouldNotRead(t *testing.T) {
 	d := enabledDevice()
 	d.SessionFiles.WalkErr = errors.New("root is not absolute")
 	_, out := doctorProjectText(d)
-	wants(t, "doctor", out, "problem: could not look for this project's session files: root is not absolute")
+	wants(t, "doctor", out, "error: could not look for this project's session files: root is not absolute")
 
 	d.SessionFiles = report.SessionFilesState{Err: errors.New("permission denied")}
 	_, out = doctorProjectText(d)
-	wants(t, "doctor", out, "problem: the session file registry could not be read: permission denied")
+	wants(t, "doctor", out, "error: the session file registry could not be read: permission denied")
 }
 
 func TestDoctorSaysNothingAboutAProjectNotEnabled(t *testing.T) {
