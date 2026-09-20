@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -142,7 +143,7 @@ func supervised(t *testing.T, addr, version string) (*proxylife.Proxy, userdirs.
 	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv(versionEnv, version)
 	layout := proxytest.SandboxLayout(t, dir)
-	p := proxylife.For(layout, version, procbin.Self(t, "proxy"), addr)
+	p := proxylife.For(layout, version, procbin.Self(t, "proxy"), addr, nil)
 	t.Cleanup(func() {
 		p.Stop()
 		waitReleased(t, addr)
@@ -253,7 +254,7 @@ func proxyLogContents(t *testing.T, layout userdirs.Layout) string {
 func TestEnsureReusesANewerProxyInsteadOfDrainingIt(t *testing.T) {
 	layout, addr := servingHolder(t, "2.0.0")
 
-	p := proxylife.For(layout, "1.0.0", "unspawnable", addr)
+	p := proxylife.For(layout, "1.0.0", "unspawnable", addr, nil)
 	if err := p.Ensure(); err != nil {
 		t.Fatalf("Ensure = %v, want the newer proxy reused", err)
 	}
@@ -268,7 +269,7 @@ func TestEnsureReusesANewerProxyInsteadOfDrainingIt(t *testing.T) {
 func TestEnsureFromADevBuildReusesAReleaseProxy(t *testing.T) {
 	layout, addr := servingHolder(t, "1.2.3")
 
-	p := proxylife.For(layout, "dev", "unspawnable", addr)
+	p := proxylife.For(layout, "dev", "unspawnable", addr, nil)
 	if err := p.Ensure(); err != nil {
 		t.Fatalf("Ensure = %v, want the release proxy reused", err)
 	}
@@ -284,7 +285,7 @@ func TestEnsureFromADevBuildReusesAReleaseProxy(t *testing.T) {
 func TestEnsureFromAReleaseBuildReusesADevProxy(t *testing.T) {
 	layout, addr := servingHolder(t, "dev")
 
-	p := proxylife.For(layout, "9.9.9", "unspawnable", addr)
+	p := proxylife.For(layout, "9.9.9", "unspawnable", addr, nil)
 	if err := p.Ensure(); err != nil {
 		t.Fatalf("Ensure = %v, want the dev proxy reused", err)
 	}
@@ -361,7 +362,7 @@ func TestEnsureRefusesForeignPortHolder(t *testing.T) {
 	t.Cleanup(func() { l.Close() })
 	go http.Serve(l, http.NotFoundHandler())
 
-	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", l.Addr().String())
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", l.Addr().String(), nil)
 	if err := p.Ensure(); !errors.Is(err, proxylife.ErrPortOccupied) {
 		t.Errorf("Ensure = %v, want ErrPortOccupied", err)
 	}
@@ -375,7 +376,7 @@ func healthzCopyHolder(t *testing.T) (*proxylife.Proxy, *proxytest.Imposter) {
 	layout := proxytest.SandboxLayout(t, t.TempDir())
 	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "dev"})
 	proxytest.PublishAdminToken(t, layout, im.Addr(), "feedfacefeedfacefeedfacefeedface")
-	return proxylife.For(layout, "dev", "unused", im.Addr()), im
+	return proxylife.For(layout, "dev", "unused", im.Addr(), nil), im
 }
 
 func TestObserveTreatsAHealthzCopyAsForeign(t *testing.T) {
@@ -436,7 +437,7 @@ func siblingStillPublishing(t *testing.T) (*proxylife.Proxy, *proxytest.Imposter
 	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "1.2.3"})
 	proxytest.PublishAdminToken(t, layout, im.Addr(), token)
 	im.ProveAfter(1, token)
-	return proxylife.For(layout, "1.2.3", "unused", im.Addr()), im
+	return proxylife.For(layout, "1.2.3", "unused", im.Addr(), nil), im
 }
 
 func TestFlushWaitsOutASiblingStillPublishingItsAdminToken(t *testing.T) {
@@ -468,7 +469,7 @@ func TestEachManagementRequestOpensItsOwnConnection(t *testing.T) {
 	proxytest.PublishAdminToken(t, layout, im.Addr(), token)
 	im.ProveAfter(0, token)
 
-	p := proxylife.For(layout, "1.2.3", "unused", im.Addr())
+	p := proxylife.For(layout, "1.2.3", "unused", im.Addr(), nil)
 	for range 2 {
 		if v := p.Observe(); v.Holder != proxylife.HolderOurs {
 			t.Fatalf("holder = %v (%v), want the proven holder", v.Holder, v.Reason)
@@ -504,7 +505,7 @@ func wedgedHolder(t *testing.T) (string, *int32) {
 func TestASettledVerdictSpendsOneWedgedManagementExchange(t *testing.T) {
 	addr, exchanges := wedgedHolder(t)
 
-	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", addr)
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", addr, nil)
 	v := p.Settled()
 	if v.Holder != proxylife.HolderForeign {
 		t.Fatalf("holder = %v, want no trust in a holder that answers nothing", v.Holder)
@@ -521,7 +522,7 @@ func TestObserveBlamesAuthenticationWhenNoAdminTokenIsReadable(t *testing.T) {
 	live := proxytest.New(t)
 	live.AdminToken()
 
-	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", live.Addr())
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", live.Addr(), nil)
 	v := p.Observe()
 	if v.Holder != proxylife.HolderForeign {
 		t.Fatalf("holder = %v, want no trust while no admin token verifies the answer", v.Holder)
@@ -543,7 +544,7 @@ func TestObserveBlamesAuthenticationWhenNoPublishedTokenMatches(t *testing.T) {
 
 	layout := proxytest.SandboxLayout(t, t.TempDir())
 	proxytest.PublishAdminToken(t, layout, live.Addr(), "feedfacefeedfacefeedfacefeedface")
-	p := proxylife.For(layout, "dev", "unused", live.Addr())
+	p := proxylife.For(layout, "dev", "unused", live.Addr(), nil)
 	v := p.Observe()
 	if v.Holder != proxylife.HolderForeign {
 		t.Fatalf("holder = %v, want no trust while no published token matches", v.Holder)
@@ -572,7 +573,7 @@ func TestObserveExplainsAHolderThatAnswersNothing(t *testing.T) {
 		}
 	}()
 
-	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", l.Addr().String())
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", l.Addr().String(), nil)
 	v := p.Observe()
 	if v.Holder != proxylife.HolderForeign {
 		t.Fatalf("holder = %v, want no trust in a holder that answers nothing", v.Holder)
@@ -614,7 +615,7 @@ func TestObserveNamesTheProxyOnAnUnreadableHealthAnswer(t *testing.T) {
 		fmt.Fprint(w, "not json")
 	})
 
-	p := proxylife.For(layout, "dev", "unused", addr)
+	p := proxylife.For(layout, "dev", "unused", addr, nil)
 	v := p.Observe()
 	if v.Holder != proxylife.HolderForeign {
 		t.Fatalf("holder = %v, want no trusted self-report out of an unreadable answer", v.Holder)
@@ -632,7 +633,7 @@ func TestFlushNamesTheProxyOnAnUnreadableFlushReply(t *testing.T) {
 		})))
 	live.AdminToken()
 
-	p := proxylife.For(layout, "1.2.3", "unused", live.Addr())
+	p := proxylife.For(layout, "1.2.3", "unused", live.Addr(), nil)
 	_, err := p.Flush(true)
 	if err == nil {
 		t.Fatal("Flush decoded an unreadable reply")
@@ -657,7 +658,7 @@ func TestEnsureReportsWhyAnOlderProxyWouldNotDrain(t *testing.T) {
 		w.Write(health)
 	})
 
-	p := proxylife.For(layout, "1.0.0", "unused", addr)
+	p := proxylife.For(layout, "1.0.0", "unused", addr, nil)
 	got := p.Ensure()
 	if got == nil {
 		t.Fatal("Ensure = nil, want the refused drain reported")
@@ -671,7 +672,7 @@ func TestStopExplainsAnUndeliverableDrainWhenNoTokenIsReadable(t *testing.T) {
 	live := proxytest.New(t)
 	live.AdminToken()
 
-	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", live.Addr())
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", live.Addr(), nil)
 	if err := p.Stop(); !errors.Is(err, proxylife.ErrProxyUnverified) {
 		t.Errorf("Stop = %v, want the authentication failure reported", err)
 	}
@@ -701,7 +702,7 @@ func TestAReplayedChallengeProofIsRefused(t *testing.T) {
 
 	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "1.2.3"})
 	im.ReplayProof(collected)
-	p := proxylife.For(layout, "1.2.3", "unused", im.Addr())
+	p := proxylife.For(layout, "1.2.3", "unused", im.Addr(), nil)
 	if v := p.Observe(); v.Holder != proxylife.HolderForeign {
 		t.Errorf("holder = %v for a replayed proof, want foreign", v.Holder)
 	}
@@ -712,7 +713,7 @@ func TestStopDrainsAHolderThatProvesItself(t *testing.T) {
 	live := proxytest.New(t, proxytest.WithLayout(layout))
 	live.AdminToken()
 
-	p := proxylife.For(layout, "1.2.3", "unused", live.Addr())
+	p := proxylife.For(layout, "1.2.3", "unused", live.Addr(), nil)
 	p.Stop()
 	if err := live.WaitStopped(5 * time.Second); err != nil {
 		t.Errorf("Serve = %v after Stop, want a clean drained exit", err)
@@ -732,8 +733,8 @@ func TestTwoProxiesOnOneLayoutAreDrivenIndependently(t *testing.T) {
 	layout := proxytest.SandboxLayout(t, t.TempDir())
 	a := proxytest.New(t, proxytest.WithLayout(layout), proxytest.WithInternal(flushStub(1)))
 	b := proxytest.New(t, proxytest.WithLayout(layout), proxytest.WithInternal(flushStub(2)))
-	pa := proxylife.For(layout, "1.2.3", "unused", a.Addr())
-	pb := proxylife.For(layout, "1.2.3", "unused", b.Addr())
+	pa := proxylife.For(layout, "1.2.3", "unused", a.Addr(), nil)
+	pb := proxylife.For(layout, "1.2.3", "unused", b.Addr(), nil)
 
 	if v := pa.Observe(); v.Holder != proxylife.HolderOurs {
 		t.Fatalf("first proxy holder = %v, want ours", v.Holder)
@@ -766,7 +767,7 @@ func TestTwoProxiesOnOneLayoutAreDrivenIndependently(t *testing.T) {
 func TestRepeatedTakeoversAlwaysLeaveAProvableHolder(t *testing.T) {
 	layout := proxytest.SandboxLayout(t, t.TempDir())
 	addr := freeAddr(t)
-	p := proxylife.For(layout, "dev", "unused", addr)
+	p := proxylife.For(layout, "dev", "unused", addr, nil)
 
 	current := proxytest.New(t, proxytest.WithLayout(layout), proxytest.WithAddr(addr), proxytest.WithVersion("0.0.1"))
 	for round := 2; round <= 4; round++ {
@@ -830,7 +831,7 @@ func TestStopDrainsAProxyPublishedUnderTheFixedName(t *testing.T) {
 	proxytest.PublishLegacyAdminToken(t, layout, token)
 	addr, drains := startFixedNameProxy(t, token)
 
-	p := proxylife.For(layout, "dev", "unused", addr)
+	p := proxylife.For(layout, "dev", "unused", addr, nil)
 	v := p.Observe()
 	if v.Holder != proxylife.HolderOurs || v.Health.Version != "0.9.0" {
 		t.Fatalf("holder=%v health=%+v, want the fixed-name publication to prove the holder", v.Holder, v.Health)
@@ -842,14 +843,14 @@ func TestStopDrainsAProxyPublishedUnderTheFixedName(t *testing.T) {
 }
 
 func TestObserveReportsNothingRunning(t *testing.T) {
-	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", freeAddr(t))
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", freeAddr(t), nil)
 	if v := p.Observe(); v.Holder != proxylife.HolderNone {
 		t.Error("Observe reports a listener on a closed port")
 	}
 }
 
 func TestStopOnNothingListeningIsANoop(t *testing.T) {
-	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", freeAddr(t))
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", freeAddr(t), nil)
 	if err := p.Stop(); err != nil {
 		t.Errorf("Stop = %v, want nil: nothing listening is the goal state", err)
 	}
@@ -862,7 +863,7 @@ func TestStopOnNothingListeningIsANoop(t *testing.T) {
 // standing in for the proxy: the watchdog cannot tell them apart.
 func superviseWith(t *testing.T, behavior string) *proxylife.Proxy {
 	t.Helper()
-	return proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", procbin.Self(t, behavior), freeAddr(t))
+	return proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", procbin.Self(t, behavior), freeAddr(t), nil)
 }
 
 func TestSuperviseEndsWithCleanChildExit(t *testing.T) {
@@ -949,12 +950,67 @@ func TestSelfcheckErrorNeverCarriesTheToken(t *testing.T) {
 	l.Close() // nothing listens now: the selfcheck GET is refused
 
 	const token = "deadbeefdeadbeefdeadbeefdeadbeef"
-	p := proxylife.For(layout, "test", "/nonexistent/trajector", addr)
+	p := proxylife.For(layout, "test", "/nonexistent/trajector", addr, nil)
 	_, err = p.Selfcheck(token)
 	if err == nil {
 		t.Fatal("selfcheck against a dead address unexpectedly succeeded")
 	}
 	if strings.Contains(err.Error(), token) {
 		t.Errorf("selfcheck error leaked the token: %v", err)
+	}
+}
+
+func TestARecordingStarterWritesTheStartItWasAskedForAndStartsNoProcess(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "proxy.log")
+	projectDir := filepath.Join(t.TempDir(), "a project")
+
+	pid, err := proxylife.RecordStartsIn(log)("/nonexistent/trajector", []string{"hook", "read", projectDir}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pid != 0 {
+		t.Errorf("pid = %d, want 0", pid)
+	}
+
+	got, err := proxylife.LoggedStarts(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []proxylife.LoggedStart{{Command: "hook", Target: projectDir}}
+	if !slices.Equal(got, want) {
+		t.Errorf("logged starts = %v, want %v", got, want)
+	}
+}
+
+func TestALogNothingRecordedIntoHasNoStarts(t *testing.T) {
+	got, err := proxylife.LoggedStarts(filepath.Join(t.TempDir(), "proxy.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("logged starts = %v, want none", got)
+	}
+}
+
+func TestEnsureAnsweredByARecordedStartLeavesThePortFree(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	addr := proxytest.IdleAddr(t)
+	p := proxylife.For(layout, "dev", "/nonexistent/trajector", addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+
+	if err := p.Ensure(); err != nil {
+		t.Fatalf("Ensure() = %v, want the recorded start to stand in for a listening proxy", err)
+	}
+
+	got, err := proxylife.LoggedStarts(layout.ProxyLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []proxylife.LoggedStart{{Command: proxylife.Command, Target: addr}}
+	if !slices.Equal(got, want) {
+		t.Errorf("logged starts = %v, want %v", got, want)
+	}
+	if conn, err := net.DialTimeout("tcp", addr, 2*time.Second); err == nil {
+		conn.Close()
+		t.Errorf("something listens at %s, want no proxy started", addr)
 	}
 }

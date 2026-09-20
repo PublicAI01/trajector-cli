@@ -50,6 +50,12 @@ type Deps struct {
 	// Releases is the index of published releases upgrade reads.
 	Releases  string
 	ProxyAddr string
+	// Spawn starts every process this machine leaves running behind a
+	// command: the proxy, and the reader a session hook hands its work
+	// to. Nil detaches them, which is what production does. A test suite
+	// that drives the CLI in its own process supplies a starter that
+	// starts nothing, so neither process outlives it.
+	Spawn proxylife.Starter
 	// Home is the user's home directory. Claude Code's own directories
 	// are resolved from it, and from the environment that moves them.
 	Home   string
@@ -133,11 +139,12 @@ func Open(deps Deps) *Machine {
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
+	deps.Spawn = deps.Spawn.OrDetached()
 	return &Machine{
 		deps:    deps,
 		tokens:  tokenstore.Open(deps.Layout.SecretsDir()),
 		service: platform.New(deps.PlatformURL, deps.Version),
-		proxy:   proxylife.For(deps.Layout, deps.Version, deps.ExecPath, deps.ProxyAddr),
+		proxy:   proxylife.For(deps.Layout, deps.Version, deps.ExecPath, deps.ProxyAddr, deps.Spawn),
 		routes:  routing.OpenStore(deps.Layout.RoutingTable()),
 		consent: consent.Open(deps.Layout.ConsentFile()),
 

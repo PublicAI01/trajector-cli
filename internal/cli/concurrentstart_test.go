@@ -37,8 +37,8 @@ func TestConcurrentStartsConvergeWithoutBlamingAForeignProcess(t *testing.T) {
 	layout := e.Layout()
 	addr := freeLoopbackAddr(t)
 	exe := procbin.Self(t, "cli")
-	first := proxylife.For(layout, "dev", exe, addr)
-	second := proxylife.For(layout, "dev", exe, addr)
+	first := proxylife.For(layout, "dev", exe, addr, nil)
+	second := proxylife.For(layout, "dev", exe, addr, nil)
 	t.Cleanup(func() {
 		// A sibling still inside its startup grace when the winner
 		// drains exits on its bind error and is restarted by its

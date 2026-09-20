@@ -173,14 +173,18 @@ type Proxy struct {
 	version  string
 	execPath string
 	addr     string
+	start    Starter
 }
 
 // For describes the proxy this binary would start on this machine.
-func For(layout userdirs.Layout, version, execPath, addr string) *Proxy {
+// start is how the process is brought up; a nil one detaches, so a
+// composition root can pass on what it was given without a branch of
+// its own.
+func For(layout userdirs.Layout, version, execPath, addr string, start Starter) *Proxy {
 	if addr == "" {
 		addr = apiproxy.Addr
 	}
-	return &Proxy{layout: layout, version: version, execPath: execPath, addr: addr}
+	return &Proxy{layout: layout, version: version, execPath: execPath, addr: addr, start: start.OrDetached()}
 }
 
 // Addr is where the proxy listens.
@@ -189,12 +193,14 @@ func (p *Proxy) Addr() string { return p.addr }
 // BaseURL is the base URL injected into a project enabled with token.
 func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/" + token }
 
-// Ensure makes sure a healthy proxy is listening: a holder this build
-// leaves serving is a no-op, a replaceable one is asked to drain and
-// taken over, and nothing listening is started. A differing-version
-// reuse is noted in the proxy log. Concurrent callers converge because
-// the port bind is the single-instance lock and losers defer to the
-// winner.
+// Ensure makes sure the proxy is up: a holder this build leaves
+// serving is a no-op, a replaceable one is asked to drain and is taken
+// over, and nothing listening is started. Up means listening, or
+// recorded as started — a starter that starts no process puts nothing
+// on the port, and Ensure then answers on the record alone. A
+// differing-version reuse is noted in the proxy log. Concurrent
+// callers converge because the port bind is the single-instance lock
+// and losers defer to the winner.
 func (p *Proxy) Ensure() error {
 	v := p.Settled()
 	switch {
@@ -220,8 +226,15 @@ func (p *Proxy) Ensure() error {
 	}
 
 	argv := []string{Command, Supervise, addrFlag, p.addr}
-	if _, err := StartDetached(p.execPath, argv, p.layout.ProxyLog()); err != nil {
+	pid, err := p.start(p.execPath, argv, p.layout.ProxyLog())
+	if err != nil {
 		return fmt.Errorf("starting proxy: %w", err)
+	}
+	if pid == noProcess {
+		// The starter reported that it started nothing. No process is
+		// on its way up, so there is nothing to wait for: waiting would
+		// only spend the whole startup budget before failing.
+		return nil
 	}
 	return p.waitHealthy()
 }

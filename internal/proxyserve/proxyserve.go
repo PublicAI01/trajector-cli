@@ -81,7 +81,7 @@ type Assembly struct {
 }
 
 func (a Assembly) proxy() *proxylife.Proxy {
-	return proxylife.For(a.Layout, a.Version, a.ExecPath, a.Addr)
+	return proxylife.For(a.Layout, a.Version, a.ExecPath, a.Addr, nil)
 }
 
 // OpenSpool opens the capture spool with the quota the service last set

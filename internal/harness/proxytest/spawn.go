@@ -133,7 +133,7 @@ func SpawnDevice(t *testing.T, home, version, service string) *SpawnedDevice {
 	}
 	d.Sandbox.pointAtService(service)
 	t.Setenv(cli.ProxyAddrEnv, d.ProxyAddr)
-	d.proxy = proxylife.For(layout, version, d.ExecPath, d.ProxyAddr)
+	d.proxy = proxylife.For(layout, version, d.ExecPath, d.ProxyAddr, nil)
 	t.Cleanup(func() { _ = d.proxy.StopGone() })
 	return d
 }

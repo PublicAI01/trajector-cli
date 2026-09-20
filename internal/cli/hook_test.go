@@ -2,8 +2,10 @@ package cli_test
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 )
 
 // hookEnv is a clitest environment with a Claude configuration
@@ -84,6 +87,52 @@ func assertSilentSuccess(t *testing.T, got clitest.Result) {
 	}
 	if got.Stdout != "" || got.Stderr != "" {
 		t.Errorf("stdout = %q, stderr = %q, want both empty", got.Stdout, got.Stderr)
+	}
+}
+
+// A session hook brings the proxy up, in a process that outlives the
+// hook. A suite that drives the CLI in its own process cannot stop
+// such a process, so the environment records the start instead of
+// performing it: the hook still reaches the start and still reports
+// success, and the address it named stays free.
+func TestHook_SessionStartRecordsTheProxyItWouldStartAndStartsNone(t *testing.T) {
+	h := newHookEnv(t)
+	h.enabled()
+
+	assertSilentSuccess(t, h.InProjectInput(h.input(h.sessionFile("-work-sample/0f1e2d3c.jsonl")), "hook", "ensure-proxy"))
+
+	if got, want := h.ProxyStarts(), []string{h.ProxyAddr()}; !slices.Equal(got, want) {
+		t.Errorf("recorded proxy starts = %q, want %q", got, want)
+	}
+	if conn, err := net.DialTimeout("tcp", h.ProxyAddr(), 2*time.Second); err == nil {
+		conn.Close()
+		t.Errorf("something listens at %s, want the hook to have started no proxy", h.ProxyAddr())
+	}
+}
+
+// A hook that reaches no proxy hands the reading to a process of its
+// own, which outlives the hook exactly as the proxy does. The
+// environment records that start as well, so the hook is seen to have
+// reached it and the suite is left with no reader to stop.
+func TestHook_SessionEndRecordsTheReaderItWouldStartAndStartsNone(t *testing.T) {
+	h := newHookEnv(t)
+	h.enabled()
+
+	assertSilentSuccess(t, h.InProjectInput(h.input(h.sessionFile("-work-sample/0f1e2d3c.jsonl")), "hook", "session-end"))
+
+	// The reader is started with the directory the hook ran in, spelled
+	// as the shell spelled it; the project root is that directory with
+	// its symbolic links resolved, which on macOS puts /private in front
+	// of a temporary directory.
+	got := h.Spawns()
+	for i := range got {
+		if resolved, err := filepath.EvalSymlinks(got[i].Target); err == nil {
+			got[i].Target = resolved
+		}
+	}
+	want := []proxylife.LoggedStart{{Command: "hook", Target: h.ProjectRoot()}}
+	if !slices.Equal(got, want) {
+		t.Errorf("recorded starts = %v, want %v", got, want)
 	}
 }
 

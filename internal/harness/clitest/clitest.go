@@ -21,6 +21,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/cli"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
@@ -32,6 +33,8 @@ type Env struct {
 	project string
 	service *fakeplatform.Server
 	client  *http.Client
+	// proxyAddr is where this environment's CLI looks for its proxy.
+	proxyAddr string
 	// config accumulates what the user config file says, so pointing
 	// the CLI at one destination does not unset another.
 	config map[string]string
@@ -72,9 +75,47 @@ func New(t *testing.T) *Env {
 	// nothing listens on, never the fixed production address, so a
 	// developer's own running proxy is never taken for this test's.
 	t.Setenv(tokenstore.BackendEnv, "file")
-	t.Setenv(cli.ProxyAddrEnv, proxytest.IdleAddr(t))
+	e.proxyAddr = proxytest.IdleAddr(t)
+	t.Setenv(cli.ProxyAddrEnv, e.proxyAddr)
+	// Nothing this environment runs may start a process of its own. A
+	// session hook starts the proxy, and a reader for the files it
+	// registered, in processes that outlive the command, and a suite
+	// that drives the CLI in its own process has no way to stop what it
+	// left behind: the proxies accumulate until each one exits on idle.
+	// Each start is recorded here instead, and Spawns reads back what
+	// was recorded. The variable is passed on to every process a test
+	// spawns, so a hook running in one of those leaves nothing behind
+	// either.
+	t.Setenv(cli.RecordProxyStartEnv, "1")
 	e.SetPlatformURL(e.service.URL())
 	return e
+}
+
+// ProxyAddr is where this environment's CLI looks for its proxy.
+func (e *Env) ProxyAddr() string { return e.proxyAddr }
+
+// Spawns is every process this environment's CLI reached a start for,
+// in order, each named by what it was to run and by the address or
+// directory it was given. None of them was started.
+func (e *Env) Spawns() []proxylife.LoggedStart {
+	e.t.Helper()
+	starts, err := proxylife.LoggedStarts(e.Layout().ProxyLog())
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return starts
+}
+
+// ProxyStarts is the address of every proxy among them.
+func (e *Env) ProxyStarts() []string {
+	e.t.Helper()
+	var addrs []string
+	for _, s := range e.Spawns() {
+		if s.Command == proxylife.Command {
+			addrs = append(addrs, s.Target)
+		}
+	}
+	return addrs
 }
 
 // SetPlatformURL points the CLI at a service endpoint by writing the
@@ -198,6 +239,7 @@ func (e *Env) StartProxy(extra ...string) *Proxy {
 	}
 	addr := l.Addr().String()
 	l.Close()
+	e.proxyAddr = addr
 	e.t.Setenv(cli.ProxyAddrEnv, addr)
 
 	p := &Proxy{t: e.t, addr: addr, layout: e.Layout(), client: e.client, stopped: make(chan struct{})}

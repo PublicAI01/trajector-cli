@@ -199,7 +199,7 @@ func TestASlowExitFlushReleasesThePortAndLeavesItsRecordsToTheSuccessor(t *testi
 	predecessor := e.serve(io.Discard, io.Discard)
 	e.waitHealthy()
 
-	takeover := proxylife.For(e.assembly.Layout, "2.0.0", "unspawnable", e.assembly.Addr).Ensure()
+	takeover := proxylife.For(e.assembly.Layout, "2.0.0", "unspawnable", e.assembly.Addr, nil).Ensure()
 	if takeover == nil || !strings.Contains(takeover.Error(), "starting proxy") {
 		t.Fatalf("takeover = %v, want it to have reached the point of starting the replacement", takeover)
 	}

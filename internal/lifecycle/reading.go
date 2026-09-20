@@ -2,7 +2,6 @@ package lifecycle
 
 import (
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
-	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/sessionread"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -22,13 +21,15 @@ func (m *Machine) reader(sp *spool.Spool) sessionread.Reader {
 	}
 }
 
-// spawnReader starts a detached process that reads projectDir's
-// registered files, and returns as soon as it is started. The hook that
-// calls this is on the session's critical path, so reading happens in a
+// spawnReader starts the process that reads projectDir's registered
+// files, and returns as soon as it is started. The hook that calls
+// this is on the session's critical path, so reading happens in a
 // process the session never waits for; the process inherits none of
-// the hook's streams, which keeps the hook's own output empty.
+// the hook's streams, which keeps the hook's own output empty. It
+// goes through the same starter the proxy does, so one suite-wide
+// choice covers both processes a hook can leave behind.
 func (m *Machine) spawnReader(projectDir string) error {
-	_, err := proxylife.StartDetached(m.deps.ExecPath, []string{"hook", claudesettings.HookRead, projectDir}, "")
+	_, err := m.deps.Spawn(m.deps.ExecPath, []string{"hook", claudesettings.HookRead, projectDir}, "")
 	return err
 }
 

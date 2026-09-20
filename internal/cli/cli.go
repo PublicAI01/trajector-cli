@@ -67,6 +67,19 @@ const ProxyAddrEnv = "TRAJECTOR_PROXY_ADDR"
 // tests. Production leaves it unset.
 const NowEnv = "TRAJECTOR_NOW"
 
+// RecordProxyStartEnv makes every process this binary would leave
+// running — the proxy, and the reader a session hook hands its work to
+// — be recorded in the proxy log instead of started, for a test suite
+// that drives Run in its own process: the session hooks still reach
+// the start, and nothing is left running that the suite would have to
+// stop. Production leaves it unset and each start spawns its process.
+//
+// It is read from the environment, which a repository's committed
+// settings reach through the session hooks, for the one reason the
+// endpoint overrides are not: all it can do is stop this machine from
+// recording, which sends nothing anywhere and reads nothing new.
+const RecordProxyStartEnv = "TRAJECTOR_RECORD_PROXY_START"
+
 type app struct {
 	stdin  io.Reader
 	stdout io.Writer
@@ -249,6 +262,9 @@ func machineAt(addr string) (*lifecycle.Machine, error) {
 		ProxyAddr:   env.proxyAddr,
 		Home:        env.home,
 		Getenv:      os.Getenv,
+	}
+	if os.Getenv(RecordProxyStartEnv) != "" {
+		deps.Spawn = proxylife.RecordStartsIn(deps.Layout.ProxyLog())
 	}
 	if v := os.Getenv(NowEnv); v != "" {
 		at, err := time.Parse(time.RFC3339, v)
