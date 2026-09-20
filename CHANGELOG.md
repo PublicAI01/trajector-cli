@@ -8,16 +8,48 @@ All notable changes to trajector are documented here. The format follows
 
 ## [0.3.2] - 2026-09-20
 
+### Added
+
+- `status` and the session hooks tell you when nothing is being
+  recorded. `status` opens with one line — `Recording: on (N
+  project(s))`, `Recording: PAUSED on this device`, `Recording:
+  STOPPED on this device (spool full)`, or `Recording: off in this
+  project` — and `enable` ends with the same line. While a pause
+  stands or the spool is full, the first session hook of a session
+  writes `trajector: nothing of this session is being recorded; run
+  trajector status` once, which Claude Code shows as a non-blocking
+  hook notice.
+- A global `--no-color` flag.
+
 ### Changed
 
+- Problems are printed as three lines: what stopped, why, and the one
+  command that ends it on a line of its own, so it can be copied whole.
+  The pauses, a missing session hook, a full spool, quarantined
+  batches, a proxy port this device could not take, and an unreadable
+  token store are all stated this way.
+- `status` and `doctor` state severity on one scale both read from.
+  `doctor` marks every line it prints — `error:`, `warning:`, `ok:`,
+  `fixed:`, `note:` — and `status` marks what is wrong, `error:` or
+  `warning:`, and leaves the rest of its lines unmarked. `WARNING:` is
+  now `warning:`, and `doctor`'s `problem:` is now `error:`. Within a
+  `status` section, what is broken is printed first.
+- A terminal gets colour and a glyph before each marked line: `✓ ✗ !`
+  where the locale states UTF-8 and `+ x !` otherwise. `NO_COLOR`,
+  `TERM=dumb` and `--no-color` turn the colour off. Output to a pipe or
+  a file stays plain ASCII with no escape sequences.
+- `status` exits 1 when it printed anything at error severity, so a
+  script can tell a recording device from a stopped one without reading
+  the text.
 - A segment whose shape is new to this build is now held on this
   machine instead of pausing recording everywhere. It is kept where
   nothing uploads it, reading goes on from the next segment, and
-  `status` and `doctor` say how many segments are held and for how
-  many sessions. A later build that reads a held segment cleanly moves
-  it back for upload when `doctor` runs, and `trajector forget
-  <session-id>` deletes what is held for that session. Recording still
-  pauses everywhere when a read contradicts itself.
+  `status` and `doctor` say how many segments are held, for how many
+  sessions, and how much disk they take. A later build that reads a
+  held segment cleanly moves it back for upload when `doctor` runs, and
+  `trajector forget <session-id>` deletes what is held for that
+  session. Recording still pauses everywhere when a read contradicts
+  itself.
 - `doctor` lifts a redaction pause without waiting for another build,
   once this build has read the session files again and found nothing
   it cannot redact. A pause an older build set is still lifted after
