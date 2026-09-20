@@ -86,6 +86,10 @@ type projectWire struct {
 	// word alone cannot name the file that failed or how it failed.
 	PauseExplanation string `json:"pause_explanation,omitempty"`
 	WindowsSide      bool   `json:"windows_side_claude"`
+	// UpstreamMoved is the last unattended change of the project's
+	// upstream, present only when one was recorded. Its address is
+	// masked like every other upstream here.
+	UpstreamMoved *upstreamMoveWire `json:"upstream_moved,omitempty"`
 	// HookPolicy is present for an enabled project: the static
 	// reading of whether its hooks load, and the setting that decided
 	// against it.
@@ -98,6 +102,11 @@ type projectWire struct {
 	// file's path would name what the user worked on, and the bundle
 	// is handed to someone else.
 	SessionFiles sessionFilesWire `json:"session_files"`
+}
+
+type upstreamMoveWire struct {
+	From string `json:"from"`
+	At   string `json:"at"`
 }
 
 type optionalSettingWire struct {
@@ -234,6 +243,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			PauseExplanation: d.Project.PauseReason.ExplainAt(d.Project.ConsentPath, d.Project.ConsentErr),
 			NoProxy:          d.Project.Shape == routing.WithoutProxy,
 			WindowsSide:      d.Project.WindowsSideClaude,
+			UpstreamMoved:    upstreamMoveValue(d),
 			HookPolicy:       hookPolicyValue(d),
 			OptionalSettings: optionalSettingValues(d),
 			SessionFiles: sessionFilesWire{
@@ -270,6 +280,16 @@ func DiagnosisJSON(d Diagnosis) []byte {
 
 		StaleDiscoveryHook: d.StaleDiscoveryHook,
 	})
+}
+
+// upstreamMoveValue carries the recorded move, nil when the upstream
+// still is what enable granted.
+func upstreamMoveValue(d Diagnosis) *upstreamMoveWire {
+	moved := d.Project.UpstreamMoved
+	if !moved.Happened() {
+		return nil
+	}
+	return &upstreamMoveWire{From: maskUpstreamCredentials(moved.From), At: moved.At}
 }
 
 // hookPolicyValue carries the static reading when one was taken.

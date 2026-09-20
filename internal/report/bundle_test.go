@@ -3,11 +3,13 @@ package report_test
 import (
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
@@ -143,10 +145,51 @@ func TestTheBundleCountsWhatTheSpoolHoldsBack(t *testing.T) {
 	)
 }
 
-// bundleOmits names each Diagnosis field the bundle leaves out, with
-// why leaving it out keeps the archive answerable.
+// bundleOmits names each fact a Diagnosis holds and the bundle does not
+// carry as a value of its own, by the path from the Diagnosis down to
+// it, with why the archive stays answerable without it.
 var bundleOmits = map[string]string{
-	"RejectedDir": "the directory is this build's own layout, not an observation about the device, and the batches waiting in it are carried in full",
+	"RejectedDir":             "the directory is this build's own layout, not an observation about the device, and the batches waiting in it are carried in full",
+	"Spool.Dir":               "the directory is this build's own layout, not an observation about the device, and what waits in it is carried in full",
+	"Project.Shape":           "the grant records one of two shapes, and which of the two it is is carried whole as no_proxy",
+	"Project.GrantHash":       "the identity the routing table records for the grant is carried in the routing table the bundle archives beside this file, where a reader compares it with project_id_hash",
+	"Project.Hooks":           "which hooks stand in the settings file is carried as one flag per hook this release installs; a name this release never installs is not one of them",
+	"Project.InjectedBaseURL": "the injected base URL addresses this device's own proxy, whose address the bundle names, and the token it carries is carried masked",
+	"Project.InjectionAgrees": "whether the injection is the one the grant calls for is a comparison of the granted and the injected token, and the bundle carries both",
+}
+
+// bundleContext is what a fact says nothing without. Such a fact is
+// asserted against a bundle written with its context alone, so what the
+// subtest measures is still the one fact it names.
+var bundleContext = map[string]func(*report.Diagnosis){
+	"Proxy.Health": func(d *report.Diagnosis) {
+		d.Proxy.Holder = proxylife.HolderOurs
+	},
+	"Project.UpstreamMoved.From": func(d *report.Diagnosis) {
+		d.Project.UpstreamMoved.At = "2026-08-01T09:00:00Z"
+	},
+	"Project.ConsentErr": func(d *report.Diagnosis) {
+		d.Project.PauseReason = routing.PauseConsentUnreadable
+	},
+	"Project.ConsentPath": func(d *report.Diagnosis) {
+		d.Project.PauseReason = routing.PauseConsentUnreadable
+		d.Project.ConsentErr = errors.New("permission denied")
+	},
+}
+
+// contextFor is the context a fact needs, named on the fact itself or
+// on a value it is part of, the nearest of them winning.
+func contextFor(fact string) func(*report.Diagnosis) {
+	for at := fact; ; {
+		if context, needs := bundleContext[at]; needs {
+			return context
+		}
+		cut := strings.LastIndex(at, ".")
+		if cut < 0 {
+			return nil
+		}
+		at = at[:cut]
+	}
 }
 
 func TestTheBundleCarriesEveryFactADiagnosisHolds(t *testing.T) {
@@ -154,26 +197,75 @@ func TestTheBundleCarriesEveryFactADiagnosisHolds(t *testing.T) {
 	written := func(d report.Diagnosis) string {
 		return string(report.DiagnosisJSON(d)) + string(report.InfoJSON(d, generatedAt))
 	}
-	nothing := written(report.Diagnosis{})
 
-	diagnosis := reflect.TypeFor[report.Diagnosis]()
-	for i := range diagnosis.NumField() {
-		field := diagnosis.Field(i)
-		t.Run(field.Name, func(t *testing.T) {
-			if why, omitted := bundleOmits[field.Name]; omitted {
+	for _, fact := range factsOf(t, reflect.TypeFor[report.Diagnosis](), "", nil) {
+		t.Run(fact, func(t *testing.T) {
+			if why, omitted := bundleOmits[fact]; omitted {
 				t.Skip(why)
 			}
-			var d report.Diagnosis
-			fillForTheBundle(t, reflect.ValueOf(&d).Elem().Field(i))
-			if got := written(d); got == nothing {
-				t.Errorf("%s reached nothing in the bundle:\n%s", field.Name, got)
+			var beside report.Diagnosis
+			if context := contextFor(fact); context != nil {
+				context(&beside)
+			}
+			d := beside
+			fillForTheBundle(t, factAt(t, reflect.ValueOf(&d).Elem(), fact))
+			if got := written(d); got == written(beside) {
+				t.Errorf("%s reached nothing in the bundle:\n%s", fact, got)
 			}
 		})
 	}
 }
 
+// factsOf lists what a diagnosis knows as one path per fact: a struct
+// is not a fact, the leaves under it are. A type that holds itself
+// stops the descent, as does a struct no caller can fill.
+func factsOf(t *testing.T, at reflect.Type, prefix string, holding []reflect.Type) []string {
+	t.Helper()
+	for at.Kind() == reflect.Pointer {
+		at = at.Elem()
+	}
+	fact := strings.TrimSuffix(prefix, ".")
+	if at.Kind() != reflect.Struct || at == reflect.TypeFor[time.Time]() || slices.Contains(holding, at) {
+		return []string{fact}
+	}
+	var facts []string
+	for i := range at.NumField() {
+		field := at.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		facts = append(facts, factsOf(t, field.Type, prefix+field.Name+".", append(holding, at))...)
+	}
+	if len(facts) == 0 {
+		return []string{fact}
+	}
+	return facts
+}
+
+// factAt resolves a fact's path to the field holding it, allocating
+// every pointer on the way down.
+func factAt(t *testing.T, v reflect.Value, fact string) reflect.Value {
+	t.Helper()
+	for name := range strings.SplitSeq(fact, ".") {
+		for v.Kind() == reflect.Pointer {
+			if v.IsNil() {
+				v.Set(reflect.New(v.Type().Elem()))
+			}
+			v = v.Elem()
+		}
+		v = v.FieldByName(name)
+		if !v.IsValid() {
+			t.Fatalf("%s names no field in a diagnosis", fact)
+		}
+	}
+	return v
+}
+
 // fillForTheBundle gives a field a value no zero Diagnosis has, so that
-// a field the bundle drops leaves the archive unchanged.
+// a field the bundle drops leaves the archive unchanged. A number is
+// filled with the value next to zero: a type that names its values
+// renders one it does not name as the name it gives zero, and such a
+// field would then read as dropped.
 func fillForTheBundle(t *testing.T, v reflect.Value) {
 	t.Helper()
 	switch v.Kind() {
@@ -182,11 +274,11 @@ func fillForTheBundle(t *testing.T, v reflect.Value) {
 	case reflect.String:
 		v.SetString("carried")
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		v.SetInt(7)
+		v.SetInt(1)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		v.SetUint(7)
+		v.SetUint(1)
 	case reflect.Float32, reflect.Float64:
-		v.SetFloat(7)
+		v.SetFloat(1)
 	case reflect.Pointer:
 		held := reflect.New(v.Type().Elem())
 		fillForTheBundle(t, held.Elem())
