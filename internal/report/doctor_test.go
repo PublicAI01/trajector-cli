@@ -249,7 +249,7 @@ func TestStatusAndDoctorReportAFullSpoolBesideARefusedEndpoint(t *testing.T) {
 	}
 	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
 		wants(t, surface, out,
-			"The spool is full. Run `trajector upload --force`",
+			"fix:  trajector upload --force",
 			// Doctor states the clause in its own casing, so both
 			// surfaces are held to the clause itself.
 			"paused since 2026-08-30T14:32:00Z until 2026-08-30T14:33:00Z: the service refused this client access")
