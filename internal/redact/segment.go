@@ -95,8 +95,37 @@ type valueGuard struct {
 // its position rather than by the shape of its value.
 type pathField struct {
 	path keyPath
-	// guard, when set, must hold for the entry to apply to a line.
-	guard *valueGuard
+	// guards, when set, must all hold for the entry to apply to a line.
+	guards []valueGuard
+}
+
+// guardTracker records, while one line is walked, which guards of each
+// listed entry have been seen to hold. An entry with no guards holds
+// unconditionally.
+type guardTracker [][]bool
+
+func newGuardTracker(entries []pathField) guardTracker {
+	t := make(guardTracker, len(entries))
+	for i, e := range entries {
+		t[i] = make([]bool, len(e.guards))
+	}
+	return t
+}
+
+// observe marks every guard that this string value satisfies.
+func (t guardTracker) observe(entries []pathField, path []string, value string) {
+	for i, e := range entries {
+		for j, g := range e.guards {
+			if g.path.equal(path) && value == g.want {
+				t[i][j] = true
+			}
+		}
+	}
+}
+
+// held reports whether every guard of entry i has been seen to hold.
+func (t guardTracker) held(i int) bool {
+	return !slices.Contains(t[i], false)
 }
 
 // anchoredPaths lists the fields whose value is, by definition, a copy
@@ -113,8 +142,8 @@ type pathField struct {
 var anchoredPaths = []pathField{
 	{path: keyPath{"cwd"}},
 	{
-		path:  keyPath{"attachment", "snapshot", "scratchpadDirectory"},
-		guard: &valueGuard{path: keyPath{"attachment", "type"}, want: "environment"},
+		path:   keyPath{"attachment", "snapshot", "scratchpadDirectory"},
+		guards: []valueGuard{{path: keyPath{"attachment", "type"}, want: "environment"}},
 	},
 }
 
@@ -131,8 +160,28 @@ var acknowledgedPaths = []pathField{
 	// not where the session ran, and the same text stands in the user
 	// line it came from.
 	{
-		path:  keyPath{"lastPrompt"},
-		guard: &valueGuard{path: keyPath{"type"}, want: "last-prompt"},
+		path:   keyPath{"lastPrompt"},
+		guards: []valueGuard{{path: keyPath{"type"}, want: "last-prompt"}},
+	},
+	// content on a queue-operation line is a prompt the user typed
+	// while a turn was running, kept until it is sent. A one-word
+	// slash command such as /exit has the shape of a path, but the
+	// value is what was typed, not where the session ran, and the same
+	// text stands in the user line it is sent as.
+	{
+		path:   keyPath{"content"},
+		guards: []valueGuard{{path: keyPath{"type"}, want: "queue-operation"}},
+	},
+	// content on a system/local_command line is the slash command the
+	// user typed, echoed back with the client's answer to it. It is
+	// the same typed text, for the same reason; no other system
+	// subtype carries a top-level content that names a location.
+	{
+		path: keyPath{"content"},
+		guards: []valueGuard{
+			{path: keyPath{"type"}, want: "system"},
+			{path: keyPath{"subtype"}, want: "local_command"},
+		},
 	},
 }
 
@@ -215,20 +264,18 @@ func stripAnchoredPaths(parsed sessionline.Line) string {
 		region
 	}
 	var hits []hit
-	guardsHeld := make([]bool, len(anchoredPaths))
+	guards := newGuardTracker(anchoredPaths)
 	walkStringValues(line, func(path []string, start, end int, value string) {
 		for i, a := range anchoredPaths {
 			if a.path.equal(path) {
 				hits = append(hits, hit{entry: i, region: region{start, end}})
 			}
-			if a.guard != nil && a.guard.path.equal(path) && value == a.guard.want {
-				guardsHeld[i] = true
-			}
 		}
+		guards.observe(anchoredPaths, path, value)
 	})
 	var regions []region
 	for _, h := range hits {
-		if g := anchoredPaths[h.entry].guard; g == nil || guardsHeld[h.entry] {
+		if guards.held(h.entry) {
 			regions = append(regions, h.region)
 		}
 	}
@@ -269,14 +316,10 @@ func stripAnchoredPaths(parsed sessionline.Line) string {
 func AbsolutePathFields(line sessionline.Line) []string {
 	s := line.Text()
 	listed := append(append([]pathField{}, anchoredPaths...), acknowledgedPaths...)
-	guardsHeld := make([]bool, len(listed))
+	guards := newGuardTracker(listed)
 	var candidates []keyPath
 	walkStringValues(s, func(path []string, start, end int, value string) {
-		for i, a := range listed {
-			if a.guard != nil && a.guard.path.equal(path) && value == a.guard.want {
-				guardsHeld[i] = true
-			}
-		}
+		guards.observe(listed, path, value)
 		if isProbedLayer(path) && isAbsolutePath(value) {
 			candidates = append(candidates, append(keyPath(nil), path...))
 		}
@@ -286,7 +329,7 @@ func AbsolutePathFields(line sessionline.Line) []string {
 	for _, c := range candidates {
 		known := false
 		for i, a := range listed {
-			if a.path.equal(c) && (a.guard == nil || guardsHeld[i]) {
+			if a.path.equal(c) && guards.held(i) {
 				known = true
 			}
 		}

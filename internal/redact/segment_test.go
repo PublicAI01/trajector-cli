@@ -431,6 +431,31 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 			line: `{"type":"user","lastPrompt":"/clear"}`,
 			want: []string{"$.lastPrompt"},
 		},
+		{
+			name: "a slash command queued while a turn runs is text, not a location",
+			line: `{"type":"queue-operation","timestamp":"2026-09-20T05:58:27.000Z","content":"/exit"}`,
+			want: nil,
+		},
+		{
+			name: "a slash command echoed by the client is text, not a location",
+			line: `{"type":"system","subtype":"local_command","content":"/exit","level":"info","sessionId":"` + fixtureSessionID + `"}`,
+			want: nil,
+		},
+		{
+			name: "a bare path queued as a prompt is text, not a location",
+			line: `{"type":"queue-operation","content":"/tmp/x"}`,
+			want: nil,
+		},
+		{
+			name: "content on a system line of another subtype is reported",
+			line: `{"type":"system","subtype":"away_summary","content":"/exit"}`,
+			want: []string{"$.content"},
+		},
+		{
+			name: "content on any other line type is reported",
+			line: `{"type":"user","content":"/exit"}`,
+			want: []string{"$.content"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

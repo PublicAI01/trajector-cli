@@ -6,6 +6,17 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-20
+
+### Fixed
+
+- A slash command typed as a prompt — `/exit` written to a
+  `queue-operation` or a `system` / `local_command` line — no longer
+  reads as a session file shape this build cannot redact, so it no
+  longer pauses recording device-wide. The value is what the user
+  typed, not where the session ran, and the same text stands in the
+  user line it came from.
+
 ## [0.3.1] - 2026-09-20
 
 ### Added
