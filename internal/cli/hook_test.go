@@ -318,3 +318,62 @@ func TestHook_ReadExitsSilently(t *testing.T) {
 	e := clitest.New(t)
 	assertSilentSuccess(t, e.Run("hook", "read", e.Project()))
 }
+
+func TestHook_TellsAStoppedDeviceOncePerSession(t *testing.T) {
+	h := newHookEnv(t)
+	h.enabled()
+	main := h.sessionFile("-work-sample/0f1e2d3c.jsonl")
+	// Registered by the first hook of the session, which runs before
+	// the pause here so that the notice is the only thing that changes.
+	assertSilentSuccess(t, h.InProjectInput(h.input(main), "hook", "session-end"))
+	h.Sandbox().Pause(proxytest.PauseSignedOut)
+
+	first := h.InProjectInput(h.input(main), "hook", "progress")
+	if first.Exit != 1 {
+		t.Errorf("exit = %d, want 1 so the session shows the line to the user (stderr: %q)", first.Exit, first.Stderr)
+	}
+	if !strings.Contains(first.Stderr, "nothing of this session is being recorded") ||
+		!strings.Contains(first.Stderr, "trajector status") {
+		t.Errorf("stderr = %q, want the line that sends the session to the command that says why", first.Stderr)
+	}
+	// A pause is one of the reasons the line covers, and the line names
+	// none of them: a session told "paused" while a full spool stopped
+	// it would be sent to repair the wrong thing.
+	if strings.Contains(first.Stderr, "paused") {
+		t.Errorf("stderr = %q, want no reason named in a line that stands for several", first.Stderr)
+	}
+	if first.Stdout != "" {
+		t.Errorf("stdout = %q, want nothing said to the model", first.Stdout)
+	}
+	for _, hook := range []string{"progress", "session-end"} {
+		again := h.InProjectInput(h.input(main), "hook", hook)
+		if again.Exit != 0 || again.Stderr != "" {
+			t.Errorf("%s after the session was told: exit = %d, stderr = %q; want one notice per session", hook, again.Exit, again.Stderr)
+		}
+	}
+}
+
+func TestHook_TellsASessionWhenTheSpoolWillTakeNoMore(t *testing.T) {
+	h := newHookEnv(t)
+	h.enabled()
+	h.Sandbox().SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
+	h.Sandbox().SeedRawcall("req-1", h.ProjectHash(), time.Now())
+	main := h.sessionFile("-work-sample/0f1e2d3c.jsonl")
+
+	got := h.InProjectInput(h.input(main), "hook", "progress")
+	if got.Exit != 1 {
+		t.Errorf("exit = %d, want 1 so the session shows the line to the user (stderr: %q)", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stderr, "nothing of this session is being recorded") {
+		t.Errorf("stderr = %q, want a full spool to reach the session as the same line a pause does", got.Stderr)
+	}
+}
+
+func TestHook_SaysNothingWhileTheDeviceRecords(t *testing.T) {
+	h := newHookEnv(t)
+	h.enabled()
+	main := h.sessionFile("-work-sample/0f1e2d3c.jsonl")
+
+	assertSilentSuccess(t, h.InProjectInput(h.input(main), "hook", "session-end"))
+	assertSilentSuccess(t, h.InProjectInput(h.input(main), "hook", "progress"))
+}

@@ -221,7 +221,7 @@ func TestSessionStartingFollowsTheSessionAndObservesTheRepository(t *testing.T) 
 		Cwd:         e.project,
 		HookEvent:   "SessionStart",
 	}
-	if err := e.machine().SessionStarting(e.project, hook, e.io()); err != nil {
+	if _, err := e.machine().SessionStarting(e.project, hook, e.io()); err != nil {
 		t.Fatalf("session start: %v", err)
 	}
 	if got := e.registeredPaths(e.canonicalRoot()); len(got) != 1 || got[0] != main {

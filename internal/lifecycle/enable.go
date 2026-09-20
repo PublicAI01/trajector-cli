@@ -500,7 +500,7 @@ func (m *Machine) explainSelfcheck(reply proxylife.Selfcheck) error {
 // leaves a signed-out user with no idea what to do about it.
 func notRecordingReason(reply proxylife.Selfcheck) string {
 	if reply.PauseReason != "" {
-		return "nothing is being recorded: " + routing.PauseReason(reply.PauseReason).Explain()
+		return "nothing is recorded: " + routing.PauseReason(reply.PauseReason).Explain()
 	}
 	if reply.Decision == string(routing.ForwardOnlyRevoked) {
 		return "this project's token is revoked; run `trajector enable` again to re-grant it"

@@ -172,7 +172,11 @@ func (a *app) hookCmd(args []string) int {
 		if err != nil {
 			return a.fail(err)
 		}
-		return a.exit(m.SessionStarting(cwd, hook, a.io()))
+		tell, err := m.SessionStarting(cwd, hook, a.io())
+		if exit := a.exit(err); exit != 0 {
+			return exit
+		}
+		return a.tellSession(tell)
 	case claudesettings.HookSessionEnd:
 		if len(rest) != 0 {
 			fmt.Fprintln(a.stderr, hookUsage)
@@ -180,7 +184,7 @@ func (a *app) hookCmd(args []string) int {
 		}
 		hook := a.hookInput()
 		if m, cwd, err := a.prelude(); err == nil {
-			m.SessionEnded(cwd, hook)
+			return a.tellSession(m.SessionEnded(cwd, hook))
 		}
 		return 0
 	case claudesettings.HookGitSnapshot:
@@ -200,7 +204,7 @@ func (a *app) hookCmd(args []string) int {
 		}
 		hook := a.hookInput()
 		if m, cwd, err := a.prelude(); err == nil {
-			m.SessionProgressed(cwd, hook)
+			return a.tellSession(m.SessionProgressed(cwd, hook))
 		}
 		return 0
 	case claudesettings.HookDiscovery:
@@ -230,6 +234,25 @@ func (a *app) hookCmd(args []string) int {
 		fmt.Fprintln(a.stderr, hookUsage)
 		return 2
 	}
+}
+
+// nothingRecordedNotice is the one line a running session is told
+// when this device captures nothing of it. It names the command that
+// says why, and nothing else: a hook has one line of the user's
+// attention and must spend it on where to look, not on which of
+// several reasons holds. It goes on the hook's stderr with a non-zero
+// exit so that Claude Code shows it — a hook that exits 0 keeps its
+// stderr in the transcript, and a hook that exits 2 blocks the
+// session, which no hook of trajector's may ever do. Everything else
+// about the hook has already succeeded by the time this is said.
+const nothingRecordedNotice = "trajector: nothing of this session is being recorded; run trajector status"
+
+func (a *app) tellSession(stopped bool) int {
+	if !stopped {
+		return 0
+	}
+	fmt.Fprintln(a.stderr, nothingRecordedNotice)
+	return 1
 }
 
 // hookUsage lists every hook entry point in the spelling a settings

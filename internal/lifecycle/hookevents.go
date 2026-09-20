@@ -1,5 +1,11 @@
 package lifecycle
 
+import (
+	"path/filepath"
+
+	"github.com/PublicAI01/trajector-cli/internal/report"
+)
+
 // A session's hooks are the only entry into this device from inside a
 // running session, and each hook event is one entry point here: which
 // operations an event triggers, the order they run in, and whose
@@ -10,6 +16,12 @@ package lifecycle
 // whose failure is reported at all, because the session's own traffic
 // goes through it; every other step is silent, and the registry and the
 // spool are where what it did is read afterwards.
+//
+// An event that a session can hear from answers tell: whether this
+// session must be told that this device captures nothing of it. The
+// sentence and the exit code that carries it belong to the command,
+// because no other caller says them; which sessions hear it, and how
+// often, is decided here.
 
 // SessionStarting is the moment a session can begin work: the capture
 // proxy is up, the session's file is followed, and the repository is
@@ -18,28 +30,35 @@ package lifecycle
 // session nothing the second time; the event named in the input is what
 // decides whether this moment is observed at all.
 //
-// The error returned is the proxy's alone.
-func (m *Machine) SessionStarting(cwd string, hook HookInput, io IO) error {
-	err := m.EnsureProxy(cwd, io)
+// The error returned is the proxy's alone. A session whose proxy could
+// not be brought up hears that instead, and stays untold about the
+// device: one hook writes one line, and the failure the user can act on
+// now is the one worth that line.
+func (m *Machine) SessionStarting(cwd string, hook HookInput, io IO) (tell bool, err error) {
+	err = m.EnsureProxy(cwd, io)
 	m.followAndObserve(cwd, hook, false)
-	return err
+	if err != nil {
+		return false, err
+	}
+	return m.tellSession(cwd, hook), nil
 }
 
 // SessionProgressed is the moment a session's file has just gained a
 // turn's worth of lines: the model stopped, or a batch of tools
 // finished. It rides on every turn, so it does one thing: it tells
-// the resident process to read that file now. Nothing is reported and
-// every failure is silent.
-func (m *Machine) SessionProgressed(cwd string, hook HookInput) {
+// the resident process to read that file now. No failure of it is
+// reported.
+func (m *Machine) SessionProgressed(cwd string, hook HookInput) (tell bool) {
 	m.followSession(cwd, hook, false)
+	return m.tellSession(cwd, hook)
 }
 
-// SessionEnded is the moment a session closes. Nothing said here would
-// be read, so nothing is said and nothing is reported: what outlasts
-// the session is the file registered now, read to its end, and what
-// the repository looked like at the end.
-func (m *Machine) SessionEnded(cwd string, hook HookInput) {
+// SessionEnded is the moment a session closes. No failure of it is
+// reported: what outlasts the session is the file registered now, read
+// to its end, and what the repository looked like at the end.
+func (m *Machine) SessionEnded(cwd string, hook HookInput) (tell bool) {
 	m.followAndObserve(cwd, hook, true)
+	return m.tellSession(cwd, hook)
 }
 
 // ToolUsed is the moment after a session's tool ran. It rides on every
@@ -63,4 +82,44 @@ func (m *Machine) ToolUsed(cwd string, hook HookInput) {
 func (m *Machine) followAndObserve(cwd string, hook HookInput, ended bool) {
 	m.ObserveGitSnapshot(cwd, hook)
 	m.followSession(cwd, hook, ended)
+}
+
+// tellSession answers whether this session is the one to hear that the
+// device captures nothing of it. It answers true once per session — the
+// registry records that the session was told — because a line repeated
+// on every turn is read as noise and then not read at all. A project
+// with no standing grant is never told: what it hears about the device
+// would not change its own answer.
+//
+// Everything about it fails silent. A session must not be blocked by
+// the attempt to tell it something, and a device whose registry cannot
+// be written is already saying enough.
+func (m *Machine) tellSession(cwd string, hook HookInput) bool {
+	if hook.SessionPath == "" {
+		return false
+	}
+	st, err := m.Project(cwd)
+	if err != nil || !st.Enabled {
+		return false
+	}
+	if !report.Recording(m.recordingFacts(st)).StoppedDeviceWide() {
+		return false
+	}
+	first, err := m.registry.Tell(st.Hash, filepath.Clean(hook.SessionPath))
+	return err == nil && first
+}
+
+// recordingFacts is the part of a diagnosis the recording state is
+// decided from, resolved without the cost of the whole: a hook runs on
+// every turn of every session and cannot pay for a dashboard to learn
+// what the session is entitled to hear. A spool that will not open
+// leaves the field it decides zero, which reads as a spool that takes
+// writes — a device already unable to open its spool has a louder
+// problem than a line in a transcript.
+func (m *Machine) recordingFacts(st report.ProjectStatus) report.Diagnosis {
+	d := report.Diagnosis{Project: st}
+	if sp, err := m.spool(); err == nil {
+		d.Spool.WritableErr = sp.Writable()
+	}
+	return d
 }

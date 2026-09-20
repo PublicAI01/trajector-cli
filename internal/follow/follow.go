@@ -286,6 +286,26 @@ func (r *Registry) mark(projectIDHash, path string, change func(*File)) error {
 	})
 }
 
+// Tell records that the session path belongs to has been told the
+// device stopped recording, and reports whether this call is the one
+// that recorded it. A session already told is answered false, so the
+// caller says nothing a second time. The whole session group is
+// marked, because a session is told once however many of its files
+// exist. A path that is not registered is refused, as an update to it
+// is.
+func (r *Registry) Tell(projectIDHash, path string) (first bool, err error) {
+	err = r.mark(projectIDHash, path, func(f *File) {
+		// Only the file the hook named decides. An agent file
+		// registered after the session was told would otherwise
+		// arrive untold and earn the session a second notice.
+		if f.Path == path && !f.Told {
+			first = true
+		}
+		f.Told = true
+	})
+	return first && err == nil, err
+}
+
 // Retire records why reading of f.Path stopped for good and keeps the
 // entry, with the cursor it reached. It is how the registry answers
 // later for a decision the reader made once: the entry is no longer

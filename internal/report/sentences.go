@@ -180,13 +180,6 @@ func ExplainHooks(policy claudesettings.HookPolicy, shape routing.Shape) HookOut
 	return outlook
 }
 
-// RecordingStoppedNotice is the one line a running session is told
-// when nothing of it is being recorded. It names the command that says
-// why, and nothing else: a hook has one line of the user's attention
-// and must spend it on where to look, not on which of several reasons
-// holds.
-const RecordingStoppedNotice = "trajector: recording is paused on this device; run trajector status"
-
 // pauseWhyFixFor lays a device-wide pause out for a surface with room
 // for three lines: what stopped recording, and the first command that
 // ends it, with nothing else on that line. The reason owns both

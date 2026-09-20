@@ -52,6 +52,12 @@ type File struct {
 	// the cursor and never leave the registry.
 	LastEvent string `json:"last_event,omitempty"`
 	PID       int    `json:"pid,omitzero"`
+	// Told records that this session was already told, on a hook of
+	// its own, that the device stopped recording. It is written once
+	// per session and never read back into a cursor: a session that
+	// hears the same line on every turn stops reading it, so the
+	// notice is worth exactly one turn of the user's attention.
+	Told bool `json:"told,omitzero"`
 }
 
 // hotWindow is how long a hook event keeps a file hot on its own,
