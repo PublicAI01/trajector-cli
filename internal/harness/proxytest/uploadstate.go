@@ -240,6 +240,51 @@ const (
 // RejectedBatch is one quarantined batch as the rejected store holds it.
 type RejectedBatch = upload.RejectedBatch
 
+// pendingFile names the batch an upload is waiting on, beside the
+// uploader's other bookkeeping.
+const pendingFile = "pending.json"
+
+// PendingBatch is the batch in flight, in upload's own type.
+type PendingBatch = upload.PendingBatch
+
+// SeedPendingBatch pins a batch id to the records it was offered with,
+// the way an upload waiting for its acknowledgement left it. The
+// records keep waiting in the spool: a pending batch is what the
+// uploader remembers about them, not a place they moved to.
+func (s *Sandbox) SeedPendingBatch(batchID string, recordIDs ...string) {
+	s.t.Helper()
+	type entry struct {
+		ID string `json:"id"`
+	}
+	records := make([]entry, 0, len(recordIDs))
+	for _, id := range recordIDs {
+		records = append(records, entry{ID: id})
+	}
+	data, err := json.Marshal(struct {
+		BatchID string  `json:"batch_id"`
+		Records []entry `json:"records"`
+	}{BatchID: batchID, Records: records})
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	if err := os.MkdirAll(s.layout.UploadDir(), 0o700); err != nil {
+		s.t.Fatal(err)
+	}
+	if err := fsatomic.WriteFile(filepath.Join(s.layout.UploadDir(), pendingFile), append(data, '\n'), 0o600); err != nil {
+		s.t.Fatal(err)
+	}
+	if got, ok := s.PendingBatch(); !ok || got.BatchID != batchID || len(got.Records) != len(recordIDs) {
+		s.t.Fatalf("the uploader reads back %+v (present: %t) after seeding batch %s with %d record(s)", got, ok, batchID, len(recordIDs))
+	}
+}
+
+// PendingBatch reports the batch this device is waiting on an
+// acknowledgement for, read the way the uploader itself reads it.
+func (s *Sandbox) PendingBatch() (PendingBatch, bool) {
+	s.t.Helper()
+	return upload.LoadPendingBatch(s.layout.UploadDir())
+}
+
 // reasonFile names the recorded reason inside a quarantined batch.
 const reasonFile = "reason.json"
 

@@ -180,6 +180,31 @@ func LoadHandshake(dir string) platform.Handshake {
 	return h.Handshake.Safe()
 }
 
+// PendingBatch is the batch this device offered to the service and has
+// not had acknowledged: the id it is pinned to, and the spool ids it
+// named. It is what a reader outside the uploader can learn about a
+// batch in flight without reading the records themselves.
+type PendingBatch struct {
+	BatchID string
+	Records []string
+}
+
+// LoadPendingBatch reports the batch left pending, if any, for a
+// process that did not make the upload. A file that cannot be read as
+// a pending batch reports none: only the uploader owns the recovery
+// for one, and a reader must not act as though a batch stands.
+func LoadPendingBatch(dir string) (PendingBatch, bool) {
+	p, ok, err := loadPending(dir)
+	if err != nil || !ok {
+		return PendingBatch{}, false
+	}
+	batch := PendingBatch{BatchID: p.BatchID, Records: make([]string, 0, len(p.Records))}
+	for _, e := range p.Records {
+		batch.Records = append(batch.Records, e.ID)
+	}
+	return batch, true
+}
+
 // LoadStandings reads every reason this device has on disk for not
 // uploading, in the order the uploader itself would meet them, for
 // status and doctor to report from a process that never made the upload

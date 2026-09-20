@@ -196,3 +196,38 @@ func TestForget_LeavesRecordsAloneWhenTheArgumentIsAFlag(t *testing.T) {
 		})
 	}
 }
+
+// TestForget_DeletesPinnedRecordsAndLeavesTheBatchInFlight pins what a
+// batch waiting for its acknowledgement does not change: the records it
+// named are deleted from this machine like any others, because that is
+// what the user asked for, and the batch itself is not cancelled — the
+// acknowledgement it waits for is what ends it.
+func TestForget_DeletesPinnedRecordsAndLeavesTheBatchInFlight(t *testing.T) {
+	e := clitest.New(t)
+	at := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	e.Sandbox().SeedRawcall("req-pinned", "hash-project", at, func(o *proxytest.Observation) {
+		o.Request = proxytest.RequestBodyOfSession(t, sessionOne)
+	})
+	spooled := e.Sandbox().SeedSegment(sessionOne, "hash-project", at)
+	seedSession(t, e, sessionTwo)
+	e.Sandbox().SeedPendingBatch("batch-in-flight", "req-pinned", spooled)
+
+	got := e.Run("forget", sessionOne)
+
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q)", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stdout, "Deleted 2 record(s) of session "+sessionOne+".") {
+		t.Errorf("stdout = %q, want both records of the session counted", got.Stdout)
+	}
+	if held := e.Sandbox().SessionsHeld(); held[sessionOne] != 0 || held[sessionTwo] != 2 {
+		t.Errorf("spool holds %v, want nothing of the forgotten session and everything of the other", held)
+	}
+	pending, ok := e.Sandbox().PendingBatch()
+	if !ok {
+		t.Fatalf("no batch is pending, want the batch in flight left to its acknowledgement")
+	}
+	if pending.BatchID != "batch-in-flight" || len(pending.Records) != 2 {
+		t.Errorf("pending batch = %+v, want the id and the records it was offered with unchanged", pending)
+	}
+}
