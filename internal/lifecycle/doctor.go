@@ -5,13 +5,12 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
-	"github.com/PublicAI01/trajector-cli/internal/drift"
-	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
-	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
+	"github.com/PublicAI01/trajector-cli/internal/sessionread"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
@@ -39,6 +38,20 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	if err != nil {
 		return 0, err
 	}
+	// A pause this build set over a line shape it could not mask is
+	// lifted here too, without waiting for another build, when this
+	// build reads the same files cleanly now: the shape may have been
+	// held against a rule this build has since stopped reporting, or
+	// the segment it was set over may now be held on this machine
+	// instead. Nothing else lifts it, so a device whose reason is gone
+	// would otherwise record nothing until an upgrade arrived.
+	rescanned := false
+	if !resumed {
+		rescanned, err = m.resumeAfterCleanRescan()
+		if err != nil {
+			return 0, err
+		}
+	}
 	// Doctor is the one command that pays for the second reading: it
 	// acts on the session files no hook reported, and it repairs from
 	// the same value it reports.
@@ -50,13 +63,17 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	// ones between them are this machine's repairs, and the order they
 	// are written in is the order the user reads them.
 	f := &report.Findings{}
+	if rescanned {
+		f.Fixed("recording resumed: this build read the session files again and found nothing it cannot redact")
+		f.Detail("Session files are read again from where reading stopped.")
+	}
 	if resumed {
 		f.Fixed("recording resumed after upgrade: it was paused by %s, and this build is %s", pausedBy, m.deps.Version)
 		f.Detail("Session files are read again from where reading stopped.")
 	}
 	// Before anything is rendered, so the count the data section
 	// prints is what is still held after this run.
-	d.Spool.Held = m.releaseHeldSegments(f, d.Spool.Held)
+	d.Spool.Held = m.releaseHeldSegments(f)
 	report.DoctorDevice(f, d)
 	m.doctorProxy(f, d)
 	if err := m.doctorInjection(f, d.Project); err != nil {
@@ -79,58 +96,110 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	return f.Problems(), nil
 }
 
-// releaseHeldSegments reads the segments kept on this machine through
-// this build's detector again and moves the ones it can mask into the
-// slot a batch reads. A build whose anchored list covers a shape an
-// earlier build did not is how a held segment reaches the service;
-// doctor is where that build looks, because it is the command a user
-// runs after an upgrade. A segment this build still cannot mask stays
-// where it is, and nothing is ever rewritten to make it pass.
-func (m *Machine) releaseHeldSegments(f *report.Findings, was report.HeldRecords) report.HeldRecords {
+// resumeAfterCleanRescan lifts a redaction pause this build itself
+// set, when reading the files again finds nothing this build must
+// stop at. The pause is the device's, so every project's hot files
+// are read, and one file that still stops reading keeps the pause for
+// all of them. Nothing is stored and no cursor moves: the question is
+// only whether the reason still holds.
+func (m *Machine) resumeAfterCleanRescan() (bool, error) {
+	reason, err := m.routes.PausedReason()
+	if err != nil || reason != routing.PauseRedactionDrift {
+		return false, err
+	}
+	grants, err := m.routes.All()
+	if err != nil {
+		return false, err
+	}
 	sp, err := m.spool()
 	if err != nil {
-		return was
+		return false, err
+	}
+	reader := m.reader(sp)
+	now := m.deps.Now()
+	for _, g := range grants {
+		if g.Revoked {
+			continue
+		}
+		files, err := m.registry.Files(g.ProjectIDHash)
+		if err != nil {
+			return false, nil
+		}
+		hot, _ := follow.Split(files, now, follow.ProcessAlive)
+		if reader.Stops(sessionread.ProjectOf(g), hot) {
+			return false, nil
+		}
+	}
+	if err := m.routes.Resume(routing.PauseRedactionDrift); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// releaseHeldSegments offers the segments kept on this machine to the
+// reader again, project by project, and reports what came of it.
+// Doctor is where that offer is made, because it is the command a user
+// runs after an upgrade, and a build whose anchored list covers a
+// shape an earlier build did not is how a held segment reaches the
+// service at last.
+//
+// Which build's judgement applies is the reader's alone: the machine
+// only says which project's files a held record came from, by the
+// project id hash the record carries. A record no standing grant
+// accounts for is offered to no one — without the project's root
+// nothing here can state where its session ran, and a release decided
+// on less than the reading knew would upload what the reading kept
+// back. A withdrawn project's records are left alone for the same
+// reason consent withdrawal deletes them: they are not going anywhere.
+func (m *Machine) releaseHeldSegments(f *report.Findings) report.HeldRecords {
+	sp, err := m.spool()
+	if err != nil {
+		return report.HeldRecordsOf(nil)
 	}
 	held, err := sp.Held()
 	if err != nil || len(held) == 0 {
-		return report.HeldRecords{}
+		return report.HeldRecordsOf(nil)
 	}
-	// The project each segment came from is the cwd its own lines
-	// carry, which the detector reads from the line; the home
-	// directory is the part only this process knows.
-	location := redact.SessionLocation{Home: m.deps.Home}
-	released := 0
-	for _, r := range held {
-		seg, err := envelope.ParseSegment(r.Raw)
+	grants, err := m.routes.All()
+	if err != nil {
+		return heldRecords(sp)
+	}
+	reader := m.reader(sp)
+	released, failed := 0, error(nil)
+	for _, g := range grants {
+		if g.Revoked {
+			continue
+		}
+		mine := heldOfProject(held, g.ProjectIDHash)
+		if len(mine) == 0 {
+			continue
+		}
+		n, err := reader.ReleaseHeld(sessionread.ProjectOf(g), mine)
+		released += n
 		if err != nil {
-			continue
+			failed = err
+			break
 		}
-		found, err := drift.Scan([]byte(seg.Lines), location)
-		if err != nil || found.Quarantine() || found.Stop() {
-			continue
-		}
-		if err := sp.Release(r.ID); err != nil {
-			continue
-		}
-		released++
 	}
 	if released > 0 {
 		f.Fixed("%d held segment(s) read cleanly under this build and will be uploaded", released)
 	}
-	remaining, err := sp.Held()
-	if err != nil {
-		return was
+	if failed != nil {
+		f.Problem("a segment held on this machine could not be moved to where uploads read it: %v", failed)
+		f.Detail("It stays held; nothing was rewritten, and nothing was lost.")
 	}
-	return report.HeldRecords{Records: len(remaining), Sessions: heldSessions(remaining)}
+	return heldRecords(sp)
 }
 
-// heldSessions counts the sessions a set of held records came from.
-func heldSessions(held []spool.Record) int {
-	sessions := map[string]bool{}
+// heldOfProject is the held records one project's grant accounts for.
+func heldOfProject(held []spool.Record, projectIDHash string) []spool.Record {
+	var mine []spool.Record
 	for _, r := range held {
-		sessions[r.SessionID] = true
+		if r.ProjectIDHash != "" && r.ProjectIDHash == projectIDHash {
+			mine = append(mine, r)
+		}
 	}
-	return len(sessions)
+	return mine
 }
 
 // doctorProxy checks who holds the proxy port. An unproven holder is

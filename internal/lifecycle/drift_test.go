@@ -182,6 +182,32 @@ func TestDoctorUploadsAHeldSegmentOnceTheBuildKnowsItsShape(t *testing.T) {
 	}
 }
 
+func TestDoctorKeepsHoldingASegmentWhoseLinesNameTheProjectWithoutACwd(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl",
+		`{"type":"summary","summary":"done","someNewPath":`+jsonString(t, filepath.Join(root, "x.bak"))+`}`+"\n")
+	e.registerFile(root, main, "")
+	e.machine().ReadSessionFiles(e.project, discardIO())
+	if len(e.sandbox.HeldRecords()) != 1 {
+		t.Fatalf("held records = %d, want the segment held by the reading build", len(e.sandbox.HeldRecords()))
+	}
+
+	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := e.sandbox.HeldRecords(); len(got) != 1 {
+		t.Errorf("held records = %d, want the segment still held", len(got))
+	}
+	if got := e.storedRecords(); len(got) != 0 {
+		t.Errorf("records = %d, want nothing this build cannot mask waiting for upload", len(got))
+	}
+}
+
 func TestReadSessionFiles_RecordsAlertsWithoutStopping(t *testing.T) {
 	e := newEnv(t)
 	e.aProxylessTarget()
@@ -273,28 +299,21 @@ func TestDoctor_ResumesRedactionPauseAfterUpgrade(t *testing.T) {
 	}{
 		{"a different build lifts the pause", "0.0.9", true},
 		{"no recorded build lifts the pause", "", true},
-		{"the same build leaves it standing", "testv", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
 			e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, tc.pausedBy)
 
-			problems, out := e.doctor()
+			_, out := e.doctor()
 
 			if got := e.sandbox.PausedReason(); (got == "") != tc.resumed {
 				t.Errorf("PausedReason = %q, want resumed = %v", got, tc.resumed)
 			}
-			if tc.resumed {
-				if !strings.Contains(out, "fixed: recording resumed after upgrade") || !strings.Contains(out, "this build is testv") {
-					t.Errorf("doctor = %q, want the resume reported as fixed", out)
-				}
-				if strings.Contains(out, "trajector upgrade") {
-					t.Errorf("doctor = %q, want no upgrade advice once resumed", out)
-				}
-			} else {
-				if problems == 0 || !strings.Contains(out, "problem: recording is paused everywhere") || !strings.Contains(out, "`trajector upgrade`") {
-					t.Errorf("doctor = %q (problems %d), want the standing pause reported with its way out", out, problems)
-				}
+			if !strings.Contains(out, "fixed: recording resumed after upgrade") || !strings.Contains(out, "this build is testv") {
+				t.Errorf("doctor = %q, want the resume reported as fixed", out)
+			}
+			if strings.Contains(out, "trajector upgrade") {
+				t.Errorf("doctor = %q, want no upgrade advice once resumed", out)
 			}
 		})
 	}
@@ -383,5 +402,34 @@ func TestStatus_PairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.
 				t.Errorf("status = %q, want the way out present = %v", out, tc.wantWay)
 			}
 		})
+	}
+}
+
+func TestDoctorResumesARedactionPauseThisBuildSetOnceItReadsTheFilesCleanly(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl",
+		`{"type":"user","cwd":"/srv/work/sample","message":{"role":"user","content":"hi"}}`+"\n")
+	e.registerFile(root, main, "")
+	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
+
+	e.stdout.Reset()
+	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := e.sandbox.PausedReason(); got != "" {
+		t.Errorf("PausedReason = %q, want the pause lifted by the build that set it", got)
+	}
+	const want = "recording resumed: this build read the session files again and found nothing it cannot redact"
+	if !strings.Contains(e.stdout.String(), want) {
+		t.Errorf("doctor = %s, want %q", e.stdout.String(), want)
+	}
+	e.machine().ReadSessionFiles(e.project, discardIO())
+	if got := e.storedRecords(); len(got) != 1 {
+		t.Errorf("records = %d, want reading to go on after the pause was lifted", len(got))
 	}
 }

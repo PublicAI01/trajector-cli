@@ -3,6 +3,12 @@
 // share — the one-shot process a session hook starts and the resident
 // proxy reading on a hook's word — so the two cannot disagree about
 // what a read stores, what holds it, or when a cursor moves.
+//
+// Releasing is the same question asked later, so it is asked here too:
+// a record held back from upload leaves the machine only once this
+// rule reads its lines and keeps nothing back. A second reader with a
+// judgement of its own is how a record held for a shape this build
+// cannot mask would be uploaded unmasked.
 package sessionread
 
 import (
@@ -85,6 +91,36 @@ func (rd Reader) Read(p Project, files []follow.File) bool {
 	return true
 }
 
+// Stops reports whether the files of p hold, past their cursors,
+// anything after which no read may store: the finding that pauses
+// recording device-wide. It stores nothing, moves no cursor, and
+// writes neither the registry nor the log — it only asks this build's
+// own question about lines a pause was set over. A file that cannot
+// be read answers nothing, because a pause is lifted on what was
+// read and never on what could not be.
+func (rd Reader) Stops(p Project, files []follow.File) bool {
+	location := rd.location(p)
+	capture := envelope.Capture{
+		ClientVersion: rd.Version,
+		Timestamp:     rd.Now().UTC().Format(time.RFC3339Nano),
+		ProjectIDHash: p.Hash,
+		Injection:     InjectionValue(p.Shape),
+	}
+	for _, f := range files {
+		res, err := follow.Read(f, capture, follow.ReadOptions{Root: p.Root})
+		if err != nil {
+			continue
+		}
+		for _, seg := range res.Segments {
+			found, err := drift.Scan([]byte(seg.Lines), location)
+			if err != nil || found.Stop() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // store holds what one read produced against the shape this build
 // masks and reads by, and then lands its records in the spool. It is
 // the whole of what storing means here, and the reader moves a cursor
@@ -130,7 +166,7 @@ func (rd Reader) store(p Project, res follow.ReadResult) follow.Storing {
 // written is let go: what was noticed is worth keeping and never worth
 // stopping a read for.
 func (rd Reader) inspectSegments(p Project, segments []envelope.Segment) (pause bool, held map[string]bool, err error) {
-	location := redact.SessionLocation{Home: rd.Home, Project: p.Root}
+	location := rd.location(p)
 	for _, seg := range segments {
 		found, err := drift.Scan([]byte(seg.Lines), location)
 		if err != nil {
@@ -147,7 +183,7 @@ func (rd Reader) inspectSegments(p Project, segments []envelope.Segment) (pause 
 			_ = rd.Routes.PauseByBuild(routing.PauseRedactionDrift, rd.Version)
 			return true, nil, nil
 		}
-		if found.Quarantine() {
+		if keepsHere(found) {
 			if held == nil {
 				held = map[string]bool{}
 			}
@@ -155,6 +191,52 @@ func (rd Reader) inspectSegments(p Project, segments []envelope.Segment) (pause 
 		}
 	}
 	return false, held, nil
+}
+
+// location is where the sessions of p ran, as every reading of their
+// lines must state it: the user's home directory and the project's own
+// root. It is built in one place because a reading that states less
+// than another lets through what the other would keep back — a field
+// naming a path is held against this value, and a location missed is a
+// location uploaded.
+func (rd Reader) location(p Project) redact.SessionLocation {
+	return redact.SessionLocation{Home: rd.Home, Project: p.Root}
+}
+
+// keepsHere reports that a scan's findings put the segment they were
+// made over on this machine. It is the one predicate both the reading
+// that holds a segment back and the run that offers to release it ask,
+// so a segment can never be released by a question weaker than the one
+// that held it.
+func keepsHere(found drift.Signals) bool { return found.Quarantine() || found.Stop() }
+
+// ReleaseHeld reads held records of p through this build's detector
+// again and moves the ones it keeps nothing back from into the slot a
+// batch reads. A build whose anchored list covers a shape an earlier
+// build did not is how a held record reaches the service; a record
+// this build still cannot mask stays where it is, and nothing is ever
+// rewritten to make it pass.
+//
+// It reports how many records it moved, and stops at the first record
+// the spool refuses: a refusal is the spool's state and not the
+// record's, so the records after it would be refused too.
+func (rd Reader) ReleaseHeld(p Project, held []spool.Record) (released int, err error) {
+	location := rd.location(p)
+	for _, r := range held {
+		seg, err := envelope.ParseSegment(r.Raw)
+		if err != nil {
+			continue
+		}
+		found, err := drift.Scan([]byte(seg.Lines), location)
+		if err != nil || keepsHere(found) {
+			continue
+		}
+		if err := rd.Spool.Release(r.ID); err != nil {
+			return released, err
+		}
+		released++
+	}
+	return released, nil
 }
 
 // storeRecords writes a read result's records to the spool. full

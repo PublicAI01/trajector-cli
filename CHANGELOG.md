@@ -8,6 +8,21 @@ All notable changes to trajector are documented here. The format follows
 
 ## [0.3.2] - 2026-09-20
 
+### Changed
+
+- A segment whose shape is new to this build is now held on this
+  machine instead of pausing recording everywhere. It is kept where
+  nothing uploads it, reading goes on from the next segment, and
+  `status` and `doctor` say how many segments are held and for how
+  many sessions. A later build that reads a held segment cleanly moves
+  it back for upload when `doctor` runs, and `trajector forget
+  <session-id>` deletes what is held for that session. Recording still
+  pauses everywhere when a read contradicts itself.
+- `doctor` lifts a redaction pause without waiting for another build,
+  once this build has read the session files again and found nothing
+  it cannot redact. A pause an older build set is still lifted after
+  the upgrade, as before.
+
 ### Fixed
 
 - A slash command typed as a prompt — `/exit` written to a
