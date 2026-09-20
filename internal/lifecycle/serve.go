@@ -20,6 +20,7 @@ func (m *Machine) assembly() proxyserve.Assembly {
 		Consent:  m.consent,
 		Version:  m.deps.Version,
 		ExecPath: m.deps.ExecPath,
+		Home:     m.deps.Home,
 		Addr:     m.deps.ProxyAddr,
 	}
 }

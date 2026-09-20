@@ -295,10 +295,22 @@ func stripAnchoredPaths(parsed sessionline.Line) string {
 	return b.String()
 }
 
+// SessionLocation is where the session whose lines are read lives: the
+// user's home directory — the user profile directory on Windows — and
+// the project directory the reader was given. Both are the caller's to
+// state, because nothing in this package reads the environment: a
+// masking rule that changed with the machine it ran on could not be
+// tested and could not be reasoned about.
+type SessionLocation struct {
+	Home    string
+	Project string
+}
+
 // AbsolutePathFields lists the JSON paths of every string value in the
-// line whose whole value is an absolute path, excluding the anchored
-// list and the acknowledged list. A non-empty result means a field
-// appeared that neither list knows.
+// line that names where the session ran and that neither the anchored
+// list nor the acknowledged list knows. A non-empty result means a
+// field appeared that neither list knows and that this build would
+// therefore let through unmasked.
 //
 // What comes back is printable as it stands: a name holds field names
 // and replacement tokens and nothing else, so no path of the user's
@@ -310,33 +322,61 @@ func stripAnchoredPaths(parsed sessionline.Line) string {
 // fields directly under attachment.snapshot. Deeper values — message
 // content, tool inputs, tool results — are observations that may name
 // files anywhere, and are never candidates for anchoring. A value under
-// an array is not looked at either. A whole value is an absolute path
-// when it starts with "/" and holds no whitespace, or has the form of a
-// Windows drive root such as "C:\" or "C:/".
-func AbsolutePathFields(line sessionline.Line) []string {
+// an array is not looked at either.
+//
+// A value names where the session ran when it is an absolute path —
+// it starts with "/" and holds no whitespace, or has the form of a
+// Windows drive root such as "C:\" or "C:/" — and it is one of:
+// inside the user's home directory, inside the project directory
+// (loc.Project, or the anchored cwd value the line itself carries), or
+// equal to an anchored field's value. Any other absolute path is a
+// value the session observed, not its own location: a typed slash
+// command, a system directory, a file elsewhere on the machine. Those
+// are left to the masking pass, which is what the shape of a value is
+// for.
+func AbsolutePathFields(line sessionline.Line, loc SessionLocation) []string {
 	s := line.Text()
 	listed := append(append([]pathField{}, anchoredPaths...), acknowledgedPaths...)
 	guards := newGuardTracker(listed)
-	var candidates []keyPath
+	var candidates []pathValue
+	var anchored []anchoredValue
 	walkStringValues(s, func(path []string, start, end int, value string) {
 		guards.observe(listed, path, value)
+		for i, a := range anchoredPaths {
+			if a.path.equal(path) {
+				anchored = append(anchored, anchoredValue{entry: i, value: value})
+			}
+		}
 		if isProbedLayer(path) && isAbsolutePath(value) {
-			candidates = append(candidates, append(keyPath(nil), path...))
+			candidates = append(candidates, pathValue{path: append(keyPath(nil), path...), value: value})
 		}
 	})
+	// The whole line is walked before a candidate is judged: cwd may
+	// stand after the field that copies it, and a guard that settles an
+	// anchored field may stand after both.
+	where := sessionLocation{home: loc.Home, dirs: []string{loc.Project}}
+	for _, a := range anchored {
+		if !guards.held(a.entry) {
+			continue
+		}
+		where.values = append(where.values, a.value)
+		if anchoredPaths[a.entry].path.equal([]string{"cwd"}) {
+			where.dirs = append(where.dirs, a.value)
+		}
+	}
 	var found []string
 	seen := make(map[string]bool)
 	for _, c := range candidates {
 		known := false
 		for i, a := range listed {
-			if a.path.equal(c) && guards.held(i) {
+			if a.path.equal(c.path) && guards.held(i) {
 				known = true
 			}
 		}
-		if known {
+		if known || !where.holds(c.value) {
 			continue
 		}
-		name := c.printable()
+		name := c.path.printable()
 		if seen[name] {
 			continue
 		}
@@ -344,6 +384,77 @@ func AbsolutePathFields(line sessionline.Line) []string {
 		found = append(found, name)
 	}
 	return found
+}
+
+// pathValue is one candidate: where it stands in the line, and what
+// it says.
+type pathValue struct {
+	path  keyPath
+	value string
+}
+
+// anchoredValue is one anchored field's value as a line carried it,
+// kept with the entry that listed the field so a guard settled later
+// in the line still decides whether the value counts.
+type anchoredValue struct {
+	entry int
+	value string
+}
+
+// sessionLocation answers the one question the report turns on: does
+// this value name where the session ran?
+type sessionLocation struct {
+	home string
+	// dirs are the directories a value inside them belongs to the
+	// session's own location.
+	dirs []string
+	// values are the anchored values the line carried, which a
+	// candidate equal to one of them copies.
+	values []string
+}
+
+func (w sessionLocation) holds(value string) bool {
+	if value == "" {
+		return false
+	}
+	if slices.Contains(w.values, value) {
+		return true
+	}
+	if underDir(value, w.home) {
+		return true
+	}
+	for _, dir := range w.dirs {
+		if underDir(value, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+// underDir reports whether value is dir or lies inside it. Separators
+// are read the same either way and a Windows path is compared without
+// case, because a session file may spell the same directory either way
+// and a location missed is a location uploaded.
+func underDir(value, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	v, d := comparablePath(value), comparablePath(dir)
+	d = strings.TrimSuffix(d, "/")
+	return v == d || strings.HasPrefix(v, d+"/")
+}
+
+func comparablePath(p string) string {
+	p = strings.ReplaceAll(p, `\`, "/")
+	if hasDriveRoot(p) {
+		return strings.ToLower(p)
+	}
+	return p
+}
+
+func hasDriveRoot(p string) bool {
+	return len(p) >= 2 && p[1] == ':' &&
+		((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z'))
 }
 
 func isProbedLayer(path []string) bool {

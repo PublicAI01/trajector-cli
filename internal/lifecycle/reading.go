@@ -17,6 +17,7 @@ func (m *Machine) reader(sp *spool.Spool) sessionread.Reader {
 		Spool:     sp,
 		Version:   m.deps.Version,
 		ReaderLog: m.deps.Layout.ReaderLog(),
+		Home:      m.deps.Home,
 		Now:       m.deps.Now,
 	}
 }

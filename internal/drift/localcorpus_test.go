@@ -12,6 +12,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
+	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
 
 // TestLocalCorpus runs Scan over every session file on this device —
@@ -37,6 +38,13 @@ func TestLocalCorpus(t *testing.T) {
 		t.Skipf("no session files directory on this device")
 	}
 
+	// The project each file belongs to is the cwd its own lines carry,
+	// so only the home directory is stated here.
+	location := redact.SessionLocation{}
+	if home, err := os.UserHomeDir(); err == nil {
+		location.Home = home
+	}
+
 	var (
 		files, unreadable, segments int
 		total                       drift.Signals
@@ -56,7 +64,7 @@ func TestLocalCorpus(t *testing.T) {
 		}
 		for _, seg := range res.Segments {
 			segments++
-			rep, err := drift.Scan([]byte(seg.Lines))
+			rep, err := drift.Scan([]byte(seg.Lines), location)
 			if err != nil {
 				unreadable++
 				continue

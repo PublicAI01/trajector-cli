@@ -71,6 +71,9 @@ type Assembly struct {
 	ExecPath string
 	// Addr is the loopback address the proxy listens on.
 	Addr string
+	// Home is the user's home directory, which reading holds a field
+	// naming a path against.
+	Home string
 	// SweepInterval is how often the served proxy looks at the hot
 	// session files on its own. Zero selects sweepInterval; a test
 	// shortens it.
@@ -179,6 +182,7 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 			Spool:     sp,
 			Version:   a.Version,
 			ReaderLog: layout.ReaderLog(),
+			Home:      a.Home,
 			Now:       time.Now,
 		},
 		routes:   routing.OpenStore(layout.RoutingTable()),

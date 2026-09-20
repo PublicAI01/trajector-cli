@@ -12,6 +12,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
+	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
@@ -43,6 +44,11 @@ type Reader struct {
 	// ReaderLog is where a line shape this build did not expect is
 	// noted.
 	ReaderLog string
+	// Home is the user's home directory, the user profile directory on
+	// Windows. With the project root it says where a session's own
+	// location is, which is what a field naming a path is held
+	// against.
+	Home string
 	// Now is the record-keeping clock.
 	Now func() time.Time
 }
@@ -68,7 +74,7 @@ func (rd Reader) Read(p Project, files []follow.File) bool {
 			ProjectIDHash: p.Hash,
 			Injection:     InjectionValue(p.Shape),
 		},
-		Store:  func(res follow.ReadResult) follow.Storing { return rd.store(p.Hash, res) },
+		Store:  func(res follow.ReadResult) follow.Storing { return rd.store(p, res) },
 		ReadAt: now,
 	}
 	for _, f := range files {
@@ -83,8 +89,8 @@ func (rd Reader) Read(p Project, files []follow.File) bool {
 // masks and reads by, and then lands its records in the spool. It is
 // the whole of what storing means here, and the reader moves a cursor
 // only on the answer it gives.
-func (rd Reader) store(projectIDHash string, res follow.ReadResult) follow.Storing {
-	hold, err := rd.inspectSegments(projectIDHash, res.Segments)
+func (rd Reader) store(p Project, res follow.ReadResult) follow.Storing {
+	hold, err := rd.inspectSegments(p, res.Segments)
 	if err != nil {
 		return follow.NotStored
 	}
@@ -119,18 +125,19 @@ func (rd Reader) store(projectIDHash string, res follow.ReadResult) follow.Stori
 // and what a finding is called is stated where the scan happens, not
 // here. A registry or a log that cannot be written is let go: what
 // was noticed is worth keeping and never worth stopping a read for.
-func (rd Reader) inspectSegments(projectIDHash string, segments []envelope.Segment) (hold bool, err error) {
+func (rd Reader) inspectSegments(p Project, segments []envelope.Segment) (hold bool, err error) {
+	location := redact.SessionLocation{Home: rd.Home, Project: p.Root}
 	for _, seg := range segments {
-		found, err := drift.Scan([]byte(seg.Lines))
+		found, err := drift.Scan([]byte(seg.Lines), location)
 		if err != nil {
 			return false, err
 		}
 		if !found.Any() {
 			continue
 		}
-		_ = rd.Registry.AddSignals(projectIDHash, found)
+		_ = rd.Registry.AddSignals(p.Hash, found)
 		if found.Unexpected() {
-			_ = drift.AppendLog(rd.ReaderLog, rd.Now().UTC().Format(time.RFC3339), projectIDHash, found)
+			_ = drift.AppendLog(rd.ReaderLog, rd.Now().UTC().Format(time.RFC3339), p.Hash, found)
 		}
 		if found.Stop() {
 			_ = rd.Routes.PauseByBuild(routing.PauseRedactionDrift, rd.Version)

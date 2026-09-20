@@ -20,7 +20,7 @@ func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
 	e.injectWithoutBaseURL()
 	root := e.canonicalRoot()
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl",
-		`{"type":"user","cwd":"/srv/work/sample","message":{"role":"user","content":"hi"},"someNewPath":"/srv/elsewhere/thing"}`+"\n")
+		`{"type":"user","cwd":"/srv/work/sample","message":{"role":"user","content":"hi"},"someNewPath":"/srv/work/sample/elsewhere/thing"}`+"\n")
 	e.registerFile(root, main, "")
 
 	e.machine().ReadSessionFiles(e.project, discardIO())
@@ -46,7 +46,7 @@ func TestReadSessionFiles_StopsAndPausesOnAnUnanchoredPathField(t *testing.T) {
 		t.Fatalf("reader log = %+v, want one stop entry for the project", log)
 	}
 	raw := e.sandbox.ReaderLogText()
-	for _, unwanted := range []string{"/srv/elsewhere", "0f1e2d3c", main} {
+	for _, unwanted := range []string{"/srv/work/sample", "0f1e2d3c", main} {
 		if strings.Contains(raw, unwanted) {
 			t.Errorf("reader log = %s, want no %q", raw, unwanted)
 		}

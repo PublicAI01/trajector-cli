@@ -1,6 +1,7 @@
 package redact_test
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"os"
@@ -26,8 +27,19 @@ func parsedLine(t *testing.T, line string) sessionline.Line {
 const (
 	fixtureSessionID = "0f1e2d3c-4b5a-4968-8776-655443322110"
 	fixtureProject   = "/srv/work/project-alpha"
+	fixtureHome      = "/home/jdoe"
+	fixtureProfile   = `C:\Users\jdoe`
 	pathToken        = `"[REDACTED_PATH]"`
 )
+
+// fixtureLocation is the machine the fixtures describe: the user's
+// home directory and the project the session ran in.
+var fixtureLocation = redact.SessionLocation{Home: fixtureHome, Project: fixtureProject}
+
+// elsewhereLocation names a home and a project the fixture lines have
+// nothing to do with, so a report can only come from what a line
+// itself carries.
+var elsewhereLocation = redact.SessionLocation{Home: "/home/other", Project: "/srv/work/other"}
 
 func fixtureCapture() envelope.Capture {
 	return envelope.Capture{
@@ -366,7 +378,7 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 	t.Run("fixture lines report nothing", func(t *testing.T) {
 		t.Parallel()
 		for i, line := range fixtureLines(t, "segment_lines.jsonl") {
-			got := redact.AbsolutePathFields(parsedLine(t, line))
+			got := redact.AbsolutePathFields(parsedLine(t, line), fixtureLocation)
 			if len(got) != 0 {
 				t.Errorf("line %d: unexpected absolute path fields %v", i, got)
 			}
@@ -374,26 +386,34 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 	})
 	t.Run("a new root field is reported", func(t *testing.T) {
 		t.Parallel()
-		got := redact.AbsolutePathFields(parsedLine(t, string(readFixture(t, "drift_line.jsonl"))))
+		got := redact.AbsolutePathFields(parsedLine(t, string(readFixture(t, "drift_line.jsonl"))), fixtureLocation)
 		if len(got) != 1 || got[0] != "$.someNewPath" {
 			t.Errorf("got %v, want [$.someNewPath]", got)
 		}
 	})
 
-	scratch := "/tmp/agent-1001/-srv-work-project-alpha/" + fixtureSessionID + "/scratchpad"
+	scratch := fixtureHome + "/.cache/agent-1001/-srv-work-project-alpha/" + fixtureSessionID + "/scratchpad"
 	cases := []struct {
 		name string
 		line string
+		loc  redact.SessionLocation
 		want []string
 	}{
 		{
-			name: "windows drive root is reported",
-			line: `{"newDir":"C:\\work\\thing","other":"D:/work"}`,
+			name: "a windows drive root under the user profile is reported",
+			line: `{"newDir":"C:\\Users\\jdoe\\work","other":"C:/Users/jdoe/notes"}`,
+			loc:  redact.SessionLocation{Home: fixtureProfile},
 			want: []string{"$.newDir", "$.other"},
 		},
 		{
+			name: "a windows system directory is not reported",
+			line: `{"newDir":"C:\\Windows\\x"}`,
+			loc:  redact.SessionLocation{Home: fixtureProfile},
+			want: nil,
+		},
+		{
 			name: "a value with whitespace is prose, not a path",
-			line: `{"note":"/srv/work and more","cmd":"/bin/sh -c ls"}`,
+			line: `{"note":"/home/jdoe and more","cmd":"/bin/sh -c ls"}`,
 			want: nil,
 		},
 		{
@@ -402,13 +422,40 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 			want: nil,
 		},
 		{
+			name: "an absolute path outside the home and the project is not reported",
+			line: `{"newDir":"/tmp/x","command":"/exit","other":"/etc/hosts"}`,
+			want: nil,
+		},
+		{
+			name: "a value under the home directory is reported",
+			line: `{"newDir":"` + fixtureHome + `/notes/plan.md"}`,
+			want: []string{"$.newDir"},
+		},
+		{
+			name: "a value under the project directory is reported",
+			line: `{"newDir":"` + fixtureProject + `/main.go"}`,
+			want: []string{"$.newDir"},
+		},
+		{
+			name: "a value under the cwd the line carries is reported",
+			line: `{"cwd":"/srv/elsewhere/beta","newDir":"/srv/elsewhere/beta/main.go"}`,
+			loc:  elsewhereLocation,
+			want: []string{"$.newDir"},
+		},
+		{
+			name: "a value equal to an anchored value is reported",
+			line: `{"copyOfCwd":"/srv/elsewhere/beta","cwd":"/srv/elsewhere/beta"}`,
+			loc:  elsewhereLocation,
+			want: []string{"$.copyOfCwd"},
+		},
+		{
 			name: "deeper layers are not looked at",
-			line: `{"toolUseResult":{"filePath":"/etc/hosts","file":{"filePath":"/srv/x"}},"message":{"content":[{"input":{"file_path":"/srv/y"}}]},"attachment":{"filename":"/srv/z"}}`,
+			line: `{"toolUseResult":{"filePath":"` + fixtureProject + `/a"},"message":{"content":[{"input":{"file_path":"` + fixtureProject + `/b"}}]},"attachment":{"filename":"` + fixtureProject + `/c"}}`,
 			want: nil,
 		},
 		{
 			name: "a new field under attachment.snapshot is reported",
-			line: `{"attachment":{"type":"environment","snapshot":{"workingDirectory":"/srv/w","newDir":"/srv/n"}}}`,
+			line: `{"attachment":{"type":"environment","snapshot":{"workingDirectory":"` + fixtureProject + `","newDir":"` + fixtureProject + `/n"}}}`,
 			want: []string{"$.attachment.snapshot.newDir"},
 		},
 		{
@@ -418,7 +465,7 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 		},
 		{
 			name: "values under an array are not looked at",
-			line: `{"paths":["/srv/a","/srv/b"],"rows":[{"dir":"/srv/c"}]}`,
+			line: `{"paths":["` + fixtureProject + `/a"],"rows":[{"dir":"` + fixtureProject + `/c"}]}`,
 			want: nil,
 		},
 		{
@@ -428,7 +475,7 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 		},
 		{
 			name: "lastPrompt on any other line is reported",
-			line: `{"type":"user","lastPrompt":"/clear"}`,
+			line: `{"type":"user","lastPrompt":"` + fixtureProject + `"}`,
 			want: []string{"$.lastPrompt"},
 		},
 		{
@@ -448,19 +495,20 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 		},
 		{
 			name: "content on a system line of another subtype is reported",
-			line: `{"type":"system","subtype":"away_summary","content":"/exit"}`,
+			line: `{"type":"system","subtype":"away_summary","content":"` + fixtureProject + `"}`,
 			want: []string{"$.content"},
 		},
 		{
 			name: "content on any other line type is reported",
-			line: `{"type":"user","content":"/exit"}`,
+			line: `{"type":"user","content":"` + fixtureHome + `/notes"}`,
 			want: []string{"$.content"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := redact.AbsolutePathFields(parsedLine(t, tc.line))
+			loc := cmp.Or(tc.loc, fixtureLocation)
+			got := redact.AbsolutePathFields(parsedLine(t, tc.line), loc)
 			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
@@ -474,6 +522,7 @@ func TestAbsolutePathFields_NamesNoKeyThatCouldBeAPath(t *testing.T) {
 	cases := []struct {
 		name string
 		line string
+		loc  redact.SessionLocation
 		want []string
 	}{
 		{
@@ -484,6 +533,7 @@ func TestAbsolutePathFields_NamesNoKeyThatCouldBeAPath(t *testing.T) {
 		{
 			name: "a windows path in key position",
 			line: `{"C:\\Users\\jdoe\\work":"C:\\Users\\jdoe\\work\\notes.md"}`,
+			loc:  redact.SessionLocation{Home: fixtureProfile},
 			want: []string{"$." + keyToken},
 		},
 		{
@@ -513,14 +563,14 @@ func TestAbsolutePathFields_NamesNoKeyThatCouldBeAPath(t *testing.T) {
 		},
 		{
 			name: "a plain field name is still named in full",
-			line: `{"someNewPath":"/srv/elsewhere/thing","another_new-Path2":"/srv/elsewhere/other"}`,
+			line: `{"someNewPath":"` + fixtureProject + `/thing","another_new-Path2":"` + fixtureProject + `/other"}`,
 			want: []string{"$.someNewPath", "$.another_new-Path2"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := redact.AbsolutePathFields(parsedLine(t, tc.line))
+			got := redact.AbsolutePathFields(parsedLine(t, tc.line), cmp.Or(tc.loc, fixtureLocation))
 			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
@@ -538,7 +588,7 @@ func TestAbsolutePathFields_NamesNoPathFromLinesTheReaderNeverKeeps(t *testing.T
 		}
 	}
 	for i, line := range lines {
-		got := redact.AbsolutePathFields(parsedLine(t, line))
+		got := redact.AbsolutePathFields(parsedLine(t, line), redact.SessionLocation{Home: fixtureHome, Project: fixtureProject})
 		for _, name := range got {
 			if strings.ContainsAny(name, `/\: `) {
 				t.Errorf("line %d: name %q carries a path", i, name)

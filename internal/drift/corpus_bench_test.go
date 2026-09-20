@@ -71,7 +71,7 @@ func BenchmarkReadAndScanFiveThousandLines(b *testing.B) {
 			b.Fatalf("segments = %d, want 1", len(res.Segments))
 		}
 		for _, seg := range res.Segments {
-			if _, err := drift.Scan([]byte(seg.Lines)); err != nil {
+			if _, err := drift.Scan([]byte(seg.Lines), redact.SessionLocation{}); err != nil {
 				b.Fatal(err)
 			}
 		}

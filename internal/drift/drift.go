@@ -9,11 +9,13 @@
 // Every finding belongs to one of three groups, told apart by what
 // happens once the finding is made:
 //
-//   - Stop. The line cannot be masked the way this build masks it, so
-//     it must not leave the device: a field holding an absolute path
-//     that the anchored list does not know, or a line cut short of its
-//     newline. Reading pauses until a build that covers the shape is
-//     installed.
+//   - Stop. The reader contradicted itself: a line cut short of its
+//     newline, which a reader never hands over. Reading pauses until a
+//     build that covers the shape is installed.
+//   - Quarantine. The line holds a field naming where the session ran
+//     that the anchored list does not know, so this build cannot mask
+//     it. The segment is kept on this machine and never uploaded;
+//     reading goes on.
 //   - Alert. The line was masked and stored as it was, but a field the
 //     record is later read by is missing or inconsistent: an assistant
 //     line without a message id, block indexes that do not run
@@ -94,12 +96,13 @@ var requiredResponseFields []string
 // reads free text. A line that is not one of a session file is an
 // error, not a finding: a reader hands over no such line, so one here
 // says the input did not come from a reader.
-func Scan(lines []byte) (Signals, error) {
+func Scan(lines []byte, loc redact.SessionLocation) (Signals, error) {
 	var r Signals
 	if !bytes.HasSuffix(lines, []byte("\n")) {
 		r.IncompleteSegments = 1
 	}
 	s := scanner{
+		location:    loc,
 		paths:       map[string]bool{},
 		blockIndex:  map[string][]int{},
 		launch:      map[string]bool{},
@@ -132,6 +135,11 @@ func Scan(lines []byte) (Signals, error) {
 // listed once however many lines carry it, and a message's block
 // indexes are judged together.
 type scanner struct {
+	// location is where the session whose lines these are ran. A field
+	// naming a path is a finding only when it names that location; the
+	// scan itself reads no environment, so what counts as the location
+	// arrives with the lines.
+	location    redact.SessionLocation
 	paths       map[string]bool
 	blockIndex  map[string][]int
 	launch      map[string]bool
@@ -145,7 +153,7 @@ func (s *scanner) line(r *Signals, raw []byte) error {
 	if !ok {
 		return fmt.Errorf("not a session line")
 	}
-	for _, name := range redact.AbsolutePathFields(line) {
+	for _, name := range redact.AbsolutePathFields(line, s.location) {
 		s.paths[name] = true
 	}
 

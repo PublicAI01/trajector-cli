@@ -8,7 +8,11 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/drift"
+	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
+
+// fixtureLocation is where the sessions in testdata ran.
+var fixtureLocation = redact.SessionLocation{Home: "/home/jdoe", Project: "/srv/work/project-alpha"}
 
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
@@ -21,7 +25,7 @@ func fixture(t *testing.T, name string) []byte {
 
 func scan(t *testing.T, name string) drift.Signals {
 	t.Helper()
-	r, err := drift.Scan(fixture(t, name))
+	r, err := drift.Scan(fixture(t, name), fixtureLocation)
 	if err != nil {
 		t.Fatalf("%s: %v", name, err)
 	}
@@ -64,7 +68,7 @@ func TestScan_IncompleteTrailingLine(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := drift.Scan(tc.lines)
+			r, err := drift.Scan(tc.lines, fixtureLocation)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -74,7 +78,7 @@ func TestScan_IncompleteTrailingLine(t *testing.T) {
 		})
 	}
 	t.Run("the cut line is not read", func(t *testing.T) {
-		r, err := drift.Scan([]byte("{\"type\":\"user\"}\n{\"type\":\"assistant\",\"message\":{}"))
+		r, err := drift.Scan([]byte("{\"type\":\"user\"}\n{\"type\":\"assistant\",\"message\":{}"), fixtureLocation)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -130,7 +134,7 @@ func TestScan_BlockIndexGapWithinOneMessage(t *testing.T) {
 		})
 	}
 	t.Run("lines without an index are not judged", func(t *testing.T) {
-		r, err := drift.Scan([]byte(`{"type":"assistant","message":{"id":"msg_1"}}` + "\n" + `{"type":"assistant","message":{"id":"msg_1"}}` + "\n"))
+		r, err := drift.Scan([]byte(`{"type":"assistant","message":{"id":"msg_1"}}`+"\n"+`{"type":"assistant","message":{"id":"msg_1"}}`+"\n"), fixtureLocation)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -162,7 +166,7 @@ func TestScan_AgentLineWithoutAnyParentField(t *testing.T) {
 	}
 	t.Run("each accepted key on its own", func(t *testing.T) {
 		for _, key := range []string{"agentId", "toolUseId", "parentAgentId", "parentSessionId"} {
-			r, err := drift.Scan([]byte(`{"type":"user","isSidechain":true,"` + key + `":"x"}` + "\n"))
+			r, err := drift.Scan([]byte(`{"type":"user","isSidechain":true,"`+key+`":"x"}`+"\n"), fixtureLocation)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -220,7 +224,7 @@ func TestScan_IgnoresFreeText(t *testing.T) {
 
 func TestScan_RefusesALineThatIsNotOneOfASessionFile(t *testing.T) {
 	for _, line := range []string{`"a string"`, `[1,2]`, `{"cwd":"/srv/wo`, `null`} {
-		_, err := drift.Scan([]byte(line + "\n"))
+		_, err := drift.Scan([]byte(line+"\n"), fixtureLocation)
 		if err == nil || !strings.Contains(err.Error(), "line 1") {
 			t.Errorf("Scan(%s) = %v, want an error naming line 1", line, err)
 		}
@@ -229,7 +233,7 @@ func TestScan_RefusesALineThatIsNotOneOfASessionFile(t *testing.T) {
 
 func TestScan_ResponseFieldProbeReportsNothingWhileItsListIsEmpty(t *testing.T) {
 	line := []byte(`{"type":"assistant","uuid":"u1","message":{"id":"msg_1","role":"assistant","content":[]}}` + "\n")
-	r, err := drift.Scan(line)
+	r, err := drift.Scan(line, fixtureLocation)
 	if err != nil {
 		t.Fatal(err)
 	}
