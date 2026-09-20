@@ -96,9 +96,10 @@ func (s *Sandbox) ActiveGrant(root string) (Grant, bool) {
 type PauseReason = routing.PauseReason
 
 const (
-	PauseSignedOut        = routing.PauseSignedOut
-	PauseConsentReconfirm = routing.PauseConsentReconfirm
-	PauseRedactionDrift   = routing.PauseRedactionDrift
+	PauseSignedOut         = routing.PauseSignedOut
+	PauseConsentReconfirm  = routing.PauseConsentReconfirm
+	PauseConsentUnreadable = routing.PauseConsentUnreadable
+	PauseRedactionDrift    = routing.PauseRedactionDrift
 )
 
 // PausedReason reports why recording is suspended device-wide, or empty

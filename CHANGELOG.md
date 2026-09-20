@@ -31,6 +31,12 @@ All notable changes to trajector are documented here. The format follows
   longer pauses recording device-wide. The value is what the user
   typed, not where the session ran, and the same text stands in the
   user line it came from.
+- A consent record that cannot be read or parsed is no longer reported
+  as a changed data agreement. It pauses recording device-wide under
+  its own reason, and `status`, `doctor` and the diagnostic bundle name
+  the file, the failure, and `trajector enable` as the way out. Running
+  `trajector enable` and accepting the agreement writes a new record
+  and resumes recording.
 
 ## [0.3.1] - 2026-09-20
 

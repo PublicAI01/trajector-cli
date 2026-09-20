@@ -173,12 +173,12 @@ func ExplainHooks(policy claudesettings.HookPolicy, shape routing.Shape) HookOut
 }
 
 // PausedEverywhere is the sentence a surface states for a device-wide
-// pause: what the pause stops, then the reason, which carries the
+// pause: what the pause stops, then the explanation, which carries the
 // command that lifts it. status prints it under the device, and so does
 // the command that has just paused the device itself, so the two never
 // describe the same stop differently.
-func PausedEverywhere(reason routing.PauseReason) string {
-	return pausedEverywhere + ": " + reason.Explain() + "."
+func PausedEverywhere(explanation string) string {
+	return pausedEverywhere + ": " + explanation + "."
 }
 
 // ShapeNotice is what the shape a project records in costs or keeps,

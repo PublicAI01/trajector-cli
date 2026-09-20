@@ -156,13 +156,35 @@ func TestEnsureProxyPausesRecordingWhenConsentCannotBeRead(t *testing.T) {
 	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
 		t.Fatalf("ensure-proxy: %v", err)
 	}
-	if reason := e.sandbox.PausedReason(); reason != proxytest.PauseConsentReconfirm {
-		t.Errorf("pause = %q, want recording paused; an unreadable consent store must not read as a current agreement", reason)
+	if reason := e.sandbox.PausedReason(); reason != proxytest.PauseConsentUnreadable {
+		t.Errorf("pause = %q, want %q; an unreadable consent store must not read as a current agreement", reason, proxytest.PauseConsentUnreadable)
 	}
 	if !strings.Contains(e.stderr.String(), "could not be read") {
 		t.Errorf("stderr = %q, want the unreadable consent store explained", e.stderr)
 	}
-	if !strings.Contains(e.stderr.String(), proxytest.PauseConsentReconfirm.Explain()) {
-		t.Errorf("stderr = %q, want the pause reason's own sentence", e.stderr)
+	if !strings.Contains(e.stderr.String(), e.sandbox.ConsentPath()) {
+		t.Errorf("stderr = %q, want the consent record's own path named", e.stderr)
+	}
+	if !strings.Contains(e.stderr.String(), "`trajector enable`") {
+		t.Errorf("stderr = %q, want the command that writes a new record", e.stderr)
+	}
+}
+
+func TestEnableResumesBothConsentPauses(t *testing.T) {
+	for _, reason := range []proxytest.PauseReason{proxytest.PauseConsentReconfirm, proxytest.PauseConsentUnreadable} {
+		t.Run(string(reason), func(t *testing.T) {
+			e := newEnv(t)
+			e.startProxy()
+			e.sandbox.CorruptConsent()
+			e.sandbox.Pause(reason)
+			e.stdin = "yes\nyes\nyes\n"
+
+			if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+				t.Fatalf("enable: %v", err)
+			}
+			if got := e.sandbox.PausedReason(); got != "" {
+				t.Errorf("pause = %q, want recording resumed", got)
+			}
+		})
 	}
 }

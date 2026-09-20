@@ -387,9 +387,19 @@ func (m *Machine) registerEarlierSessions(projectIDHash string, found discover.R
 // answer. An acceptance recorded for an older agreement version is
 // stale: the terms changed, so the user must confirm again.
 func (m *Machine) confirmAgreement(io IO) error {
+	// Bytes that are not a consent record establish no acceptance, so
+	// the agreement is shown in full and accepted again: this command
+	// is what the unreadable-record pause tells the user to run, and it
+	// must not stop at the same unreadable bytes. Every other failure
+	// is a store that was never read — a permission denied, a disk
+	// error — and a store nobody read says nothing about what was
+	// accepted, so it must not be answered by asking again.
 	version, _, err := m.consent.AcceptedVersion()
-	if err != nil {
-		return err
+	switch {
+	case errors.Is(err, consent.ErrUnreadable):
+		version = ""
+	case err != nil:
+		return fmt.Errorf("reading the consent record at %s: %w", m.consent.Path(), err)
 	}
 	if version == consent.AgreementVersion {
 		return nil
@@ -411,9 +421,12 @@ func (m *Machine) confirmAgreement(io IO) error {
 	if err := m.consent.AcceptAgreement(consent.AgreementVersion, m.now()); err != nil {
 		return err
 	}
-	// Recording the changed agreement paused may resume now that the
-	// current terms are accepted.
-	return m.routes.Resume(routing.PauseConsentReconfirm)
+	// Both consent pauses may resume now that the current terms are
+	// accepted: the record is current and it is readable.
+	if err := m.routes.Resume(routing.PauseConsentReconfirm); err != nil {
+		return err
+	}
+	return m.routes.Resume(routing.PauseConsentUnreadable)
 }
 
 // projectToken reuses the active token when the project is already

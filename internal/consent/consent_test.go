@@ -90,8 +90,23 @@ func TestMalformedStoreSurfacesError(t *testing.T) {
 	if _, _, err := s.AcceptedVersion(); err == nil {
 		t.Error("malformed store read did not fail")
 	}
-	if err := s.AcceptAgreement(consent.AgreementVersion, "2026-08-02T10:00:00Z"); err == nil {
-		t.Error("write over a malformed store did not fail")
+}
+
+func TestAcceptingTheAgreementReplacesAnUnreadableStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "consent-under-test.json")
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := consent.Open(path)
+	if err := s.AcceptAgreement(consent.AgreementVersion, "2026-08-02T10:00:00Z"); err != nil {
+		t.Fatalf("accepting over an unreadable store: %v", err)
+	}
+	version, _, err := s.AcceptedVersion()
+	if err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	if version != consent.AgreementVersion {
+		t.Errorf("accepted version = %q, want %q", version, consent.AgreementVersion)
 	}
 }
 

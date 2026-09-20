@@ -165,12 +165,18 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 
 	st.WindowsSideClaude = claudesettings.WindowsSideClaude(root, "")
 
+	// A record that cannot be read is reported, not returned as a
+	// failure of the whole reading: the pause it causes is exactly what
+	// status and doctor exist to show, and they can only show it if
+	// they still get a status.
 	if st.AgreementVersion, _, err = m.consent.AcceptedVersion(); err != nil {
-		return st, err
+		st.ConsentPath, st.ConsentErr = m.consent.Path(), err
+		return st, nil
 	}
 	state, ok, err := m.consent.ProjectState(st.Hash)
 	if err != nil {
-		return st, err
+		st.ConsentPath, st.ConsentErr = m.consent.Path(), err
+		return st, nil
 	}
 	if ok {
 		st.ConsentState = state

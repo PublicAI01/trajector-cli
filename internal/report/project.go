@@ -69,12 +69,28 @@ type ProjectStatus struct {
 
 	// PauseReason is the device-wide pause, empty while recording.
 	PauseReason routing.PauseReason
+	// ConsentPath is where the consent record lives, and ConsentErr
+	// the failure that made it unreadable. They are set together and
+	// only when the record could not be read: a pause stored as one
+	// word cannot name the file or the failure, so the surface that
+	// read it carries them here.
+	ConsentPath string
+	ConsentErr  error
 
 	// WindowsSideClaude reports that the project lies on a Windows
 	// drive mounted into WSL. Claude Code opens such a project from
 	// the Windows side, where its hooks run Windows commands that
 	// cannot reach this trajector, so nothing is recorded from it.
 	WindowsSideClaude bool
+}
+
+// PauseExplanation is the device-wide pause as one sentence, with what
+// only the reader of the consent record can add to it.
+func (s ProjectStatus) PauseExplanation() string {
+	if s.PauseReason == routing.PauseConsentUnreadable && s.ConsentErr != nil {
+		return routing.ExplainUnreadableConsent(s.ConsentPath, s.ConsentErr)
+	}
+	return s.PauseReason.Explain()
 }
 
 // Consistent reports the fully healthy enabled state: a standing grant

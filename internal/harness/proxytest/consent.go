@@ -109,6 +109,10 @@ func (s *Sandbox) SettingDecisions(projectIDHash string) map[string]SettingDecis
 	return decisions
 }
 
+// ConsentPath reports where the consent store lives, for tests that
+// assert a surface names the file it could not read.
+func (s *Sandbox) ConsentPath() string { return s.layout.ConsentFile() }
+
 // CorruptConsent leaves the consent store unreadable, the way a crash
 // or a kill partway through a write leaves it: the bytes on disk are a
 // JSON document that stops mid-key. Tests that ask what the device

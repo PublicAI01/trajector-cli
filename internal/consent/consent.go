@@ -9,6 +9,7 @@ package consent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -115,13 +116,15 @@ type ProjectSnapshot struct {
 }
 
 // SnapshotProject captures the project's current record; a project with
-// no record yields a snapshot that restores to absence.
+// no record, and a store whose bytes cannot be parsed, both yield a
+// snapshot that restores to absence — an unreadable record states no
+// decision to put back.
 func (s *Store) SnapshotProject(projectIDHash string) (ProjectSnapshot, error) {
 	if projectIDHash == "" {
 		return ProjectSnapshot{}, fmt.Errorf("consent: project hash is required")
 	}
 	f, err := s.read()
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrUnreadable) {
 		return ProjectSnapshot{}, err
 	}
 	snap := ProjectSnapshot{hash: projectIDHash}
@@ -183,6 +186,14 @@ func (s *Store) MarkPrompted(projectIDHash string) (first bool, err error) {
 	return first, nil
 }
 
+// ErrUnreadable marks a store whose bytes on disk are not a consent
+// record. It is told apart from an absent store, which means nothing
+// was ever accepted, and from a store that could not be opened at all,
+// which says nothing either way: only these bytes are answered by
+// showing the agreement and recording the answer again, because only
+// they can be replaced by doing so.
+var ErrUnreadable = errors.New("unreadable consent record")
+
 func (s *Store) read() (storeFile, error) {
 	data, err := fsatomic.ReadFile(s.path)
 	if os.IsNotExist(err) {
@@ -190,16 +201,16 @@ func (s *Store) read() (storeFile, error) {
 	} else if err != nil {
 		return storeFile{Projects: map[string]projectRecord{}}, err
 	}
-	return parseStoreFile(s.path, data)
+	return parseStoreFile(data)
 }
 
-func parseStoreFile(path string, data []byte) (storeFile, error) {
+func parseStoreFile(data []byte) (storeFile, error) {
 	f := storeFile{Projects: map[string]projectRecord{}}
 	if len(data) == 0 {
 		return f, nil
 	}
 	if err := json.Unmarshal(data, &f); err != nil {
-		return f, fmt.Errorf("consent: parsing %s: %w", path, err)
+		return f, fmt.Errorf("consent: %w: %v", ErrUnreadable, err)
 	}
 	if f.Projects == nil {
 		f.Projects = map[string]projectRecord{}
@@ -209,13 +220,19 @@ func parseStoreFile(path string, data []byte) (storeFile, error) {
 
 // update rewrites the store under fsatomic's cross-process lock, so
 // concurrent commands never lose each other's consent decisions.
+//
+// Bytes that cannot be parsed are replaced rather than preserved. They
+// hold no decision any reader can recover, and keeping them would brick
+// the store for good: every command that records a decision, including
+// the enable that lifts the pause an unreadable record causes, would
+// fail on them forever.
 func (s *Store) update(mutate func(*storeFile)) error {
 	if err := userdirs.EnsureOwnerDir(filepath.Dir(s.path)); err != nil {
 		return err
 	}
 	return fsatomic.Update(s.path, 0o600, func(old []byte) ([]byte, error) {
-		f, err := parseStoreFile(s.path, old)
-		if err != nil {
+		f, err := parseStoreFile(old)
+		if err != nil && !errors.Is(err, ErrUnreadable) {
 			return nil, err
 		}
 		mutate(&f)

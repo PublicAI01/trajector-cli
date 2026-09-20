@@ -242,9 +242,12 @@ func (m *Machine) pauseIfAgreementStale(io IO) {
 		// recording under terms nobody could show the user had accepted.
 		// This is the only consent-side check the recording decision
 		// depends on, so it fails closed, the way routing's own loader
-		// does for a table it cannot read.
-		if perr := m.routes.Pause(routing.PauseConsentReconfirm); perr == nil {
-			fmt.Fprintf(io.Err, "trajector: your accepted data agreement could not be read (%v); %s\n", err, routing.PauseConsentReconfirm.Explain())
+		// does for a table it cannot read. It is its own reason: an
+		// agreement that changed and a record that will not parse are
+		// different facts, and telling the user the first when the
+		// second happened names a change that never occurred.
+		if perr := m.routes.Pause(routing.PauseConsentUnreadable); perr == nil {
+			fmt.Fprintf(io.Err, "trajector: %s\n", routing.ExplainUnreadableConsent(m.consent.Path(), err))
 		}
 		return
 	}

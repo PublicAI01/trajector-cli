@@ -147,6 +147,6 @@ func (m *Machine) Logout(io IO) error {
 	// The pause this command just set is stated in the words every other
 	// surface uses for it, so the user reads the same stop and the same
 	// way out here as in status.
-	fmt.Fprintln(io.Out, report.PausedEverywhere(routing.PauseSignedOut))
+	fmt.Fprintln(io.Out, report.PausedEverywhere(routing.PauseSignedOut.Explain()))
 	return nil
 }

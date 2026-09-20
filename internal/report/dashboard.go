@@ -35,7 +35,7 @@ func Dashboard(w io.Writer, d Diagnosis) {
 		fmt.Fprintln(w, "  Not signed in. Run `trajector login` to pair this device.")
 	}
 	if st.PauseReason != "" {
-		fmt.Fprintf(w, "  %s\n", PausedEverywhere(st.PauseReason))
+		fmt.Fprintf(w, "  %s\n", PausedEverywhere(st.PauseExplanation()))
 	}
 	if d.StaleDiscoveryHook {
 		fmt.Fprintf(w, "  WARNING: %s. Run `trajector doctor` to remove it.\n", staleDiscoveryHookFact)

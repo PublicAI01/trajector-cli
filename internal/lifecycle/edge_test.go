@@ -54,6 +54,31 @@ func TestEnableFailsWhenAgreementAnswerUnavailable(t *testing.T) {
 	}
 }
 
+func TestEnableStopsAtAConsentRecordItCannotOpen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file mode does not withhold read access on Windows")
+	}
+	e := newEnv(t)
+	e.startProxy()
+	e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
+	path := e.sandbox.ConsentPath()
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0o600) })
+
+	err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
+	if err == nil {
+		t.Fatal("enable succeeded over a consent record it never read")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("err = %v, want the record it could not read named", err)
+	}
+	if strings.Contains(e.stdout.String(), "Do you accept") {
+		t.Errorf("stdout = %q, want no second acceptance asked for terms that may already be accepted", e.stdout)
+	}
+}
+
 func TestEnableRollsBackWhenSettingsFileIsMalformed(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()

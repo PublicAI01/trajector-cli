@@ -150,7 +150,7 @@ func doctorPause(f *Findings, st ProjectStatus) {
 	if st.PauseReason == "" {
 		return
 	}
-	f.Problem("%s: %s", strings.ToLower(pausedEverywhere), st.PauseReason.Explain())
+	f.Problem("%s: %s", strings.ToLower(pausedEverywhere), st.PauseExplanation())
 }
 
 // DoctorProject reports what a diagnosis establishes about the current

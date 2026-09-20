@@ -453,3 +453,36 @@ func TestStatusSaysWhenTheOnlyRecordsLeftAreQuarantined(t *testing.T) {
 		t.Errorf("status = %q, want the quarantine-only standing", out)
 	}
 }
+
+func TestStatusAndDoctorNameTheConsentRecordTheyCouldNotRead(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	e.sandbox.CorruptConsent()
+	e.sandbox.Pause(proxytest.PauseConsentUnreadable)
+	e.stdout.Reset()
+
+	out := e.statusOutput()
+	for _, want := range []string{"the consent record at " + e.sandbox.ConsentPath(), "could not be read", "`trajector enable`"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want it to contain %q", out, want)
+		}
+	}
+	if strings.Contains(out, "the data agreement changed") {
+		t.Errorf("status = %q, want no claim that the agreement changed", out)
+	}
+
+	e.stdout.Reset()
+	problems, err := e.machine().Doctor(e.project, e.io())
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if problems == 0 {
+		t.Error("doctor reported no problem for an unreadable consent record")
+	}
+	if !strings.Contains(e.stdout.String(), e.sandbox.ConsentPath()) {
+		t.Errorf("doctor = %q, want the consent record's own path named", e.stdout)
+	}
+}

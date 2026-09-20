@@ -45,7 +45,7 @@ const (
 )
 
 // PauseReason is the device-wide pause written into the routing table.
-// Exactly three values are legal; each writer resumes only its own, so
+// Exactly four values are legal; each writer resumes only its own, so
 // accepting a new agreement can never silently lift a signed-out pause.
 // The machine is the only thing that sets and clears them.
 type PauseReason string
@@ -57,6 +57,12 @@ const (
 	// PauseConsentReconfirm suspends recording until the changed data
 	// agreement is reconfirmed.
 	PauseConsentReconfirm PauseReason = "consent_reconfirm"
+	// PauseConsentUnreadable suspends recording while the consent
+	// record cannot be read or parsed. Whether the agreement in force
+	// was accepted is then unknown, and unknown is not yes, so this
+	// pause is not the same fact as a changed agreement and must not
+	// be reported as one.
+	PauseConsentUnreadable PauseReason = "consent_unreadable"
 	// PauseRedactionDrift suspends recording when session records took
 	// a shape this build's redaction does not cover: what it cannot
 	// redact must not leave the device, and a pause is the only way
@@ -73,6 +79,18 @@ const (
 	driftSecondStep = "trajector doctor"
 )
 
+// consentWayOut is the command that writes a new consent record, and
+// so the one way out of a record that cannot be read.
+const consentWayOut = "trajector enable"
+
+// ExplainUnreadableConsent is the consent_unreadable sentence for a
+// surface that read the record itself. The stored reason is one word:
+// only the reader of the file can name the file and the failure, so
+// the sentence is completed here rather than guessed at by Explain.
+func ExplainUnreadableConsent(path string, err error) string {
+	return "the consent record at " + path + " could not be read (" + err.Error() + "); run `" + consentWayOut + "` to accept the agreement again"
+}
+
 // Explain returns the pause as one user-readable sentence naming the
 // command that lifts it. A reason this build does not know (written by
 // a newer one) is returned verbatim rather than hidden.
@@ -82,6 +100,8 @@ func (r PauseReason) Explain() string {
 		return "this device is signed out; run `trajector login` to resume recording"
 	case PauseConsentReconfirm:
 		return "the data agreement changed; run `trajector enable` to reconfirm it"
+	case PauseConsentUnreadable:
+		return "the consent record could not be read; run `" + consentWayOut + "` to accept the agreement again"
 	case PauseRedactionDrift:
 		return "session records changed shape in a way this build's redaction does not cover; run `" + driftFirstStep + "`, then `" + driftSecondStep + "`"
 	default:
