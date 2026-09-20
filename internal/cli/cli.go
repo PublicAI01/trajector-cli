@@ -13,6 +13,8 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
@@ -94,7 +96,13 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "--help", "-h":
+		usage(stdout)
+		return 0
 	case "version", "--version":
+		if code, answered := a.preparse("usage: trajector version", args[1:], nil); answered {
+			return code
+		}
 		fmt.Fprintf(stdout, "trajector %s\n", version)
 		return 0
 	case "login":
@@ -311,10 +319,40 @@ func takeFlag(args []string, flag string) ([]string, bool) {
 	return args, false
 }
 
-// with is the shape every command shares: the argument-count check
-// against usage, the prelude, and the one mapping from the machine's
-// answer to an exit code.
-func (a *app) with(usage string, args []string, nargs int, do func(m *lifecycle.Machine, cwd string) error) int {
+// preparse answers what every command must settle before it reads an
+// argument as a value: whether the user asked for help, and whether a
+// `-` prefixed argument is a flag the command does not know. Such an
+// argument is a mistake, never a value, so no positional argument may
+// be read until this has refused it — a command that read one would act
+// on a name the user never wrote. known holds the flags the command
+// itself accepts, including any it takes in a positional slot. The
+// second result reports that the command is already answered.
+func (a *app) preparse(usage string, args []string, known []string) (int, bool) {
+	if slices.ContainsFunc(args, func(arg string) bool { return arg == "--help" || arg == "-h" }) {
+		fmt.Fprintln(a.stdout, usage)
+		return 0, true
+	}
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") || slices.Contains(known, arg) {
+			continue
+		}
+		fmt.Fprintln(a.stderr, usage)
+		fmt.Fprintf(a.stderr, "trajector: unknown flag %q\n", arg)
+		return 2, true
+	}
+	return 0, false
+}
+
+// with is the shape every command shares: the flag pre-parse, the
+// argument-count check against usage, the prelude, and the one mapping
+// from the machine's answer to an exit code. known names the flags this
+// command still accepts at this point: the ones takeFlag already
+// stripped are gone, and what remains is a flag the command reads from
+// a positional slot.
+func (a *app) with(usage string, args []string, nargs int, do func(m *lifecycle.Machine, cwd string) error, known ...string) int {
+	if code, answered := a.preparse(usage, args, known); answered {
+		return code
+	}
 	if len(args) != nargs {
 		fmt.Fprintln(a.stderr, usage)
 		return 2

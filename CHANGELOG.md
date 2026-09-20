@@ -25,6 +25,9 @@ All notable changes to trajector are documented here. The format follows
 
 ### Fixed
 
+- `trajector forget --help` prints usage instead of treating `--help`
+  as a session id; every command now answers `--help` and refuses an
+  unknown flag before reading its arguments.
 - A slash command typed as a prompt — `/exit` written to a
   `queue-operation` or a `system` / `local_command` line — no longer
   reads as a session file shape this build cannot redact, so it no

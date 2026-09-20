@@ -13,9 +13,27 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 )
 
+// proxyUsage names the mode a user starts by hand. The serve mode is
+// dispatched too, but only the supervisor starts it.
+const proxyUsage = "usage: trajector " + proxylife.Command + " " + proxylife.Supervise
+
+// Flag names of the proxy modes, spelled once for the pre-parse and for
+// the flag set that reads their values.
+const (
+	addrFlag = "addr"
+	idleFlag = "idle-timeout"
+)
+
+// proxyFlags is every spelling the flag package accepts for the flags
+// the proxy modes take, so the pre-parse lets them through to it.
+var proxyFlags = []string{"-" + addrFlag, "--" + addrFlag, "-" + idleFlag, "--" + idleFlag}
+
 func (a *app) proxyCmd(args []string) int {
+	if code, answered := a.preparse(proxyUsage, args, proxyFlags); answered {
+		return code
+	}
 	if len(args) == 0 {
-		fmt.Fprintf(a.stderr, "usage: trajector %s %s\n", proxylife.Command, proxylife.Supervise)
+		fmt.Fprintln(a.stderr, proxyUsage)
 		return 2
 	}
 	switch args[0] {
@@ -38,8 +56,8 @@ func (a *app) uploadCmd(args []string) int {
 func (a *app) runProxy(mode string, args []string) int {
 	fs := flag.NewFlagSet("proxy "+mode, flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
-	addr := fs.String("addr", "", "listen address, matched by its literal spelling: probes, admin-token files, and the challenge all treat localhost and 127.0.0.1 as different addresses, so every command must spell it the way serve did")
-	idle := fs.Duration("idle-timeout", 0, "exit after this much authorized-traffic silence")
+	addr := fs.String(addrFlag, "", "listen address, matched by its literal spelling: probes, admin-token files, and the challenge all treat localhost and 127.0.0.1 as different addresses, so every command must spell it the way serve did")
+	idle := fs.Duration(idleFlag, 0, "exit after this much authorized-traffic silence")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}

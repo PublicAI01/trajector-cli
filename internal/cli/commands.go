@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -61,6 +60,11 @@ func (a *app) doctorCmd(args []string) int {
 		}
 		return exit
 	}
+	// Only the subcommand slot is judged here: what follows belongs to
+	// the subcommand, and its own pre-parse knows which flags it takes.
+	if code, answered := a.preparse(doctorUsage, args[:1], nil); answered {
+		return code
+	}
 	switch args[0] {
 	case "requeue":
 		return a.requeueCmd(args[1:])
@@ -69,22 +73,19 @@ func (a *app) doctorCmd(args []string) int {
 	case "bundle":
 		return a.bundleCmd(args[1:])
 	default:
-		doctorUsage(a.stderr)
+		fmt.Fprintln(a.stderr, doctorUsage)
 		return 2
 	}
 }
 
 // doctorUsage spells out the two exits a quarantined batch has, because
 // choosing between them is the whole question a user arrives with.
-func doctorUsage(w io.Writer) {
-	fmt.Fprint(w, `usage: trajector doctor [bundle | requeue <batch-id>|--all | discard <batch-id>|--all]
+const doctorUsage = `usage: trajector doctor [bundle | requeue <batch-id>|--all | discard <batch-id>|--all]
 
   requeue  put a quarantined batch back in the spool to upload again;
            use it once whatever stopped the batch is fixed
   discard  delete a quarantined batch and its rawcalls from this machine
-           for good; use it to give up on a batch that will never upload
-`)
-}
+           for good; use it to give up on a batch that will never upload`
 
 func (a *app) bundleCmd(args []string) int {
 	return a.with("usage: trajector doctor bundle", args, 0, func(m *lifecycle.Machine, cwd string) error {
@@ -100,7 +101,7 @@ func (a *app) requeueCmd(args []string) int {
 			batchID = ""
 		}
 		return m.RequeueRejected(batchID, all, a.io())
-	})
+	}, "--all")
 }
 
 func (a *app) discardCmd(args []string) int {
@@ -111,7 +112,7 @@ func (a *app) discardCmd(args []string) int {
 			batchID = ""
 		}
 		return m.DiscardRejected(batchID, all, confirmed, a.io())
-	})
+	}, "--all")
 }
 
 func (a *app) upgradeCmd(args []string) int {
@@ -133,8 +134,14 @@ func (a *app) uninstallCmd(args []string) int {
 // writes on stdout reaches the model, and what it writes on stderr
 // reaches the user.
 func (a *app) hookCmd(args []string) int {
+	// A hook runs where nobody is watching, so a mistyped flag must be
+	// refused before the hook name is read as an event and before any
+	// session file is looked for.
+	if code, answered := a.preparse(hookUsage, args, []string{claudesettings.NoProxyMarker}); answered {
+		return code
+	}
 	if len(args) == 0 {
-		hookUsage(a.stderr)
+		fmt.Fprintln(a.stderr, hookUsage)
 		return 2
 	}
 	name, rest := args[0], args[1:]
@@ -146,7 +153,7 @@ func (a *app) hookCmd(args []string) int {
 		// records.
 		rest, _ = takeFlag(rest, claudesettings.NoProxyMarker)
 		if len(rest) != 0 {
-			hookUsage(a.stderr)
+			fmt.Fprintln(a.stderr, hookUsage)
 			return 2
 		}
 		hook := a.hookInput()
@@ -157,7 +164,7 @@ func (a *app) hookCmd(args []string) int {
 		return a.exit(m.SessionStarting(cwd, hook, a.io()))
 	case claudesettings.HookSessionEnd:
 		if len(rest) != 0 {
-			hookUsage(a.stderr)
+			fmt.Fprintln(a.stderr, hookUsage)
 			return 2
 		}
 		hook := a.hookInput()
@@ -167,7 +174,7 @@ func (a *app) hookCmd(args []string) int {
 		return 0
 	case claudesettings.HookGitSnapshot:
 		if len(rest) != 0 {
-			hookUsage(a.stderr)
+			fmt.Fprintln(a.stderr, hookUsage)
 			return 2
 		}
 		hook := a.hookInput()
@@ -177,7 +184,7 @@ func (a *app) hookCmd(args []string) int {
 		return 0
 	case claudesettings.HookProgress:
 		if len(rest) != 0 {
-			hookUsage(a.stderr)
+			fmt.Fprintln(a.stderr, hookUsage)
 			return 2
 		}
 		hook := a.hookInput()
@@ -187,7 +194,7 @@ func (a *app) hookCmd(args []string) int {
 		return 0
 	case claudesettings.HookDiscovery:
 		if len(rest) != 0 {
-			hookUsage(a.stderr)
+			fmt.Fprintln(a.stderr, hookUsage)
 			return 2
 		}
 		// A lost hint is acceptable; a blocked session is not, so every
@@ -209,17 +216,21 @@ func (a *app) hookCmd(args []string) int {
 		return 0
 	default:
 		fmt.Fprintf(a.stderr, "trajector: unknown hook %q\n", name)
-		hookUsage(a.stderr)
+		fmt.Fprintln(a.stderr, hookUsage)
 		return 2
 	}
 }
 
-func hookUsage(w io.Writer) {
-	fmt.Fprintf(w, "usage: trajector hook <%s [%s]|%s|%s|%s|%s|%s>\n",
-		claudesettings.HookEnsureProxy, claudesettings.NoProxyMarker,
-		claudesettings.HookSessionEnd, claudesettings.HookGitSnapshot,
-		claudesettings.HookProgress, claudesettings.HookDiscovery, claudesettings.HookRead)
-}
+// hookUsage lists every hook entry point in the spelling a settings
+// file carries, so the usage text cannot drift from what the command
+// line dispatches on.
+const hookUsage = "usage: trajector hook <" +
+	claudesettings.HookEnsureProxy + " [" + claudesettings.NoProxyMarker + "]|" +
+	claudesettings.HookSessionEnd + "|" +
+	claudesettings.HookGitSnapshot + "|" +
+	claudesettings.HookProgress + "|" +
+	claudesettings.HookDiscovery + "|" +
+	claudesettings.HookRead + ">"
 
 // hookInput decodes what the session wrote on stdin. A terminal is not
 // read: a person running the hook by hand would otherwise wait on it

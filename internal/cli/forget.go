@@ -16,6 +16,9 @@ var sessionIDShape = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // forgetCmd acts on one session by id, not on the working directory, so
 // it runs from anywhere: the machine alone is enough.
 func (a *app) forgetCmd(args []string) int {
+	if code, answered := a.preparse(forgetUsage, args, nil); answered {
+		return code
+	}
 	if len(args) > 1 {
 		fmt.Fprintln(a.stderr, forgetUsage)
 		return 2

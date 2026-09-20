@@ -122,3 +122,110 @@ func TestEnableReportsServiceFailureWithExitCodeOne(t *testing.T) {
 		t.Errorf("stderr = %q, want the failure reported once, prefixed", got.Stderr)
 	}
 }
+
+func TestCommandsAnswerHelpWithUsage(t *testing.T) {
+	tests := []struct {
+		args      []string
+		wantUsage string
+	}{
+		{[]string{"--help"}, "usage: trajector <command>"},
+		{[]string{"-h"}, "usage: trajector <command>"},
+		{[]string{"forget", "--help"}, "usage: trajector forget <session-id>"},
+		{[]string{"forget", "-h"}, "usage: trajector forget <session-id>"},
+		{[]string{"doctor", "--help"}, "usage: trajector doctor"},
+		{[]string{"doctor", "discard", "--help"}, "usage: trajector doctor discard"},
+		{[]string{"doctor", "requeue", "--help"}, "usage: trajector doctor requeue"},
+		{[]string{"upload", "--help"}, "usage: trajector upload"},
+		{[]string{"enable", "--help"}, "usage: trajector enable"},
+		{[]string{"disable", "--help"}, "usage: trajector disable"},
+		{[]string{"uninstall", "--help"}, "usage: trajector uninstall"},
+		{[]string{"status", "--help"}, "usage: trajector status"},
+		{[]string{"version", "--help"}, "usage: trajector version"},
+		{[]string{"hook", "read", "--help"}, "usage: trajector hook"},
+		{[]string{"proxy", "run", "--help"}, "usage: trajector proxy run"},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			e := clitest.New(t)
+			got := e.Run(tt.args...)
+			if got.Exit != 0 {
+				t.Errorf("exit = %d, want 0 (stderr: %q)", got.Exit, got.Stderr)
+			}
+			if !strings.Contains(got.Stdout, tt.wantUsage) {
+				t.Errorf("stdout = %q, want it to contain %q", got.Stdout, tt.wantUsage)
+			}
+			if got.Stderr != "" {
+				t.Errorf("stderr = %q, want help on stdout alone", got.Stderr)
+			}
+		})
+	}
+}
+
+func TestCommandsRefuseAnUnknownFlag(t *testing.T) {
+	tests := []struct {
+		args      []string
+		wantUsage string
+	}{
+		{[]string{"forget", "--bogus"}, "usage: trajector forget <session-id>"},
+		{[]string{"doctor", "--bogus"}, "usage: trajector doctor"},
+		{[]string{"doctor", "discard", "--bogus"}, "usage: trajector doctor discard"},
+		{[]string{"upload", "--bogus"}, "usage: trajector upload"},
+		{[]string{"enable", "--bogus"}, "usage: trajector enable"},
+		{[]string{"status", "--bogus"}, "usage: trajector status"},
+		{[]string{"version", "--bogus"}, "usage: trajector version"},
+		{[]string{"hook", "read", "--bogus"}, "usage: trajector hook"},
+		{[]string{"proxy", "run", "--bogus"}, "usage: trajector proxy run"},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			e := clitest.New(t)
+			got := e.Run(tt.args...)
+			if got.Exit != 2 {
+				t.Errorf("exit = %d, want 2 (stdout: %q)", got.Exit, got.Stdout)
+			}
+			if !strings.Contains(got.Stderr, tt.wantUsage) {
+				t.Errorf("stderr = %q, want it to contain %q", got.Stderr, tt.wantUsage)
+			}
+			if !strings.Contains(got.Stderr, "unknown flag") {
+				t.Errorf("stderr = %q, want the refused flag named", got.Stderr)
+			}
+		})
+	}
+}
+
+func TestKnownFlagsStillReachTheirCommands(t *testing.T) {
+	tests := [][]string{
+		{"doctor", "requeue", "--all"},
+		{"doctor", "discard", "--all", "--yes"},
+		{"upload", "--force"},
+		{"hook", "ensure-proxy", "--no-proxy"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			e := clitest.New(t)
+			got := e.Run(args...)
+			if strings.Contains(got.Stderr, "unknown flag") || strings.Contains(got.Stderr, "usage:") {
+				t.Errorf("stderr = %q, want the command to run rather than answer with its usage", got.Stderr)
+			}
+		})
+	}
+}
+
+func TestHookReadAnsweringHelpTouchesNothing(t *testing.T) {
+	e := clitest.New(t)
+
+	got := e.Run("hook", "read", "--help")
+
+	if got.Exit != 0 {
+		t.Errorf("exit = %d, want 0 (stderr: %q)", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stdout, "usage: trajector hook") {
+		t.Errorf("stdout = %q, want the hook usage", got.Stdout)
+	}
+	if registered := e.Sandbox().RegisteredPaths(e.ProjectHash()); len(registered) != 0 {
+		t.Errorf("registry = %q, want nothing registered", registered)
+	}
+	if starts := e.ProxyStarts(); len(starts) != 0 {
+		t.Errorf("proxy starts = %q, want none", starts)
+	}
+}

@@ -178,3 +178,21 @@ func TestForget_ReachesTheRecordsAQuarantinedBatchHolds(t *testing.T) {
 		t.Errorf("quarantine holds %+v, want the emptied batch gone whole", batches)
 	}
 }
+
+func TestForget_LeavesRecordsAloneWhenTheArgumentIsAFlag(t *testing.T) {
+	for _, arg := range []string{"--help", "-h", "--bogus"} {
+		t.Run(arg, func(t *testing.T) {
+			e := clitest.New(t)
+			seedSession(t, e, sessionOne)
+
+			got := e.Run("forget", arg)
+
+			if strings.Contains(got.Stdout, "Deleted") || strings.Contains(got.Stdout, "Forgetting") {
+				t.Errorf("stdout = %q, want no session acted on", got.Stdout)
+			}
+			if held := e.Sandbox().SessionsHeld(); held[sessionOne] != 2 {
+				t.Errorf("spool holds %v, want the session untouched", held)
+			}
+		})
+	}
+}
