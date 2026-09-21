@@ -3,7 +3,7 @@ package consent
 // AgreementVersion identifies the agreement text below. Bumping it
 // makes every earlier acceptance stale: capture pauses until the user
 // reconfirms, so recorded consent always matches the current terms.
-const AgreementVersion = "2026-09-20"
+const AgreementVersion = "2026-09-21"
 
 // AgreementText is shown in full before the explicit yes/no prompt.
 // It states the actual client behavior and must be kept truthful to
@@ -36,9 +36,11 @@ machine.
 
    When you enable a project, trajector also collects, once, the
    session files that project had already written before you enabled
-   it. Enable tells you how many there are and how old the oldest one
-   is. After that it does not scan backwards again unless you ask it
-   to.
+   it, and starts reading them right away. Enable tells you how many
+   there are and how old the oldest one is. Enabling with --no-earlier
+   leaves those files alone: they are never registered and never
+   read. After that it does not scan backwards again unless you ask
+   it to.
 
    Only enabled projects are collected. Traffic from other projects
    never reaches the proxy, and the paths to their session files are

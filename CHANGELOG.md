@@ -16,6 +16,17 @@ All notable changes to trajector are documented here. The format follows
   on the grant, and `status` states it under the project with the way
   back. It stands beside `--no-proxy` and neither implies the other.
 
+### Changed
+
+- The data agreement says that the session files a project had before
+  you enabled it are read right away, and that `--no-earlier` leaves
+  them alone; `PRIVACY.md` says the same, names `trajector doctor` as
+  the command that uploads the records a build holds on your machine
+  because it cannot redact their shape, and says that a diagnostics
+  archive names a program that holds the proxy port against this
+  build. The agreement version moves to 2026-09-21, so `enable` asks
+  once more.
+
 ### Fixed
 
 - The session files a project already had are now read after `enable`

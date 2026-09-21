@@ -4,7 +4,7 @@ This page describes everything trajector does with data on your machine and
 what leaves it. The client is fully open source; every statement here can be
 checked against the code in this repository.
 
-It describes version 2026-09-20 of the data agreement — the version
+It describes version 2026-09-21 of the data agreement — the version
 `trajector enable` shows you in full and records when you accept it. The
 agreement and this page state the same terms and change together; the
 version is the day the build carrying those terms was released.
@@ -50,8 +50,10 @@ inside the project the session was running, never the absolute directory.
 **Sessions from before you enabled the project.** When you enable a
 project, trajector also collects, once, the session files that project had
 already written before that moment. `trajector enable` tells you how many
-there are and how old the oldest one is. After that, trajector does not scan
-backwards again unless you ask it to.
+there are and how old the oldest one is, and reads them in the background
+right away. After that, trajector does not scan backwards again unless you
+ask it to. `trajector enable --no-earlier` leaves them alone: those files
+are then never registered, and nothing reads them.
 
 Records are observed facts and are never rewritten: model identifiers,
 thinking signatures, and usage figures stay exactly as the API produced
@@ -87,7 +89,12 @@ prints is copied as printed.
 - **Diagnostics, unless you send them.** `trajector doctor bundle` writes an
   archive you can inspect and attach to a report yourself. It contains
   identities, counters, and timestamps — never captured records, credentials,
-  or clear-text tokens. Nothing reports home on its own.
+  or clear-text tokens. Where another program holds the proxy port and this
+  build may not use it, the archive also names that program and its process
+  id, as your operating system reports them, so you can see what stands in
+  the way. It names neither for a holder that can be a proxy of your own,
+  and neither where this machine cannot read them. Nothing reports home on
+  its own.
 
 ## What happens on your machine
 
@@ -112,6 +119,11 @@ and any file your messages and tool results name: trajector does not rewrite
 an observation, because rewriting it would destroy the record.
 In a git record the branch name and the changed paths pass the same masking,
 and the commit and blob identifiers are left exactly as git printed them.
+A session record whose shape this build's redaction does not cover is held
+on your machine, in a place nothing uploads from, and reading goes on from
+the next record; `trajector status` and `trajector doctor` say how many are
+held, a later build that reads them cleanly uploads them the next time you
+run `trajector doctor`, and `trajector forget <session-id>` deletes them.
 **Unredacted data never leaves your machine.** Known limitation: masking
 applies to values only — a secret placed in a JSON key position is not
 masked, because keys are structure and the pass never rewrites them.
