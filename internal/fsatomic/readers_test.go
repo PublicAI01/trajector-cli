@@ -17,6 +17,9 @@ var plainReadFiles = map[string]bool{
 	"internal/fsatomic/fsatomic.go": true,
 	// /proc/version is provided by the kernel.
 	"internal/report/doctor.go": true,
+	// /proc/net/tcp and /proc/<pid>/{comm,cmdline} are provided by the
+	// kernel; nothing writes them.
+	"internal/proxylife/holder_linux.go": true,
 	// Session files belong to Claude Code, which writes them plainly;
 	// nothing in this codebase writes them at all.
 	"internal/follow/read.go": true,
