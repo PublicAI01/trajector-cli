@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"os"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -152,6 +153,10 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 		st.GrantHash = grant.ProjectIDHash
 		st.Shape = grant.Shape
 		st.EarlierSkipped = grant.EarlierSkipped
+		// A time the table does not hold in the layout's own form is no
+		// time at all: a reading that guessed one would date this
+		// project's sessions against it.
+		st.GrantedAt, _ = time.Parse(time.RFC3339, grant.GrantedAt)
 	}
 	if st.PauseReason, err = m.routes.PausedReason(); err != nil {
 		return st, err
@@ -246,11 +251,32 @@ func (m *Machine) readProjectTree(state report.SessionFilesState, st report.Proj
 	state.Walked = true
 	state.Gaps = found.Gaps
 	for _, path := range found.Sessions {
-		if !held[path] {
-			state.Unregistered++
+		if held[path] {
+			continue
+		}
+		state.Unregistered++
+		if earlierThanGrant(path, st.GrantedAt) {
+			state.Earlier++
 		}
 	}
 	return state
+}
+
+// earlierThanGrant reports that the file at path was last written
+// before the project was enabled, which is what separates a session
+// no hook could have reported from one a hook should have. A file
+// this process cannot stat, and a grant with no readable time, answer
+// false: the sessions this device cannot date are the ones it must
+// not explain away.
+func earlierThanGrant(path string, grantedAt time.Time) bool {
+	if grantedAt.IsZero() {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.ModTime().Before(grantedAt)
 }
 
 // proxyIdleBetweenSessions reports that every enabled project on this

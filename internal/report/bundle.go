@@ -76,6 +76,7 @@ type projectWire struct {
 	// session files left alone, which is why no reading of them is
 	// waiting anywhere.
 	NoEarlier        bool        `json:"no_earlier"`
+	GrantedAt        time.Time   `json:"granted_at,omitzero"`
 	InjectedToken    maskedToken `json:"injected_token"`
 	Token            maskedToken `json:"token"`
 	HooksInstalled   bool        `json:"hooks_installed"`
@@ -146,6 +147,9 @@ type sessionFilesWire struct {
 	// the registry does not hold. It is a count, like everything here:
 	// naming one would name what the user worked on.
 	Unregistered int `json:"unregistered"`
+	// Earlier counts how many of them were written before the project
+	// was enabled.
+	Earlier int `json:"earlier"`
 }
 
 type proxyWire struct {
@@ -247,6 +251,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			PauseExplanation: d.Project.PauseReason.ExplainAt(d.Project.ConsentPath, d.Project.ConsentErr),
 			NoProxy:          d.Project.Shape == routing.WithoutProxy,
 			NoEarlier:        d.Project.EarlierSkipped,
+			GrantedAt:        d.Project.GrantedAt,
 			WindowsSide:      d.Project.WindowsSideClaude,
 			UpstreamMoved:    upstreamMoveValue(d),
 			HookPolicy:       hookPolicyValue(d),
@@ -263,6 +268,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 				Walked:       d.SessionFiles.Walked,
 				WalkErr:      errString(d.SessionFiles.WalkErr),
 				Unregistered: d.SessionFiles.Unregistered,
+				Earlier:      d.SessionFiles.Earlier,
 			},
 		},
 		Proxy: proxy,

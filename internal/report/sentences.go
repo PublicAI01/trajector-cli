@@ -70,19 +70,29 @@ const (
 	emptyReasoningWayOut = claudesettings.KeyShowThinkingSummaries +
 		" is off for this project; run `trajector enable` to turn it on."
 
-	// workspaceNotTrusted is doctor's answer when session files of an
-	// enabled project exist that no hook of trajector's reported, and
-	// nothing readable on this machine keeps the hooks from loading:
-	// Claude Code runs a project's hooks only once the workspace is
-	// trusted, and that trust is given in a dialog no file records.
-	workspaceNotTrusted = "This workspace is not trusted yet; accept the trust dialog in Claude Code."
+	// noProxyCaveat is the one spelling of the clause a sentence
+	// carries when it sends an already enabled project back to
+	// `trajector enable`. A bare run re-declares the shape with a
+	// proxy, so a project that records from its session files only is
+	// converted by following such a sentence unless the sentence tells
+	// it to name the flag again.
+	noProxyCaveat = "(with --no-proxy if you use it)"
+
+	// earlierSessionsFix is what doctor says under its count of the
+	// session files a project had before it was enabled: the one way
+	// those files are registered. status states the same way back in
+	// its own sentence, earlierSessionsSkippedWayBack, because the two
+	// surfaces count different projects — doctor counts files older
+	// than the grant, status the files a user asked enable to leave
+	// alone.
+	earlierSessionsFix = "Run `trajector enable` in this project " + noProxyCaveat + " to register them."
 
 	// earlierSessionsSkippedWayBack is what status says under a project
 	// enabled with its earlier session files left alone. It names the
 	// way back and says that the way back re-declares the whole
 	// install: enable writes the shape as well as this choice, so a
 	// run that omits the shape flag changes the shape too.
-	earlierSessionsSkippedWayBack = "Earlier sessions were skipped at enable; run `trajector enable` again (with --no-proxy if you use it) to collect them."
+	earlierSessionsSkippedWayBack = "Earlier sessions were skipped at enable; run `trajector enable` again " + noProxyCaveat + " to collect them."
 
 	// spellingVariantsNotice is the standing disclosure of what the
 	// search for a project's session files cannot find by design.
@@ -269,6 +279,33 @@ func EarlierSessionLines(found discover.Result) []string {
 		lines = append(lines, treeLimitExceeded())
 	}
 	return lines
+}
+
+// earlierSessionsHeadline counts the session files an enabled project
+// had before it was enabled and that nothing registered. No hook of
+// trajector's could have reported them: none was installed while they
+// were written, so their absence from the registry says nothing about
+// the hooks.
+func earlierSessionsHeadline(sessions int) string {
+	return fmt.Sprintf("%d session(s) of this project predate its grant, so no hook of trajector's reported them", sessions)
+}
+
+// unreportedSessionsHeadline counts the session files written after
+// the project was enabled that no hook reported. What kept the hooks
+// from reporting them is not readable on this device — the causes
+// below are the ones known, and none of them can be confirmed from
+// here — so the finding states the question, never an answer.
+func unreportedSessionsHeadline(sessions int) string {
+	return fmt.Sprintf("could not determine why the hooks did not report %d session(s) of this project", sessions)
+}
+
+// unreportedSessionCauses are the readings that would explain it,
+// none of which this device can make. They are stated together so a
+// user who recognizes one of them stops there.
+var unreportedSessionCauses = []string{
+	"Claude Code runs a project's hooks only once the workspace is trusted, and that answer is given in a dialog no file records.",
+	"A session started with `claude --bare`, or with `--settings` naming another file, loads other settings than the ones this project carries.",
+	"A setting in the environment of the session's own process is not readable from here either; under WSL, so are managed settings on the Windows side.",
 }
 
 // treeLimitExceeded says that the count of a project's earlier

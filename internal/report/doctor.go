@@ -40,6 +40,11 @@ func (f *Findings) Problem(format string, a ...any) { f.add(severityError, forma
 // headline carries no command, so the two never state it twice.
 func (f *Findings) ProblemFix(headline, why, fix string) { f.problemFix(headline, why, fix) }
 
+// warn records something to watch that no one command ends. It never
+// counts toward the exit code: a state this device cannot explain is
+// not a state it can call broken.
+func (f *Findings) warn(format string, a ...any) { f.add(severityWarning, format, a...) }
+
 // note records something the user should read that doctor can neither
 // verify nor fix, so it never counts toward the exit code. Every note a
 // run prints comes from a diagnosis rather than from a repair, which is
@@ -168,13 +173,17 @@ func doctorHookPolicy(f *Findings, d Diagnosis) {
 }
 
 // doctorSessionFiles reports the second reading of the project's
-// session files: the ones it found that the registry does not hold are
-// the one observation that says the hooks did not run, and when
-// nothing readable explains why, the unrecorded cause left is the
-// workspace-trust dialog, which is the next step. Everything the
-// reading could not cover is stated as it is, never counted as a
-// fault. A diagnosis that took no second reading says nothing here:
-// the registry's own account is status's to print, not a finding.
+// session files. The sessions it found that the registry does not
+// hold are split by when they were written, because the two halves
+// are different facts: one written before the project was enabled
+// went through no hook because there was none, and one written after
+// it went past a hook that reported nothing. Only the second is a
+// fault, and its cause is not this device's to name — several
+// unreadable ones produce it, so it is stated as what it is, a state
+// this device cannot explain. Everything the reading could not cover
+// is stated as it is, never counted as a fault. A diagnosis that took
+// no second reading says nothing here: the registry's own account is
+// status's to print, not a finding.
 func doctorSessionFiles(f *Findings, d Diagnosis) {
 	s := d.SessionFiles
 	if s.Err != nil {
@@ -192,15 +201,37 @@ func doctorSessionFiles(f *Findings, d Diagnosis) {
 	case s.Unregistered == 0:
 		f.OK("every session file of this project is registered (%d session(s))", s.Sessions)
 	case d.HookPolicy != nil && !d.HookPolicy.Runs:
-		f.note("%d session(s) of this project were written without a hook of trajector's reporting them, which follows from the setting above", s.Unregistered)
+		doctorEarlierSessions(f, d)
+		if s.unreported() > 0 {
+			f.note("%d session(s) of this project were written without a hook of trajector's reporting them, which follows from the setting above", s.unreported())
+		}
 	default:
-		f.Problem("%s", workspaceNotTrusted)
-		f.Detail("%d session(s) of this project were written without a hook of trajector's reporting them, and nothing readable", s.Unregistered)
-		f.Detail("on this device keeps the hooks from loading. Claude Code runs them only once the workspace is trusted.")
+		doctorEarlierSessions(f, d)
+		if s.unreported() > 0 {
+			f.warn("%s", unreportedSessionsHeadline(s.unreported()))
+			for _, cause := range unreportedSessionCauses {
+				f.Detail("%s", cause)
+			}
+		}
 	}
 	for _, line := range gapLines(s.Gaps) {
 		f.note("%s", line)
 	}
+}
+
+// doctorEarlierSessions states the half of the unregistered sessions
+// that predate the grant, with the one way they are registered. It
+// runs under every reading of the hooks, because the setting that
+// keeps the hooks from loading explains nothing about a file written
+// before there was a hook at all. A project enabled with its earlier
+// sessions skipped has them on disk unregistered by the user's own
+// choice; status says so and doctor has nothing to report about them.
+func doctorEarlierSessions(f *Findings, d Diagnosis) {
+	if d.SessionFiles.Earlier == 0 || d.Project.EarlierSkipped {
+		return
+	}
+	f.note("%s", earlierSessionsHeadline(d.SessionFiles.Earlier))
+	f.Detail("%s", earlierSessionsFix)
 }
 
 // doctorSpool verifies the capture spool accepts writes within quota.

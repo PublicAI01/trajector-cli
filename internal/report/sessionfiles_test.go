@@ -279,14 +279,115 @@ func TestStatusDoesNotCallAnIdleProxyAFaultWhereNoProjectUsesIt(t *testing.T) {
 	rejects(t, "status", out, "WARNING", "starts on demand")
 }
 
-func TestDoctorSendsAnUntrustedWorkspaceToTheDialog(t *testing.T) {
-	d := enabledDevice()
-	problems, out := doctorProjectText(walked(d, 2))
-	if problems != 1 {
-		t.Errorf("problems = %d, want the untrusted workspace counted once", problems)
+// walkedEarlier is walked with some of the unregistered sessions
+// written before the project was enabled.
+func walkedEarlier(d report.Diagnosis, unregistered, earlier int) report.Diagnosis {
+	d = walked(d, unregistered)
+	d.SessionFiles.Earlier = earlier
+	return d
+}
+
+func TestDoctorSplitsUnregisteredSessionsByWhetherAHookCouldHaveReportedThem(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		unregistered, earlier int
+		want                  []string
+		absent                []string
+	}{
+		{
+			name:         "every one of them predates the grant",
+			unregistered: 3,
+			earlier:      3,
+			want:         []string{"note: 3 session(s) of this project predate its grant, so no hook of trajector's reported them", "Run `trajector enable` in this project (with --no-proxy if you use it) to register them."},
+			absent:       []string{"could not determine why"},
+		},
+		{
+			name:         "none of them predates the grant",
+			unregistered: 2,
+			want: []string{
+				"warning: could not determine why the hooks did not report 2 session(s) of this project",
+				"only once the workspace is trusted",
+				"`claude --bare`",
+				"managed settings on the Windows side",
+			},
+			absent: []string{"predate its grant"},
+		},
+		{
+			name:         "some of each",
+			unregistered: 5,
+			earlier:      3,
+			want: []string{
+				"note: 3 session(s) of this project predate its grant, so no hook of trajector's reported them",
+				"warning: could not determine why the hooks did not report 2 session(s) of this project",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			problems, out := doctorProjectText(walkedEarlier(enabledDevice(), tc.unregistered, tc.earlier))
+			if problems != 0 {
+				t.Errorf("problems = %d, want a state this device cannot explain counted as none", problems)
+			}
+			wants(t, "doctor", out, tc.want...)
+			rejects(t, "doctor", out, append(tc.absent, workspaceTrustLine, ".jsonl", remoteControlLine)...)
+		})
 	}
-	wants(t, "doctor", out, "error: "+workspaceTrustLine, "2 session(s) of this project were written without a hook of trajector's reporting them")
-	rejects(t, "doctor", out, ".jsonl", remoteControlLine)
+}
+
+func TestDoctorSaysNothingAboutEarlierSessionsTheProjectWasEnabledWithout(t *testing.T) {
+	d := enabledDevice()
+	d.Project.EarlierSkipped = true
+	problems, out := doctorProjectText(walkedEarlier(d, 3, 3))
+	if problems != 0 {
+		t.Errorf("problems = %d, want none", problems)
+	}
+	rejects(t, "doctor", out, "predate its grant", "could not determine why", workspaceTrustLine)
+}
+
+func TestNoSurfaceSendsAnEnabledProjectToEnableWithoutNamingTheShapeFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		surface string
+		render  func() string
+	}{
+		{
+			name:    "doctor under the sessions that predate the grant",
+			surface: "doctor",
+			render: func() string {
+				_, out := doctorProjectText(walkedEarlier(enabledDevice(), 3, 3))
+				return out
+			},
+		},
+		{
+			name:    "status under a project enabled with its earlier sessions left alone",
+			surface: "status",
+			render: func() string {
+				d := enabledDevice()
+				d.Project.EarlierSkipped = true
+				return dashboard(d)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for line := range strings.SplitSeq(tc.render(), "\n") {
+				if strings.Contains(line, "trajector enable") && !strings.Contains(line, "--no-proxy") {
+					t.Errorf("%s says %q, want the shape flag named so a project that records without a proxy is not converted by following it", tc.surface, strings.TrimSpace(line))
+				}
+			}
+		})
+	}
+}
+
+func TestDoctorDoesNotChargeTheHookSettingWithSessionsThatPredateTheGrant(t *testing.T) {
+	d := enabledDevice()
+	d.HookPolicy = &claudesettings.HookPolicy{Reason: "disableAllHooks in user settings.json"}
+	problems, out := doctorProjectText(walkedEarlier(d, 2, 1))
+	if problems != 0 {
+		t.Errorf("problems = %d, want a setting the user or their organization keeps not counted as a fault", problems)
+	}
+	wants(t, "doctor", out,
+		"1 session(s) of this project predate its grant, so no hook of trajector's reported them",
+		"1 session(s) of this project were written without a hook of trajector's reporting them, which follows from the setting above")
+	rejects(t, "doctor", out, "2 session(s) of this project were written without a hook")
 }
 
 func TestDoctorPassesWhenEverySessionFileIsRegistered(t *testing.T) {

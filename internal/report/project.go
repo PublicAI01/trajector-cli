@@ -1,6 +1,8 @@
 package report
 
 import (
+	"time"
+
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -41,6 +43,11 @@ type ProjectStatus struct {
 	// it: the one answer every surface reads. It is empty when no
 	// grant stands.
 	Shape routing.Shape
+	// GrantedAt is when the standing grant was recorded, zero when no
+	// grant stands or the table holds no readable time for it. It is
+	// what a session file found on this device is held against: one
+	// written before it went through no hook because there was none.
+	GrantedAt time.Time
 	// EarlierSkipped reports a grant made with the session files that
 	// predate it left alone, as the grant records it: they were never
 	// registered, so nothing reads them and nothing counts them as

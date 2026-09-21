@@ -3,14 +3,19 @@ package lifecycle_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 const (
+	// workspaceTrustLine is the sentence doctor no longer says: an
+	// unregistered session file is not a reading of the trust dialog,
+	// and no surface may present it as one.
 	workspaceTrustLine = "This workspace is not trusted yet; accept the trust dialog in Claude Code."
 	sessionMarker      = "sid-MARKER"
 )
@@ -46,13 +51,15 @@ func (e *env) lockedSubdir(name string) string {
 
 // enabledWithOneSessionAndOneUnreported enables the project with one
 // session file already there, then leaves one more that no hook
-// reported and a directory the walk cannot list.
+// reported and a directory the walk cannot list. The second file is
+// written after the project was enabled, so nothing but a hook could
+// have reported it.
 func (e *env) enabledWithOneSessionAndOneUnreported() (locked string) {
 	e.t.Helper()
 	e.startProxy()
 	e.sessionFile(sessionMarker+"-1", time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC))
 	e.enable(proxytest.WithProxy)
-	e.sessionFile(sessionMarker+"-2", time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC))
+	e.sessionFile(sessionMarker+"-2", e.deps.Now().Add(time.Hour))
 	locked = e.lockedSubdir("vendor")
 	e.stdout.Reset()
 	return locked
@@ -94,18 +101,17 @@ func TestDoctorWalksTheProjectWithoutRegistering(t *testing.T) {
 	problems, out := e.doctor()
 
 	for _, want := range []string{
-		"error: " + workspaceTrustLine,
-		"1 session(s) of this project were written without a hook of trajector's reporting them",
+		"warning: could not determine why the hooks did not report 1 session(s) of this project",
 		"note: Not looked at: " + locked + " could not be listed",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor = %q, want it to contain %q", out, want)
 		}
 	}
-	if problems == 0 {
-		t.Error("problems = 0, want the untrusted workspace counted")
+	if problems != 0 {
+		t.Errorf("problems = %d, want a state this device cannot explain counted as none", problems)
 	}
-	for _, unwanted := range []string{sessionMarker, "Remote Control"} {
+	for _, unwanted := range []string{sessionMarker, "Remote Control", workspaceTrustLine} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("doctor = %q, want no %q", out, unwanted)
 		}
@@ -115,6 +121,37 @@ func TestDoctorWalksTheProjectWithoutRegistering(t *testing.T) {
 	}
 	if paths := e.registeredPaths(e.canonicalRoot()); len(paths) != 1 {
 		t.Errorf("registered = %v, want the one file enable registered and nothing doctor found", paths)
+	}
+}
+
+func TestDoctorRegistersTheSessionsThatPredateTheGrantAndHasThemRead(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.startProxy(res.handler())
+	e.enable(proxytest.WithProxy)
+	// A file this project already had when it was enabled, which
+	// nothing registered: the shape an install made by a build that
+	// registered none of them leaves behind.
+	earlier := e.sessionFile(sessionMarker+"-1", e.deps.Now().Add(-48*time.Hour))
+	e.stdout.Reset()
+
+	problems, out := e.doctor()
+
+	if problems != 0 {
+		t.Errorf("problems = %d, want none", problems)
+	}
+	if !strings.Contains(out, "fixed: registered 1 session file(s) of this project that no hook reported, and asked for them to be read") {
+		t.Errorf("doctor = %q, want the earlier session registered and read", out)
+	}
+	if paths := e.registeredPaths(e.canonicalRoot()); len(paths) != 1 || paths[0] != earlier {
+		t.Errorf("registered = %v, want %q", paths, earlier)
+	}
+	want := []apiproxy.Progress{{ProjectIDHash: e.status().Hash, Path: earlier, End: true}}
+	if got := res.reports(); !slices.Equal(got, want) {
+		t.Errorf("the resident process was told %+v, want %+v", got, want)
+	}
+	if strings.Contains(out, "predate its grant") {
+		t.Errorf("doctor = %q, want no leftover note about what it has just registered", out)
 	}
 }
 

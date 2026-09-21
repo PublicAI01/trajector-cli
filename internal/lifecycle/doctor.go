@@ -6,6 +6,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
+	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -81,6 +82,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	}
 	m.doctorDiscoveryHint(f, d.TokenStore)
 	m.doctorStaleDiscoveryHook(f, d)
+	m.doctorEarlierSessions(f, &d)
 	report.DoctorProject(f, d)
 	report.DoctorData(f, d)
 	report.DoctorEnvironment(f)
@@ -200,6 +202,39 @@ func heldOfProject(held []spool.Record, projectIDHash string) []spool.Record {
 		}
 	}
 	return mine
+}
+
+// doctorEarlierSessions registers the session files an enabled
+// project already had when it was enabled and asks for them to be
+// read, through the one path enable uses. Nothing but enable ever
+// looked for them, so a project enabled by a build that registered
+// them without reading them, or one whose registration failed, would
+// otherwise keep them on disk unread for good.
+//
+// It repairs only what the user asked for: a project enabled with its
+// earlier sessions skipped is left alone, and so is one whose files
+// this process cannot reach. What it registered leaves the diagnosis
+// it repaired from, so the run reports the repair rather than the
+// state it has just ended; what it cannot explain — a session written
+// after the grant that no hook reported — is untouched and still
+// reported.
+func (m *Machine) doctorEarlierSessions(f *report.Findings, d *report.Diagnosis) {
+	st := d.Project
+	if d.SessionFiles.Earlier == 0 || st.EarlierSkipped || st.WindowsSideClaude {
+		return
+	}
+	found, err := discover.Walk(st.Root, m.claude().ConfigDir)
+	if err != nil {
+		return
+	}
+	registered, err := m.registerEarlierSessions(st.Hash, found, nil)
+	if err != nil || len(registered) == 0 {
+		return
+	}
+	_ = m.readEarlierSessions(st, registered)
+	f.Fixed("registered %d session file(s) of this project that no hook reported, and asked for them to be read", len(registered))
+	d.SessionFiles.Unregistered -= d.SessionFiles.Earlier
+	d.SessionFiles.Earlier = 0
 }
 
 // doctorProxy checks who holds the proxy port. An unproven holder is

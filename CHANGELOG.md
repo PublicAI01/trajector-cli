@@ -25,6 +25,14 @@ All notable changes to trajector are documented here. The format follows
   0.3.1 these files were registered and then never read in the shape
   that routes traffic through the proxy, because the resident process
   reads the files of running sessions and the files a hook names.
+- `doctor` no longer answers an unregistered session file with `This
+  workspace is not trusted yet`. Sessions written before the project
+  was enabled are named as such and registered on the spot; sessions
+  written after it that no hook reported are reported as what they
+  are — `could not determine why the hooks did not report N
+  session(s)` — with the causes this device cannot read listed under
+  it. Neither counts as a problem, so `doctor` does not exit 1 over
+  session files that predate the grant.
 
 ## [0.3.2] - 2026-09-20
 

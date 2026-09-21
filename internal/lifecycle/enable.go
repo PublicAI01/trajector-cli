@@ -395,10 +395,14 @@ func (m *Machine) confirmHooksWillRun(io IO, root string, shape routing.Shape) (
 }
 
 // registerEarlierSessions puts the session files found before the
-// install into the project's registry. The registry goes on the ledger
-// only when this install is the one creating it: a registry that
-// already stood — from an earlier enable, or from a session's own
-// hooks — is not this install's to take back.
+// install into the project's registry and reports the sessions this
+// run is the first to register, which are the ones to ask a reading
+// of. The registry goes on the ledger only when this install is the
+// one creating it: a registry that already stood — from an earlier
+// enable, or from a session's own hooks — is not this install's to
+// take back. A nil ledger is a caller with nothing to take back:
+// doctor registers outside a transaction, and a registration is not
+// undone by the run that made it.
 //
 // A file the reader retired keeps its entry and stays retired: enable
 // finds it again, because it is still on disk, but running enable a
@@ -408,7 +412,7 @@ func (m *Machine) registerEarlierSessions(projectIDHash string, found discover.R
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Contains(projects, projectIDHash) {
+	if ledger != nil && !slices.Contains(projects, projectIDHash) {
 		ledger.record(func() error { return m.registry.Unregister(projectIDHash) })
 	}
 	held, err := m.registry.Files(projectIDHash)

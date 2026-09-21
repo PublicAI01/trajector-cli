@@ -126,7 +126,22 @@ type SessionFilesState struct {
 	// says no hook of trajector's reported them. It is zero when
 	// nothing walked.
 	Unregistered int
+	// Earlier is how many of the unregistered sessions were written
+	// before the project was enabled. They went through no hook
+	// because there was nothing to hook them yet, which is a different
+	// fact from a hook that should have run and did not, and it is
+	// the only one of the two that has a way out. It is zero when
+	// nothing walked and when the grant records no time.
+	Earlier int
 }
+
+// unreported counts the unregistered sessions this device cannot
+// account for: the ones written after the project was enabled, where
+// a hook of trajector's was installed and reported nothing. A surface
+// that diagnoses the hooks asks here, so the sessions that predate
+// the grant are never held against them. The two counts it reads are
+// exported, so a caller outside this package derives it the same way.
+func (s SessionFilesState) unreported() int { return s.Unregistered - s.Earlier }
 
 // full reports a spool that refuses writes because usage reached the
 // quota, the one writability failure with a distinct remedy. It reads
