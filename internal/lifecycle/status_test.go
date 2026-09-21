@@ -27,7 +27,7 @@ func (e *env) statusOutput() string {
 func TestStatusShowsTheStateOfADeviceThatJustEnabledAProject(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.stdout.Reset()
@@ -99,7 +99,7 @@ func TestStatusCarriesTheOptionalSettingAnswerEnableRecorded(t *testing.T) {
 				tc.seed(t, e)
 			}
 			e.stdin = tc.stdin
-			if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
 			e.stdout.Reset()
@@ -460,7 +460,7 @@ func TestStatusSaysWhenTheOnlyRecordsLeftAreQuarantined(t *testing.T) {
 func TestStatusAndDoctorNameTheConsentRecordTheyCouldNotRead(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.sandbox.CorruptConsent()

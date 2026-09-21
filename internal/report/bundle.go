@@ -66,12 +66,16 @@ type diagnosisWire struct {
 }
 
 type projectWire struct {
-	Root             string      `json:"root"`
-	ProjectIDHash    string      `json:"project_id_hash"`
-	Enabled          bool        `json:"enabled"`
-	Upstream         string      `json:"upstream"`
-	Injected         bool        `json:"injected"`
-	NoProxy          bool        `json:"no_proxy"`
+	Root          string `json:"root"`
+	ProjectIDHash string `json:"project_id_hash"`
+	Enabled       bool   `json:"enabled"`
+	Upstream      string `json:"upstream"`
+	Injected      bool   `json:"injected"`
+	NoProxy       bool   `json:"no_proxy"`
+	// NoEarlier says the grant was made with the project's earlier
+	// session files left alone, which is why no reading of them is
+	// waiting anywhere.
+	NoEarlier        bool        `json:"no_earlier"`
 	InjectedToken    maskedToken `json:"injected_token"`
 	Token            maskedToken `json:"token"`
 	HooksInstalled   bool        `json:"hooks_installed"`
@@ -242,6 +246,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			PauseReason:      string(d.Project.PauseReason),
 			PauseExplanation: d.Project.PauseReason.ExplainAt(d.Project.ConsentPath, d.Project.ConsentErr),
 			NoProxy:          d.Project.Shape == routing.WithoutProxy,
+			NoEarlier:        d.Project.EarlierSkipped,
 			WindowsSide:      d.Project.WindowsSideClaude,
 			UpstreamMoved:    upstreamMoveValue(d),
 			HookPolicy:       hookPolicyValue(d),

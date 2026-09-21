@@ -39,7 +39,7 @@ func enabledOnOfficial(t *testing.T) *env {
 	t.Helper()
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	return e
@@ -114,7 +114,7 @@ func TestReEnableResetsTheUpstreamMoveTrace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	st := e.status()
@@ -147,7 +147,7 @@ func TestASessionsOwnInjectionIsNotReadAsTheRelayBeingGone(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.environ["ANTHROPIC_BASE_URL"] = relay
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.status().Upstream; got != relay {
@@ -198,7 +198,7 @@ func TestEnableRefusesToGuessAMaskedUpstream(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.environ["ANTHROPIC_BASE_URL"] = relay
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -210,7 +210,7 @@ func TestEnableRefusesToGuessAMaskedUpstream(t *testing.T) {
 	}
 
 	e.stdout.Reset()
-	err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
+	err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
 	if !errors.Is(err, lifecycle.ErrUpstreamMasked) {
 		t.Fatalf("re-enable with the upstream masked returned %v and granted %q; the relay was replaced by a guess",
 			err, e.status().Upstream)
@@ -300,7 +300,7 @@ func TestEnableRefusesABaseURLTheProxyCannotForwardTo(t *testing.T) {
 			e.startProxy()
 			e.environ["ANTHROPIC_BASE_URL"] = tt.upstream
 
-			err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
+			err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
 			if !errors.Is(err, lifecycle.ErrUpstreamUnroutable) {
 				t.Fatalf("Enable() error = %v, want ErrUpstreamUnroutable", err)
 			}

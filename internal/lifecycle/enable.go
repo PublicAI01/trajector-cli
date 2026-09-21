@@ -91,7 +91,8 @@ func projectHooks(execPath string) claudesettings.HookCommands {
 // the one answer enable ever waits for is given with the facts in
 // view. Re-running enable on an enabled project walks the same steps:
 // that is how an injection made by an older build is completed.
-func (m *Machine) enableProject(projectDir string, shape routing.Shape, io IO) error {
+func (m *Machine) enableProject(projectDir string, choices EnableChoices, io IO) error {
+	shape := choices.Shape
 	// Every prompt in one enable must read through one buffered reader: a
 	// second bufio over the same stream would find the bytes the first
 	// one buffered ahead already gone. bufio.NewReader hands this same
@@ -170,12 +171,19 @@ func (m *Machine) enableProject(projectDir string, shape routing.Shape, io IO) e
 	// The session files this project already has are counted and named
 	// here, before anything is written: the count is part of what the
 	// user is enabling, and reading them is not asked about separately.
-	earlier, err := discover.Walk(st.Root, m.claude().ConfigDir)
-	if err != nil {
-		return fmt.Errorf("looking for this project's session files: %w", err)
-	}
-	for _, line := range report.EarlierSessionLines(earlier) {
-		fmt.Fprintln(io.Out, line)
+	// Asked to skip them, enable does not even look: a count it would
+	// not act on is not a fact about this install.
+	var earlier discover.Result
+	if choices.SkipEarlier {
+		fmt.Fprintln(io.Out, report.EarlierSessionsSkipped)
+	} else {
+		earlier, err = discover.Walk(st.Root, m.claude().ConfigDir)
+		if err != nil {
+			return fmt.Errorf("looking for this project's session files: %w", err)
+		}
+		for _, line := range report.EarlierSessionLines(earlier) {
+			fmt.Fprintln(io.Out, line)
+		}
 	}
 
 	// The routing table, the consent file, and the project's .gitignore
@@ -194,7 +202,7 @@ func (m *Machine) enableProject(projectDir string, shape routing.Shape, io IO) e
 	}
 
 	var ledger enableLedger
-	if err := m.installAndVerify(io, st, upstream, shape, earlier, prior, &ledger); err != nil {
+	if err := m.installAndVerify(io, st, upstream, choices, earlier, prior, &ledger); err != nil {
 		if undoErr := ledger.undo(); undoErr != nil {
 			return fmt.Errorf("%w (rollback incomplete: %v)", err, undoErr)
 		}
@@ -225,7 +233,8 @@ func (m *Machine) readBeforeChanging(st report.ProjectStatus) (priorState, error
 	return prior, err
 }
 
-func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream string, shape routing.Shape, earlier discover.Result, prior priorState, ledger *enableLedger) error {
+func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream string, choices EnableChoices, earlier discover.Result, prior priorState, ledger *enableLedger) error {
+	shape := choices.Shape
 	token, err := projectToken(st)
 	if err != nil {
 		return err
@@ -234,12 +243,13 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 	now := m.now()
 	ledger.record(func() error { return m.routes.RestoreGrants(prior.grants) })
 	if err := m.routes.Grant(routing.Grant{
-		Token:         token,
-		ProjectIDHash: st.Hash,
-		RootPath:      st.Root,
-		Upstream:      upstream,
-		GrantedAt:     now,
-		Shape:         shape,
+		Token:          token,
+		ProjectIDHash:  st.Hash,
+		RootPath:       st.Root,
+		Upstream:       upstream,
+		GrantedAt:      now,
+		Shape:          shape,
+		EarlierSkipped: choices.SkipEarlier,
 	}); err != nil {
 		return fmt.Errorf("updating routing table: %w", err)
 	}
@@ -247,8 +257,13 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 	if err := m.consent.SetProjectState(st.Hash, st.Root, consent.StateGranted, now); err != nil {
 		return fmt.Errorf("recording project consent: %w", err)
 	}
-	if err := m.registerEarlierSessions(st.Hash, earlier, ledger); err != nil {
-		return fmt.Errorf("registering this project's session files: %w", err)
+	// Skipping them means exactly that: no entry is made, so no later
+	// run finds a registered file waiting to be read.
+	var registered []string
+	if !choices.SkipEarlier {
+		if registered, err = m.registerEarlierSessions(st.Hash, earlier, ledger); err != nil {
+			return fmt.Errorf("registering this project's session files: %w", err)
+		}
 	}
 	m.offerOptionalSettings(io, st)
 	ledger.record(prior.settings.restore)
@@ -297,6 +312,21 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		fmt.Fprintln(io.Out, "Self-check passed: the resident process is up.")
 	} else {
 		fmt.Fprintln(io.Out, "Self-check passed: routing and recording verified end to end.")
+	}
+	// The files just registered are read from here, not from the next
+	// session hook: a hook names the session it belongs to, and the
+	// resident process looks at nothing else on its own, so files
+	// registered cold would wait for a hook that never names them.
+	// The reading is announced only once a reader has taken the ask,
+	// and an ask nobody took is not enough to fail the install: the
+	// registration is what the user came for and it stands, so what is
+	// left is to say that the reading waits for the next session.
+	if len(registered) > 0 {
+		if err := m.readEarlierSessions(st, registered); err != nil {
+			fmt.Fprintf(io.Err, "WARNING: %d earlier session record(s) are registered but nothing could be asked to read them now (%v). The next session of this project reports them, and the reading starts then.\n", len(registered), err)
+		} else {
+			fmt.Fprintf(io.Out, "Reading %d earlier session record(s) in the background.\n", len(registered))
+		}
 	}
 	fmt.Fprintln(io.Out, report.ShapeNotice(shape))
 	fmt.Fprintln(io.Out, report.UnwitnessedReward)
@@ -373,15 +403,48 @@ func (m *Machine) confirmHooksWillRun(io IO, root string, shape routing.Shape) (
 // A file the reader retired keeps its entry and stays retired: enable
 // finds it again, because it is still on disk, but running enable a
 // second time is not an answer to why its reading stopped.
-func (m *Machine) registerEarlierSessions(projectIDHash string, found discover.Result, ledger *enableLedger) error {
+func (m *Machine) registerEarlierSessions(projectIDHash string, found discover.Result, ledger *enableLedger) (sessions []string, err error) {
 	projects, err := m.registry.Projects()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !slices.Contains(projects, projectIDHash) {
 		ledger.record(func() error { return m.registry.Unregister(projectIDHash) })
 	}
-	return discover.Register(m.registry, projectIDHash, found)
+	held, err := m.registry.Files(projectIDHash)
+	if err != nil {
+		return nil, err
+	}
+	before := make(map[string]bool, len(held))
+	for _, f := range held {
+		before[f.Path] = true
+	}
+	if err := discover.Register(m.registry, projectIDHash, found); err != nil {
+		return nil, err
+	}
+	// A file this install is the first to register has no event of its
+	// own, which is exactly what makes it cold, and the resident
+	// process looks at hot files only. Stamping the registration as the
+	// event puts it in reach of the next sweep, so the read asked for
+	// below is how these files are read quickly, never the only way
+	// they are read at all.
+	now := m.deps.Now()
+	main := make(map[string]bool, len(found.Sessions))
+	for _, path := range found.Sessions {
+		main[path] = true
+	}
+	for _, path := range found.Files {
+		if before[path] {
+			continue
+		}
+		if err := m.registry.Warm(projectIDHash, path, 0, now); err != nil {
+			return nil, err
+		}
+		if main[path] {
+			sessions = append(sessions, path)
+		}
+	}
+	return sessions, nil
 }
 
 // confirmAgreement shows the agreement and records the explicit

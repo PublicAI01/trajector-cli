@@ -6,6 +6,26 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-21
+
+### Added
+
+- `trajector enable --no-earlier` leaves the session files a project
+  already has alone: they are neither registered nor read, so only the
+  sessions that run from now on are collected. The choice is recorded
+  on the grant, and `status` states it under the project with the way
+  back. It stands beside `--no-proxy` and neither implies the other.
+
+### Fixed
+
+- The session files a project already had are now read after `enable`
+  instead of waiting for a session hook to name them. `enable` asks
+  the resident process to read each of them, starts a reader where no
+  resident process is up, and says how many it is reading. Since
+  0.3.1 these files were registered and then never read in the shape
+  that routes traffic through the proxy, because the resident process
+  reads the files of running sessions and the files a hook names.
+
 ## [0.3.2] - 2026-09-20
 
 ### Added

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
@@ -45,6 +46,27 @@ func sentRecordIDs(t *testing.T, e *env) [][]string {
 	return sent
 }
 
+// waitForTheSegmentToBeSent waits until the service holds the one
+// batch and the spool is empty again. enable asks the resident process
+// to read the file it just registered, and the resident process is
+// the flusher, so the segment is read, sent and acknowledged with no
+// reading run and no upload of this test's own.
+func waitForTheSegmentToBeSent(t *testing.T, e *env) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		sent := sentRecordIDs(t, e)
+		held := e.storedRecords()
+		if len(sent) == 1 && len(sent[0]) == 1 && len(held) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("batches = %+v and %d record(s) still in the spool, want the one segment sent once and the spool emptied", sent, len(held))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestEnableAfterASessionLeftTheProjectLeavesItRetiredAndSendsItsSegmentOnce(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
@@ -56,16 +78,7 @@ func TestEnableAfterASessionLeftTheProjectLeavesItRetiredAndSendsItsSegmentOnce(
 
 	e.enable(proxytest.WithProxy)
 	m := e.machine()
-	m.ReadSessionFiles(e.project, discardIO())
-	if got := e.storedRecords(); len(got) != 1 {
-		t.Fatalf("records after the first reading run = %d, want the one segment", len(got))
-	}
-	if err := m.Upload(true, e.io()); err != nil {
-		t.Fatal(err)
-	}
-	if got := e.storedRecords(); len(got) != 0 {
-		t.Fatalf("records after the acknowledged upload = %d, want the spool emptied", len(got))
-	}
+	waitForTheSegmentToBeSent(t, e)
 
 	appendLine(t, path, `{"type":"relocated","relocatedCwd":"/elsewhere/entirely"}`)
 	m.ReadSessionFiles(e.project, discardIO())

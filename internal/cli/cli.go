@@ -358,6 +358,28 @@ func takeFlag(args []string, flag string) ([]string, bool) {
 	return args, false
 }
 
+// takeFlags strips each of flags from the end of args, in whatever
+// order they were written, and reports which were there. It is
+// takeFlag for a command that accepts more than one: each pass takes
+// whichever flag is now last, so no order of them leaves one behind
+// and none of them is read as a positional argument.
+func takeFlags(args []string, flags ...string) ([]string, map[string]bool) {
+	taken := make(map[string]bool, len(flags))
+	for {
+		shorter := args
+		for _, flag := range flags {
+			var ok bool
+			if shorter, ok = takeFlag(shorter, flag); ok {
+				taken[flag] = true
+			}
+		}
+		if len(shorter) == len(args) {
+			return args, taken
+		}
+		args = shorter
+	}
+}
+
 // preparse answers what every command must settle before it reads an
 // argument as a value: whether the user asked for help, and whether a
 // `-` prefixed argument is a flag the command does not know. Such an

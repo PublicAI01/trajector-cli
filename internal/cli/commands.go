@@ -21,17 +21,23 @@ func (a *app) logoutCmd(args []string) int {
 	})
 }
 
+// noEarlierFlag asks enable to leave the project's earlier session
+// files alone. It stands beside --no-proxy and neither implies the
+// other: the shape decides where this project's traffic goes, and this
+// decides whether the sessions it already has are collected.
+const noEarlierFlag = "--no-earlier"
+
 func (a *app) enableCmd(args []string) int {
-	// The flag is spelled exactly as the marker the injected hook
+	// The shape flag is spelled exactly as the marker the injected hook
 	// carries, so the one word names the shape everywhere it shows.
-	args, noProxy := takeFlag(args, claudesettings.NoProxyMarker)
-	shape := routing.WithProxy
-	if noProxy {
-		shape = routing.WithoutProxy
+	args, taken := takeFlags(args, claudesettings.NoProxyMarker, noEarlierFlag)
+	choices := lifecycle.EnableChoices{Shape: routing.WithProxy, SkipEarlier: taken[noEarlierFlag]}
+	if taken[claudesettings.NoProxyMarker] {
+		choices.Shape = routing.WithoutProxy
 	}
-	return a.with("usage: trajector enable [--no-proxy]", args, 0, func(m *lifecycle.Machine, cwd string) error {
-		return m.Enable(cwd, shape, a.io())
-	})
+	return a.with("usage: trajector enable [--no-proxy] [--no-earlier]", args, 0, func(m *lifecycle.Machine, cwd string) error {
+		return m.Enable(cwd, choices, a.io())
+	}, claudesettings.NoProxyMarker, noEarlierFlag)
 }
 
 func (a *app) disableCmd(args []string) int {

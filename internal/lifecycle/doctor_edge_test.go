@@ -31,7 +31,7 @@ func TestDoctorReportsAnOlderProxyItCannotReplace(t *testing.T) {
 func TestDoctorFlagsAnUnsupportedChannel(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"
@@ -49,7 +49,7 @@ func TestDoctorFlagsAnUnsupportedChannel(t *testing.T) {
 func TestDoctorReportsAnIdentityDisagreement(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	// The routing table now claims this root under a different project

@@ -41,6 +41,11 @@ type ProjectStatus struct {
 	// it: the one answer every surface reads. It is empty when no
 	// grant stands.
 	Shape routing.Shape
+	// EarlierSkipped reports a grant made with the session files that
+	// predate it left alone, as the grant records it: they were never
+	// registered, so nothing reads them and nothing counts them as
+	// missing.
+	EarlierSkipped bool
 
 	// InjectedBaseURL is the base URL trajector injected into the
 	// project's settings, empty when no base URL is injected;

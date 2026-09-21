@@ -164,7 +164,7 @@ func TestLogoutRevokesPausesAndKeepsGrants(t *testing.T) {
 	e := newEnv(t)
 	e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(200, map[string]any{}))
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	grant := e.status()
@@ -234,7 +234,7 @@ func TestLogoutTellsAnAlreadyRevokedTokenFromAServiceOutage(t *testing.T) {
 func TestPurgeRefusedByTheServiceDoesNotAdviseRetrying(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.service.Stub("POST", "/v1/data-deletions", fakeplatform.JSON(400, map[string]any{"error": "malformed"}))
@@ -306,7 +306,7 @@ func TestEnableOnAnUnpairedDevicePairsFirst(t *testing.T) {
 	e.pairable()
 	e.startProxy()
 
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "not paired yet") {
@@ -323,7 +323,7 @@ func TestEnableOnAnUnpairedDevicePairsFirst(t *testing.T) {
 func TestPurgeSendsADeletionRequestForThisProjectOnly(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	grant := e.status()
@@ -379,7 +379,7 @@ func TestPurgeOnANeverEnabledProjectStillRequestsDeletion(t *testing.T) {
 func TestPurgeWithoutAPairedDeviceStillDisablesLocally(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.sandbox.ClearDeviceToken()
@@ -399,7 +399,7 @@ func TestUninstallRemovesEveryInjectionAndKeepsDataByDefault(t *testing.T) {
 	if err := e.machine().Login(e.io()); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -425,7 +425,7 @@ func TestUninstallPointsAtLeftoverIgnoreLinesWithoutEditingThem(t *testing.T) {
 	e := newEnv(t)
 	e.gitRepo()
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	ignorePath := filepath.Join(e.canonicalRoot(), ".gitignore")
@@ -460,7 +460,7 @@ func TestUninstallPointsAtLeftoverIgnoreLinesWithoutEditingThem(t *testing.T) {
 func TestUninstallSkipsIgnoreNoteWithoutAnIgnoreFile(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -477,7 +477,7 @@ func TestUninstallSkipsIgnoreNoteWithoutAnIgnoreFile(t *testing.T) {
 func TestUninstallDeletesEverythingWhenAsked(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 

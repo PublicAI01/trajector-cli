@@ -6,9 +6,70 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
+
+// earlierSessionFile writes a session file of this project's, as
+// Claude Code would have left one before the project was enabled.
+func earlierSessionFile(t *testing.T, e *clitest.Env, sid string) string {
+	t.Helper()
+	proxytest.RequireSessionSources(t)
+	dir := filepath.Join(e.Home(), "claude", "projects", discover.Encode(e.ProjectRoot()))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, sid+".jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"user","message":{"id":"`+sid+`"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestEnable_NoEarlierLeavesTheProjectsEarlierSessionsAlone(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		shape proxytest.Shape
+	}{
+		{name: "on its own", args: []string{"enable", "--no-earlier"}, shape: proxytest.WithProxy},
+		{name: "after the shape flag", args: []string{"enable", "--no-proxy", "--no-earlier"}, shape: proxytest.WithoutProxy},
+		{name: "before the shape flag", args: []string{"enable", "--no-earlier", "--no-proxy"}, shape: proxytest.WithoutProxy},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := clitest.New(t)
+			e.Paired()
+			p := e.StartProxy()
+			defer p.Stop()
+			earlierSessionFile(t, e, "0f1e2d3c")
+
+			got := e.InProjectInput("yes\n", tt.args...)
+			if got.Exit != 0 {
+				t.Fatalf("%v = exit %d\nstdout: %s\nstderr: %s", tt.args, got.Exit, got.Stdout, got.Stderr)
+			}
+			if !strings.Contains(got.Stdout, "Earlier session records skipped.") {
+				t.Errorf("stdout does not say the earlier sessions were skipped:\n%s", got.Stdout)
+			}
+			if strings.Contains(got.Stdout, "will be collected once") {
+				t.Errorf("stdout counts earlier sessions although they were skipped:\n%s", got.Stdout)
+			}
+			grant, ok := e.Sandbox().ActiveGrant(e.Project())
+			if !ok || grant.Shape != tt.shape || !grant.EarlierSkipped {
+				t.Errorf("grant = %+v, want the shape and the skipped earlier sessions recorded", grant)
+			}
+			if files := e.Sandbox().RegisteredPaths(e.ProjectHash()); len(files) != 0 {
+				t.Errorf("registered = %v, want none", files)
+			}
+
+			const notice = "Earlier sessions were skipped at enable; run `trajector enable` again (with --no-proxy if you use it) to collect them."
+			if status := e.InProject("status"); !strings.Contains(status.Stdout, notice) {
+				t.Errorf("status does not say the earlier sessions were skipped:\n%s", status.Stdout)
+			}
+		})
+	}
+}
 
 func TestEnable_NoProxyFlagInstallsHooksWithoutABaseURL(t *testing.T) {
 	proxytest.RequireSessionSources(t)

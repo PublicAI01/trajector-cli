@@ -57,13 +57,29 @@ var ErrPortOccupied = proxylife.ErrPortOccupied
 // one.
 var ErrProxyUnverified = proxylife.ErrProxyUnverified
 
+// EnableChoices are the answers enable is given before it changes
+// anything, and both of them are recorded on the grant: every surface
+// afterwards reads the choice from there, and none of them reads a
+// command line a second time. They are independent — a project may
+// record in either shape with or without its earlier session files —
+// so no combination of them is refused.
+type EnableChoices struct {
+	// Shape is what the project's settings receive: with the proxy, or
+	// the session hooks and no base URL.
+	Shape routing.Shape
+	// SkipEarlier leaves the session files that predate this enable
+	// alone: they are neither registered nor read, so only the
+	// sessions that run from now on are collected.
+	SkipEarlier bool
+}
+
 // Enable starts contributing data from a project. Pairing is the
 // precondition, so an unpaired device pairs first rather than failing.
 // The shape is what the project's settings receive and what the grant
 // records: with the proxy, or the session hooks and no base URL, where
 // the files its sessions leave are read and its traffic is not routed
 // through the proxy.
-func (m *Machine) Enable(projectDir string, shape routing.Shape, io IO) error {
+func (m *Machine) Enable(projectDir string, choices EnableChoices, io IO) error {
 	m.warnNonDefaultEndpoint(io.Out)
 	if !m.Paired() {
 		fmt.Fprintln(io.Out, "This device is not paired yet; starting pairing first.")
@@ -71,7 +87,7 @@ func (m *Machine) Enable(projectDir string, shape routing.Shape, io IO) error {
 			return err
 		}
 	}
-	return m.enableProject(projectDir, shape, io)
+	return m.enableProject(projectDir, choices, io)
 }
 
 // Disable stops contributing from a project. With purge it also asks

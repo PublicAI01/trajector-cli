@@ -151,6 +151,7 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 		st.UpstreamMoved = grant.UpstreamMoved
 		st.GrantHash = grant.ProjectIDHash
 		st.Shape = grant.Shape
+		st.EarlierSkipped = grant.EarlierSkipped
 	}
 	if st.PauseReason, err = m.routes.PausedReason(); err != nil {
 		return st, err

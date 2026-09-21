@@ -2,15 +2,23 @@ package lifecycle_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 )
 
 const (
@@ -82,7 +90,7 @@ func (e *env) acceptCurrentAgreement() {
 
 func (e *env) enable(shape proxytest.Shape) {
 	e.t.Helper()
-	if err := e.machine().Enable(e.project, shape, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(shape), e.io()); err != nil {
 		e.t.Fatalf("enable: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
 	}
 }
@@ -497,6 +505,186 @@ func TestEnable_RegistersExistingSessionFiles(t *testing.T) {
 	}
 }
 
+// readingEarlierLine is what enable says once it has asked for the
+// files it registered to be read.
+func readingEarlierLine(n int) string {
+	return fmt.Sprintf("Reading %d earlier session record(s) in the background.", n)
+}
+
+// resident stands in for the process that reads session files, and
+// records what it was told to read. A report is answered as the real
+// resident answers one.
+type resident struct {
+	mu   sync.Mutex
+	told []apiproxy.Progress
+}
+
+func (r *resident) handler() proxytest.Option {
+	return proxytest.WithInternal(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != apiproxy.ProgressPath {
+			http.NotFound(w, req)
+			return
+		}
+		var ev apiproxy.Progress
+		if err := json.NewDecoder(req.Body).Decode(&ev); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		r.mu.Lock()
+		r.told = append(r.told, ev)
+		r.mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+	}))
+}
+
+func (r *resident) reports() []apiproxy.Progress {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.told)
+}
+
+func TestEnable_TellsTheResidentProcessToReadEverySessionFileItRegistered(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.startProxy(res.handler())
+	at := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+	first := e.sessionFile("s-1", at)
+	second := e.sessionFile("s-2", at)
+
+	e.enable(proxytest.WithProxy)
+
+	if !strings.Contains(e.stdout.String(), readingEarlierLine(2)) {
+		t.Errorf("enable does not say the earlier sessions are being read:\n%s", e.stdout)
+	}
+	got := res.reports()
+	want := []apiproxy.Progress{
+		{ProjectIDHash: e.status().Hash, Path: first, End: true},
+		{ProjectIDHash: e.status().Hash, Path: second, End: true},
+	}
+	slices.SortFunc(got, func(a, b apiproxy.Progress) int { return strings.Compare(a.Path, b.Path) })
+	if !slices.Equal(got, want) {
+		t.Errorf("the resident process was told %+v, want each earlier session read to its end: %+v", got, want)
+	}
+}
+
+func TestEnable_LeavesTheSessionFilesItRegisteredWhereTheSweepLooks(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
+
+	e.enable(proxytest.WithProxy)
+
+	files := e.registeredFiles(e.canonicalRoot())
+	if len(files) != 1 {
+		t.Fatalf("registered = %d file(s), want 1", len(files))
+	}
+	if files[0].LastEvent == "" {
+		t.Error("the registered file carries no event, so nothing but a hook naming it would ever read it")
+	}
+}
+
+func TestEnable_StartsAReaderWhenNoResidentProcessIsUpToReadTheEarlierSessions(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Spawn = proxylife.RecordStartsIn(e.deps.Layout.ProxyLog())
+	e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
+
+	e.enable(proxytest.WithoutProxy)
+
+	starts, err := proxylife.LoggedStarts(e.deps.Layout.ProxyLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The reader is started for the project as the grant and the
+	// registry name it, which is the resolved path: on macOS a temporary
+	// directory and its resolved form are two spellings of one place.
+	want := proxylife.LoggedStart{Command: "hook", Target: e.canonicalRoot()}
+	if !slices.Contains(starts, want) {
+		t.Errorf("starts = %v, want a reader started for the project", starts)
+	}
+}
+
+// noReaderStarts fails only the reader. The proxy's own start reports
+// that it started nothing, which is the device with no resident
+// process up; the one-shot reader the fallback asks for cannot be
+// started at all, so neither shape of the ask reaches a reader.
+func noReaderStarts() proxylife.Starter {
+	return func(_ string, args []string, _ string) (int, error) {
+		if len(args) > 0 && args[0] == "hook" {
+			return 0, errors.New("exec format error")
+		}
+		return 0, nil
+	}
+}
+
+func TestEnable_SaysTheEarlierSessionsAreStillUnreadWhenNoReaderCouldBeStarted(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Spawn = noReaderStarts()
+	e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
+
+	e.enable(proxytest.WithoutProxy)
+
+	if out := e.stdout.String(); strings.Contains(out, readingEarlierLine(1)) {
+		t.Errorf("stdout claims a reading no reader was told about:\n%s", out)
+	}
+	for _, want := range []string{"WARNING", "1 earlier session record(s)", "registered", "next session"} {
+		if !strings.Contains(e.stderr.String(), want) {
+			t.Errorf("stderr = %q, want it to contain %q", e.stderr, want)
+		}
+	}
+	if paths := e.registeredPaths(e.canonicalRoot()); len(paths) != 1 {
+		t.Errorf("registered = %v, want the earlier session registered although no reader took the ask", paths)
+	}
+}
+
+func TestEnable_SkippingEarlierSessionsRegistersNoneOfThem(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
+
+	if err := e.machine().Enable(e.project, lifecycle.EnableChoices{Shape: proxytest.WithProxy, SkipEarlier: true}, e.io()); err != nil {
+		t.Fatalf("enable: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
+	}
+
+	out := e.stdout.String()
+	if !strings.Contains(out, "Earlier session records skipped.") {
+		t.Errorf("enable does not say the earlier sessions were skipped:\n%s", out)
+	}
+	for _, absent := range []string{"will be collected once", readingEarlierLine(1)} {
+		if strings.Contains(out, absent) {
+			t.Errorf("stdout carries %q although the earlier sessions were skipped:\n%s", absent, out)
+		}
+	}
+	if got := e.registeredPaths(e.canonicalRoot()); len(got) != 0 {
+		t.Errorf("registered = %v, want none", got)
+	}
+	grant, ok := e.sandbox.ActiveGrant(e.project)
+	if !ok || !grant.EarlierSkipped {
+		t.Errorf("grant = %+v, want the skipped earlier sessions recorded on it", grant)
+	}
+}
+
+func TestEnable_SkippingEarlierSessionsHoldsInEitherShape(t *testing.T) {
+	for _, shape := range []proxytest.Shape{proxytest.WithProxy, proxytest.WithoutProxy} {
+		t.Run(string(shape), func(t *testing.T) {
+			e := newEnv(t)
+			e.startProxy()
+			e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
+
+			if err := e.machine().Enable(e.project, lifecycle.EnableChoices{Shape: shape, SkipEarlier: true}, e.io()); err != nil {
+				t.Fatalf("enable: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
+			}
+
+			grant, ok := e.sandbox.ActiveGrant(e.project)
+			if !ok || grant.Shape != shape || !grant.EarlierSkipped {
+				t.Errorf("grant = %+v, want both the shape and the skipped earlier sessions recorded", grant)
+			}
+			if got := e.registeredPaths(e.canonicalRoot()); len(got) != 0 {
+				t.Errorf("registered = %v, want none", got)
+			}
+		})
+	}
+}
+
 func TestEnable_RollbackUnregistersWhatItRegistered(t *testing.T) {
 	at := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
 	tests := []struct {
@@ -516,7 +704,7 @@ func TestEnable_RollbackUnregistersWhatItRegistered(t *testing.T) {
 				e.sandbox.RegisterSessionFile(e.status().Hash, earlier, "")
 			}
 
-			if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err == nil {
+			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err == nil {
 				t.Fatal("enable succeeded against a foreign port")
 			}
 
@@ -576,7 +764,7 @@ func TestEnable_RollsBackEveryChangeWhereverItFails(t *testing.T) {
 			}
 			tt.prepare(e)
 
-			err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
+			err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
 
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) || !strings.Contains(err.Error(), "all changes rolled back") {
 				t.Fatalf("err = %v, want %q and every change taken back", err, tt.wantErr)
@@ -748,7 +936,7 @@ func TestEnable_RollsBackWhenSessionFilesCannotBeRegistered(t *testing.T) {
 	e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
 	e.obstruct(e.layout().FollowDir())
 
-	err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
+	err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
 	if err == nil || !strings.Contains(err.Error(), "session files") || !strings.Contains(err.Error(), "rolled back") {
 		t.Fatalf("err = %v, want the registration failure with the rollback notice", err)
 	}
@@ -775,7 +963,7 @@ func TestEnable_FailsWhenTheProjectTreeCannotBeListed(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(root, 0o755) })
 
-	err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
+	err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
 	if err == nil || !strings.Contains(err.Error(), "looking for this project's session files") {
 		t.Fatalf("err = %v, want the walk failure named", err)
 	}
@@ -806,7 +994,7 @@ func TestEnable_NoProxyFailsWhenTheAnswerIsUnavailable(t *testing.T) {
 	e.lockHooksInUserSettings()
 	e.stdin = ""
 
-	err := e.machine().Enable(e.project, proxytest.WithoutProxy, e.io())
+	err := e.machine().Enable(e.project, choices(proxytest.WithoutProxy), e.io())
 	if err == nil || !strings.Contains(err.Error(), "reading the answer") {
 		t.Fatalf("err = %v, want the unavailable answer reported", err)
 	}

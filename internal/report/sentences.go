@@ -77,6 +77,13 @@ const (
 	// trusted, and that trust is given in a dialog no file records.
 	workspaceNotTrusted = "This workspace is not trusted yet; accept the trust dialog in Claude Code."
 
+	// earlierSessionsSkippedWayBack is what status says under a project
+	// enabled with its earlier session files left alone. It names the
+	// way back and says that the way back re-declares the whole
+	// install: enable writes the shape as well as this choice, so a
+	// run that omits the shape flag changes the shape too.
+	earlierSessionsSkippedWayBack = "Earlier sessions were skipped at enable; run `trajector enable` again (with --no-proxy if you use it) to collect them."
+
 	// spellingVariantsNotice is the standing disclosure of what the
 	// search for a project's session files cannot find by design.
 	spellingVariantsNotice = "Sessions started under another spelling of this project's path, or under a directory name Claude Code was told to use instead, are stored under names this device does not compute and are not collected."
@@ -230,6 +237,15 @@ func ShapeNotice(shape routing.Shape) string {
 	}
 	return remoteControlNotice
 }
+
+// EarlierSessionsSkipped is the line enable prints in place of
+// EarlierSessionLines when it was asked to leave a project's earlier
+// session files alone: nothing was looked for, so nothing is counted.
+// It states only what this run did. What status says afterwards about
+// the same project is a second sentence, earlierSessionsSkippedWayBack,
+// because that one names the way back and this one is printed at the
+// moment the way back was declined.
+const EarlierSessionsSkipped = "Earlier session records skipped."
 
 // EarlierSessionLines is what enable says about the session files a
 // project already has: how many are collected once it is enabled and

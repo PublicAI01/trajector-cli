@@ -63,6 +63,11 @@ type Grant struct {
 	// Shape is the form enable installed. A grant read back from the
 	// table always carries one of the two shapes.
 	Shape Shape
+	// EarlierSkipped records that the user asked enable to leave the
+	// session files that predate the grant alone. It is the answer
+	// every surface reads: nothing else on this device states that
+	// the files a project already had are not collected.
+	EarlierSkipped bool
 }
 
 // UpstreamMove is one recorded unattended upstream change: where the
@@ -108,6 +113,7 @@ func (s *Store) Grant(g Grant) error {
 			Upstream:      g.Upstream,
 			GrantedAt:     g.GrantedAt,
 			NoProxy:       g.Shape == WithoutProxy,
+			NoEarlier:     g.EarlierSkipped,
 		}
 	})
 }
@@ -345,13 +351,14 @@ func (s *Store) All() ([]Grant, error) {
 			shape = WithoutProxy
 		}
 		g := Grant{
-			Token:         tok,
-			ProjectIDHash: rec.ProjectIDHash,
-			RootPath:      rec.RootPath,
-			Upstream:      rec.Upstream,
-			GrantedAt:     rec.GrantedAt,
-			Revoked:       rec.RevokedAt != "",
-			Shape:         shape,
+			Token:          tok,
+			ProjectIDHash:  rec.ProjectIDHash,
+			RootPath:       rec.RootPath,
+			Upstream:       rec.Upstream,
+			GrantedAt:      rec.GrantedAt,
+			Revoked:        rec.RevokedAt != "",
+			Shape:          shape,
+			EarlierSkipped: rec.NoEarlier,
 		}
 		if rec.UpstreamMoved != nil {
 			g.UpstreamMoved = UpstreamMove{From: rec.UpstreamMoved.From, At: rec.UpstreamMoved.At}

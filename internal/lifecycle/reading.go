@@ -1,7 +1,11 @@
 package lifecycle
 
 import (
+	"fmt"
+
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/sessionread"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -31,6 +35,43 @@ func (m *Machine) reader(sp *spool.Spool) sessionread.Reader {
 func (m *Machine) spawnReader(projectDir string) error {
 	_, err := m.deps.Spawn(m.deps.ExecPath, []string{"hook", claudesettings.HookRead, projectDir}, "")
 	return err
+}
+
+// readEarlierSessions has the session files a command just registered
+// read without waiting for a session hook to name one of them. The
+// resident process reads a file on a hook's word and, on its own,
+// looks only at the files of sessions that are running; a file
+// registered from outside a session belongs to neither set, so the
+// command that registered it is what asks for it to be read.
+//
+// The two shapes of the ask are the two the hook path already has: a
+// resident process is told about each session by name, and where none
+// is up a one-shot reader is started for the project, which reads
+// every registered file and brings the resident process up on its way
+// out. One failed report is enough to fall back — the reader covers
+// every file, so reporting the rest after it would read them twice.
+// Each report names a session's own file and asks for it to be read
+// to its end, so the agent files beside it are read with it.
+//
+// Nothing here waits for the reading to finish, and the error means
+// only that no reader took the ask: both shapes refused, which is the
+// device where no resident process is up and none can be started. The
+// sweep that looks at what a registration just marked runs inside
+// that same resident process, so it is no fallback here. The fallback
+// is the next session of this project: its hook names the session, and
+// the reading starts from where the entry stands. The files are
+// registered either way, so the caller states this rather than fails
+// on it.
+func (m *Machine) readEarlierSessions(st report.ProjectStatus, sessions []string) error {
+	for _, path := range sessions {
+		if err := m.proxy.Progress(apiproxy.Progress{ProjectIDHash: st.Hash, Path: path, End: true}); err != nil {
+			if spawnErr := m.spawnReader(st.Root); spawnErr != nil {
+				return fmt.Errorf("the resident process did not take the report (%v) and no reader could be started: %w", err, spawnErr)
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 // ReadSessionFiles reads the files registered for a project once, on

@@ -27,7 +27,7 @@ func TestEnableExplainsWhyRecordingIsPaused(t *testing.T) {
 			e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
 			e.sandbox.Pause(tt.reason)
 
-			err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
+			err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
 			if err == nil {
 				t.Fatalf("enable succeeded while recording was paused for %q", tt.reason)
 			}
@@ -125,7 +125,7 @@ func TestSessionHooksSurviveAProjectDirectoryThatIsGone(t *testing.T) {
 func TestPurgeReportsAFailedDeletionRequestWithoutUndoingTheLocalDisable(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	// No stub for the deletion endpoint, so the service refuses it.
@@ -141,7 +141,7 @@ func TestPurgeReportsAFailedDeletionRequestWithoutUndoingTheLocalDisable(t *test
 func TestEnableRefusesAnUnreachableService(t *testing.T) {
 	e := newUnpairedEnv(t)
 	// No pairing stubs, so the service refuses to start one.
-	err := e.machine().Enable(e.project, proxytest.WithProxy, e.io())
+	err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
 	if err == nil || !strings.Contains(err.Error(), "starting pairing") {
 		t.Errorf("enable = %v, want the pairing failure", err)
 	}

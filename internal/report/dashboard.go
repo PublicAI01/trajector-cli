@@ -227,6 +227,9 @@ func projectLines(d Diagnosis) []string {
 	lines = append(lines, UnwitnessedReward)
 	lines = append(lines, hookJudgementLines(d)...)
 	lines = append(lines, sessionFileLines(d.SessionFiles)...)
+	if st.EarlierSkipped {
+		lines = append(lines, earlierSessionsSkippedWayBack)
+	}
 	return append(lines, signalLines(d)...)
 }
 

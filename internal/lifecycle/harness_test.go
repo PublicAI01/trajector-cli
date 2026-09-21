@@ -85,6 +85,13 @@ func newUnpairedEnv(t *testing.T) *env {
 	return e
 }
 
+// choices is one enable's answers where a test cares only about the
+// shape: the project's earlier session files are collected, which is
+// what enable does unless it is told otherwise.
+func choices(shape proxytest.Shape) lifecycle.EnableChoices {
+	return lifecycle.EnableChoices{Shape: shape}
+}
+
 func (e *env) machine() *lifecycle.Machine {
 	e.t.Helper()
 	return lifecycle.Open(e.deps)

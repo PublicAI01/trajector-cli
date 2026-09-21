@@ -223,6 +223,12 @@ type projectRecord struct {
 	// stays granted so the project is found the same way in either
 	// shape.
 	NoProxy bool `json:"no_proxy,omitempty"`
+	// NoEarlier marks a grant made with the project's earlier session
+	// files left alone: they were never registered, so nothing reads
+	// them. Like every other field here it is additive — a table
+	// written by a build that does not know it reads as a grant that
+	// collected them, which is what such a build did.
+	NoEarlier bool `json:"no_earlier,omitempty"`
 }
 
 type upstreamMoveRecord struct {

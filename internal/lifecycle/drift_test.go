@@ -390,7 +390,7 @@ func TestStatus_PairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.
 			e := newEnv(t)
 			e.startProxy()
 			e.stdin = tc.stdin
-			if err := e.machine().Enable(e.project, proxytest.WithProxy, e.io()); err != nil {
+			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
 			e.sandbox.AddSignals(proxytest.ProjectIDHash(e.canonicalRoot()), proxytest.Signals{
