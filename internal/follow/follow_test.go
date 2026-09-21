@@ -160,6 +160,38 @@ func TestRegistry_FilesAreOrderedByPath(t *testing.T) {
 	}
 }
 
+func TestRegistry_EntriesListsRetiredFilesThatFilesLeavesOut(t *testing.T) {
+	r := follow.Open(t.TempDir())
+	a, b := abs(t, "a.jsonl"), abs(t, "b.jsonl")
+	mustRegister(t, r, project, a, b)
+	if err := r.Retire(project, follow.File{Path: b}, follow.Relocated); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := r.Files(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := r.Entries(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(files) != 1 || files[0].Path != a {
+		t.Errorf("Files() = %+v, want only %q", files, a)
+	}
+	var got []string
+	for _, f := range entries {
+		got = append(got, f.Path)
+	}
+	if want := []string{a, b}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Entries() paths = %v, want %v", got, want)
+	}
+	if entries[1].Retired != follow.Relocated {
+		t.Errorf("Entries()[1] = %+v, want the retirement it was given", entries[1])
+	}
+}
+
 func TestRegistry_UpdateReplacesWholeEntry(t *testing.T) {
 	dir := t.TempDir()
 	r := follow.Open(dir)

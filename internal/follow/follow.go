@@ -29,11 +29,13 @@
 package follow
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -190,20 +192,30 @@ func (r *Registry) Signals(projectIDHash string) (drift.Signals, error) {
 // Files lists the files projectIDHash still reads, ordered by path. A
 // project with no registry has no files. A retired entry is not
 // listed: nothing is left to read of it, and it is kept only so that
-// registering its path again does not read the file over.
+// registering its path again does not read the file over. What the
+// registry holds, retirements and all, is Entries.
 func (r *Registry) Files(projectIDHash string) ([]File, error) {
+	entries, err := r.Entries(projectIDHash)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(entries, func(f File) bool { return f.Retired != "" }), nil
+}
+
+// Entries lists every entry projectIDHash's registry holds, ordered
+// by path, the retired ones included. It is what a caller holding a
+// search of the project's tree against the registry asks for: a
+// retired path is registered, so calling it unregistered would ask
+// the user to register what is registered already. What is still
+// read is Files.
+func (r *Registry) Entries(projectIDHash string) ([]File, error) {
 	reg, err := r.read(projectIDHash)
 	if err != nil {
 		return nil, err
 	}
-	files := []File{}
-	for _, f := range reg.Files {
-		if f.Retired == "" {
-			files = append(files, f)
-		}
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	return files, nil
+	entries := append([]File{}, reg.Files...)
+	slices.SortFunc(entries, func(a, b File) int { return cmp.Compare(a.Path, b.Path) })
+	return entries, nil
 }
 
 // Update replaces the whole entry whose path is f.Path.
@@ -276,9 +288,9 @@ func (r *Registry) mark(projectIDHash, path string, change func(*File)) error {
 		if _, ok := find(reg.Files, path); !ok {
 			return nil, ErrNotRegistered
 		}
-		session := sessionOf(path)
+		session := SessionOf(path)
 		for i := range reg.Files {
-			if sessionOf(reg.Files[i].Path) == session {
+			if SessionOf(reg.Files[i].Path) == session {
 				change(&reg.Files[i])
 			}
 		}

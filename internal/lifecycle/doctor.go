@@ -204,37 +204,84 @@ func heldOfProject(held []spool.Record, projectIDHash string) []spool.Record {
 	return mine
 }
 
-// doctorEarlierSessions registers the session files an enabled
-// project already had when it was enabled and asks for them to be
-// read, through the one path enable uses. Nothing but enable ever
-// looked for them, so a project enabled by a build that registered
-// them without reading them, or one whose registration failed, would
+// doctorEarlierSessions puts this project's session files back on the
+// one path that reads them: what it already had when it was enabled
+// is registered, and every entry still waiting for its first reading
+// is asked for, through the calls enable makes. Nothing but enable
+// ever looked for the files, and only a hook ever names a registered
+// one, so an install made by a build that registered them without
+// reading them, and a registration whose reading never ran, would
 // otherwise keep them on disk unread for good.
 //
-// It repairs only what the user asked for: a project enabled with its
-// earlier sessions skipped is left alone, and so is one whose files
-// this process cannot reach. What it registered leaves the diagnosis
-// it repaired from, so the run reports the repair rather than the
-// state it has just ended; what it cannot explain — a session written
-// after the grant that no hook reported — is untouched and still
-// reported.
+// It repairs only what the user asked for. A project enabled with its
+// earlier sessions skipped keeps that answer for the files it is
+// about: the ones written before the grant are not searched for, not
+// registered and not asked for, while an entry written after it is
+// repaired as in any other project. The choice is about the age of a
+// file, never about whether a reading that stopped is repaired. A
+// project whose files this process cannot reach is left alone.
+//
+// What it registered leaves the diagnosis it repaired from, so the run
+// reports the repair rather than the state it has just ended; what it
+// cannot explain — a session written after the grant that no hook
+// reported — is untouched and still reported.
+//
+// A repair it could not make is a problem of its own, never a silent
+// run: a registration that failed to be written, and a reading no
+// reader took, both leave the files where they were. Only an ask a
+// reader took is reported as done.
 func (m *Machine) doctorEarlierSessions(f *report.Findings, d *report.Diagnosis) {
 	st := d.Project
-	if d.SessionFiles.Earlier == 0 || st.EarlierSkipped || st.WindowsSideClaude {
+	if !st.Enabled || st.WindowsSideClaude {
 		return
+	}
+	registered, toRead, err := m.earlierSessionsRepair(d.SessionFiles, st)
+	if err != nil {
+		f.Problem("this project's session files could not be put back on the path that reads them: %v", err)
+		return
+	}
+	if len(toRead) == 0 {
+		return
+	}
+	if err := m.readEarlierSessions(st, toRead); err != nil {
+		f.Problem("%d never-read session file(s) of this project could not be asked for: %v", len(toRead), err)
+		f.Detail("The next session of this project reads them, where a reader can be started for it.")
+		return
+	}
+	if registered == 0 {
+		f.Fixed("asked for %d never-read session file(s) of this project to be read", len(toRead))
+		return
+	}
+	f.Fixed("registered %d session file(s) of this project that no hook reported, and asked for them to be read", registered)
+	d.SessionFiles.Unregistered -= d.SessionFiles.Earlier
+	d.SessionFiles.Earlier = 0
+}
+
+// earlierSessionsRepair makes the registrations this project is
+// short of and reports what is left to read. The walk is paid for
+// only where the diagnosis found session files the registry does not
+// hold: registering is what that walk is for, and an entry already
+// registered is found without it. It is not paid for at all in a
+// project whose earlier files the user asked enable to leave alone —
+// what such a walk would find is exactly what must not be
+// registered.
+//
+// Of what the walk finds, only the sessions written before the grant
+// are registered, judged by the same question that counted them. A
+// session written after the grant that no hook reported is what this
+// device cannot explain: registering it here would end the report of
+// it, and one run of doctor would silence a broken hook for good.
+func (m *Machine) earlierSessionsRepair(s report.SessionFilesState, st report.ProjectStatus) (registered int, toRead []string, err error) {
+	if s.Earlier == 0 || st.EarlierSkipped {
+		toRead, err = m.unreadSessions(st)
+		return 0, toRead, err
 	}
 	found, err := discover.Walk(st.Root, m.claude().ConfigDir)
 	if err != nil {
-		return
+		return 0, nil, err
 	}
-	registered, err := m.registerEarlierSessions(st.Hash, found, nil)
-	if err != nil || len(registered) == 0 {
-		return
-	}
-	_ = m.readEarlierSessions(st, registered)
-	f.Fixed("registered %d session file(s) of this project that no hook reported, and asked for them to be read", len(registered))
-	d.SessionFiles.Unregistered -= d.SessionFiles.Earlier
-	d.SessionFiles.Earlier = 0
+	earlier := found.OnlySessions(func(session string) bool { return earlierThanGrant(session, st.GrantedAt) })
+	return m.registerEarlierSessions(st, earlier, nil)
 }
 
 // doctorProxy checks who holds the proxy port. An unproven holder is

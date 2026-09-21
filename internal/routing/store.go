@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
@@ -68,6 +69,19 @@ type Grant struct {
 	// every surface reads: nothing else on this device states that
 	// the files a project already had are not collected.
 	EarlierSkipped bool
+}
+
+// GrantedAtTime is when the project was enabled. A record that does
+// not hold the time in the layout the table writes holds no time at
+// all, and says so: a caller that guessed one would date this
+// project's session files against it. The layout is read here because
+// the record is this package's own.
+func (g Grant) GrantedAtTime() (time.Time, bool) {
+	at, err := time.Parse(time.RFC3339, g.GrantedAt)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
 }
 
 // UpstreamMove is one recorded unattended upstream change: where the

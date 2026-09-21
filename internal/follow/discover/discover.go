@@ -85,6 +85,11 @@ type Result struct {
 	// Oldest is the modification time of the oldest main session file,
 	// or the zero time when none was found.
 	Oldest time.Time
+	// mods is when each main session file found was last written, by
+	// path. Oldest is the oldest of them, and a filter over the
+	// sessions answers its own oldest from here rather than looking
+	// at the files a second time.
+	mods map[string]time.Time
 	// visited counts the directories the walk looked at.
 	visited int
 	// Gaps is what this walk could not cover, in the one form the
@@ -202,7 +207,48 @@ func walk(root, configDir string, limit int) (Result, error) {
 		}
 		return collect(hit, &res)
 	})
+	res.Oldest = oldestOf(res.mods)
 	return res, err
+}
+
+// oldestOf is the earliest of the times a walk observed, and the zero
+// time when it observed none.
+func oldestOf(mods map[string]time.Time) time.Time {
+	var at time.Time
+	for _, mod := range mods {
+		if at.IsZero() || mod.Before(at) {
+			at = mod
+		}
+	}
+	return at
+}
+
+// OnlySessions is this result with only the sessions keep answers for,
+// each with the agent files found under the session's own directory.
+// keep is asked about the path of every main session file found. What
+// the walk could not cover is carried over whole: a gap is a fact
+// about the search, not about one session. An agent file whose
+// session's own file the walk did not find is dropped: keep judges a
+// session, and nothing here can say which session that file's is
+// without the file that names it.
+func (r Result) OnlySessions(keep func(session string) bool) Result {
+	out := Result{visited: r.visited, Gaps: r.Gaps, mods: make(map[string]time.Time)}
+	kept := make(map[string]bool, len(r.Sessions))
+	for _, path := range r.Sessions {
+		if !keep(path) {
+			continue
+		}
+		kept[follow.SessionOf(path)] = true
+		out.Sessions = append(out.Sessions, path)
+		out.mods[path] = r.mods[path]
+	}
+	for _, path := range r.Files {
+		if kept[follow.SessionOf(path)] {
+			out.Files = append(out.Files, path)
+		}
+	}
+	out.Oldest = oldestOf(out.mods)
+	return out
 }
 
 // collect gathers the session files of one project directory that has
@@ -222,9 +268,10 @@ func collect(hit string, res *Result) error {
 			}
 			res.Files = append(res.Files, p)
 			res.Sessions = append(res.Sessions, p)
-			if res.Oldest.IsZero() || info.ModTime().Before(res.Oldest) {
-				res.Oldest = info.ModTime()
+			if res.mods == nil {
+				res.mods = make(map[string]time.Time)
 			}
+			res.mods[p] = info.ModTime()
 		case e.IsDir():
 			if err := collectAgents(filepath.Join(p, follow.SubagentsDir), res); err != nil {
 				return err

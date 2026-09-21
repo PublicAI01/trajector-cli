@@ -1,6 +1,7 @@
 package routing_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -405,6 +406,54 @@ func TestSetUpstreamRecordsTheMoveUntilTheNextGrant(t *testing.T) {
 	}
 	if fresh.UpstreamMoved.Happened() {
 		t.Errorf("fresh = %+v, want a new grant to reset the move record", fresh)
+	}
+}
+
+func TestAGrantWhoseStoredTimeIsNotTheTablesLayoutHoldsNoTime(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		at    string
+		want  bool
+		stamp string
+	}{
+		{name: "the layout the table writes", at: "2026-08-01T00:00:00Z", want: true, stamp: "2026-08-01T00:00:00Z"},
+		{name: "a date with no time of day", at: "2026-08-01", want: false},
+		{name: "no time at all", at: "", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "routes-under-test.json")
+			record := map[string]any{
+				"project_id_hash": "hash-1",
+				"root_path":       "/home/dev/p",
+				"upstream":        "https://api.anthropic.com",
+				"granted_at":      tc.at,
+			}
+			table, err := json.Marshal(map[string]any{"projects": map[string]any{"tok-1": record}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, table, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			g, ok, err := routing.OpenStore(path).Active("/home/dev/p")
+			if err != nil || !ok {
+				t.Fatalf("Active = %v, %v", ok, err)
+			}
+			at, read := g.GrantedAtTime()
+			if read != tc.want {
+				t.Fatalf("GrantedAtTime read = %v, want %v; a time this table does not hold must not be guessed at, because a session file would be dated against it", read, tc.want)
+			}
+			if !read {
+				if !at.IsZero() {
+					t.Errorf("GrantedAtTime = %v, want the zero time where none was read", at)
+				}
+				return
+			}
+			if at.Format(time.RFC3339) != tc.stamp {
+				t.Errorf("GrantedAtTime = %v, want %s", at, tc.stamp)
+			}
+		})
 	}
 }
 

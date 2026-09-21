@@ -25,6 +25,13 @@ All notable changes to trajector are documented here. The format follows
   0.3.1 these files were registered and then never read in the shape
   that routes traffic through the proxy, because the resident process
   reads the files of running sessions and the files a hook names.
+  `enable` and `doctor` also ask for every registered session file
+  this device never read, which is what such an install left behind.
+  In a project enabled with `--no-earlier`, neither asks for the files
+  older than its grant. Where no reader takes the ask, neither
+  pretends it did: `enable` says the files are registered and names
+  `trajector doctor` as the way to ask again, and `doctor` reports it
+  instead of counting it repaired.
 - A process that holds the proxy port and answers nothing is now
   reported as what it is — `another process holds the proxy port` —
   with the command that names the holder on this platform, the
@@ -41,7 +48,8 @@ All notable changes to trajector are documented here. The format follows
   are — `could not determine why the hooks did not report N
   session(s)` — with the causes this device cannot read listed under
   it. Neither counts as a problem, so `doctor` does not exit 1 over
-  session files that predate the grant.
+  session files that predate the grant; what it does count is a
+  repair it could not make.
 
 ## [0.3.2] - 2026-09-20
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
@@ -258,10 +259,14 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		return fmt.Errorf("recording project consent: %w", err)
 	}
 	// Skipping them means exactly that: no entry is made, so no later
-	// run finds a registered file waiting to be read.
-	var registered []string
+	// run finds a registered file waiting to be read. The answer this
+	// install has just written is the one that decides, not the one
+	// the status was read under: a project enabled again to collect
+	// the files a first enable skipped must have them asked for.
+	st.EarlierSkipped = choices.SkipEarlier
+	var toRead []string
 	if !choices.SkipEarlier {
-		if registered, err = m.registerEarlierSessions(st.Hash, earlier, ledger); err != nil {
+		if _, toRead, err = m.registerEarlierSessions(st, earlier, ledger); err != nil {
 			return fmt.Errorf("registering this project's session files: %w", err)
 		}
 	}
@@ -320,12 +325,15 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 	// The reading is announced only once a reader has taken the ask,
 	// and an ask nobody took is not enough to fail the install: the
 	// registration is what the user came for and it stands, so what is
-	// left is to say that the reading waits for the next session.
-	if len(registered) > 0 {
-		if err := m.readEarlierSessions(st, registered); err != nil {
-			fmt.Fprintf(io.Err, "WARNING: %d earlier session record(s) are registered but nothing could be asked to read them now (%v). The next session of this project reports them, and the reading starts then.\n", len(registered), err)
+	// left is to name what reads them later. Only doctor is certain of
+	// it: the ask fails where no reader can be started, and a session
+	// hook of this project starts one the same way, so the session that
+	// follows may fail for the same reason this run did.
+	if len(toRead) > 0 {
+		if err := m.readEarlierSessions(st, toRead); err != nil {
+			fmt.Fprintf(io.Err, "WARNING: %d earlier session record(s) are registered but nothing could be asked to read them now (%v). Run `trajector doctor` to ask again. The next session of this project reads them too, where a reader can be started for it.\n", len(toRead), err)
 		} else {
-			fmt.Fprintf(io.Out, "Reading %d earlier session record(s) in the background.\n", len(registered))
+			fmt.Fprintf(io.Out, "Reading %d earlier session record(s) in the background.\n", len(toRead))
 		}
 	}
 	fmt.Fprintln(io.Out, report.ShapeNotice(shape))
@@ -395,57 +403,99 @@ func (m *Machine) confirmHooksWillRun(io IO, root string, shape routing.Shape) (
 }
 
 // registerEarlierSessions puts the session files found before the
-// install into the project's registry and reports the sessions this
-// run is the first to register, which are the ones to ask a reading
-// of. The registry goes on the ledger only when this install is the
-// one creating it: a registry that already stood — from an earlier
-// enable, or from a session's own hooks — is not this install's to
-// take back. A nil ledger is a caller with nothing to take back:
-// doctor registers outside a transaction, and a registration is not
-// undone by the run that made it.
+// install into the project's registry, and reports how many of them
+// this run is the first to register together with every session that
+// is still to be read. The registry goes on the ledger only when this
+// install is the one creating it: a registry that already stood —
+// from an earlier enable, or from a session's own hooks — is not this
+// install's to take back. A nil ledger is a caller with nothing to
+// take back: doctor registers outside a transaction, and a
+// registration is not undone by the run that made it.
+//
+// What is to be read is asked of the registry rather than of this
+// walk, so an entry a previous run registered and left unread is
+// reached as well as one this run just made. A build that registered
+// these files without ever reading them left exactly such entries
+// behind.
 //
 // A file the reader retired keeps its entry and stays retired: enable
 // finds it again, because it is still on disk, but running enable a
-// second time is not an answer to why its reading stopped.
-func (m *Machine) registerEarlierSessions(projectIDHash string, found discover.Result, ledger *enableLedger) (sessions []string, err error) {
+// second time is not an answer to why its reading stopped. Such a
+// path is counted as registered already, which is what it is: the
+// registration this run would make of it changes nothing.
+func (m *Machine) registerEarlierSessions(st report.ProjectStatus, found discover.Result, ledger *enableLedger) (registered int, toRead []string, err error) {
+	projectIDHash := st.Hash
 	projects, err := m.registry.Projects()
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	if ledger != nil && !slices.Contains(projects, projectIDHash) {
 		ledger.record(func() error { return m.registry.Unregister(projectIDHash) })
 	}
-	held, err := m.registry.Files(projectIDHash)
+	held, err := m.registry.Entries(projectIDHash)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	before := make(map[string]bool, len(held))
 	for _, f := range held {
 		before[f.Path] = true
 	}
 	if err := discover.Register(m.registry, projectIDHash, found); err != nil {
+		return 0, nil, err
+	}
+	for _, path := range found.Sessions {
+		if !before[path] {
+			registered++
+		}
+	}
+	toRead, err = m.unreadSessions(st)
+	return registered, toRead, err
+}
+
+// unreadSessions marks every registered file nothing has read yet as
+// just reported, and returns the sessions to ask a reading of.
+//
+// A file no reading has consumed is cold and named by no hook: the
+// resident process looks at the files of running sessions and at the
+// file a hook names, so nothing looks at this one again on its own.
+// Stamping the entry as the event puts it in reach of the next sweep,
+// which is the fallback under every ask made afterwards. The file
+// must still be on disk with something in it: an entry whose file is
+// gone or empty has nothing to read, so it asks for nothing and is
+// not made to look like a session that just reported. A retired entry
+// is none of these — the registry does not list it, which is what
+// retirement means.
+//
+// A project enabled with its earlier session files left alone keeps
+// that answer here, and only for the files it is about: an entry
+// whose file was last written before the grant is passed over, and
+// one written after it is asked for as in any other project. The
+// answer is about the age of a file, never about whether a reading
+// that never happened is asked for again.
+func (m *Machine) unreadSessions(st report.ProjectStatus) ([]string, error) {
+	projectIDHash := st.Hash
+	files, err := m.registry.Files(projectIDHash)
+	if err != nil {
 		return nil, err
 	}
-	// A file this install is the first to register has no event of its
-	// own, which is exactly what makes it cold, and the resident
-	// process looks at hot files only. Stamping the registration as the
-	// event puts it in reach of the next sweep, so the read asked for
-	// below is how these files are read quickly, never the only way
-	// they are read at all.
 	now := m.deps.Now()
-	main := make(map[string]bool, len(found.Sessions))
-	for _, path := range found.Sessions {
-		main[path] = true
-	}
-	for _, path := range found.Files {
-		if before[path] {
+	var sessions []string
+	for _, f := range files {
+		if !f.NeverRead() {
 			continue
 		}
-		if err := m.registry.Warm(projectIDHash, path, 0, now); err != nil {
+		if st.EarlierSkipped && earlierThanGrant(f.Path, st.GrantedAt) {
+			continue
+		}
+		on, err := follow.StatFile(f.Path)
+		if err != nil || !on.Exists || on.Size == 0 {
+			continue
+		}
+		if err := m.registry.Warm(projectIDHash, f.Path, 0, now); err != nil {
 			return nil, err
 		}
-		if main[path] {
-			sessions = append(sessions, path)
+		if f.MainSession() {
+			sessions = append(sessions, f.Path)
 		}
 	}
 	return sessions, nil

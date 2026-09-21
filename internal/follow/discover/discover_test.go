@@ -167,6 +167,7 @@ func TestWalk_FindsSessionsUnderEveryDirectory(t *testing.T) {
 		t.Errorf("Oldest = %v, want %v", res.Oldest, want.Oldest)
 	}
 	res.Oldest, want.Oldest = time.Time{}, time.Time{}
+	res.mods = nil
 	if !reflect.DeepEqual(res, want) {
 		t.Errorf("Walk = %+v\nwant %+v", res, want)
 	}
@@ -341,6 +342,56 @@ func TestWalk_CollectsSubagentFiles(t *testing.T) {
 	}
 	if !slices.Equal(res.Sessions, []string{main}) {
 		t.Errorf("Sessions = %v, want %v: agent files are not sessions", res.Sessions, []string{main})
+	}
+}
+
+func TestOnlySessions_KeepsTheChosenSessionsWithTheirAgentFiles(t *testing.T) {
+	tr := newTree(t)
+	day := 24 * time.Hour
+	t0 := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	keep := tr.session(t, tr.root, "keep", t0.Add(2*day))
+	tr.session(t, tr.root, "drop", t0)
+	proj := tr.project(t, tr.root)
+	kept := writeFile(t, filepath.Join(proj, "keep", "subagents", "agent-1.jsonl"))
+	writeFile(t, filepath.Join(proj, "drop", "subagents", "agent-2.jsonl"))
+	writeFile(t, filepath.Join(proj, "orphan", "subagents", "agent-3.jsonl"))
+
+	res := mustWalk(t, tr).OnlySessions(func(session string) bool { return session == keep })
+
+	want := []string{keep, kept}
+	slices.Sort(want)
+	slices.Sort(res.Files)
+	if !slices.Equal(res.Files, want) {
+		t.Errorf("Files = %v, want %v", res.Files, want)
+	}
+	if !slices.Equal(res.Sessions, []string{keep}) {
+		t.Errorf("Sessions = %v, want %v", res.Sessions, []string{keep})
+	}
+	if !res.Oldest.Equal(t0.Add(2 * day)) {
+		t.Errorf("Oldest = %v, want the oldest of the sessions kept (%v)", res.Oldest, t0.Add(2*day))
+	}
+}
+
+func TestOnlySessions_KeepsWhatTheSearchCouldNotCover(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not bind root")
+	}
+	tr := newTree(t)
+	tr.session(t, tr.root, "s", time.Now())
+	closed := tr.mkdir(t, "closed")
+	tr.session(t, closed, "closed", time.Now())
+	if err := os.Chmod(closed, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(closed, 0o755) })
+
+	res := mustWalk(t, tr).OnlySessions(func(string) bool { return false })
+
+	if !slices.Equal(res.Gaps.Unreadable, []string{closed}) {
+		t.Errorf("Unreadable = %v, want %v", res.Gaps.Unreadable, []string{closed})
+	}
+	if len(res.Files) != 0 || len(res.Sessions) != 0 || !res.Oldest.IsZero() {
+		t.Errorf("OnlySessions kept %+v, want nothing where no session was chosen", res)
 	}
 }
 

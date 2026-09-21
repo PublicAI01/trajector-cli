@@ -10,6 +10,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
 
 const (
@@ -53,10 +54,11 @@ func (e *env) lockedSubdir(name string) string {
 // session file already there, then leaves one more that no hook
 // reported and a directory the walk cannot list. The second file is
 // written after the project was enabled, so nothing but a hook could
-// have reported it.
-func (e *env) enabledWithOneSessionAndOneUnreported() (locked string) {
+// have reported it. A surface that asks for a reading needs a proxy
+// that takes the report, so the caller hands one in.
+func (e *env) enabledWithOneSessionAndOneUnreported(opts ...proxytest.Option) (locked string) {
 	e.t.Helper()
-	e.startProxy()
+	e.startProxy(opts...)
 	e.sessionFile(sessionMarker+"-1", time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC))
 	e.enable(proxytest.WithProxy)
 	e.sessionFile(sessionMarker+"-2", e.deps.Now().Add(time.Hour))
@@ -95,8 +97,9 @@ func TestStatusReadsTheRegistryWithoutWalkingOrRegistering(t *testing.T) {
 
 func TestDoctorWalksTheProjectWithoutRegistering(t *testing.T) {
 	e := newEnv(t)
-	locked := e.enabledWithOneSessionAndOneUnreported()
-	before := e.registryBytes()
+	var res resident
+	locked := e.enabledWithOneSessionAndOneUnreported(res.handler())
+	before := e.registeredFiles(e.canonicalRoot())
 
 	problems, out := e.doctor()
 
@@ -116,11 +119,18 @@ func TestDoctorWalksTheProjectWithoutRegistering(t *testing.T) {
 			t.Errorf("doctor = %q, want no %q", out, unwanted)
 		}
 	}
-	if got := e.registryBytes(); got != before {
-		t.Errorf("doctor changed the registry:\n%s\nwas:\n%s", got, before)
+	after := e.registeredFiles(e.canonicalRoot())
+	if len(after) != len(before) {
+		t.Fatalf("registered = %+v, want the one file enable registered and nothing doctor found", after)
 	}
-	if paths := e.registeredPaths(e.canonicalRoot()); len(paths) != 1 {
-		t.Errorf("registered = %v, want the one file enable registered and nothing doctor found", paths)
+	for i, f := range after {
+		was := before[i]
+		if f.Path != was.Path || f.Retired != was.Retired {
+			t.Errorf("registry entry = %+v, was %+v", f, was)
+		}
+		if f.NextSegment != was.NextSegment || f.Offset != was.Offset || !slices.Equal(f.MessageIDs, was.MessageIDs) {
+			t.Errorf("doctor moved a cursor: %+v, was %+v", f, was)
+		}
 	}
 }
 
@@ -152,6 +162,221 @@ func TestDoctorRegistersTheSessionsThatPredateTheGrantAndHasThemRead(t *testing.
 	}
 	if strings.Contains(out, "predate its grant") {
 		t.Errorf("doctor = %q, want no leftover note about what it has just registered", out)
+	}
+}
+func TestDoctorRegistersOnlyTheSessionsThatPredateTheGrantAndKeepsReportingTheRest(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.startProxy(res.handler())
+	e.enable(proxytest.WithProxy)
+	earlier := e.sessionFile(sessionMarker+"-1", e.deps.Now().Add(-48*time.Hour))
+	e.sessionFile(sessionMarker+"-2", e.deps.Now().Add(time.Hour))
+	e.stdout.Reset()
+
+	_, out := e.doctor()
+
+	if paths := e.registeredPaths(e.canonicalRoot()); !slices.Equal(paths, []string{earlier}) {
+		t.Errorf("registered = %v, want only the session that predates the grant (%q)", paths, earlier)
+	}
+	want := []apiproxy.Progress{{ProjectIDHash: e.status().Hash, Path: earlier, End: true}}
+	if got := res.reports(); !slices.Equal(got, want) {
+		t.Errorf("the resident process was told %+v, want %+v", got, want)
+	}
+	if !strings.Contains(out, "warning: could not determine why the hooks did not report 1 session(s) of this project") {
+		t.Errorf("doctor = %q, want the session written after the grant still reported", out)
+	}
+
+	e.stdout.Reset()
+	_, again := e.doctor()
+
+	if !strings.Contains(again, "warning: could not determine why the hooks did not report 1 session(s) of this project") {
+		t.Errorf("second doctor = %q, want the unexplained session reported again", again)
+	}
+}
+
+// registeredButNeverRead leaves what a build that registered a
+// project's session files without ever reading them left behind: an
+// entry with a cursor at nothing, whose file is on disk with lines in
+// it. The file is written after the project was enabled, so nothing
+// about it is a session the walk finds unregistered.
+func (e *env) registeredButNeverRead() string {
+	e.t.Helper()
+	path := e.sessionFile(sessionMarker+"-1", e.deps.Now().Add(time.Hour))
+	e.registerFile(e.canonicalRoot(), path, "")
+	return path
+}
+
+func TestDoctorAsksForARegisteredSessionFileThatWasNeverRead(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.startProxy(res.handler())
+	e.enable(proxytest.WithProxy)
+	path := e.registeredButNeverRead()
+	e.stdout.Reset()
+
+	problems, out := e.doctor()
+
+	if problems != 0 {
+		t.Errorf("problems = %d, want none", problems)
+	}
+	if !strings.Contains(out, "fixed: asked for 1 never-read session file(s) of this project to be read") {
+		t.Errorf("doctor = %q, want the never-read session asked for", out)
+	}
+	want := []apiproxy.Progress{{ProjectIDHash: e.status().Hash, Path: path, End: true}}
+	if got := res.reports(); !slices.Equal(got, want) {
+		t.Errorf("the resident process was told %+v, want %+v", got, want)
+	}
+	files := e.registeredFiles(e.canonicalRoot())
+	if len(files) != 1 || files[0].LastEvent == "" {
+		t.Errorf("registry = %+v, want the entry left where the sweep looks", files)
+	}
+}
+
+func TestDoctorSaysTheNeverReadSessionFilesCouldNotBeAskedFor(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Spawn = noReaderStarts()
+	e.enable(proxytest.WithoutProxy)
+	e.registeredButNeverRead()
+	e.stdout.Reset()
+
+	problems, out := e.doctor()
+
+	if problems != 1 {
+		t.Errorf("problems = %d, want a reading no reader took counted as one", problems)
+	}
+	for _, want := range []string{"could not be asked for", "The next session"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor = %q, want it to contain %q", out, want)
+		}
+	}
+	for _, unwanted := range []string{"fixed: asked for", "Everything checks out."} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("doctor = %q, want no %q", out, unwanted)
+		}
+	}
+}
+
+func TestDoctorSaysTheSessionFilesCouldNotBePutBackOnTheReadingPath(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.startProxy(res.handler())
+	e.enable(proxytest.WithProxy)
+	e.registeredButNeverRead()
+	e.readOnlyDir(e.layout().FollowDir())
+	e.stdout.Reset()
+
+	problems, out := e.doctor()
+
+	if problems == 0 {
+		t.Errorf("doctor = %q, want the repair it could not make counted as a problem", out)
+	}
+	if !strings.Contains(out, "could not be put back on the path that reads them") {
+		t.Errorf("doctor = %q, want it to say the repair failed", out)
+	}
+	if strings.Contains(out, "Everything checks out.") {
+		t.Errorf("doctor = %q, want no all-clear after a failed repair", out)
+	}
+}
+
+func TestDoctorLeavesARetiredSessionFileAlone(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.startProxy(res.handler())
+	e.enable(proxytest.WithProxy)
+	path := e.registeredButNeverRead()
+	e.sandbox.RetireSessionFile(e.status().Hash, path)
+	before := e.registryBytes()
+	e.stdout.Reset()
+
+	_, out := e.doctor()
+
+	if got := e.registryBytes(); got != before {
+		t.Errorf("doctor changed the registry:\n%s\nwas:\n%s", got, before)
+	}
+	if got := res.reports(); len(got) != 0 {
+		t.Errorf("the resident process was told %+v about a file whose reading stopped for good", got)
+	}
+	if strings.Contains(out, "never-read") {
+		t.Errorf("doctor = %q, want no reading asked for a retired entry", out)
+	}
+}
+func TestDoctorDoesNotCountARetiredSessionFileAsUnregistered(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.startProxy(res.handler())
+	e.enable(proxytest.WithProxy)
+	path := e.sessionFile(sessionMarker+"-1", e.deps.Now().Add(-48*time.Hour))
+	e.registerFile(e.canonicalRoot(), path, "")
+	e.sandbox.RetireSessionFile(e.status().Hash, path)
+	e.stdout.Reset()
+
+	_, out := e.doctor()
+	e.stdout.Reset()
+	status := e.statusOutput()
+
+	if !strings.Contains(out, "every session file of this project is registered") {
+		t.Errorf("doctor = %q, want a retired entry counted as registered", out)
+	}
+	for _, unwanted := range []string{"predate its grant", "to register them", "could not determine why"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("doctor = %q, want no %q about a file whose reading stopped for good", out, unwanted)
+		}
+		if strings.Contains(status, unwanted) {
+			t.Errorf("status = %q, want no %q about a file whose reading stopped for good", status, unwanted)
+		}
+	}
+}
+
+func TestDoctorLeavesNeverReadSessionsAloneWhereEarlierSessionsWereSkipped(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.startProxy(res.handler())
+	if err := e.machine().Enable(e.project, lifecycle.EnableChoices{Shape: proxytest.WithProxy, SkipEarlier: true}, e.io()); err != nil {
+		t.Fatalf("enable: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
+	}
+	path := e.sessionFile(sessionMarker+"-1", e.deps.Now().Add(-48*time.Hour))
+	e.registerFile(e.canonicalRoot(), path, "")
+	before := e.registryBytes()
+	e.stdout.Reset()
+
+	_, out := e.doctor()
+
+	if got := e.registryBytes(); got != before {
+		t.Errorf("doctor changed the registry:\n%s\nwas:\n%s", got, before)
+	}
+	if got := res.reports(); len(got) != 0 {
+		t.Errorf("the resident process was told %+v about a project enabled without its earlier sessions", got)
+	}
+	if strings.Contains(out, "never-read") {
+		t.Errorf("doctor = %q, want no reading asked where the user asked for none", out)
+	}
+}
+func TestDoctorAsksForANeverReadSessionWrittenAfterAGrantThatSkippedTheEarlierOnes(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.startProxy(res.handler())
+	if err := e.machine().Enable(e.project, lifecycle.EnableChoices{Shape: proxytest.WithProxy, SkipEarlier: true}, e.io()); err != nil {
+		t.Fatalf("enable: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
+	}
+	earlier := e.sessionFile(sessionMarker+"-1", e.deps.Now().Add(-48*time.Hour))
+	e.registerFile(e.canonicalRoot(), earlier, "")
+	later := e.sessionFile(sessionMarker+"-2", e.deps.Now().Add(time.Hour))
+	e.registerFile(e.canonicalRoot(), later, "")
+	e.stdout.Reset()
+
+	_, out := e.doctor()
+
+	if !strings.Contains(out, "fixed: asked for 1 never-read session file(s) of this project to be read") {
+		t.Errorf("doctor = %q, want the session written after the grant asked for", out)
+	}
+	want := []apiproxy.Progress{{ProjectIDHash: e.status().Hash, Path: later, End: true}}
+	if got := res.reports(); !slices.Equal(got, want) {
+		t.Errorf("the resident process was told %+v, want %+v", got, want)
+	}
+	for _, f := range e.registeredFiles(e.canonicalRoot()) {
+		if f.Path == earlier && f.LastEvent != "" {
+			t.Errorf("registry = %+v, want the entry that predates the grant left as it was", f)
+		}
 	}
 }
 

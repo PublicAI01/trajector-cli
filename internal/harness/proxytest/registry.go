@@ -63,6 +63,16 @@ func (s *Sandbox) RewindCursor(projectIDHash, path string) {
 	}
 }
 
+// RetireSessionFile stops one entry from ever being read again, as a
+// reader that found the session outside what consent covers does. The
+// entry stays in the registry, which is what retirement means.
+func (s *Sandbox) RetireSessionFile(projectIDHash, path string) {
+	s.t.Helper()
+	if err := s.registry().Retire(projectIDHash, s.registered(projectIDHash, path), follow.Relocated); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
 func (s *Sandbox) registered(projectIDHash, path string) RegisteredFile {
 	s.t.Helper()
 	files := s.RegisteredFiles(projectIDHash)

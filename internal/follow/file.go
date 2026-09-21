@@ -105,17 +105,17 @@ func (f File) Attended(alive func(pid int) bool) bool {
 // hook ever names. Marking one file of a session marks them all, and
 // what is read on a hook's word is the whole group.
 func Group(files []File, path string) []File {
-	session := sessionOf(path)
+	session := SessionOf(path)
 	group := []File{}
 	for _, f := range files {
-		if sessionOf(f.Path) == session {
+		if SessionOf(f.Path) == session {
 			group = append(group, f)
 		}
 	}
 	return group
 }
 
-// sessionOf names the session a path belongs to: the session's own
+// SessionOf names the session a path belongs to: the session's own
 // directory, which is the main file's path without the lines
 // extension. It is the one definition of what makes a session's
 // files one group, and it is path arithmetic alone — a group holds
@@ -123,7 +123,7 @@ func Group(files []File, path string) []File {
 // <dir>/<sid>.jsonl and the agent files under <dir>/<sid>/subagents/
 // yield the same name. A path that is neither belongs to no session
 // but its own.
-func sessionOf(path string) string {
+func SessionOf(path string) string {
 	dir := filepath.Dir(path)
 	if filepath.Base(dir) == SubagentsDir && IsAgentFile(filepath.Base(path)) {
 		return filepath.Dir(dir)
@@ -164,6 +164,12 @@ func (f File) MainSession() bool {
 	_, file := identify(f.Path)
 	return file == "" && strings.HasSuffix(f.Path, linesExt)
 }
+
+// NeverRead reports an entry nothing has ever consumed: no segment
+// taken from it and no byte of it read. It is the state a
+// registration leaves behind, and it separates a file still waiting
+// for its first reading from one whose reading is merely up to date.
+func (f File) NeverRead() bool { return f.NextSegment == 0 && f.Offset == 0 }
 
 // LastRead is when the file was last read. A file never read, and one
 // whose time was not written in the layout's own form, has none. It is

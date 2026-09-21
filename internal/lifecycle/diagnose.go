@@ -165,10 +165,7 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 		st.GrantHash = grant.ProjectIDHash
 		st.Shape = grant.Shape
 		st.EarlierSkipped = grant.EarlierSkipped
-		// A time the table does not hold in the layout's own form is no
-		// time at all: a reading that guessed one would date this
-		// project's sessions against it.
-		st.GrantedAt, _ = time.Parse(time.RFC3339, grant.GrantedAt)
+		st.GrantedAt, _ = grant.GrantedAtTime()
 	}
 	if st.PauseReason, err = m.routes.PausedReason(); err != nil {
 		return st, err
@@ -219,8 +216,8 @@ func injectionAgrees(st report.ProjectStatus, onFile routing.Shape) bool {
 
 // sessionFilesState turns the project's registry into counts and
 // sizes: it stats the registered files to measure what is not read yet
-// and opens none of them. The registry is opened once here, whichever
-// reading was asked for, so one run can never hold two accounts of it.
+// and opens none of them. Every count here is of what the project
+// still reads, so one run can never hold two accounts of that.
 func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFileReading) report.SessionFilesState {
 	registered := m.sessionFiles(st.Hash)
 	state := report.SessionFilesState{Err: registered.Err, Gaps: registered.Gaps, Signals: registered.Signals}
@@ -242,22 +239,32 @@ func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFile
 	if reading == fromRegistry || state.Err != nil || st.WindowsSideClaude {
 		return state
 	}
-	return m.readProjectTree(state, st, registered.Files)
+	return m.readProjectTree(state, st)
 }
 
 // readProjectTree takes the second reading: it walks the project's tree
-// once and holds what it found against the files the registry holds.
+// once and holds what it found against every entry the registry keeps,
+// the retired ones included. An entry whose reading stopped for good is
+// registered, and a search that called its path unregistered would ask
+// the user to register what is registered already. The counts above
+// come from what is still read, which is a different question.
+//
 // It registers nothing — registering is enable's and the session hooks'
 // alone, and a run that diagnoses must leave the state it diagnosed as
 // it found it.
-func (m *Machine) readProjectTree(state report.SessionFilesState, st report.ProjectStatus, registered []follow.File) report.SessionFilesState {
+func (m *Machine) readProjectTree(state report.SessionFilesState, st report.ProjectStatus) report.SessionFilesState {
+	entries, err := m.registry.Entries(st.Hash)
+	if err != nil {
+		state.Err = err
+		return state
+	}
 	found, err := discover.Walk(st.Root, m.claude().ConfigDir)
 	if err != nil {
 		state.WalkErr = err
 		return state
 	}
-	held := make(map[string]bool, len(registered))
-	for _, f := range registered {
+	held := make(map[string]bool, len(entries))
+	for _, f := range entries {
 		held[f.Path] = true
 	}
 	state.Walked = true
