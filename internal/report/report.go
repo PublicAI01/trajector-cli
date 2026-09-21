@@ -196,10 +196,16 @@ type Diagnosis struct {
 	OptionalSettings []OptionalSettingStatus
 	// Proxy is who holds the proxy port, read without the startup grace
 	// only callers about to act on it pay.
-	Proxy    proxylife.Verdict
-	Spool    SpoolState
-	Uploads  upload.State
-	Rejected []upload.RejectedBatch
+	Proxy proxylife.Verdict
+	// ProxyHolder is what this run could read about the process
+	// holding the port, and is read only where the holder is not
+	// ours. It is the zero value wherever nothing could be read,
+	// which is what a surface states then: this device does not know
+	// who holds the port.
+	ProxyHolder HolderProcess
+	Spool       SpoolState
+	Uploads     upload.State
+	Rejected    []upload.RejectedBatch
 	// RejectedErr, when non-nil, means the quarantined batches could not
 	// be read; Rejected is then empty, which must never present as an
 	// empty quarantine.

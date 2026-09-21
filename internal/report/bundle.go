@@ -164,6 +164,15 @@ type proxyWire struct {
 	// Without it a reader cannot tell that holder apart from a proxy
 	// that should be running and is not.
 	IdleBetweenSessions bool `json:"idle_between_sessions"`
+	// HolderPID and HolderName are what this device could read about a
+	// holder of the port that this build may not use, as the operating
+	// system reports them. They are absent where nothing could be
+	// read, and absent for every other holder: recording a process id
+	// and a program name for a holder that may be this user's own
+	// proxy would name it a foreign process in the archive, which is
+	// what no surface says of it.
+	HolderPID  int    `json:"holder_pid,omitzero"`
+	HolderName string `json:"holder_name,omitempty"`
 }
 
 type spoolWire struct {
@@ -228,6 +237,10 @@ func DiagnosisJSON(d Diagnosis) []byte {
 		Holder:              d.Proxy.Holder.String(),
 		Reason:              errString(d.Proxy.Reason),
 		IdleBetweenSessions: d.ProxyIdleBetweenSessions,
+	}
+	if proxylife.PortIsHeld(d.Proxy.Reason) {
+		proxy.HolderPID = d.ProxyHolder.PID
+		proxy.HolderName = d.ProxyHolder.Name
 	}
 	if d.Proxy.Holder == proxylife.HolderOurs {
 		proxy.Health = d.Proxy.Health

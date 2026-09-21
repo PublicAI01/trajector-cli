@@ -25,6 +25,15 @@ All notable changes to trajector are documented here. The format follows
   0.3.1 these files were registered and then never read in the shape
   that routes traffic through the proxy, because the resident process
   reads the files of running sessions and the files a hook names.
+- A process that holds the proxy port and answers nothing is now
+  reported as what it is — `another process holds the proxy port` —
+  with the command that names the holder on this platform, the
+  holder's name and process id where this device can read them, and
+  `trajector doctor` named as the step after the port is free rather
+  than as the fix. It was previously reported as a proxy this device
+  could not confirm, with a fix that could not succeed. A silent
+  holder that is provably this build's own proxy is stopped and
+  replaced, as a hung proxy of ours; anything else is left alone.
 - `doctor` no longer answers an unregistered session file with `This
   workspace is not trusted yet`. Sessions written before the project
   was enabled are named as such and registered on the spot; sessions

@@ -9,11 +9,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -76,6 +78,42 @@ func serveProxy(args []string) int {
 // watchdog owns the child's argv.
 const markerEnv = "TRAJECTOR_TEST_CRASH_MARKER"
 
+// silentEnv names the file whose presence keeps a spawned proxy from
+// answering, since the watchdog owns the child's argv.
+const silentEnv = "TRAJECTOR_TEST_SILENT_CHILD"
+
+// holdSilently binds the address in the proxy's own argv and reads
+// nothing from it. It stops on the signal a drain would otherwise ask
+// for, and exits the way a child that has drained does.
+func holdSilently(args []string) int {
+	if len(args) < 4 {
+		return 96
+	}
+	l, err := net.Listen("tcp", args[3])
+	if err != nil {
+		return 3
+	}
+	defer l.Close()
+	go func() {
+		var held []net.Conn
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			held = append(held, conn)
+		}
+	}()
+	stopping := make(chan os.Signal, 1)
+	signal.Notify(stopping, os.Interrupt, syscall.SIGTERM)
+	select {
+	case <-stopping:
+		return 0
+	case <-time.After(time.Minute):
+		return 4
+	}
+}
+
 // versionEnv sets the version the spawned proxy announces, since the
 // watchdog owns the child's argv.
 const versionEnv = "TRAJECTOR_TEST_PROXY_VERSION"
@@ -106,6 +144,24 @@ func TestMain(m *testing.M) {
 			case <-time.After(time.Minute):
 				return 4
 			}
+		},
+		// Stands in for a proxy of ours that stopped answering: it
+		// holds the port and reads nothing from it, which is what a
+		// hung process and a forwarded port look like from outside.
+		// It stops on the signal a drain would otherwise ask for.
+		"silent-hold": holdSilently,
+		// Stands in for the same holder under the watchdog production
+		// runs: the watchdog is the real one, and the child it starts
+		// holds the port and reads nothing from it while the file named
+		// by silentEnv is there.
+		"supervised-silent-hold": func(args []string) int {
+			if len(args) > 1 && args[1] == proxylife.Supervise {
+				return serveProxy(args)
+			}
+			if _, err := os.Stat(os.Getenv(silentEnv)); err == nil {
+				return holdSilently(args)
+			}
+			return serveProxy(args)
 		},
 		"crash-until-marker": func([]string) int {
 			marker := os.Getenv(markerEnv)
@@ -400,6 +456,281 @@ func TestEnsureRefusesAHealthzCopyingPortHolder(t *testing.T) {
 	}
 	if im.SawHeader(apiproxy.AdminHeader) {
 		t.Error("the admin token was sent to a holder that never proved it knows it")
+	}
+}
+
+// silentHolder squats an address and answers nothing: it accepts the
+// connection and leaves it open, which is what a port forwarded
+// elsewhere and a process that stopped reading both do.
+func silentHolder(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var held []net.Conn
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, conn)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		l.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range held {
+			conn.Close()
+		}
+	})
+	return l.Addr().String()
+}
+
+// wrongProofHolder answers every challenge with a proof of a token
+// this device never published.
+func wrongProofHolder(t *testing.T) *proxylife.Proxy {
+	t.Helper()
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "dev"})
+	proxytest.PublishAdminToken(t, layout, im.Addr(), "feedfacefeedfacefeedfacefeedface")
+	im.ProveAfter(0, "0123456789abcdef0123456789abcdef")
+	return proxylife.For(layout, "dev", "unused", im.Addr(), nil)
+}
+
+func TestObserveTellsThePortHolderShapesApart(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		proxy func(*testing.T) *proxylife.Proxy
+		want  error
+	}{
+		{
+			name: "the holder answers nothing",
+			proxy: func(t *testing.T) *proxylife.Proxy {
+				return proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", silentHolder(t), nil)
+			},
+			want: proxylife.ErrPortSilent,
+		},
+		{
+			name: "the holder answers without proof",
+			proxy: func(t *testing.T) *proxylife.Proxy {
+				p, _ := healthzCopyHolder(t)
+				return p
+			},
+			want: proxylife.ErrPortOccupied,
+		},
+		{
+			name:  "the holder answers with a proof of another token",
+			proxy: wrongProofHolder,
+			want:  proxylife.ErrProxyUnverified,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := tc.proxy(t).Observe()
+			if v.Holder != proxylife.HolderForeign {
+				t.Errorf("holder = %v, want foreign", v.Holder)
+			}
+			if !errors.Is(v.Reason, tc.want) {
+				t.Errorf("reason = %v, want %v", v.Reason, tc.want)
+			}
+		})
+	}
+}
+
+func TestASilentHolderNamesTheAddressItHolds(t *testing.T) {
+	addr := silentHolder(t)
+	p := proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", addr, nil)
+
+	got, held := proxylife.HeldPort(p.Observe().Reason)
+	if !held || got != addr {
+		t.Errorf("held port = %q, %v, want %q", got, held, addr)
+	}
+}
+
+func TestNoHolderIsProvenByANameThatIsNoProgramFile(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "trajector")
+	if err := os.WriteFile(exe, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	for _, tc := range []struct {
+		name string
+		exe  string
+		want bool
+	}{
+		{name: "the program file the operating system named", exe: exe, want: true},
+		{name: "a bare name the working directory resolves", exe: "trajector", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			holder := proxylife.Process{
+				PID:  1,
+				Name: "trajector",
+				Exe:  tc.exe,
+				Argv: []string{exe, proxylife.Command, proxylife.Serve, "--addr", "127.0.0.1:41100"},
+			}
+			if got := holder.IsProxyOf(exe); got != tc.want {
+				t.Errorf("IsProxyOf = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHolderCommandAsksTheToolThisPlatformHas(t *testing.T) {
+	want := map[string]string{
+		"linux":   "ss -ltnp 'sport = :41100'",
+		"windows": "netstat -ano | findstr 41100",
+	}[runtime.GOOS]
+	if want == "" {
+		want = "lsof -nP -iTCP:41100 -sTCP:LISTEN"
+	}
+	for _, tc := range []struct {
+		name string
+		addr string
+	}{
+		{name: "an address with a host", addr: "127.0.0.1:41100"},
+		{name: "an address that is only a port", addr: "41100"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := proxylife.HolderCommand(tc.addr); got != want {
+				t.Errorf("HolderCommand(%q) = %q, want %q", tc.addr, got, want)
+			}
+		})
+	}
+}
+
+func TestEnsureLeavesASilentHolderItCannotProveIsOursAlone(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	addr := silentHolder(t)
+	p := proxylife.For(layout, "dev", "/nonexistent/trajector", addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+
+	if err := p.Ensure(); !errors.Is(err, proxylife.ErrPortSilent) {
+		t.Errorf("Ensure = %v, want the silent holder reported and left alone", err)
+	}
+	starts, err := proxylife.LoggedStarts(layout.ProxyLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(starts) != 0 {
+		t.Errorf("starts = %v, want nothing started against a port this build may not take", starts)
+	}
+	if conn, err := net.DialTimeout("tcp", addr, time.Second); err != nil {
+		t.Errorf("the holder was stopped: %v", err)
+	} else {
+		conn.Close()
+	}
+}
+
+func TestEnsureReplacesAProxyOfOursThatStoppedAnswering(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("this device reads no holder on Windows, so no holder is ever proven ours")
+	}
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	addr := freeAddr(t)
+	exe := procbin.Self(t, "silent-hold")
+	holder := exec.Command(exe, proxylife.Command, proxylife.Serve, "--addr", addr)
+	if err := holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		holder.Process.Kill()
+		holder.Wait()
+	})
+	waitListening(t, addr)
+	p := proxylife.For(layout, "dev", exe, addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+
+	if err := p.Ensure(); err != nil {
+		t.Fatalf("Ensure = %v, want the proxy that stopped answering replaced", err)
+	}
+
+	if err := holder.Wait(); err != nil {
+		t.Errorf("the holder exited with %v, want the stop it was asked for", err)
+	}
+	starts, err := proxylife.LoggedStarts(layout.ProxyLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []proxylife.LoggedStart{{Command: proxylife.Command, Target: addr}}
+	if !slices.Equal(starts, want) {
+		t.Errorf("starts = %v, want %v", starts, want)
+	}
+}
+
+func TestEnsureReplacesASupervisedProxyOfOursThatStoppedAnswering(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("this device reads no holder on Windows, so no holder is ever proven ours")
+	}
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_DATA_HOME", dir)
+	t.Setenv("XDG_STATE_HOME", dir)
+	t.Setenv(versionEnv, "dev")
+	silent := filepath.Join(dir, "hold-the-port-and-answer-nothing")
+	if err := os.WriteFile(silent, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(silentEnv, silent)
+	layout := proxytest.SandboxLayout(t, dir)
+	addr := freeAddr(t)
+	exe := procbin.Self(t, "supervised-silent-hold")
+
+	watchdog := exec.Command(exe, proxylife.Command, proxylife.Supervise, "--addr", addr)
+	if err := watchdog.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { watchdog.Process.Kill() })
+	watchdogExited := make(chan error, 1)
+	go func() { watchdogExited <- watchdog.Wait() }()
+	waitListening(t, addr)
+	// From here on a spawned proxy answers. The one holding the port
+	// was spawned before this and does not.
+	if err := os.Remove(silent); err != nil {
+		t.Fatal(err)
+	}
+
+	p := proxylife.For(layout, "dev", exe, addr, nil)
+	t.Cleanup(func() {
+		p.Stop()
+		waitReleased(t, addr)
+		waitLogReleased(t, layout)
+	})
+	if err := p.Ensure(); err != nil {
+		t.Fatalf("Ensure = %v, want the supervised proxy that stopped answering replaced", err)
+	}
+
+	if v := p.Observe(); v.Holder != proxylife.HolderOurs {
+		t.Errorf("after Ensure: holder=%v reason=%v, want a proxy that answers at %s", v.Holder, v.Reason, addr)
+	}
+	select {
+	case err := <-watchdogExited:
+		if err != nil {
+			t.Errorf("the watchdog exited with %v, want it gone with the child it was asked to stop", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Error("the watchdog of the replaced proxy is still running, want it gone with its child")
+	}
+}
+
+// waitListening waits until something accepts connections at addr.
+func waitListening(t *testing.T, addr string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("nothing is listening at %s", addr)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

@@ -261,7 +261,7 @@ func (m *Machine) doctorProxy(f *report.Findings, d report.Diagnosis) {
 		}
 		f.OK("proxy running at %s (version %s, up %s)", d.Proxy.Addr, h.Version, up)
 	case d.Proxy.Holder == proxylife.HolderForeign:
-		f.ProxyProblem(d.Proxy.Reason)
+		f.ProxyProblem(d.Proxy.Reason, d.ProxyHolder)
 	default:
 		if !d.Project.Enabled {
 			f.OK("proxy not running; it starts on demand with the next session")

@@ -63,6 +63,18 @@ func (m *Machine) diagnose(dir string, reading sessionFileReading) (report.Diagn
 	// to wait out a sibling's startup. A diagnosis reports the port as
 	// it stands and must answer at once.
 	d.Proxy = m.proxy.Observe()
+	if proxylife.PortIsHeld(d.Proxy.Reason) {
+		// Only a holder this device may not use is looked into, and
+		// only for what the operating system says about it: a surface
+		// that names the process the user can look at themselves,
+		// never a judgement about what the program is. A holder that
+		// answered the challenge without proof is not one of them, and
+		// reading the port for it costs a scan of every process for a
+		// process no surface may name.
+		if holder, read := proxylife.HolderOf(d.Proxy.Addr); read {
+			d.ProxyHolder = report.HolderProcess{PID: holder.PID, Name: holder.Name}
+		}
+	}
 	if st.Enabled && d.Proxy.Holder == proxylife.HolderOurs {
 		if reply, err := m.proxy.Selfcheck(st.Token); err == nil {
 			d.Selfcheck = &reply

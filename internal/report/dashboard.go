@@ -129,7 +129,7 @@ func proxySection(d Diagnosis) *section {
 			s.warnf("Recent recording errors: %d (last: %s)", n, h.RecentRecordingErrors[n-1])
 		}
 	case proxylife.HolderForeign:
-		s.take(proxyProblem(d.Proxy.Reason))
+		s.take(proxyProblem(d.Proxy.Reason, d.ProxyHolder))
 	default:
 		if d.ProxyIdleBetweenSessions {
 			s.linef("Not running; on this device it runs only while a session is open, because every enabled project records without it.")

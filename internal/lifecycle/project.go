@@ -51,6 +51,14 @@ var ErrUpstreamUnroutable = errors.New(
 // else, which the caller must surface loudly rather than retry.
 var ErrPortOccupied = proxylife.ErrPortOccupied
 
+// ErrPortSilent reports that the proxy's port is held by something
+// that accepted a connection and then answered nothing. The port is
+// held by a process this device may not use exactly as an occupied one
+// is, so its remedy is the same and is never `trajector doctor`:
+// nothing this build runs takes a port from another process, and the
+// user is the one who can free it.
+var ErrPortSilent = proxylife.ErrPortSilent
+
 // ErrProxyUnverified reports a port holder that failed admin-token
 // authentication: possibly this user's own proxy whose published token
 // went missing or stale, so its remedy must never be the foreign-process
@@ -237,7 +245,10 @@ func (m *Machine) EnsureProxy(projectDir string, io IO) error {
 	m.refreshUpstreamDrift(projectDir, io)
 
 	if err := m.proxy.Ensure(); err != nil {
-		if errors.Is(err, ErrPortOccupied) || errors.Is(err, ErrProxyUnverified) {
+		// Every port-holder verdict is passed through with its own
+		// words: each of them has a remedy of its own that a command
+		// states, and a sentence wrapped around one would bury it.
+		if errors.Is(err, ErrPortOccupied) || errors.Is(err, ErrPortSilent) || errors.Is(err, ErrProxyUnverified) {
 			return err
 		}
 		return fmt.Errorf("could not start the capture proxy: %w", err)

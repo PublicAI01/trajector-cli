@@ -107,13 +107,58 @@ func TestStatusWarnsWhenInjectionAndRoutingDisagree(t *testing.T) {
 	wants(t, "status", out, "warning: ", "`trajector doctor`")
 }
 
-func TestStatusReportsAForeignPortHolder(t *testing.T) {
+func TestStatusReportsAPortHeldByAnotherProcess(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		why  error
+		want string
+	}{
+		{
+			name: "the holder answered without proof",
+			why:  &proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortOccupied},
+			want: "not the trajector proxy",
+		},
+		{
+			name: "the holder answered nothing",
+			why:  &proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent, Observed: "context deadline exceeded"},
+			want: "did not answer a probe",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := device()
+			d.Proxy = foreign(tc.why)
+			out := dashboard(d)
+
+			wants(t, "status", out,
+				"error: ", tc.want,
+				"why:  another process holds the proxy port",
+				"free the port by stopping whatever holds it",
+				"To find the holder: ",
+				"41100",
+				"Once the port is free, run `trajector doctor`.")
+			// No command of trajector's takes a port from another
+			// process, so none is offered on the line meant to be
+			// copied.
+			rejects(t, "status", out, "fix:  ", "Running at")
+		})
+	}
+}
+
+func TestStatusNamesTheHolderItCouldReadAndNothingMore(t *testing.T) {
 	d := device()
-	d.Proxy = foreign(proxylife.ErrPortOccupied)
+	d.Proxy = foreign(&proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent})
+	d.ProxyHolder = report.HolderProcess{PID: 4321, Name: "example-helper"}
 	out := dashboard(d)
 
-	wants(t, "status", out, "error: ", "not the trajector proxy", "fix:  trajector doctor", "find and stop the process")
-	rejects(t, "status", out, "Running at")
+	wants(t, "status", out, "At the port as this device reads it: example-helper (pid 4321).")
+}
+
+func TestStatusSaysNothingAboutAHolderItCouldNotRead(t *testing.T) {
+	d := device()
+	d.Proxy = foreign(&proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent})
+	out := dashboard(d)
+
+	rejects(t, "status", out, "At the port as this device reads it")
 }
 
 func TestStatusPresentsAnUnverifiableProxyAsAuthentication(t *testing.T) {

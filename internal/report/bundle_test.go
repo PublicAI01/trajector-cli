@@ -90,6 +90,28 @@ func TestTheBundleReportsAnUnprovenHoldersReasonInsteadOfItsHealth(t *testing.T)
 	rejects(t, "diagnosis.json", got, `"health"`)
 }
 
+// A holder that engaged the admin-token challenge without proving a
+// token is most often this user's own proxy whose publication went
+// missing, so the archive names no process for it: a process id and a
+// program name there read as a foreign process to go and stop.
+func TestTheBundleNamesNoHolderForAProxyItCouldNotVerify(t *testing.T) {
+	d := device()
+	d.Proxy = foreign(proxylife.ErrProxyUnverified)
+	d.ProxyHolder = report.HolderProcess{PID: 4321, Name: "example-helper"}
+
+	rejects(t, "diagnosis.json", string(report.DiagnosisJSON(d)),
+		"holder_pid", "holder_name", "4321", "example-helper")
+}
+
+func TestTheBundleNamesTheHolderOfAPortHeldAgainstThisBuild(t *testing.T) {
+	d := device()
+	d.Proxy = foreign(&proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent})
+	d.ProxyHolder = report.HolderProcess{PID: 4321, Name: "example-helper"}
+
+	wants(t, "diagnosis.json", string(report.DiagnosisJSON(d)),
+		`"holder_pid": 4321`, `"holder_name": "example-helper"`)
+}
+
 func TestTheBundleNamesTheBuildAndTheProxyItDiagnosed(t *testing.T) {
 	d := device()
 	d.Proxy = ours("testv")
@@ -164,6 +186,9 @@ var bundleOmits = map[string]string{
 var bundleContext = map[string]func(*report.Diagnosis){
 	"Proxy.Health": func(d *report.Diagnosis) {
 		d.Proxy.Holder = proxylife.HolderOurs
+	},
+	"ProxyHolder": func(d *report.Diagnosis) {
+		d.Proxy.Reason = &proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortOccupied}
 	},
 	"Project.UpstreamMoved.From": func(d *report.Diagnosis) {
 		d.Project.UpstreamMoved.At = "2026-08-01T09:00:00Z"

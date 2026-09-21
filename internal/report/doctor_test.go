@@ -299,7 +299,7 @@ func everyFixOffered() []string {
 	foreignPort := device()
 	foreignPort.Proxy.Holder, foreignPort.Proxy.Reason = proxylife.HolderForeign, proxylife.ErrPortOccupied
 	f := &report.Findings{}
-	f.ProxyProblem(foreignPort.Proxy.Reason)
+	f.ProxyProblem(foreignPort.Proxy.Reason, report.HolderProcess{})
 	var b bytes.Buffer
 	f.Render(&b, report.Style{})
 	printed = append(printed, b.String(), dashboard(foreignPort))

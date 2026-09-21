@@ -52,6 +52,65 @@ const Addr = apiproxy.Addr
 // callers must surface this loudly instead of retrying.
 var ErrPortOccupied = errors.New("port occupied by a process that is not the trajector proxy")
 
+// ErrPortSilent reports a port holder that accepts a connection and
+// then answers nothing within the time one management exchange is
+// given. It is held apart from ErrPortOccupied because what was
+// observed is different — a holder that said nothing at all, which a
+// forwarded port and a hung process both produce — while what it
+// costs the user is the same: the port is held by something this
+// build may not use.
+var ErrPortSilent = errors.New("the holder of the proxy port did not answer a probe")
+
+// PortIsHeld reports that err is a verdict about a port held by
+// something this build may not use: a holder that answered without
+// proof, and one that answered nothing at all. The two sentinels above
+// are observed differently and cost the user the same, so this is the
+// one judgement every surface asks for, and no surface spells the pair
+// out a second time.
+//
+// A holder that engaged the admin-token challenge without proving a
+// token is not one of them. It is most often this user's own proxy
+// whose published token went missing, so nothing may treat it as a
+// process to hunt: no advice to stop it, and no process id or program
+// name read off the port and recorded about it.
+func PortIsHeld(err error) bool {
+	return errors.Is(err, ErrPortOccupied) || errors.Is(err, ErrPortSilent)
+}
+
+// PortHeld is one reading of a port this build may not take. It
+// carries the address, so a surface can name the command that finds
+// the holder without reading it out of a sentence, and it wraps the
+// sentinel that says how the holder failed to prove itself.
+type PortHeld struct {
+	// Addr is the address the holder was probed at.
+	Addr string
+	// Why is ErrPortSilent or ErrPortOccupied.
+	Why error
+	// Observed is what the probe saw, empty where the sentinel says
+	// the whole of it.
+	Observed string
+}
+
+func (p *PortHeld) Error() string {
+	if p.Observed == "" {
+		return fmt.Sprintf("%v: %s", p.Why, p.Addr)
+	}
+	return fmt.Sprintf("%v: %s (%s)", p.Why, p.Addr, p.Observed)
+}
+
+func (p *PortHeld) Unwrap() error { return p.Why }
+
+// HeldPort reports the address a port-holder error is about, and
+// whether err is one. A surface asks here rather than parsing the
+// sentence it prints.
+func HeldPort(err error) (string, bool) {
+	var held *PortHeld
+	if errors.As(err, &held) {
+		return held.Addr, true
+	}
+	return "", false
+}
+
 // ErrProxyUnverified reports a port holder that engages the admin-token
 // challenge without proving it knows a token published on this machine.
 // A missing or stale publication produces exactly this while the holder
@@ -205,7 +264,14 @@ func (p *Proxy) Ensure() error {
 	v := p.Settled()
 	switch {
 	case v.Holder == HolderForeign:
-		return v.Reason
+		// A holder that answers nothing may be a proxy of ours that
+		// hung: it holds the port, so nothing of ours can serve, and
+		// it will never hand the port over on a request it does not
+		// read. Replacing it is this build's to do only where the
+		// process is provably the binary this build starts itself.
+		if err := p.replaceHungProxy(v); err != nil {
+			return err
+		}
 	case v.Serving(p.version):
 		if v.Health.Version != p.version {
 			p.noteReuse(v.Health.Version)
@@ -237,6 +303,36 @@ func (p *Proxy) Ensure() error {
 		return nil
 	}
 	return p.waitHealthy()
+}
+
+// replaceHungProxy stops a silent holder that is provably a proxy of
+// this build's own, so the caller may start one in its place, and
+// returns the verdict's own reason for every holder it must not
+// touch. What it asks of the process is what a drain asks of a proxy
+// that still reads its port: stop, with the exit path it has. Nothing
+// is killed, and nothing that is not proven ours is signalled — the
+// port may be held by a program of the user's that this build knows
+// nothing about.
+func (p *Proxy) replaceHungProxy(v Verdict) error {
+	if !errors.Is(v.Reason, ErrPortSilent) {
+		return v.Reason
+	}
+	holder, read := HolderOf(v.Addr)
+	if !read || !holder.IsProxyOf(p.execPath) {
+		return v.Reason
+	}
+	// Reading the port and signalling what holds it are two moments,
+	// and a pid names the process that was read only while that process
+	// lives. The reading by pid alone must prove the same program file
+	// and command line again, or the signal would reach whatever holds
+	// the pid now.
+	if again := describe(holder.PID); !again.IsProxyOf(p.execPath) {
+		return v.Reason
+	}
+	if err := terminate(holder.PID); err != nil {
+		return fmt.Errorf("stopping the proxy that stopped answering at %s: %w", v.Addr, err)
+	}
+	return p.waitPortFree(drainTimeout)
 }
 
 // Observe reads the port as it stands and pays no startup grace: it is
@@ -288,12 +384,12 @@ func (p *Proxy) verify() (string, Holder, error) {
 	req.Header.Set(apiproxy.ChallengeHeader, challenge)
 	resp, err := adminClient(adminTimeout).Do(req)
 	if err != nil {
-		return "", HolderForeign, fmt.Errorf("the holder of %s did not answer a probe: %v", p.addr, transportCause(err))
+		return "", HolderForeign, &PortHeld{Addr: p.addr, Why: ErrPortSilent, Observed: transportCause(err).Error()}
 	}
 	resp.Body.Close()
 	proof := resp.Header.Get(apiproxy.ProofHeader)
 	if proof == "" {
-		return "", HolderForeign, fmt.Errorf("%w: %s", ErrPortOccupied, p.addr)
+		return "", HolderForeign, &PortHeld{Addr: p.addr, Why: ErrPortOccupied}
 	}
 
 	// The published tokens are read after the answer arrives: a proxy
