@@ -16,6 +16,14 @@ All notable changes to trajector are documented here. The format follows
 
 ### Fixed
 
+- A session that moved to a directory the project does not cover and
+  then came back was never read again: its entry was retired for good
+  when it left. Now nothing the session writes while it is away is
+  kept or uploaded, in its main file or in its agents' files, even
+  when a file is rewritten, and reading goes on once it comes back. A
+  session an earlier release retired this way is read on from where
+  that release stopped. `status` counts the sessions that are away
+  right now, without naming where they went.
 - 0.3.0 through 0.3.3 could skip lines of a session file that two
   readers read at the same time: the resident process reading on a
   hook's word and on its own sweep, or a reader a hook started. Both

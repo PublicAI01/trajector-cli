@@ -98,6 +98,16 @@ func TestStatusStatesEverySessionFileFact(t *testing.T) {
 			want: []string{"Session files: 2 session(s) registered; last read 2026-09-10T08:30:00Z; 0 B not read yet."},
 		},
 		{
+			name:  "sessions that moved out of the project",
+			state: report.SessionFilesState{Sessions: 3, Outside: 2},
+			want:  []string{"Outside this project: 2 session(s) moved to a directory this project does not cover."},
+		},
+		{
+			name:   "no session outside the project",
+			state:  report.SessionFilesState{Sessions: 3},
+			reject: []string{"Outside this project"},
+		},
+		{
 			name:  "the tree was larger than the search visits",
 			state: report.SessionFilesState{Sessions: 1, Gaps: follow.Gaps{Truncated: true}},
 			want:  []string{treeLimitLine},

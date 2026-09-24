@@ -150,6 +150,9 @@ type sessionFilesWire struct {
 	// Earlier counts how many of them were written before the project
 	// was enabled.
 	Earlier int `json:"earlier"`
+	// Outside counts the sessions outside the directories consent
+	// covers. Where they went is not named.
+	Outside int `json:"outside"`
 }
 
 type proxyWire struct {
@@ -282,6 +285,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 				WalkErr:      errString(d.SessionFiles.WalkErr),
 				Unregistered: d.SessionFiles.Unregistered,
 				Earlier:      d.SessionFiles.Earlier,
+				Outside:      d.SessionFiles.Outside,
 			},
 		},
 		Proxy: proxy,

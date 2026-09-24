@@ -332,8 +332,20 @@ func sessionFileLines(s SessionFilesState) []string {
 		lines = append(lines, fmt.Sprintf("Session files: %d session(s) registered; last read %s; %s not read yet.",
 			s.Sessions, lastRead, platform.HumanBytes(s.BytesBehind)))
 	}
+	lines = append(lines, outsideLines(s.Outside)...)
 	lines = append(lines, gapLines(s.Gaps)...)
 	return append(lines, spellingVariantsNotice)
+}
+
+// outsideLines counts the sessions that are outside the directories
+// consent covers right now. It gives a count and never a path: where a
+// session went is outside what the user agreed to share, on this
+// surface as much as in an upload.
+func outsideLines(sessions int) []string {
+	if sessions == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf("Outside this project: %d session(s) moved to a directory this project does not cover. What they write there is not collected; collecting goes on when they come back.", sessions)}
 }
 
 // gapLines states what the search for a project's earlier session

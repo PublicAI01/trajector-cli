@@ -105,6 +105,10 @@ type SessionFilesState struct {
 	// BytesBehind is how much of the registered files lies past their
 	// cursors: what a reader has yet to consume.
 	BytesBehind int64
+	// Outside counts the registered sessions that moved to a directory
+	// consent does not cover and have not come back. What they write
+	// there is passed over, never read into a record.
+	Outside int
 	// Gaps is what the search for earlier files left uncovered: the
 	// second reading's own account when Walked, and otherwise what the
 	// registry recorded when the search at enable ran.

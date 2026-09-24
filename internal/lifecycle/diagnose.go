@@ -224,6 +224,9 @@ func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFile
 	for _, f := range registered.Files {
 		if f.MainSession() {
 			state.Sessions++
+			if f.Outside {
+				state.Outside++
+			}
 		}
 		if at, ok := f.LastRead(); ok && at.After(state.LastReadAt) {
 			state.LastReadAt = at
