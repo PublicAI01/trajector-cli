@@ -6,6 +6,14 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- A session file is now read in segments of at most 8 MiB of lines
+  each. The first read of a large session file, such as one a project
+  had before you enabled it, used to make one segment of the whole
+  file. A line longer than 8 MiB is a segment of its own; lines are
+  never split, and a line longer than 32 MiB is still not read.
+
 ### Fixed
 
 - 0.3.0 through 0.3.3 could skip lines of a session file that two

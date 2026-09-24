@@ -10,10 +10,12 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
-// entryLockStale bounds the lock one read of an entry holds. It is
-// longer than the slowest read of one segment and the storing of it —
-// a line of maxLineBytes read, redacted, and written to disk — so a
-// lock that old can only belong to a reader that died.
+// entryLockStale bounds the lock one round of reading an entry holds.
+// It is longer than the slowest round: one segment read — at most one
+// pass over the rest of the file to find a relocated line — and
+// stored, where a segment may be one line of maxLineBytes read,
+// redacted, and written to disk. A lock that old can only belong to a
+// reader that died.
 const entryLockStale = 2 * time.Minute
 
 // entryLockWait is how long a reader waits for an entry another reader

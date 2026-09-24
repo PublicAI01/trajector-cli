@@ -8,7 +8,7 @@
 // A registry is one JSON object: {"version":1,"files":[...]}, each
 // element carrying path, inode, size, offset, next_segment, and
 // message_ids, and optionally read_at, subpath, retired, last_event,
-// and pid. The path
+// pid, told, and before_rewrite. The path
 // is the entry's identity. Inode, size, and offset describe the file as it
 // was last observed locally: they steer reading and never leave it.
 // An optional "gaps" object records what the one-time search for the

@@ -49,29 +49,37 @@ func TestLocalCorpus(t *testing.T) {
 		files, unreadable, segments int
 		total                       drift.Signals
 	)
-	// Every directory counts as consented to, so a session that moved
-	// is read through rather than stopped at the move.
+	// Every directory counts as consented to, so no move takes a
+	// session outside. A file read from byte 0 still lets go of what
+	// precedes its first move, as the reader does: that is the part
+	// written before the session came into the directory.
 	opts := follow.ReadOptions{Authorized: func(string) bool { return true }}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl") {
 			return nil
 		}
 		files++
-		res, err := follow.Read(follow.File{Path: path}, envelope.Capture{}, opts)
-		if err != nil {
-			unreadable++
-			return nil
-		}
-		for _, seg := range res.Segments {
-			segments++
-			rep, err := drift.Scan([]byte(seg.Lines), location)
+		f := follow.File{Path: path}
+		for {
+			res, err := follow.Read(f, envelope.Capture{}, opts)
 			if err != nil {
 				unreadable++
-				continue
+				return nil
 			}
-			total = total.Add(rep)
+			for _, seg := range res.Segments {
+				segments++
+				rep, err := drift.Scan([]byte(seg.Lines), location)
+				if err != nil {
+					unreadable++
+					continue
+				}
+				total = total.Add(rep)
+			}
+			if !res.More {
+				return nil
+			}
+			f = res.File
 		}
-		return nil
 	})
 	if err != nil {
 		t.Fatal(err)

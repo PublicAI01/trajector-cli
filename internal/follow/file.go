@@ -28,6 +28,14 @@ type File struct {
 	// metadata file has no messages: there it holds the record id of
 	// the last snapshot taken.
 	MessageIDs []string `json:"message_ids"`
+	// BeforeRewrite holds the message ids consumed before the file was
+	// rewritten, while the pass that reads the rewritten file from its
+	// start has not reached its end, and is absent otherwise. That pass
+	// may take several reads, and each of them skips these ids as the
+	// first one did. A build that does not know the field continues
+	// such a pass as an ordinary read, and sends again the lines of
+	// those ids that it meets.
+	BeforeRewrite []string `json:"before_rewrite,omitempty"`
 	// ReadAt is when the file was last read, in RFC 3339, and absent
 	// for a file never read. The reader writes it with the cursor; the
 	// registry only keeps it.
@@ -68,7 +76,8 @@ type File struct {
 // those as they stand now, not as they stood when the read began.
 func (f File) advancedTo(read File) File {
 	f.Inode, f.Size, f.Offset, f.NextSegment = read.Inode, read.Size, read.Offset, read.NextSegment
-	f.MessageIDs, f.ReadAt, f.Retired = read.MessageIDs, read.ReadAt, read.Retired
+	f.MessageIDs, f.BeforeRewrite = read.MessageIDs, read.BeforeRewrite
+	f.ReadAt, f.Retired = read.ReadAt, read.Retired
 	return f
 }
 
@@ -228,8 +237,9 @@ const (
 	Continue Reaction = iota
 	// Rewrite: the file is not the one the cursor describes. The
 	// reader starts over from byte 0; ids already in MessageIDs are
-	// not consumed again; NextSegment continues from its stored value
-	// and is never reset.
+	// not consumed again, in this read or in the reads that finish the
+	// pass; NextSegment continues from its stored value and is never
+	// reset.
 	Rewrite
 	// Vanished: the file is gone, and the cursor is void.
 	Vanished

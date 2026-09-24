@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
@@ -26,6 +27,14 @@ const (
 	// line is consumed like a malformed one: reading moves past it and
 	// nothing of it is kept.
 	maxLineBytes = 32 << 20
+
+	// maxSegmentBytes bounds the lines one segment holds, counted as
+	// read — newline included, before redaction — and over the lines
+	// kept only. A read stops in front of the line that would pass it,
+	// so a segment never holds more, except that a line longer than
+	// the bound — up to maxLineBytes — is a segment of its own: a line
+	// is never split.
+	maxSegmentBytes = 8 << 20
 
 	typeRelocated = "relocated"
 )
@@ -53,7 +62,8 @@ type ReadOptions struct {
 // ReadResult is what one observation of a registered file produced.
 type ReadResult struct {
 	// Segments holds at most one segment: the complete lines gained
-	// since the cursor that are kept, in file order.
+	// since the cursor that are kept, in file order, up to
+	// maxSegmentBytes of them.
 	Segments []envelope.Segment
 	// Snapshots holds at most one snapshot, and only for an agent
 	// metadata file whose content differs from the last snapshot taken.
@@ -67,6 +77,9 @@ type ReadResult struct {
 	// caller must retire the entry: the bytes beyond it belong to a
 	// place consent does not cover, and a cursor cannot say so.
 	Stopped bool
+	// More reports that the segment reached its bound before the lines
+	// observed ran out. The rest is read from the advanced cursor.
+	More bool
 }
 
 // Read consumes what a registered file gained since its cursor and
@@ -74,7 +87,8 @@ type ReadResult struct {
 // writes the file it reads.
 //
 // Only lines that end in a newline are consumed; a line still being
-// written waits for the next read. A line that is not one of a session
+// written waits for the next read. One read keeps at most one segment
+// of lines, and More says when lines past it wait for the next read. A line that is not one of a session
 // file is consumed and dropped. A rewritten file is read again from its
 // start, and lines whose message id was consumed before are not sent
 // again: the copy sent first stands. Lines are stored byte for byte;
@@ -98,8 +112,14 @@ func Read(f File, capture envelope.Capture, opts ReadOptions) (ReadResult, error
 func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptions) (ReadResult, error) {
 	f := res.File
 	start := f.Offset
+	// Bytes past the cursor were never consumed, so only a pass that
+	// starts over may meet a line it already sent: until that pass
+	// reaches the end of the file, the ids consumed before it began are
+	// not consumed again, in whichever read the pass meets them.
+	skipIDs := f.BeforeRewrite
 	if res.Reaction == Rewrite {
 		start = 0
+		skipIDs = f.MessageIDs
 	}
 	src, err := os.Open(f.Path)
 	if os.IsNotExist(err) {
@@ -122,9 +142,10 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 	for _, id := range f.MessageIDs {
 		consumedBefore[id] = true
 	}
-	// Bytes past the cursor were never consumed, so only a pass that
-	// starts over may meet a line it already sent.
-	skipConsumed := res.Reaction == Rewrite
+	skipped := make(map[string]bool, len(skipIDs))
+	for _, id := range skipIDs {
+		skipped[id] = true
+	}
 	// A pass that starts at byte 0 cannot tell where the session was
 	// before a relocated line: whatever precedes a move into consent is
 	// let go. A pass that continues from a cursor was already inside.
@@ -146,6 +167,7 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 		if n == 0 {
 			break
 		}
+		lineStart := offset
 		offset += int64(n)
 		if line == nil {
 			continue
@@ -170,28 +192,77 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 				continue
 			}
 		}
-		if fields.MessageID != "" {
-			if skipConsumed && consumedBefore[fields.MessageID] {
-				continue
+		if fields.MessageID != "" && skipped[fields.MessageID] {
+			continue
+		}
+		if kept.Len() > 0 && kept.Len()+len(line) > maxSegmentBytes {
+			if !inside {
+				// Nothing kept so far may be sent before it is known
+				// whether a move into consent follows it.
+				end, into, err := relocationAhead(lines, offset, authorized)
+				if err != nil {
+					return ReadResult{}, err
+				}
+				if into {
+					kept.Reset()
+					added, addedSet = nil, map[string]bool{}
+					inside = true
+					offset = end
+					continue
+				}
 			}
-			if !consumedBefore[fields.MessageID] && !addedSet[fields.MessageID] {
-				added = append(added, fields.MessageID)
-				addedSet[fields.MessageID] = true
-			}
+			// The line that would pass the bound is the first of the
+			// next segment, and the cursor stops in front of it.
+			offset = lineStart
+			res.More = true
+			break
+		}
+		if fields.MessageID != "" && !consumedBefore[fields.MessageID] && !addedSet[fields.MessageID] {
+			added = append(added, fields.MessageID)
+			addedSet[fields.MessageID] = true
 		}
 		kept.Write(line)
 	}
 
 	res.File.Inode, res.File.Size, res.File.Offset = st.Inode, st.Size, offset
-	// The caller's slice is never grown in place.
+	// The caller's slices are never grown in place.
 	ids := f.MessageIDs[:len(f.MessageIDs):len(f.MessageIDs)]
 	res.File.MessageIDs = append(ids, added...)
+	res.File.BeforeRewrite = nil
+	if res.More && len(skipIDs) > 0 {
+		res.File.BeforeRewrite = slices.Clip(skipIDs)
+	}
 	if kept.Len() > 0 {
 		sessionID, file := identify(f.Path)
 		res.Segments = []envelope.Segment{envelope.NewSegment(sessionID, file, f.NextSegment, capture, kept.String())}
 		res.File.NextSegment++
 	}
 	return res, nil
+}
+
+// relocationAhead reads on from offset to the first relocated line
+// within what was observed. into reports that the line moves the
+// session into a directory consent covers, and end is the offset just
+// past it. A pass that meets no relocated line, or one that moves the
+// session out, reports into as false: what precedes it stays.
+func relocationAhead(lines *lineScanner, offset int64, authorized func(string) bool) (end int64, into bool, err error) {
+	for {
+		line, n, err := lines.next()
+		if err != nil || n == 0 {
+			return 0, false, err
+		}
+		offset += int64(n)
+		if line == nil || !bytes.Contains(line, []byte(typeRelocated)) {
+			continue
+		}
+		parsed, ok := sessionline.Parse(line)
+		if !ok {
+			continue
+		}
+		if fields := parsed.Fields(); fields.Type == typeRelocated {
+			return offset, authorized(fields.RelocatedCwd), nil
+		}
+	}
 }
 
 // readMeta takes a snapshot of a whole agent metadata file. The file is

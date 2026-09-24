@@ -109,9 +109,20 @@ func (rd Reader) Stops(p Project, files []follow.File) bool {
 		Injection:     InjectionValue(p.Shape),
 	}
 	for _, f := range files {
-		res, err := follow.Read(f, capture, follow.ReadOptions{Root: p.Root})
+		if stopsIn(f, capture, location, follow.ReadOptions{Root: p.Root}) {
+			return true
+		}
+	}
+	return false
+}
+
+// stopsIn asks Stops' question of one file, segment after segment, to
+// the end of what the file holds past its cursor.
+func stopsIn(f follow.File, capture envelope.Capture, location redact.SessionLocation, opts follow.ReadOptions) bool {
+	for {
+		res, err := follow.Read(f, capture, opts)
 		if err != nil {
-			continue
+			return false
 		}
 		for _, seg := range res.Segments {
 			found, err := drift.Scan([]byte(seg.Lines), location)
@@ -119,8 +130,11 @@ func (rd Reader) Stops(p Project, files []follow.File) bool {
 				return true
 			}
 		}
+		if !res.More {
+			return false
+		}
+		f = res.File
 	}
-	return false
 }
 
 // store holds what one read produced against the shape this build

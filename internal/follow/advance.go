@@ -55,16 +55,21 @@ type Reader struct {
 // Store, and persist the advanced cursor only once Store keeps every
 // record. A cursor written past a record that nothing stored would
 // lose that record for good, which is why the order is never the other
-// way.
+// way. A file that gained more than one segment holds is read in
+// rounds of one segment each, until nothing is left or a round does
+// not move the cursor.
 //
-// The whole rule runs under the entry's lock, and the cursor it starts
+// Each round runs under the entry's lock, and the cursor it starts
 // from is the one the registry holds once the lock is taken, never one
-// the caller read before. Two reads from one cursor make two records
-// with one id and different lines; the store keeps the first, and the
-// cursor the second one writes can pass lines that only the discarded
-// one held. An entry another reader holds is left to it: its cursor
-// stays where that reader puts it, and the next run reads what is
-// left.
+// the caller or an earlier round read before. Two reads from one
+// cursor make two records with one id and different lines; the store
+// keeps the first, and the cursor the second one writes can pass lines
+// that only the discarded one held. An entry another reader holds is
+// left to it: its cursor stays where that reader puts it, and the next
+// run reads what is left. The lock is taken again for every round, so
+// what one holder may keep it for is one segment, not one file — and,
+// in a round from byte 0 that meets the segment bound before any
+// relocated line, one pass over the rest of the file to find one.
 //
 // An entry whose file vanished leaves the registry: its cursor can
 // never advance again and no search finds the file to register it a
@@ -75,14 +80,29 @@ type Reader struct {
 //
 // Advance reports whether the project's next entry may be read.
 func (rd Reader) Advance(path string) bool {
+	for {
+		next, more := rd.round(path)
+		if !more {
+			return next
+		}
+	}
+}
+
+// round is one round of Advance: at most one segment read, stored, and
+// written back. next is what Advance reports; more reports that the
+// cursor moved to a segment's bound and lines past it wait.
+func (rd Reader) round(path string) (next, more bool) {
 	unlock, ok := rd.Registry.lockEntry(rd.ProjectIDHash, path, entryLockWait)
 	if !ok {
-		return true
+		return true, false
 	}
 	defer unlock()
 	f, ok, err := rd.Registry.entry(rd.ProjectIDHash, path)
-	if err != nil || !ok || f.Retired != "" {
-		return true
+	if err != nil || !ok {
+		return true, false
+	}
+	if f.Retired != "" {
+		return true, false
 	}
 	capture := rd.Capture
 	capture.ProjectSubpath = f.Subpath
@@ -92,26 +112,29 @@ func (rd Reader) Advance(path string) bool {
 		// caught mid-write, say — keeps its cursor and is read again
 		// in the next run. The project's other files still make
 		// progress.
-		return true
+		return true, false
 	}
 	switch rd.Store(res) {
 	case Held:
-		return false
+		return false, false
 	case NotStored:
-		return true
+		return true, false
 	}
 	switch {
 	case res.Reaction == Vanished:
 		_ = rd.Registry.Remove(rd.ProjectIDHash, f.Path)
+		return true, false
 	case res.Stopped:
 		_ = rd.Registry.Retire(rd.ProjectIDHash, f, res.File, Relocated)
-	default:
-		// The cursor carries when it was last moved, so a surface can
-		// say when a file was last read without a clock of its own.
-		if !rd.ReadAt.IsZero() {
-			res.File.ReadAt = rd.ReadAt.UTC().Format(readAtLayout)
-		}
-		_ = rd.Registry.Update(rd.ProjectIDHash, f, res.File)
+		return true, false
 	}
-	return true
+	// The cursor carries when it was last moved, so a surface can say
+	// when a file was last read without a clock of its own.
+	if !rd.ReadAt.IsZero() {
+		res.File.ReadAt = rd.ReadAt.UTC().Format(readAtLayout)
+	}
+	if err := rd.Registry.Update(rd.ProjectIDHash, f, res.File); err != nil {
+		return true, false
+	}
+	return true, res.More
 }
