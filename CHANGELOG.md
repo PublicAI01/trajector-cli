@@ -6,6 +6,20 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- 0.3.0 through 0.3.3 could skip lines of a session file that two
+  readers read at the same time: the resident process reading on a
+  hook's word and on its own sweep, or a reader a hook started. Both
+  reads started from the same point and made a record under the same
+  id, only the first record was kept, and the point read to could
+  move past lines that only the other record held. Those lines were
+  never uploaded, and this release does not upload them: they are
+  still in the session file on your machine, but the point read to is
+  past them. Now one reader at a time reads a given file, in one
+  process or across processes, and a reader that finds the file busy
+  leaves it to the next read.
+
 ## [0.3.3] - 2026-09-21
 
 ### Added

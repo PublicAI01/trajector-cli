@@ -63,8 +63,10 @@ type Reader struct {
 // given, and stores what it consumes. A project the routing table does
 // not clear is nothing to read. A failure to read one file is left
 // behind so the next file, and the next run, still make progress; a
-// condition that holds for every file alike stops the run. Read
-// reports whether every file was offered.
+// condition that holds for every file alike stops the run. Only the
+// path of each file is taken: a read starts from the cursor the
+// registry holds when the read begins. Read reports whether every
+// file was offered.
 func (rd Reader) Read(p Project, files []follow.File) bool {
 	if !rd.Routes.Records(p.Token) {
 		return false
@@ -84,7 +86,7 @@ func (rd Reader) Read(p Project, files []follow.File) bool {
 		ReadAt: now,
 	}
 	for _, f := range files {
-		if !reader.Advance(f) {
+		if !reader.Advance(f.Path) {
 			return false
 		}
 	}

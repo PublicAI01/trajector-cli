@@ -644,6 +644,11 @@ func TestHook_EndToEnd_RegisterReadStore(t *testing.T) {
 	for {
 		recs := e.storedRecords()
 		if len(recs) == 1 && recs[0].Kind == "segment" {
+			// The reader still writes its cursor, lets the file's lock
+			// go, and brings the resident process up after the segment
+			// is stored: the test ends once all of that is done, so none
+			// of it lands in a directory being removed.
+			waitHealthy(t, e, e.deps.ProxyAddr)
 			return
 		}
 		if time.Now().After(deadline) {

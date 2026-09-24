@@ -103,7 +103,7 @@ func TestReader_AdvancesTheCursorOnlyOnceEveryRecordIsStored(t *testing.T) {
 	a.register(path, "")
 
 	a.answer = follow.Held
-	if a.reader.Advance(a.entry(path)) {
+	if a.reader.Advance(path) {
 		t.Error("Advance with nothing stored = true, want the project's reading held")
 	}
 	if f := a.entry(path); f.Offset != 0 || f.NextSegment != 0 || f.ReadAt != "" {
@@ -111,7 +111,7 @@ func TestReader_AdvancesTheCursorOnlyOnceEveryRecordIsStored(t *testing.T) {
 	}
 
 	a.answer = follow.Stored
-	if !a.reader.Advance(a.entry(path)) {
+	if !a.reader.Advance(path) {
 		t.Error("Advance after the records were stored = false, want reading to go on")
 	}
 	f := a.entry(path)
@@ -134,7 +134,7 @@ func TestReader_AFileNothingCouldBeStoredForLeavesTheNextOneToRead(t *testing.T)
 	a.register(path, "")
 
 	a.answer = follow.NotStored
-	if !a.reader.Advance(a.entry(path)) {
+	if !a.reader.Advance(path) {
 		t.Error("Advance = false, want the project's next entry still read")
 	}
 	if f := a.entry(path); f.Offset != 0 || f.NextSegment != 0 {
@@ -150,7 +150,7 @@ func TestReader_RetiresTheEntryOfASessionThatLeftTheProject(t *testing.T) {
 	a.register(path, "")
 	a.answer = follow.Stored
 
-	a.reader.Advance(a.entry(path))
+	a.reader.Advance(path)
 
 	if files := a.listed(); len(files) != 0 {
 		t.Fatalf("registry lists %+v, want nothing left to read", files)
@@ -175,7 +175,7 @@ func TestReader_DropsTheEntryOfAFileThatVanished(t *testing.T) {
 	a.register(path, "")
 	a.answer = follow.Stored
 
-	if !a.reader.Advance(a.entry(path)) {
+	if !a.reader.Advance(path) {
 		t.Error("Advance = false, want the project's next entry still read")
 	}
 	if stored := a.stored(); len(stored) != 0 {
@@ -190,7 +190,7 @@ func TestReader_KeepsTheCursorOfAFileItCouldNotRead(t *testing.T) {
 	a.register(path, "")
 	a.answer = follow.Stored
 
-	if !a.reader.Advance(a.entry(path)) {
+	if !a.reader.Advance(path) {
 		t.Error("Advance over a file that could not be read = false, want reading to go on")
 	}
 	if len(a.handed) != 0 {
@@ -208,7 +208,7 @@ func TestReader_GivesEachRecordThePositionOfTheEntryItCameFrom(t *testing.T) {
 	a.register(path, "api/worker")
 	a.answer = follow.Stored
 
-	a.reader.Advance(a.entry(path))
+	a.reader.Advance(path)
 
 	if len(a.handed) != 1 || len(a.handed[0].Segments) != 1 {
 		t.Fatalf("reads handed to the store = %+v, want one segment", a.handed)

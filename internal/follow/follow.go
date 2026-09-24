@@ -2,7 +2,8 @@
 // enabled project, and how far each has been read. The layout is a
 // documented product contract:
 //
-//	<dir>/<project-id-hash>.json   one registry per enabled project
+//	<dir>/<project-id-hash>.json            one registry per enabled project
+//	<dir>/<project-id-hash>.<digest>.lock   held while one of its files is read
 //
 // A registry is one JSON object: {"version":1,"files":[...]}, each
 // element carrying path, inode, size, offset, next_segment, and
@@ -250,6 +251,20 @@ func (r *Registry) Update(projectIDHash string, from, to File) error {
 		reg.Files[i] = to
 		return encode(reg)
 	})
+}
+
+// entry is the registered entry for path as the registry holds it now,
+// retired or not. ok is false for a path that is not registered.
+func (r *Registry) entry(projectIDHash, path string) (f File, ok bool, err error) {
+	reg, err := r.read(projectIDHash)
+	if err != nil {
+		return File{}, false, err
+	}
+	i, ok := find(reg.Files, path)
+	if !ok {
+		return File{}, false, nil
+	}
+	return reg.Files[i], true, nil
 }
 
 // Warm records that a session hook named path at at, from the process

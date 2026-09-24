@@ -50,11 +50,21 @@ type Reader struct {
 	ReadAt time.Time
 }
 
-// Advance applies the whole rule to one registered entry: read what
-// the file gained since its cursor, hand the result to Store, and
-// persist the advanced cursor only once Store keeps every record. A
-// cursor written past a record that nothing stored would lose that
-// record for good, which is why the order is never the other way.
+// Advance applies the whole rule to the entry registered for path:
+// read what the file gained since its cursor, hand the result to
+// Store, and persist the advanced cursor only once Store keeps every
+// record. A cursor written past a record that nothing stored would
+// lose that record for good, which is why the order is never the other
+// way.
+//
+// The whole rule runs under the entry's lock, and the cursor it starts
+// from is the one the registry holds once the lock is taken, never one
+// the caller read before. Two reads from one cursor make two records
+// with one id and different lines; the store keeps the first, and the
+// cursor the second one writes can pass lines that only the discarded
+// one held. An entry another reader holds is left to it: its cursor
+// stays where that reader puts it, and the next run reads what is
+// left.
 //
 // An entry whose file vanished leaves the registry: its cursor can
 // never advance again and no search finds the file to register it a
@@ -64,7 +74,16 @@ type Reader struct {
 // its start and sending again what was sent already.
 //
 // Advance reports whether the project's next entry may be read.
-func (rd Reader) Advance(f File) bool {
+func (rd Reader) Advance(path string) bool {
+	unlock, ok := rd.Registry.lockEntry(rd.ProjectIDHash, path)
+	if !ok {
+		return true
+	}
+	defer unlock()
+	f, ok, err := rd.Registry.entry(rd.ProjectIDHash, path)
+	if err != nil || !ok || f.Retired != "" {
+		return true
+	}
 	capture := rd.Capture
 	capture.ProjectSubpath = f.Subpath
 	res, err := Read(f, capture, rd.Options)
