@@ -151,9 +151,11 @@ func readOnce(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// Lock acquisition parameters. Holders are short-lived CLI mutations;
-// a lock older than lockStale can only belong to a process that died
-// without unlocking, and is ejected rather than waited out forever.
+// Lock acquisition parameters. Update's holders are short-lived CLI
+// mutations: an Update lock older than lockStale can only belong to a
+// process that died without unlocking, and is ejected rather than
+// waited out forever. An ejection ticket is held for one stat and one
+// remove, so lockStale bounds its age whatever lock it guards.
 const (
 	lockRetry   = 5 * time.Millisecond
 	lockStale   = 10 * time.Second
@@ -178,7 +180,7 @@ const (
 // leftovers of writers that died mid-flight are swept here, under the
 // lock, where no live writer's transient can be mistaken for one.
 func Update(path string, perm fs.FileMode, fn func(old []byte) ([]byte, error)) error {
-	unlock, err := lock(path + lockSuffix)
+	unlock, err := lock(path+lockSuffix, lockStale, lockTimeout)
 	if err != nil {
 		return err
 	}
@@ -236,18 +238,33 @@ func StaleTempName(name string, mod time.Time) bool {
 	return strings.Contains(name, tempMarker) && time.Since(mod) > lockStale
 }
 
+// Lock takes path's lock for work that Update does not describe: a
+// caller that must do more than rewrite one file while no other
+// process does the same. It is the lock file Update takes for path,
+// so the two must never be held for one path at once.
+//
+// A lock older than stale is taken to belong to a holder that died,
+// and is ejected: a holder must release it within stale, or another
+// process may take it while the work is still under way. A lock that
+// is still held after wait is not waited for any longer, and Lock
+// returns an error; the caller does its work at a later time. unlock
+// releases the lock and must be called exactly once.
+func Lock(path string, stale, wait time.Duration) (unlock func(), err error) {
+	return lock(path+lockSuffix, stale, wait)
+}
+
 // lock takes an exclusive lock via create-exclusive of a lock file,
 // which every platform this runs on supports over local filesystems.
 // The file carries a random owner mark: a lock ejected as stale may
 // already have been recreated by the next holder, so release must
 // recognize — and spare — an incarnation it did not create.
-func lock(path string) (unlock func(), err error) {
+func lock(path string, stale, wait time.Duration) (unlock func(), err error) {
 	var mark [16]byte
 	if _, err := rand.Read(mark[:]); err != nil {
 		return nil, err
 	}
 	owner := []byte(hex.EncodeToString(mark[:]))
-	deadline := time.Now().Add(lockTimeout)
+	deadline := time.Now().Add(wait)
 	var graceDeadline time.Time
 	for {
 		err := claimLock(path, owner)
@@ -266,15 +283,15 @@ func lock(path string) (unlock func(), err error) {
 		default:
 			return nil, err
 		}
-		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > lockStale {
+		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > stale {
 			// Whether or not this waiter won the ejection, the claim retry
 			// goes through the shared deadline and pacing below: a lock
 			// that stays stale because its ejection ticket is blocked must
 			// still time out rather than spin.
-			ejectStaleLock(path)
+			ejectStaleLock(path, stale)
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("fsatomic: %s held past the stale deadline: %w", path, err)
+			return nil, fmt.Errorf("fsatomic: %s held past the wait deadline: %w", path, err)
 		}
 		time.Sleep(lockRetry)
 	}
@@ -322,7 +339,7 @@ func releaseLock(path string, owner []byte) {
 // from a pre-ejection judgment would remove the fresh lock that the
 // winner's ejection plus a new claim just put at the same path. Waiters
 // that lose the ticket re-enter the wait loop and judge afresh.
-func ejectStaleLock(path string) {
+func ejectStaleLock(path string, stale time.Duration) {
 	ticket := path + ejectSuffix
 	f, err := os.OpenFile(ticket, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -335,7 +352,7 @@ func ejectStaleLock(path string) {
 	}
 	f.Close()
 	defer os.Remove(ticket)
-	if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) > lockStale {
+	if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) > stale {
 		os.Remove(path)
 	}
 }

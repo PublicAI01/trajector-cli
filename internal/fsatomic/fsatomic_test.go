@@ -318,7 +318,7 @@ func TestUpdateOnAnUnwritableDirectoryReturnsThePermissionError(t *testing.T) {
 	if !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("Update = %v, want a permission error", err)
 	}
-	if strings.Contains(err.Error(), "stale deadline") {
+	if strings.Contains(err.Error(), "wait deadline") {
 		t.Errorf("Update = %v, want the permission cause rather than a lock timeout", err)
 	}
 }
@@ -402,4 +402,50 @@ func TestUpdateSweepsAbandonedTempAndClaimFiles(t *testing.T) {
 	if _, err := os.Stat(fresh); err != nil {
 		t.Errorf("a fresh temp file was swept: %v", err)
 	}
+}
+
+func TestLockGivesUpOnALockHeldPastTheWait(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "entry")
+	unlock, err := fsatomic.Lock(path, time.Minute, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := fsatomic.Lock(path, time.Minute, 50*time.Millisecond); err == nil {
+		t.Fatal("Lock on a held lock = nil error, want it to give up")
+	}
+	if _, err := os.Stat(path + ".lock"); err != nil {
+		t.Errorf("the holder's lock is gone after a waiter gave up: %v", err)
+	}
+
+	unlock()
+	again, err := fsatomic.Lock(path, time.Minute, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Lock after the holder released = %v, want it taken", err)
+	}
+	again()
+	if _, err := os.Stat(path + ".lock"); !errors.Is(err, fs.ErrNotExist) {
+		t.Error("lock file left behind after the last holder released")
+	}
+}
+
+func TestLockEjectsOnlyALockOlderThanItsStaleBound(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "entry")
+	lock := path + ".lock"
+	if err := os.WriteFile(lock, []byte("dead-holder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	aged := time.Now().Add(-5 * time.Second)
+	if err := os.Chtimes(lock, aged, aged); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := fsatomic.Lock(path, time.Minute, 50*time.Millisecond); err == nil {
+		t.Fatal("Lock on a lock younger than the stale bound = nil error, want it left to its holder")
+	}
+	unlock, err := fsatomic.Lock(path, time.Second, time.Second)
+	if err != nil {
+		t.Fatalf("Lock on a lock older than the stale bound = %v, want it ejected", err)
+	}
+	unlock()
 }
