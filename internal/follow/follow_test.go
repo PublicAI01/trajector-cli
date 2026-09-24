@@ -68,7 +68,7 @@ func TestRegistry_RegisterKeepsExistingCursors(t *testing.T) {
 	path := abs(t, "a.jsonl")
 	mustRegister(t, r, project, path)
 	advanced := follow.File{Path: path, Inode: 7, Size: 10, Offset: 10, NextSegment: 2, MessageIDs: []string{"msg_a"}}
-	if err := r.Update(project, advanced); err != nil {
+	if err := r.Update(project, follow.File{Path: path}, advanced); err != nil {
 		t.Fatal(err)
 	}
 	mustRegister(t, r, project, path)
@@ -102,7 +102,7 @@ func TestRegistry_RejectsProjectHashesThatCouldEscapeTheDirectory(t *testing.T) 
 		if err := r.Register(hash, path); err == nil {
 			t.Errorf("Register(%q) = nil, want refused", hash)
 		}
-		if err := r.Update(hash, follow.File{Path: path}); err == nil {
+		if err := r.Update(hash, follow.File{Path: path}, follow.File{Path: path}); err == nil {
 			t.Errorf("Update(%q) = nil, want refused", hash)
 		}
 		if err := r.Unregister(hash); err == nil {
@@ -164,7 +164,7 @@ func TestRegistry_EntriesListsRetiredFilesThatFilesLeavesOut(t *testing.T) {
 	r := follow.Open(t.TempDir())
 	a, b := abs(t, "a.jsonl"), abs(t, "b.jsonl")
 	mustRegister(t, r, project, a, b)
-	if err := r.Retire(project, follow.File{Path: b}, follow.Relocated); err != nil {
+	if err := r.Retire(project, follow.File{Path: b}, follow.File{Path: b}, follow.Relocated); err != nil {
 		t.Fatal(err)
 	}
 
@@ -192,17 +192,43 @@ func TestRegistry_EntriesListsRetiredFilesThatFilesLeavesOut(t *testing.T) {
 	}
 }
 
+func TestRegistry_UpdateFromACursorThatMovedChangesNothing(t *testing.T) {
+	r := follow.Open(t.TempDir())
+	path := abs(t, "a.jsonl")
+	mustRegister(t, r, project, path)
+	start := follow.File{Path: path}
+	moved := follow.File{Path: path, Inode: 7, Size: 10, Offset: 10, NextSegment: 1, MessageIDs: []string{"msg_a"}}
+	if err := r.Update(project, start, moved); err != nil {
+		t.Fatal(err)
+	}
+
+	late := follow.File{Path: path, Inode: 7, Size: 30, Offset: 30, NextSegment: 1, MessageIDs: []string{"msg_b"}}
+	if err := r.Update(project, start, late); err == nil {
+		t.Error("Update from a cursor that moved = nil, want an error")
+	}
+	if err := r.Retire(project, start, late, follow.Relocated); err == nil {
+		t.Error("Retire from a cursor that moved = nil, want an error")
+	}
+	files, err := r.Files(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || !sameFile(files[0], moved) {
+		t.Errorf("Files() = %+v, want the entry as the first update left it", files)
+	}
+}
+
 func TestRegistry_UpdateReplacesWholeEntry(t *testing.T) {
 	dir := t.TempDir()
 	r := follow.Open(dir)
 	a, b := abs(t, "a.jsonl"), abs(t, "b.jsonl")
 	mustRegister(t, r, project, a, b)
 	first := follow.File{Path: a, Inode: 11, Size: 300, Offset: 300, NextSegment: 1, MessageIDs: []string{"msg_a", "msg_b"}}
-	if err := r.Update(project, first); err != nil {
+	if err := r.Update(project, follow.File{Path: a}, first); err != nil {
 		t.Fatal(err)
 	}
 	second := follow.File{Path: a, Inode: 12, Size: 40, Offset: 40, NextSegment: 2, MessageIDs: []string{"msg_c"}}
-	if err := r.Update(project, second); err != nil {
+	if err := r.Update(project, first, second); err != nil {
 		t.Fatal(err)
 	}
 
@@ -261,7 +287,7 @@ func TestRegistry_UpdateUnregisteredFails(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := follow.Open(t.TempDir())
 			tt.setup(t, r)
-			err := r.Update(project, follow.File{Path: abs(t, "a.jsonl"), Offset: 5})
+			err := r.Update(project, follow.File{}, follow.File{Path: abs(t, "a.jsonl"), Offset: 5})
 			if !errors.Is(err, follow.ErrNotRegistered) {
 				t.Errorf("Update() = %v, want ErrNotRegistered", err)
 			}
@@ -366,7 +392,7 @@ func TestRegistry_FilePermissionsAreOwnerOnly(t *testing.T) {
 		t.Fatalf("Open created the directory: stat = %v", err)
 	}
 	mustRegister(t, r, project, abs(t, "a.jsonl"))
-	if err := r.Update(project, follow.File{Path: abs(t, "a.jsonl"), Offset: 1}); err != nil {
+	if err := r.Update(project, follow.File{}, follow.File{Path: abs(t, "a.jsonl"), Offset: 1}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -418,7 +444,7 @@ func TestRegistry_UnknownVersionIsAnError(t *testing.T) {
 			if err := r.Register(project, path); err == nil {
 				t.Error("Register() = nil, want refused")
 			}
-			if err := r.Update(project, follow.File{Path: path}); err == nil {
+			if err := r.Update(project, follow.File{Path: path}, follow.File{Path: path}); err == nil {
 				t.Error("Update() = nil, want refused")
 			}
 			got, err := os.ReadFile(filepath.Join(dir, project+".json"))

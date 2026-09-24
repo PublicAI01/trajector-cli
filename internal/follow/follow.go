@@ -57,6 +57,10 @@ const registryExt = ".json"
 // registered, or to a project without a registry.
 var ErrNotRegistered = errors.New("follow: file is not registered")
 
+// errCursorMoved reports an update made from a cursor the entry no
+// longer holds: another reader moved it in the meantime.
+var errCursorMoved = errors.New("follow: cursor moved since it was read")
+
 // Registry is the on-disk set of files trajector reads for an enabled
 // project, and how far each has been read.
 type Registry struct{ dir string }
@@ -218,8 +222,13 @@ func (r *Registry) Entries(projectIDHash string) ([]File, error) {
 	return entries, nil
 }
 
-// Update replaces the whole entry whose path is f.Path.
-func (r *Registry) Update(projectIDHash string, f File) error {
+// Update replaces the whole entry whose path is to.Path with to, but
+// only while the entry's cursor still stands where from says. An entry
+// whose Offset or NextSegment moved since from was read is left as it
+// is, and Update fails: to was made from a cursor that is no longer the
+// entry's, and writing it would put the cursor past lines that no
+// record of the other reader holds.
+func (r *Registry) Update(projectIDHash string, from, to File) error {
 	if err := checkProjectIDHash(projectIDHash); err != nil {
 		return err
 	}
@@ -231,11 +240,14 @@ func (r *Registry) Update(projectIDHash string, f File) error {
 		if err != nil {
 			return nil, err
 		}
-		i, ok := find(reg.Files, f.Path)
+		i, ok := find(reg.Files, to.Path)
 		if !ok {
 			return nil, ErrNotRegistered
 		}
-		reg.Files[i] = f
+		if cur := reg.Files[i]; cur.Offset != from.Offset || cur.NextSegment != from.NextSegment {
+			return nil, errCursorMoved
+		}
+		reg.Files[i] = to
 		return encode(reg)
 	})
 }
@@ -318,15 +330,16 @@ func (r *Registry) Tell(projectIDHash, path string) (first bool, err error) {
 	return first && err == nil, err
 }
 
-// Retire records why reading of f.Path stopped for good and keeps the
+// Retire records why reading of to.Path stopped for good and keeps the
 // entry, with the cursor it reached. It is how the registry answers
 // later for a decision the reader made once: the entry is no longer
 // listed, and registering the same path again leaves it as it is,
 // rather than reading the file from its start a second time. A path
-// that is not registered is refused, as an update to it is.
-func (r *Registry) Retire(projectIDHash string, f File, why Retirement) error {
-	f.Retired = why
-	return r.Update(projectIDHash, f)
+// that is not registered, and an entry whose cursor moved since from,
+// are refused, as an update to them is.
+func (r *Registry) Retire(projectIDHash string, from, to File, why Retirement) error {
+	to.Retired = why
+	return r.Update(projectIDHash, from, to)
 }
 
 // Unregister removes projectIDHash's registry, cursors included. A

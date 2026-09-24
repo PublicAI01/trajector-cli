@@ -71,7 +71,7 @@ func TestRegistry_UpdateKeepsWhenAFileWasRead(t *testing.T) {
 	if err := r.Register(project, path); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Update(project, follow.File{Path: path, Offset: 3, ReadAt: "2026-09-10T08:30:00Z"}); err != nil {
+	if err := r.Update(project, follow.File{Path: path}, follow.File{Path: path, Offset: 3, ReadAt: "2026-09-10T08:30:00Z"}); err != nil {
 		t.Fatal(err)
 	}
 

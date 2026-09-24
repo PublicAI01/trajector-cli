@@ -56,9 +56,10 @@ func (s *Sandbox) RegisteredPaths(projectIDHash string) []string {
 // is still registered, and nothing counts as read from it.
 func (s *Sandbox) RewindCursor(projectIDHash, path string) {
 	s.t.Helper()
-	f := s.registered(projectIDHash, path)
+	from := s.registered(projectIDHash, path)
+	f := from
 	f.Offset, f.Size, f.Inode, f.NextSegment, f.MessageIDs = 0, 0, 0, 0, nil
-	if err := s.registry().Update(projectIDHash, f); err != nil {
+	if err := s.registry().Update(projectIDHash, from, f); err != nil {
 		s.t.Fatal(err)
 	}
 }
@@ -68,7 +69,8 @@ func (s *Sandbox) RewindCursor(projectIDHash, path string) {
 // entry stays in the registry, which is what retirement means.
 func (s *Sandbox) RetireSessionFile(projectIDHash, path string) {
 	s.t.Helper()
-	if err := s.registry().Retire(projectIDHash, s.registered(projectIDHash, path), follow.Relocated); err != nil {
+	f := s.registered(projectIDHash, path)
+	if err := s.registry().Retire(projectIDHash, f, f, follow.Relocated); err != nil {
 		s.t.Fatal(err)
 	}
 }

@@ -85,14 +85,14 @@ func (rd Reader) Advance(f File) bool {
 	case res.Reaction == Vanished:
 		_ = rd.Registry.Remove(rd.ProjectIDHash, f.Path)
 	case res.Stopped:
-		_ = rd.Registry.Retire(rd.ProjectIDHash, res.File, Relocated)
+		_ = rd.Registry.Retire(rd.ProjectIDHash, f, res.File, Relocated)
 	default:
 		// The cursor carries when it was last moved, so a surface can
 		// say when a file was last read without a clock of its own.
 		if !rd.ReadAt.IsZero() {
 			res.File.ReadAt = rd.ReadAt.UTC().Format(readAtLayout)
 		}
-		_ = rd.Registry.Update(rd.ProjectIDHash, res.File)
+		_ = rd.Registry.Update(rd.ProjectIDHash, f, res.File)
 	}
 	return true
 }
