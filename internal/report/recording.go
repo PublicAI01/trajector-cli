@@ -7,16 +7,20 @@ import "fmt"
 // a running session is told all read it, so the three can never answer
 // the question differently.
 //
-// The two device-wide states come before the one about this project. A
-// pause and a full spool stop every project on the machine, and a
-// device that stops everywhere must not read as a project that is
-// merely not enabled.
+// The device-wide states come before the one about this project. An
+// unreadable routing table, a pause and a full spool stop every project
+// on the machine, and a device that stops everywhere must not read as
+// a project that is merely not enabled.
 type RecordingState int
 
 const (
 	// RecordingOn is this project contributing with nothing device-wide
 	// in the way.
 	RecordingOn RecordingState = iota
+	// RecordingTableUnreadable is a routing table that exists and
+	// cannot be read. No token resolves, so no project on this device
+	// captures anything, and whether a pause stands is unknown.
+	RecordingTableUnreadable
 	// RecordingPausedDeviceWide is a pause of any reason. No project on
 	// this device captures anything while it stands.
 	RecordingPausedDeviceWide
@@ -30,19 +34,21 @@ const (
 
 // StoppedDeviceWide reports a state in which no project on this device
 // captures anything. It is what a running session is told about: which
-// of the two holds decides nothing for that session, because either
-// way the session's own project is as unrecorded as every other.
+// of them holds decides nothing for that session, because each way the
+// session's own project is as unrecorded as every other.
 func (s RecordingState) StoppedDeviceWide() bool {
-	return s == RecordingPausedDeviceWide || s == RecordingSpoolFull
+	return s == RecordingTableUnreadable || s == RecordingPausedDeviceWide || s == RecordingSpoolFull
 }
 
-// Recording decides the state from a diagnosis. It reads the two
+// Recording decides the state from a diagnosis. It reads the
 // device-wide facts and this project's injection and nothing else, so
 // a caller holding only those — a session hook, which may not pay for
 // a whole dashboard on every turn — asks this same question and gets
 // this same answer.
 func Recording(d Diagnosis) RecordingState {
 	switch {
+	case d.Project.TableUnreadable != nil:
+		return RecordingTableUnreadable
 	case d.Project.PauseReason != "":
 		return RecordingPausedDeviceWide
 	case d.Spool.full():
@@ -63,6 +69,8 @@ func Verdict(state RecordingState, projects int) string {
 		return "Recording: PAUSED on this device"
 	case RecordingSpoolFull:
 		return "Recording: STOPPED on this device (spool full)"
+	case RecordingTableUnreadable:
+		return "Recording: STOPPED on this device (routing table unreadable)"
 	case RecordingOffHere:
 		return "Recording: off in this project"
 	default:

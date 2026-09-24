@@ -64,11 +64,12 @@ func (f *Findings) Render(out io.Writer, style Style) {
 	render(out, style, f.all, layout{markEvery: true})
 }
 
-// DoctorDevice reports the two device-wide facts a doctor run opens
-// with: whether the pairing state could be read at all, and whether a
-// device-wide pause stands.
+// DoctorDevice reports the device-wide facts a doctor run opens with:
+// whether the pairing state could be read at all, whether the routing
+// table could, and whether a device-wide pause stands.
 func DoctorDevice(f *Findings, d Diagnosis) {
 	doctorTokenStore(f, d.TokenStore)
+	doctorTable(f, d.Project)
 	doctorPause(f, d.Project)
 }
 

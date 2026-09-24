@@ -114,6 +114,14 @@ func (m *Machine) enableProject(projectDir string, choices EnableChoices, io IO)
 	if want.unsupportedKey != "" {
 		return fmt.Errorf("%s is set: Bedrock and Vertex channels are not supported and nothing was injected", want.unsupportedKey)
 	}
+	// Before any resolution is trusted: an injection no grant records
+	// wrote over the user's own value, so what the chain resolves to now,
+	// external or not, is not what this project used.
+	if orphaned, err := m.injectionOutlivedGrant(st); err != nil {
+		return err
+	} else if orphaned {
+		return injectionWithoutGrantRemedy()
+	}
 	upstream := want.upstream
 	// A standing grant of this project's own is the one record of where
 	// its traffic went that survives our injection standing in the

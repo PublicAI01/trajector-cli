@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,8 +36,13 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	// the upgrade that brings such a build is installed. It is lifted
 	// before the diagnosis so that one run never reports a pause it has
 	// itself already lifted.
+	//
+	// A routing table that cannot be read holds no pause this run can
+	// read or lift. That is not a reason to stop: the diagnosis below
+	// reports the table, and doctor is where the user looks for it.
 	resumed, pausedBy, err := m.routes.ResumeOtherBuild(routing.PauseRedactionDrift, m.deps.Version)
-	if err != nil {
+	_, tableUnreadable := errors.AsType[*routing.UnreadableError](err)
+	if err != nil && !tableUnreadable {
 		return 0, err
 	}
 	// A pause this build set over a line read without its newline is
@@ -45,7 +51,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	// device whose reason is gone would otherwise record nothing until
 	// an upgrade arrived.
 	rescanned := false
-	if !resumed {
+	if !resumed && !tableUnreadable {
 		rescanned, err = m.resumeAfterCleanRescan()
 		if err != nil {
 			return 0, err
@@ -335,6 +341,12 @@ func (m *Machine) doctorProxy(f *report.Findings, d report.Diagnosis) {
 func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) error {
 	settingsPath := st.SettingsPath()
 	switch {
+	case st.TableUnreadable != nil:
+		// Enabled is unknown, not false: reconciling against it would
+		// take a standing injection for a stale one and remove it. The
+		// device finding already states the table.
+		return nil
+
 	case !st.Enabled && !st.Injected:
 		f.OK("this project is not enabled; nothing to reconcile")
 		return nil
@@ -348,6 +360,21 @@ func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) e
 		return nil
 
 	case !st.Enabled && st.Injected:
+		orphaned, err := m.injectionOutlivedGrant(st)
+		if err != nil {
+			return err
+		}
+		if orphaned {
+			// Removing it would leave the chain naming nothing, and no
+			// grant says what the injection wrote over, so the user's own
+			// value would be gone for good. It stays until they put that
+			// value back.
+			f.Problem("%v; doctor leaves the injection in %s in place", ErrInjectionWithoutGrant, settingsPath)
+			for _, step := range injectionWithoutGrantSteps() {
+				f.Detail("%s", step)
+			}
+			return nil
+		}
 		restored, unrestored, err := m.removeInjection(st.Root)
 		if err != nil {
 			f.Problem("a stale injection points traffic at a token that no longer records, and removing it failed: %v", err)

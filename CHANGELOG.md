@@ -41,6 +41,19 @@ All notable changes to trajector are documented here. The format follows
   past them. Now one reader at a time reads a given file, in one
   process or across processes, and a reader that finds the file busy
   leaves it to the next read.
+- A routing table that exists but cannot be read or parsed no longer
+  stops recording without a word. Traffic is still forwarded and
+  nothing is recorded, as before. `status` now opens with `Recording:
+  STOPPED on this device (routing table unreadable)` and exits 1;
+  `status`, `doctor`, the diagnostic bundle and any command that needs
+  the table name the file and the failure, and say to move the file
+  aside and then run `trajector enable` in each project you enabled.
+  `doctor` reports it and changes nothing: it no longer stops at the
+  table, and it leaves the file and each project's injection as they
+  are. `trajector doctor bundle` still writes its archive. A session
+  that runs while the table cannot be read is told once that nothing
+  of it is recorded. A missing table is still the state of a device
+  where nothing is enabled, not an error.
 
 ## [0.3.3] - 2026-09-21
 

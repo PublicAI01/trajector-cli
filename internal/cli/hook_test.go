@@ -369,6 +369,22 @@ func TestHook_TellsASessionWhenTheSpoolWillTakeNoMore(t *testing.T) {
 	}
 }
 
+func TestHook_TellsASessionWhenTheRoutingTableCannotBeRead(t *testing.T) {
+	h := newHookEnv(t)
+	h.enabled()
+	main := h.sessionFile("-work-sample/0f1e2d3c.jsonl")
+	assertSilentSuccess(t, h.InProjectInput(h.input(main), "hook", "session-end"))
+	h.Sandbox().CorruptRoutingTable()
+
+	got := h.InProjectInput(h.input(main), "hook", "progress")
+	if got.Exit != 1 {
+		t.Errorf("exit = %d, want 1 so the session shows the line to the user (stderr: %q)", got.Exit, got.Stderr)
+	}
+	if !strings.Contains(got.Stderr, "nothing of this session is being recorded") {
+		t.Errorf("stderr = %q, want an unreadable table to reach the session as the same line a pause does", got.Stderr)
+	}
+}
+
 func TestHook_SaysNothingWhileTheDeviceRecords(t *testing.T) {
 	h := newHookEnv(t)
 	h.enabled()

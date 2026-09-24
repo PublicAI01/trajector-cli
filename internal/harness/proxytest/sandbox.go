@@ -143,6 +143,47 @@ func (s *Sandbox) ResumeOtherBuild(reason routing.PauseReason, version string) b
 	return resumed
 }
 
+// RoutingTablePath reports where the routing table lives, for tests
+// that assert a surface names the file it could not read.
+func (s *Sandbox) RoutingTablePath() string { return s.layout.RoutingTable() }
+
+// CorruptRoutingTable leaves the routing table unparseable: the bytes
+// on disk are a JSON document that stops mid-key, as a crash partway
+// through a write by anything but the table's own atomic writer leaves
+// it.
+func (s *Sandbox) CorruptRoutingTable() {
+	s.t.Helper()
+	writeFile(s.t, s.layout.RoutingTable(), `{"projects":{"tok`)
+}
+
+// BlockRoutingTable puts a directory where the routing table is: the
+// path exists and no read of it succeeds. It stands for a table the
+// user cannot read, and holds for every user on every platform, where
+// a file mode does not.
+func (s *Sandbox) BlockRoutingTable() {
+	s.t.Helper()
+	path := s.layout.RoutingTable()
+	if err := os.RemoveAll(path); err != nil {
+		s.t.Fatal(err)
+	}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// MoveRoutingTableAside renames the routing table to a sibling path, as
+// a user does with a table that cannot be read, and reports where the
+// file went. Nothing is left at the table's own path.
+func (s *Sandbox) MoveRoutingTableAside() string {
+	s.t.Helper()
+	path := s.layout.RoutingTable()
+	aside := path + ".aside"
+	if err := os.Rename(path, aside); err != nil {
+		s.t.Fatal(err)
+	}
+	return aside
+}
+
 // Recording reports what the proxy would decide for a token, read the
 // same way the proxy reads it.
 func (s *Sandbox) Recording(token string) (known, recording bool) {

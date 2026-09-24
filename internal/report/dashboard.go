@@ -48,8 +48,9 @@ func Dashboard(w io.Writer, style Style, d Diagnosis) int {
 }
 
 // deviceSection states what holds for every project on this machine:
-// whether the device is paired, whether a pause stops all of them, and
-// a hook of trajector's that is left where nothing reads it.
+// whether the device is paired, whether an unreadable routing table or
+// a pause stops all of them, and a hook of trajector's that is left
+// where nothing reads it.
 func deviceSection(d Diagnosis) *section {
 	s := &section{name: "Device"}
 	switch {
@@ -59,6 +60,9 @@ func deviceSection(d Diagnosis) *section {
 		s.linef("Signed in.")
 	default:
 		s.linef("Not signed in. Run `trajector login` to pair this device.")
+	}
+	if d.Project.TableUnreadable != nil {
+		s.take(tableUnreadableProblem(d.Project.TableUnreadable))
 	}
 	if d.Project.PauseReason != "" {
 		why, fix := pauseWhyFixFor(d.Project)
@@ -78,6 +82,8 @@ func projectSection(d Diagnosis) *section {
 	st := d.Project
 	s := &section{name: "Project " + st.Root}
 	switch {
+	case st.TableUnreadable != nil:
+		s.linef("Whether this project is enabled is unknown while the routing table cannot be read (see Device above).")
 	case st.InjectionAgrees:
 		if st.PauseReason != "" {
 			s.linef("Contributing; recording is paused for now (see Device above).")

@@ -21,6 +21,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
@@ -429,6 +430,10 @@ func (a *app) with(usage string, args []string, nargs int, do func(m *lifecycle.
 // with a softer story than a bare failure are mapped here, once, so
 // every command explains them the same way.
 func (a *app) exit(err error) int {
+	if table, ok := errors.AsType[*routing.UnreadableError](err); ok {
+		report.TableUnreadable(a.stderr, a.errStyle, table)
+		return 1
+	}
 	switch {
 	case err == nil:
 		return 0

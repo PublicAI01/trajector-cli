@@ -293,6 +293,39 @@ func TestPausedDeviceForwardsWithoutRecording(t *testing.T) {
 	}
 }
 
+func TestARoutingTableThatCannotBeReadForwardsWithoutRecording(t *testing.T) {
+	tests := []struct {
+		name  string
+		spoil func(*proxytest.Sandbox)
+	}{
+		{name: "a table that does not parse", spoil: (*proxytest.Sandbox).CorruptRoutingTable},
+		{name: "a table no read succeeds on", spoil: (*proxytest.Sandbox).BlockRoutingTable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := proxytest.New(t)
+			tt.spoil(e.Sandbox())
+
+			respBody := `{"id":"msg_unrouted"}`
+			e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(respBody)})
+			resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != 200 || string(body) != respBody {
+				t.Fatalf("an unreadable table changed the exchange: %d %s", resp.StatusCode, body)
+			}
+			if reqs := e.Upstream.Requests(); len(reqs) != 1 || reqs[0].URL != "/v1/messages" {
+				t.Errorf("upstream requests = %+v, want the traffic forwarded", reqs)
+			}
+			if stored := e.Rawcalls(); len(stored) != 0 {
+				t.Errorf("spool holds %d rawcalls, want none for a token no table resolves", len(stored))
+			}
+			if h := e.Healthz(); h.RecordedToday != 0 {
+				t.Errorf("recorded_today = %d with a table that cannot be read", h.RecordedToday)
+			}
+		})
+	}
+}
+
 // TestPausedTrafficKeepsTheProxyAlive pins what the idle clock measures.
 // A device-wide pause forwards every request and records none, and until
 // 2026-08-16 only a recorded request touched the clock — so the clock

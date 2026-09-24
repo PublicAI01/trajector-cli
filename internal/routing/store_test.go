@@ -2,6 +2,7 @@ package routing_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -484,6 +485,48 @@ func TestStoreStartsFromMissingFile(t *testing.T) {
 	grant(t, store, "tok", "/home/dev/p")
 	if _, ok, err := store.Active("/home/dev/p"); err != nil || !ok {
 		t.Errorf("Active after first grant = %v, %v", ok, err)
+	}
+}
+
+// A table that exists and cannot be read is a different fact from a
+// missing one, and every reader of it says so in one error that names
+// the file: the reads the CLI makes and the proxy's cached view.
+func TestATableThatExistsButCannotBeReadIsNamedByEveryReader(t *testing.T) {
+	tests := []struct {
+		name  string
+		spoil func(t *testing.T, path string)
+	}{
+		{name: "does not parse", spoil: func(t *testing.T, path string) { writeTable(t, path, `{"projects":{"tok`) }},
+		{name: "cannot be read", spoil: func(t *testing.T, path string) {
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "routes-under-test.json")
+			tt.spoil(t, path)
+			store, table := routing.OpenStore(path), routing.New(path, time.Nanosecond)
+
+			_, all := store.All()
+			_, paused := store.PausedReason()
+			_, resolve := store.Resolve("tok")
+			for name, err := range map[string]error{
+				"All":          all,
+				"PausedReason": paused,
+				"Resolve":      resolve,
+				"Table.Err":    table.Err(),
+			} {
+				unreadable, ok := errors.AsType[*routing.UnreadableError](err)
+				if !ok || unreadable.Path != path {
+					t.Errorf("%s = %v, want the unreadable table at %s", name, err, path)
+				}
+			}
+			if store.Records("tok") {
+				t.Error("Records = true, want no recording on a table that cannot be read")
+			}
+		})
 	}
 }
 

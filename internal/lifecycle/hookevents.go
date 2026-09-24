@@ -89,7 +89,9 @@ func (m *Machine) followAndObserve(cwd string, hook HookInput, ended bool) {
 // registry records that the session was told — because a line repeated
 // on every turn is read as noise and then not read at all. A project
 // with no standing grant is never told: what it hears about the device
-// would not change its own answer.
+// would not change its own answer. A routing table that cannot be read
+// leaves the grant unknown, and the session is told: its hook runs, so
+// it was enabled, and nothing of it is recorded.
 //
 // Everything about it fails silent. A session must not be blocked by
 // the attempt to tell it something, and a device whose registry cannot
@@ -98,8 +100,8 @@ func (m *Machine) tellSession(cwd string, hook HookInput) bool {
 	if hook.SessionPath == "" {
 		return false
 	}
-	st, err := m.Project(cwd)
-	if err != nil || !st.Enabled {
+	st, err := m.observeProject(cwd)
+	if err != nil || (!st.Enabled && st.TableUnreadable == nil) {
 		return false
 	}
 	if !report.Recording(m.recordingFacts(st)).StoppedDeviceWide() {

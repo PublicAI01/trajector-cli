@@ -403,6 +403,23 @@ func (s *Store) update(mutate func(*tableFile)) error {
 	})
 }
 
+// UnreadableError is a table that exists and cannot be read or parsed.
+// A missing table is never one: that is the state of a device where
+// nothing was enabled. While the table cannot be read no token
+// resolves, so traffic is still forwarded and nothing is recorded; the
+// error is what lets a surface say so instead of reporting a device
+// with nothing enabled.
+type UnreadableError struct {
+	Path string
+	Err  error
+}
+
+func (e *UnreadableError) Error() string {
+	return fmt.Sprintf("routing: reading %s: %v", e.Path, e.Err)
+}
+
+func (e *UnreadableError) Unwrap() error { return e.Err }
+
 // readTableFile loads the on-disk table; a missing file is the normal
 // nothing-enabled state and yields an empty table. The read goes
 // through fsatomic so it neither blocks nor is broken by a concurrent
@@ -412,7 +429,7 @@ func readTableFile(path string) (tableFile, error) {
 	if os.IsNotExist(err) {
 		data = nil
 	} else if err != nil {
-		return tableFile{Projects: map[string]projectRecord{}}, err
+		return tableFile{Projects: map[string]projectRecord{}}, &UnreadableError{Path: path, Err: err}
 	}
 	return parseTableFile(path, data)
 }
@@ -423,7 +440,7 @@ func parseTableFile(path string, data []byte) (tableFile, error) {
 		return f, nil
 	}
 	if err := json.Unmarshal(data, &f); err != nil {
-		return f, fmt.Errorf("routing: parsing %s: %w", path, err)
+		return f, &UnreadableError{Path: path, Err: err}
 	}
 	if f.Projects == nil {
 		f.Projects = map[string]projectRecord{}

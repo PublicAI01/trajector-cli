@@ -322,7 +322,7 @@ func (t *Table) refreshLocked() {
 		if os.IsNotExist(err) {
 			t.loadErr = nil
 		} else {
-			t.loadErr = err
+			t.loadErr = &UnreadableError{Path: t.path, Err: err}
 		}
 		t.mtime, t.size = time.Time{}, 0
 		return
@@ -336,12 +336,12 @@ func (t *Table) refreshLocked() {
 	// surfaces here as a spurious load error.
 	data, err := fsatomic.ReadFile(t.path)
 	if err != nil {
-		t.routes, t.revoked, t.loadErr = nil, nil, err
+		t.routes, t.revoked, t.loadErr = nil, nil, &UnreadableError{Path: t.path, Err: err}
 		return
 	}
 	var f tableFile
 	if err := json.Unmarshal(data, &f); err != nil {
-		t.routes, t.revoked, t.loadErr = nil, nil, err
+		t.routes, t.revoked, t.loadErr = nil, nil, &UnreadableError{Path: t.path, Err: err}
 		return
 	}
 	routes := make(map[string]Route, len(f.Projects))

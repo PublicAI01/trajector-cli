@@ -1,10 +1,16 @@
 package lifecycle
 
 import (
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
 	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/report"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 // nonLoopbackUpstreamRemedy is the one explanation every surface
@@ -52,6 +58,59 @@ type upstreamResolution struct {
 // from this one spelling so they cannot drift apart again.
 func (r upstreamResolution) keepsRecordedUpstream(st report.ProjectStatus) bool {
 	return !r.external && st.Enabled && st.Injected && st.Upstream != "" && !st.UpstreamMoved.Happened()
+}
+
+// ErrInjectionWithoutGrant reports an enable that cannot see where this
+// project's traffic goes, because trajector's own base URL stands in the
+// project's settings file and no grant records what it wrote over. It
+// is the settings-file sibling of ErrUpstreamMasked: guessing the
+// official endpoint would send a relay user's credentials somewhere they
+// never chose, so enable stops and says how to put the value back.
+var ErrInjectionWithoutGrant = errors.New(
+	"trajector's own base URL stands in this project's settings, but the routing table records no grant for this project, " +
+		"so the base URL it wrote over is unknown")
+
+// injectionOutlivedGrant reports trajector's own base URL standing in
+// the project's settings file while no entry of the routing table —
+// standing or revoked — names this project or the token the injection
+// carries. keepsRecordedUpstream answers from the grant; here there is
+// no grant to answer from, and the chain is silent for the reason
+// described above: the injection wrote over the one key the user's own
+// value lived in. The official endpoint is then a guess like any other.
+//
+// This is how a routing table that went missing reaches enable and
+// doctor: the user moves an unreadable table aside, every injection
+// stays, and the grant that held each relay is no longer read. Until
+// 2026-09-24 enable granted the official endpoint there without a word,
+// and doctor removed the injection as stale with nothing to put back,
+// so a relay kept in .claude/settings.local.json was lost either way.
+// A revoked entry is still a record: doctor removes such an injection
+// and restores from it. The unattended reconcile runs only over a
+// standing grant, so it never meets this state; enable and doctor ask
+// it through this one predicate.
+func (m *Machine) injectionOutlivedGrant(st report.ProjectStatus) (bool, error) {
+	if st.Enabled || st.InjectedBaseURL == "" {
+		return false, nil
+	}
+	grants, err := m.routes.All()
+	if err != nil {
+		return false, err
+	}
+	return !slices.ContainsFunc(grants, func(g routing.Grant) bool {
+		return g.RootPath == st.Root || (st.InjectedToken != "" && g.Token == st.InjectedToken)
+	}), nil
+}
+
+// injectionWithoutGrantSteps are the steps that end the state, as
+// enable and doctor both state them.
+func injectionWithoutGrantSteps() []string {
+	return append(report.BaseURLRestoreSteps(), "Then run `trajector enable` in this project.")
+}
+
+// injectionWithoutGrantRemedy is ErrInjectionWithoutGrant with those
+// steps, as enable reports it.
+func injectionWithoutGrantRemedy() error {
+	return fmt.Errorf("%w. %s", ErrInjectionWithoutGrant, strings.Join(injectionWithoutGrantSteps(), " "))
 }
 
 // desiredUpstream resolves a project's upstream: an unsupported channel

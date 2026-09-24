@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/report"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -60,11 +62,18 @@ func (m *Machine) DoctorBundle(projectDir string, io IO) (string, error) {
 		}
 	}
 
+	// A routing table that cannot be read has nothing to summarize, and
+	// diagnosis.json already names it and the failure: the archive is
+	// still written, because that is when a report needs one most.
 	routingSummary, err := m.summarizeRouting()
-	if err != nil {
+	_, tableUnreadable := errors.AsType[*routing.UnreadableError](err)
+	switch {
+	case tableUnreadable:
+	case err != nil:
 		return "", err
+	default:
+		b.add("routing.json", routingSummary)
 	}
-	b.add("routing.json", routingSummary)
 
 	// The archive lands in the user's project and names every project
 	// root on the machine; neither it nor the directory a user unpacks

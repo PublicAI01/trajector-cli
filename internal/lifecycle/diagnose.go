@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"errors"
 	"os"
 	"time"
 
@@ -40,7 +41,7 @@ const (
 // carries, so a surface never has to ask again.
 func (m *Machine) diagnose(dir string, reading sessionFileReading) (report.Diagnosis, error) {
 	d := report.Diagnosis{Version: m.deps.Version}
-	st, err := m.Project(dir)
+	st, err := m.observeProject(dir)
 	if err != nil {
 		return d, err
 	}
@@ -147,6 +148,21 @@ func oldestWaiting(sp *spool.Spool) time.Time {
 // cannot be read surfaces as the error; the zero fields of a partial
 // status are never presented as facts.
 func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
+	st, err := m.observeProject(dir)
+	if err == nil && st.TableUnreadable != nil {
+		return st, st.TableUnreadable
+	}
+	return st, err
+}
+
+// observeProject is Project for a caller that reports what it finds
+// rather than acts on it. A routing table that exists and cannot be
+// read is carried in the status instead of failing the call: which
+// projects are enabled is then unknown, and that is exactly what
+// status, doctor and a session hook must be able to say. Project
+// still fails on it, because a caller that acts on a grant must never
+// act on the zero one.
+func (m *Machine) observeProject(dir string) (report.ProjectStatus, error) {
 	root, err := consent.CanonicalRoot(dir)
 	if err != nil {
 		return report.ProjectStatus{}, err
@@ -154,7 +170,9 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 	st := report.ProjectStatus{Root: root, Hash: consent.ProjectIDHash(root)}
 
 	grant, enabled, err := m.routes.Active(root)
-	if err != nil {
+	if unreadable, ok := errors.AsType[*routing.UnreadableError](err); ok {
+		st.TableUnreadable = unreadable
+	} else if err != nil {
 		return st, err
 	}
 	if enabled {
@@ -167,8 +185,10 @@ func (m *Machine) Project(dir string) (report.ProjectStatus, error) {
 		st.EarlierSkipped = grant.EarlierSkipped
 		st.GrantedAt, _ = grant.GrantedAtTime()
 	}
-	if st.PauseReason, err = m.routes.PausedReason(); err != nil {
-		return st, err
+	if st.TableUnreadable == nil {
+		if st.PauseReason, err = m.routes.PausedReason(); err != nil {
+			return st, err
+		}
 	}
 
 	settings := st.SettingsPath()

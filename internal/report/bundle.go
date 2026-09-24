@@ -90,7 +90,12 @@ type projectWire struct {
 	// can add. The stored reason is one word, so a bundle carrying that
 	// word alone cannot name the file that failed or how it failed.
 	PauseExplanation string `json:"pause_explanation,omitempty"`
-	WindowsSide      bool   `json:"windows_side_claude"`
+	// RoutingTableUnreadable is present only when the routing table
+	// exists and cannot be read: the sentence the other surfaces give
+	// as the why, naming the file and the failure. Every field above
+	// that the table answers is then unknown, not zero.
+	RoutingTableUnreadable string `json:"routing_table_unreadable,omitempty"`
+	WindowsSide            bool   `json:"windows_side_claude"`
 	// UpstreamMoved is the last unattended change of the project's
 	// upstream, present only when one was recorded. Its address is
 	// masked like every other upstream here.
@@ -251,27 +256,28 @@ func DiagnosisJSON(d Diagnosis) []byte {
 	return mustJSON(diagnosisWire{
 		EnabledProjects: d.EnabledProjects,
 		Project: projectWire{
-			Root:             d.Project.Root,
-			ProjectIDHash:    d.Project.Hash,
-			Enabled:          d.Project.Enabled,
-			Upstream:         maskUpstreamCredentials(d.Project.Upstream),
-			Injected:         d.Project.Injected,
-			InjectedToken:    maskedToken(d.Project.InjectedToken),
-			Token:            maskedToken(d.Project.Token),
-			HooksInstalled:   d.Project.Hooks.Has(claudesettings.HookEnsureProxy),
-			SessionEndOK:     d.Project.Hooks.Has(claudesettings.HookSessionEnd),
-			GitSnapshotOK:    d.Project.Hooks.Has(claudesettings.HookGitSnapshot),
-			AgreementVersion: d.Project.AgreementVersion,
-			ConsentState:     string(d.Project.ConsentState),
-			PauseReason:      string(d.Project.PauseReason),
-			PauseExplanation: d.Project.PauseReason.ExplainAt(d.Project.ConsentPath, d.Project.ConsentErr),
-			NoProxy:          d.Project.Shape == routing.WithoutProxy,
-			NoEarlier:        d.Project.EarlierSkipped,
-			GrantedAt:        d.Project.GrantedAt,
-			WindowsSide:      d.Project.WindowsSideClaude,
-			UpstreamMoved:    upstreamMoveValue(d),
-			HookPolicy:       hookPolicyValue(d),
-			OptionalSettings: optionalSettingValues(d),
+			Root:                   d.Project.Root,
+			ProjectIDHash:          d.Project.Hash,
+			Enabled:                d.Project.Enabled,
+			Upstream:               maskUpstreamCredentials(d.Project.Upstream),
+			Injected:               d.Project.Injected,
+			InjectedToken:          maskedToken(d.Project.InjectedToken),
+			Token:                  maskedToken(d.Project.Token),
+			HooksInstalled:         d.Project.Hooks.Has(claudesettings.HookEnsureProxy),
+			SessionEndOK:           d.Project.Hooks.Has(claudesettings.HookSessionEnd),
+			GitSnapshotOK:          d.Project.Hooks.Has(claudesettings.HookGitSnapshot),
+			AgreementVersion:       d.Project.AgreementVersion,
+			ConsentState:           string(d.Project.ConsentState),
+			PauseReason:            string(d.Project.PauseReason),
+			PauseExplanation:       d.Project.PauseReason.ExplainAt(d.Project.ConsentPath, d.Project.ConsentErr),
+			RoutingTableUnreadable: tableUnreadableFact(d.Project.TableUnreadable),
+			NoProxy:                d.Project.Shape == routing.WithoutProxy,
+			NoEarlier:              d.Project.EarlierSkipped,
+			GrantedAt:              d.Project.GrantedAt,
+			WindowsSide:            d.Project.WindowsSideClaude,
+			UpstreamMoved:          upstreamMoveValue(d),
+			HookPolicy:             hookPolicyValue(d),
+			OptionalSettings:       optionalSettingValues(d),
 			SessionFiles: sessionFilesWire{
 				Err:          errString(d.SessionFiles.Err),
 				Sessions:     d.SessionFiles.Sessions,

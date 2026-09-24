@@ -79,6 +79,12 @@ type ProjectStatus struct {
 	// project never decided anything.
 	ConsentState consent.ProjectState
 
+	// TableUnreadable is set when the routing table exists and cannot
+	// be read. Every field the table answers — Enabled and the grant,
+	// PauseReason — is then unknown and left zero, and a surface must
+	// not present those zeros as facts.
+	TableUnreadable *routing.UnreadableError
+
 	// PauseReason is the device-wide pause, empty while recording.
 	PauseReason routing.PauseReason
 	// ConsentPath is where the consent record lives, and ConsentErr
