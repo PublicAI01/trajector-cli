@@ -50,7 +50,26 @@ type File struct {
 	// keeps its name and its meaning, a registry written without the
 	// field holds no retired entry, and a build that does not know the
 	// field reads a retired entry as one still to read.
+	//
+	// This build retires no entry for good. The retirement
+	// "relocated" is read as Outside, and a retirement this build does
+	// not know stays as it is.
 	Retired Retirement `json:"retired,omitempty"`
+	// Outside records that the session moved to a directory consent
+	// does not cover and has not come back. The reader moves the
+	// cursor past what the session writes there and keeps none of it,
+	// and keeps its lines again once a relocated line brings it back;
+	// a rewrite of the file does not bring it back. It is set from the
+	// file's own lines only. An agent file holds no relocated line, and
+	// is read as outside while its session's main file is.
+	//
+	// It has no key of its own on disk. The on-disk form of outside is
+	// the retirement an earlier build wrote, "relocated", so an earlier
+	// build never reads on past the line that took the session out: it
+	// reads the entry as retired and leaves it alone. The cursor that
+	// build left sits just past that line, so an entry it retired
+	// reads here as outside and continues from there.
+	Outside bool `json:"-"`
 	// LastEvent is when a session hook last named this file, in RFC
 	// 3339, and absent for a file no hook named since it was
 	// registered. PID is the process the session runs in, as the hook
@@ -69,15 +88,15 @@ type File struct {
 }
 
 // advancedTo is f with the fields a reader owns taken from read: where
-// reading stands, what it consumed, when it last moved, and why it
-// stopped for good. Every other field has a writer of its own — the
+// reading stands, what it consumed, when it last moved, where the
+// session is, and why reading stopped for good. Every other field has a writer of its own — the
 // registration, the hooks that mark a session hot or cold, the notice
 // that a session was told — and an entry a reader writes back keeps
 // those as they stand now, not as they stood when the read began.
 func (f File) advancedTo(read File) File {
 	f.Inode, f.Size, f.Offset, f.NextSegment = read.Inode, read.Size, read.Offset, read.NextSegment
 	f.MessageIDs, f.BeforeRewrite = read.MessageIDs, read.BeforeRewrite
-	f.ReadAt, f.Retired = read.ReadAt, read.Retired
+	f.ReadAt, f.Retired, f.Outside = read.ReadAt, read.Retired, read.Outside
 	return f
 }
 
@@ -172,11 +191,10 @@ func Split(files []File, now time.Time, alive func(pid int) bool) (hot, cold []F
 // values are written to the registry, so they are part of the layout.
 type Retirement string
 
-// Relocated: the session moved to a directory consent does not cover.
-// It is the one reason an entry is kept after its reading stopped:
-// the file stays on disk, so a later search of the project finds it
-// again and would otherwise read it from its start a second time.
-const Relocated Retirement = "relocated"
+// relocated is the retirement earlier builds wrote for a session that
+// moved to a directory consent does not cover, and the on-disk form of
+// Outside in this one.
+const relocated Retirement = "relocated"
 
 // MainSession reports whether f is a session's own file rather than
 // an agent file kept beside it under subagents/. Counting sessions

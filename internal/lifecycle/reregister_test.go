@@ -67,7 +67,7 @@ func waitForTheSegmentToBeSent(t *testing.T, e *env) {
 	}
 }
 
-func TestEnableAfterASessionLeftTheProjectLeavesItRetiredAndSendsItsSegmentOnce(t *testing.T) {
+func TestEnableAfterASessionLeftTheProjectKeepsItsCursorAndSendsItsSegmentOnce(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.service.StubFunc("POST", "/v1/batches", ackBatch(nil))
@@ -81,19 +81,21 @@ func TestEnableAfterASessionLeftTheProjectLeavesItRetiredAndSendsItsSegmentOnce(
 	waitForTheSegmentToBeSent(t, e)
 
 	appendLine(t, path, `{"type":"relocated","relocatedCwd":"/elsewhere/entirely"}`)
+	appendLine(t, path, `{"type":"user","message":{"id":"m2"}}`)
 	m.ReadSessionFiles(e.project, discardIO())
-	if got := e.registeredFiles(root); len(got) != 0 {
-		t.Fatalf("registry after the session left the project = %+v, want the entry retired", got)
+	left := e.registeredFiles(root)
+	if len(left) != 1 || !left[0].Outside {
+		t.Fatalf("registry after the session left the project = %+v, want the entry kept, outside", left)
 	}
 
 	e.enable(proxytest.WithProxy)
-	if got := e.registeredFiles(root); len(got) != 0 {
-		t.Fatalf("registry after the second enable = %+v, want the retired file left alone", got)
+	if got := e.registeredFiles(root); len(got) != 1 || got[0].Offset != left[0].Offset || !got[0].Outside {
+		t.Fatalf("registry after the second enable = %+v, want the entry left as it was", got)
 	}
 
 	m.ReadSessionFiles(e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 0 {
-		t.Fatalf("records after the second enable = %d, want nothing read of the retired file", len(got))
+		t.Fatalf("records after the second enable = %d, want nothing of what the session wrote outside", len(got))
 	}
 	if err := m.Upload(true, e.io()); err != nil {
 		t.Fatal(err)

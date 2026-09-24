@@ -40,7 +40,7 @@ func TestFile_HotWhileItsProcessRunsOrAHookNamedItWithinADay(t *testing.T) {
 		{"named two days ago", follow.File{LastEvent: stamp(48 * time.Hour)}, false},
 		{"named two days ago but its process runs", follow.File{LastEvent: stamp(48 * time.Hour), PID: 42}, true},
 		{"its process is gone and it was named two days ago", follow.File{LastEvent: stamp(48 * time.Hour), PID: 7}, false},
-		{"retired", follow.File{LastEvent: stamp(time.Hour), PID: 42, Retired: follow.Relocated}, false},
+		{"retired", follow.File{LastEvent: stamp(time.Hour), PID: 42, Retired: "a-reason-of-a-later-build"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.file.Hot(now, alive); got != tc.want {

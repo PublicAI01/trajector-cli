@@ -445,40 +445,36 @@ func TestReadSessionFiles_FullSpoolLeavesTheCursorAlone(t *testing.T) {
 	}
 }
 
-func TestReadSessionFiles_StopsReadingVanishedAndRelocatedFiles(t *testing.T) {
-	root := "" // filled per case from the enabled project
-	tests := []struct {
-		name    string
-		prepare func(e *env) string // returns the registered path
-	}{
-		{
-			name: "a file that vanished",
-			prepare: func(e *env) string {
-				return filepath.Join(e.sessionFilesRoot(), "-work-sample", "gone.jsonl")
-			},
-		},
-		{
-			name: "a session that left the consented directory",
-			prepare: func(e *env) string {
-				return e.putSessionFile("-work-sample/moved.jsonl", `{"type":"relocated","relocatedCwd":"/elsewhere/entirely"}`+"\n")
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := newEnv(t)
-			e.aProxylessTarget()
-			e.enableProject()
-			e.injectWithoutBaseURL()
-			root = e.canonicalRoot()
-			path := tt.prepare(e)
-			e.registerFile(root, path, "")
+func TestReadSessionFiles_DropsAFileThatVanished(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	e.registerFile(root, filepath.Join(e.sessionFilesRoot(), "-work-sample", "gone.jsonl"), "")
 
-			e.machine().ReadSessionFiles(e.project, discardIO())
-			if got := e.registeredFiles(root); len(got) != 0 {
-				t.Errorf("registry = %+v, want nothing left to read", got)
-			}
-		})
+	e.machine().ReadSessionFiles(e.project, discardIO())
+	if got := e.registeredFiles(root); len(got) != 0 {
+		t.Errorf("registry = %+v, want nothing left to read", got)
+	}
+}
+
+func TestReadSessionFiles_StoresNothingASessionWroteOutsideTheProject(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	path := e.putSessionFile("-work-sample/moved.jsonl",
+		`{"type":"relocated","relocatedCwd":"/elsewhere/entirely"}`+"\n"+`{"type":"user","message":{"id":"m1"}}`+"\n")
+	e.registerFile(root, path, "")
+
+	e.machine().ReadSessionFiles(e.project, discardIO())
+	if got := e.registeredFiles(root); len(got) != 1 || !got[0].Outside {
+		t.Errorf("registry = %+v, want the entry kept, outside", got)
+	}
+	if got := e.storedRecords(); len(got) != 0 {
+		t.Errorf("records = %+v, want none", got)
 	}
 }
 

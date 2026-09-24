@@ -59,6 +59,13 @@ type ReadOptions struct {
 	Authorized func(path string) bool
 }
 
+func (o ReadOptions) authorized() func(path string) bool {
+	if o.Authorized != nil {
+		return o.Authorized
+	}
+	return func(path string) bool { return path == o.Root }
+}
+
 // ReadResult is what one observation of a registered file produced.
 type ReadResult struct {
 	// Segments holds at most one segment: the complete lines gained
@@ -72,11 +79,6 @@ type ReadResult struct {
 	// input when the file vanished.
 	File     File
 	Reaction Reaction
-	// Stopped reports that the session moved to a directory consent
-	// does not cover. The cursor sits just past that line, and the
-	// caller must retire the entry: the bytes beyond it belong to a
-	// place consent does not cover, and a cursor cannot say so.
-	Stopped bool
 	// More reports that the segment reached its bound before the lines
 	// observed ran out. The rest is read from the advanced cursor.
 	More bool
@@ -88,28 +90,43 @@ type ReadResult struct {
 //
 // Only lines that end in a newline are consumed; a line still being
 // written waits for the next read. One read keeps at most one segment
-// of lines, and More says when lines past it wait for the next read. A line that is not one of a session
-// file is consumed and dropped. A rewritten file is read again from its
-// start, and lines whose message id was consumed before are not sent
-// again: the copy sent first stands. Lines are stored byte for byte;
-// nothing in them is interpreted beyond the three fields that steer
-// reading.
+// of lines, and More says when lines past it wait for the next read. A
+// line that is not one of a session file is consumed and dropped, and
+// so is every line the session wrote while it was in a directory
+// consent does not cover: the cursor moves past them and the entry
+// says the session is outside until a relocated line brings it back,
+// however the file is rewritten in the meantime. A rewritten file is
+// read again from its start, and lines whose message id was consumed
+// before are not sent again: the copy sent first stands. Lines are
+// stored byte for byte; nothing in them is interpreted beyond the
+// three fields that steer reading.
+//
+// Read judges a file by its own lines alone. An agent file holds no
+// line that says where its session is; a Reader judges it by its
+// session's main file as well.
 func Read(f File, capture envelope.Capture, opts ReadOptions) (ReadResult, error) {
 	st, err := StatFile(f.Path)
 	if err != nil {
 		return ReadResult{}, err
 	}
+	return readObserved(f, st, capture, opts, false)
+}
+
+// readObserved is Read of f as st observed it. sessionOutside keeps
+// nothing of what the read consumes, while the cursor moves on as it
+// would: it is how an agent file is read while its session is outside.
+func readObserved(f File, st Stat, capture envelope.Capture, opts ReadOptions, sessionOutside bool) (ReadResult, error) {
 	res := ReadResult{File: f, Reaction: f.React(st)}
 	if res.Reaction == Vanished {
 		return res, nil
 	}
 	if strings.HasSuffix(f.Path, metaExt) {
-		return readMeta(res, st, capture)
+		return readMeta(res, st, capture, sessionOutside)
 	}
-	return readLines(res, st, capture, opts)
+	return readLines(res, st, capture, opts, sessionOutside)
 }
 
-func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptions) (ReadResult, error) {
+func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptions, sessionOutside bool) (ReadResult, error) {
 	f := res.File
 	start := f.Offset
 	// Bytes past the cursor were never consumed, so only a pass that
@@ -134,10 +151,7 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 		return ReadResult{}, err
 	}
 
-	authorized := opts.Authorized
-	if authorized == nil {
-		authorized = func(path string) bool { return path == opts.Root }
-	}
+	authorized := opts.authorized()
 	consumedBefore := make(map[string]bool, len(f.MessageIDs))
 	for _, id := range f.MessageIDs {
 		consumedBefore[id] = true
@@ -146,10 +160,18 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 	for _, id := range skipIDs {
 		skipped[id] = true
 	}
-	// A pass that starts at byte 0 cannot tell where the session was
-	// before a relocated line: whatever precedes a move into consent is
-	// let go. A pass that continues from a cursor was already inside.
-	inside := start > 0
+	// Where the session is decides what is kept: nothing of what it
+	// writes while it is in a directory consent does not cover. A pass
+	// that continues from a cursor knows where the session is from the
+	// cursor, and so does any pass, from byte 0 too, of a file whose
+	// cursor says the session is outside: only a relocated line into
+	// consent brings it back, whatever a rewrite left in the file. Any
+	// other pass that starts at byte 0 cannot tell until the first
+	// relocated line: when it moves the session into consent, what
+	// precedes it was written outside and is let go; when it moves the
+	// session out, what precedes it was written inside and stays.
+	outside := f.Outside
+	settled := start > 0 || f.Outside
 
 	var kept bytes.Buffer
 	var added []string
@@ -181,22 +203,31 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 			continue
 		}
 		if fields.Type == typeRelocated {
-			if !authorized(fields.RelocatedCwd) {
-				res.Stopped = true
-				break
-			}
-			if !inside {
+			// A relocated line that crosses the edge of consent is
+			// never kept: moving out, it names where the session went.
+			into := authorized(fields.RelocatedCwd)
+			switch {
+			case !into:
+				settled, outside = true, true
+				continue
+			case !settled:
 				kept.Reset()
 				added, addedSet = nil, map[string]bool{}
-				inside = true
+				settled = true
+				continue
+			case outside:
+				outside = false
 				continue
 			}
+		}
+		if outside || sessionOutside {
+			continue
 		}
 		if fields.MessageID != "" && skipped[fields.MessageID] {
 			continue
 		}
 		if kept.Len() > 0 && kept.Len()+len(line) > maxSegmentBytes {
-			if !inside {
+			if !settled {
 				// Nothing kept so far may be sent before it is known
 				// whether a move into consent follows it.
 				end, into, err := relocationAhead(lines, offset, authorized)
@@ -206,7 +237,7 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 				if into {
 					kept.Reset()
 					added, addedSet = nil, map[string]bool{}
-					inside = true
+					settled = true
 					offset = end
 					continue
 				}
@@ -225,6 +256,7 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 	}
 
 	res.File.Inode, res.File.Size, res.File.Offset = st.Inode, st.Size, offset
+	res.File.Outside = outside
 	// The caller's slices are never grown in place.
 	ids := f.MessageIDs[:len(f.MessageIDs):len(f.MessageIDs)]
 	res.File.MessageIDs = append(ids, added...)
@@ -244,7 +276,8 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 // within what was observed. into reports that the line moves the
 // session into a directory consent covers, and end is the offset just
 // past it. A pass that meets no relocated line, or one that moves the
-// session out, reports into as false: what precedes it stays.
+// session out, reports into as false: what precedes it was written
+// inside.
 func relocationAhead(lines *lineScanner, offset int64, authorized func(string) bool) (end int64, into bool, err error) {
 	for {
 		line, n, err := lines.next()
@@ -252,15 +285,72 @@ func relocationAhead(lines *lineScanner, offset int64, authorized func(string) b
 			return 0, false, err
 		}
 		offset += int64(n)
-		if line == nil || !bytes.Contains(line, []byte(typeRelocated)) {
-			continue
+		if cwd, ok := relocatedCwd(line); ok {
+			return offset, authorized(cwd), nil
 		}
-		parsed, ok := sessionline.Parse(line)
-		if !ok {
-			continue
+	}
+}
+
+// relocatedCwd reports the directory a relocated line moves the
+// session to, and false for any other line.
+func relocatedCwd(line []byte) (string, bool) {
+	if line == nil || !bytes.Contains(line, []byte(typeRelocated)) {
+		return "", false
+	}
+	parsed, ok := sessionline.Parse(line)
+	if !ok {
+		return "", false
+	}
+	fields := parsed.Fields()
+	return fields.RelocatedCwd, fields.Type == typeRelocated
+}
+
+// sessionWasOutside reports whether the session main belongs to is in
+// a directory consent does not cover, or was at any point of what its
+// main file holds past the cursor: the cursor says the session is
+// outside, or a relocated line not yet consumed moves it out, or moves
+// it in at a point before which a pass from byte 0 lets everything go.
+//
+// It answers for the whole of what main holds unread, not for when
+// each line of another file was written, so it may call outside a line
+// written inside and never the other way: keeping nothing written
+// outside comes before keeping everything written inside.
+func sessionWasOutside(main File, opts ReadOptions) (bool, error) {
+	if main.Outside {
+		return true, nil
+	}
+	st, err := StatFile(main.Path)
+	if err != nil {
+		return false, err
+	}
+	start := main.Offset
+	switch main.React(st) {
+	case Vanished:
+		return false, nil
+	case Rewrite:
+		start = 0
+	}
+	src, err := os.Open(main.Path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer src.Close()
+	if _, err := src.Seek(start, io.SeekStart); err != nil {
+		return false, err
+	}
+	authorized := opts.authorized()
+	fromCursor := start > 0
+	lines := &lineScanner{r: bufio.NewReaderSize(io.LimitReader(src, st.Size-start), 64<<10)}
+	for {
+		line, n, err := lines.next()
+		if err != nil || n == 0 {
+			return false, err
 		}
-		if fields := parsed.Fields(); fields.Type == typeRelocated {
-			return offset, authorized(fields.RelocatedCwd), nil
+		if cwd, ok := relocatedCwd(line); ok && (!fromCursor || !authorized(cwd)) {
+			return true, nil
 		}
 	}
 }
@@ -268,8 +358,10 @@ func relocationAhead(lines *lineScanner, offset int64, authorized func(string) b
 // readMeta takes a snapshot of a whole agent metadata file. The file is
 // overwritten in place, so the cursor's message id set holds the record
 // id of the last snapshot taken: a new snapshot is due exactly when the
-// content names a different one, however the size or inode moved.
-func readMeta(res ReadResult, st Stat, capture envelope.Capture) (ReadResult, error) {
+// content names a different one, however the size or inode moved. With
+// sessionOutside the content counts as taken and no snapshot is made,
+// so what the file held while its session was outside is never sent.
+func readMeta(res ReadResult, st Stat, capture envelope.Capture, sessionOutside bool) (ReadResult, error) {
 	f := res.File
 	content, err := os.ReadFile(f.Path)
 	if os.IsNotExist(err) {
@@ -291,8 +383,10 @@ func readMeta(res ReadResult, st Stat, capture envelope.Capture) (ReadResult, er
 	if len(f.MessageIDs) == 1 && f.MessageIDs[0] == snap.RecordID {
 		return res, nil
 	}
-	res.Snapshots = []envelope.MetaSnapshot{snap}
 	res.File.MessageIDs = []string{snap.RecordID}
+	if !sessionOutside {
+		res.Snapshots = []envelope.MetaSnapshot{snap}
+	}
 	return res, nil
 }
 

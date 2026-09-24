@@ -362,18 +362,177 @@ func TestRead_BridgeSessionLineIsDropped(t *testing.T) {
 	wantCursor(t, res.File, int64(len(userLine(1)+bridge+userLine(2))), 1)
 }
 
-func TestRead_RelocatedOutOfConsentStops(t *testing.T) {
+func TestRead_LinesWrittenOutsideConsentAreSkipped(t *testing.T) {
 	path := mainPath(t)
 	before := userLine(1) + assistantLine("msg_a", 0, "a")
 	out := relocatedLine("/elsewhere")
-	writeFile(t, path, before+out+userLine(2)+assistantLine("msg_b", 0, "b"))
+	after := userLine(2) + assistantLine("msg_b", 0, "b")
+	writeFile(t, path, before+out+after)
 
 	res := read(t, follow.File{Path: path})
-	if !res.Stopped {
-		t.Fatalf("Stopped = false, want true")
-	}
+
 	wantLines(t, res, userLine(1), assistantLine("msg_a", 0, "a"))
-	wantCursor(t, res.File, int64(len(before+out)), 1, "msg_a")
+	wantCursor(t, res.File, int64(len(before+out+after)), 1, "msg_a")
+	if !res.File.Outside {
+		t.Error("Outside = false, want the cursor to say the session is outside")
+	}
+}
+
+func TestRead_ASessionThatComesBackIsReadAgain(t *testing.T) {
+	inside1 := userLine(1) + assistantLine("msg_in1", 0, "i1")
+	away1 := relocatedLine("/elsewhere") + userLine(2) + assistantLine("msg_out1", 0, "o1")
+	back := relocatedLine(root)
+	inside2 := userLine(3) + assistantLine("msg_in2", 0, "i2")
+	away2 := relocatedLine("/elsewhere/else") + userLine(4) + assistantLine("msg_out2", 0, "o2")
+	parts := []string{inside1, away1, back, inside2, away2}
+	want := []string{userLine(1), assistantLine("msg_in1", 0, "i1"), userLine(3), assistantLine("msg_in2", 0, "i2")}
+
+	t.Run("in one read", func(t *testing.T) {
+		path := mainPath(t)
+		writeFile(t, path, strings.Join(parts, ""))
+
+		res := read(t, follow.File{Path: path})
+
+		wantLines(t, res, want...)
+		wantCursor(t, res.File, int64(len(strings.Join(parts, ""))), 1, "msg_in1", "msg_in2")
+		if !res.File.Outside {
+			t.Error("Outside = false after the second move out, want true")
+		}
+	})
+	t.Run("one part per read", func(t *testing.T) {
+		path := mainPath(t)
+		writeFile(t, path, parts[0])
+		cursor := follow.File{Path: path}
+		var got []string
+		var outside []bool
+		for i, part := range parts {
+			if i > 0 {
+				appendFile(t, path, part)
+			}
+			res := read(t, cursor)
+			got = append(got, segmentLines(t, res)...)
+			outside = append(outside, res.File.Outside)
+			cursor = res.File
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("lines kept = %q, want only the lines written inside %q", got, want)
+		}
+		if wantOutside := []bool{false, true, false, false, true}; !slices.Equal(outside, wantOutside) {
+			t.Errorf("Outside after each read = %v, want %v", outside, wantOutside)
+		}
+	})
+}
+
+func TestRead_ARewriteOfAFileOutsideKeepsNothingUntilTheSessionComesBack(t *testing.T) {
+	tests := []struct {
+		name      string
+		rewritten string
+	}{
+		{name: "no relocated line", rewritten: userLine(3) + assistantLine("msg_out", 0, "o")},
+		{name: "a move from outside to outside", rewritten: userLine(3) + relocatedLine("/elsewhere/else") + assistantLine("msg_out", 0, "o")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := mainPath(t)
+			writeFile(t, path, userLine(1)+relocatedLine("/elsewhere")+userLine(2))
+			left := read(t, follow.File{Path: path})
+			if !left.File.Outside {
+				t.Fatal("Outside = false after the move out, want true")
+			}
+			replaceFile(t, path, tt.rewritten)
+
+			rewritten := read(t, left.File)
+
+			if rewritten.Reaction != follow.Rewrite {
+				t.Fatalf("Reaction = %v, want Rewrite", rewritten.Reaction)
+			}
+			wantLines(t, rewritten)
+			if !rewritten.File.Outside {
+				t.Error("Outside = false after a rewrite of a file outside, want true")
+			}
+
+			appendFile(t, path, relocatedLine(root)+userLine(4))
+			back := read(t, rewritten.File)
+			wantLines(t, back, userLine(4))
+		})
+	}
+}
+
+// agentPath is where the agent file of the session mainPath names sits.
+func agentPath(mainPath string) string {
+	return filepath.Join(strings.TrimSuffix(mainPath, ".jsonl"), follow.SubagentsDir, "agent-a1.jsonl")
+}
+
+func TestReader_AnAgentFileIsOutsideWhileItsMainFileIs(t *testing.T) {
+	tests := []struct {
+		name  string
+		order func(main, agent string) []string
+	}{
+		{name: "main file first", order: func(main, agent string) []string { return []string{main, agent} }},
+		{name: "agent file first", order: func(main, agent string) []string { return []string{agent, main} }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newAdvancing(t)
+			main := mainPath(t)
+			agent := agentPath(main)
+			writeFile(t, main, userLine(1))
+			writeFile(t, agent, userLine(11))
+			a.register(main, "")
+			a.register(agent, "")
+			kept := func(paths ...string) []string {
+				a.handed = nil
+				for _, p := range paths {
+					a.reader.Advance(p)
+				}
+				var lines []string
+				for _, res := range a.handed {
+					lines = append(lines, segmentLines(t, res)...)
+				}
+				return lines
+			}
+			if got, want := kept(main, agent), []string{userLine(1), userLine(11)}; !slices.Equal(got, want) {
+				t.Fatalf("lines kept before the move = %q, want %q", got, want)
+			}
+
+			appendFile(t, main, relocatedLine("/elsewhere")+userLine(2))
+			appendFile(t, agent, userLine(12))
+			if got := kept(tt.order(main, agent)...); got != nil {
+				t.Errorf("lines kept while the session is outside = %q, want none", got)
+			}
+			if got := a.entry(agent); got.Offset != int64(len(userLine(11)+userLine(12))) {
+				t.Errorf("agent cursor offset = %d, want it past the lines written outside", got.Offset)
+			}
+
+			appendFile(t, main, relocatedLine(root)+userLine(3))
+			appendFile(t, agent, userLine(13))
+			if got, want := kept(main, agent), []string{userLine(3), userLine(13)}; !slices.Equal(got, want) {
+				t.Errorf("lines kept after the session came back = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestReader_AnAgentMetadataFileWrittenWhileItsSessionIsOutsideIsNeverSnapshotted(t *testing.T) {
+	a := newAdvancing(t)
+	main := mainPath(t)
+	meta := strings.TrimSuffix(agentPath(main), ".jsonl") + ".meta.json"
+	writeFile(t, main, userLine(1)+relocatedLine("/elsewhere"))
+	a.register(main, "")
+	a.register(meta, "")
+	a.reader.Advance(main)
+	writeFile(t, meta, `{"agentType":"a","description":"written outside"}`)
+
+	a.reader.Advance(meta)
+	appendFile(t, main, relocatedLine(root))
+	a.reader.Advance(main)
+	a.reader.Advance(meta)
+
+	for _, res := range a.handed {
+		if len(res.Snapshots) != 0 {
+			t.Errorf("snapshots = %+v, want none of what the file held while its session was outside", res.Snapshots)
+		}
+	}
 }
 
 func TestRead_RelocatedIntoConsentStartsAfterThatLine(t *testing.T) {
@@ -413,9 +572,6 @@ func TestRead_RelocatedIntoConsentStartsAfterThatLine(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			path := mainPath(t)
 			res := read(t, tt.start(t, path))
-			if res.Stopped {
-				t.Errorf("Stopped = true, want false")
-			}
 			wantLines(t, res, tt.want...)
 			wantCursor(t, res.File, int64(len(outside+in+after)), tt.wantNext, "msg_in")
 		})
@@ -444,8 +600,8 @@ func TestRead_RelocatedWithinConsentContinues(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if res.Stopped {
-				t.Errorf("Stopped = true, want false")
+			if res.File.Outside {
+				t.Errorf("Outside = true, want the session still inside")
 			}
 			wantLines(t, res, move, userLine(2))
 			wantCursor(t, res.File, int64(len(userLine(1)+move+userLine(2))), 2)
@@ -457,8 +613,8 @@ func TestRead_AuthorizedDefaultsToTheRootAlone(t *testing.T) {
 	path := mainPath(t)
 	writeFile(t, path, userLine(1)+relocatedLine(root+"/sub")+userLine(2))
 	res := read(t, follow.File{Path: path})
-	if !res.Stopped {
-		t.Errorf("a move to a subdirectory did not stop reading")
+	if !res.File.Outside {
+		t.Errorf("Outside = false after a move to a subdirectory, want true")
 	}
 	wantLines(t, res, userLine(1))
 }
@@ -529,7 +685,7 @@ func TestRead_VanishedFileYieldsNothing(t *testing.T) {
 			if res.Reaction != follow.Vanished {
 				t.Errorf("Reaction = %v, want Vanished", res.Reaction)
 			}
-			if len(res.Segments) != 0 || len(res.Snapshots) != 0 || res.Stopped {
+			if len(res.Segments) != 0 || len(res.Snapshots) != 0 {
 				t.Errorf("result = %+v, want no records", res)
 			}
 			if !reflect.DeepEqual(res.File, tt.file) {

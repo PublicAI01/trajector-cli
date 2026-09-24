@@ -167,3 +167,27 @@ func TestRead_LinesBeforeAMoveIntoConsentStayUnsentPastTheBound(t *testing.T) {
 	}
 	wantCursor(t, res.File, int64(len(outside+relocatedLine(root)+after)), 1, "msg_in")
 }
+
+func TestReader_SendsNoLineWrittenOutsideConsentAcrossSegments(t *testing.T) {
+	a := newAdvancing(t)
+	path := mainPath(t)
+	in1, in2, in3 := sizedLine("msg_in1", 5<<20), sizedLine("msg_in2", 5<<20), userLine(1)
+	out1, out2, out3 := sizedLine("msg_out1", 5<<20), sizedLine("msg_out2", 5<<20), userLine(2)
+	content := in1 + in2 + relocatedLine("/elsewhere") + out1 + out2 + relocatedLine(root) + in3 + relocatedLine("/elsewhere") + out3
+	writeFile(t, path, content)
+	a.register(path, "")
+	a.answer = follow.Stored
+
+	a.reader.Advance(path)
+
+	var got []string
+	for _, res := range a.handed {
+		got = append(got, segmentLines(t, res)...)
+	}
+	if want := []string{in1, in2, in3}; strings.Join(got, "") != strings.Join(want, "") {
+		t.Errorf("lines sent = %v bytes, want only the %v bytes written inside", lineSizes(got), lineSizes(want))
+	}
+	if f := a.entry(path); f.Offset != int64(len(content)) || !f.Outside {
+		t.Errorf("cursor = offset %d, outside %v, want the end of the file with the session outside", f.Offset, f.Outside)
+	}
+}

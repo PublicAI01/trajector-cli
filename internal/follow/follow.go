@@ -8,7 +8,10 @@
 // A registry is one JSON object: {"version":1,"files":[...]}, each
 // element carrying path, inode, size, offset, next_segment, and
 // message_ids, and optionally read_at, subpath, retired, last_event,
-// pid, told, and before_rewrite. The path
+// pid, told, and before_rewrite. A session that moved to a directory
+// consent does not cover is written as retired "relocated", the form
+// an earlier build wrote: an earlier build then never reads on past
+// the line that took the session out. The path
 // is the entry's identity. Inode, size, and offset describe the file as it
 // was last observed locally: they steer reading and never leave it.
 // An optional "gaps" object records what the one-time search for the
@@ -25,7 +28,7 @@
 // Read consumes the complete lines a file gained since its cursor and
 // hands back the records to store together with the advanced cursor,
 // and a Reader holds the whole rule around it — read, hand the records
-// to a store, advance or retire the entry, persist. The registry
+// to a store, advance or drop the entry, persist. The registry
 // decides nothing about content; nothing here writes a file it reads.
 package follow
 
@@ -346,18 +349,6 @@ func (r *Registry) Tell(projectIDHash, path string) (first bool, err error) {
 	return first && err == nil, err
 }
 
-// Retire records why reading of to.Path stopped for good and keeps the
-// entry, with the cursor it reached. It is how the registry answers
-// later for a decision the reader made once: the entry is no longer
-// listed, and registering the same path again leaves it as it is,
-// rather than reading the file from its start a second time. A path
-// that is not registered, and an entry whose cursor moved since from,
-// are refused, as an update to them is.
-func (r *Registry) Retire(projectIDHash string, from, to File, why Retirement) error {
-	to.Retired = why
-	return r.Update(projectIDHash, from, to)
-}
-
 // Unregister removes projectIDHash's registry, cursors included. A
 // project that has no registry is already unregistered.
 func (r *Registry) Unregister(projectIDHash string) error {
@@ -457,16 +448,26 @@ func parse(data []byte) (registry, error) {
 	if reg.Version != version {
 		return registry{}, fmt.Errorf("follow: unsupported registry version %d", reg.Version)
 	}
+	// relocated is how outside is written; see File.Outside.
+	for i := range reg.Files {
+		if reg.Files[i].Retired == relocated {
+			reg.Files[i].Retired, reg.Files[i].Outside = "", true
+		}
+	}
 	return reg, nil
 }
 
 func encode(reg registry) ([]byte, error) {
+	reg.Files = slices.Clone(reg.Files)
 	if reg.Files == nil {
 		reg.Files = []File{}
 	}
 	for i := range reg.Files {
 		if reg.Files[i].MessageIDs == nil {
 			reg.Files[i].MessageIDs = []string{}
+		}
+		if reg.Files[i].Outside {
+			reg.Files[i].Retired = relocated
 		}
 	}
 	return json.Marshal(reg)

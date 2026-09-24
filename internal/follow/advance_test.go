@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -143,7 +144,7 @@ func TestReader_AFileNothingCouldBeStoredForLeavesTheNextOneToRead(t *testing.T)
 	}
 }
 
-func TestReader_RetiresTheEntryOfASessionThatLeftTheProject(t *testing.T) {
+func TestReader_ReadsOnAfterASessionLeftTheProject(t *testing.T) {
 	a := newAdvancing(t)
 	path := mainPath(t)
 	kept := assistantLine("m1", 0, "hello")
@@ -153,20 +154,33 @@ func TestReader_RetiresTheEntryOfASessionThatLeftTheProject(t *testing.T) {
 
 	a.reader.Advance(path)
 
-	if files := a.listed(); len(files) != 0 {
-		t.Fatalf("registry lists %+v, want nothing left to read", files)
+	f := a.entry(path)
+	if !f.Outside || f.Retired != "" {
+		t.Fatalf("entry = %+v, want it listed and outside", f)
 	}
-	stored := a.stored()
-	if len(stored) != 1 || string(stored[0]["retired"]) != `"relocated"` {
-		t.Fatalf("registry file holds %v, want the entry kept with why it stopped", stored)
+	if stored := a.stored(); len(stored) != 1 || string(stored[0]["retired"]) != `"relocated"` || stored[0]["outside"] != nil {
+		t.Errorf("registry file holds %v, want the entry outside written as retired relocated and no outside key", stored)
+	}
+	a.register(path, "")
+	if again := a.entry(path); again.Offset != f.Offset || !again.Outside {
+		t.Errorf("entry after the path was registered again = %+v, want it as it was", again)
 	}
 
-	a.register(path, "")
-	if files := a.listed(); len(files) != 0 {
-		t.Errorf("registry lists %+v after the path was registered again, want the file still retired", files)
+	appendFile(t, path, userLine(1)+relocatedLine(root)+userLine(2))
+	a.reader.Advance(path)
+
+	var got []string
+	for _, res := range a.handed {
+		got = append(got, segmentLines(t, res)...)
 	}
-	if len(a.handed) != 1 || len(segmentLines(t, a.handed[0])) != 1 {
-		t.Errorf("reads handed to the store = %+v, want the one segment before the session left", a.handed)
+	if want := []string{kept, userLine(2)}; !slices.Equal(got, want) {
+		t.Errorf("lines handed to the store = %q, want %q", got, want)
+	}
+	if f := a.entry(path); f.Outside {
+		t.Errorf("entry = %+v, want it inside after the session came back", f)
+	}
+	if stored := a.stored(); len(stored) != 1 || stored[0]["retired"] != nil || stored[0]["outside"] != nil {
+		t.Errorf("registry file holds %v, want no retirement once the session came back", stored)
 	}
 }
 
@@ -229,7 +243,7 @@ func TestReader_KeepsTheHeatAHookWroteWhileTheFileWasRead(t *testing.T) {
 		content string
 	}{
 		{"cursor advanced", assistantLine("m1", 0, "hello")},
-		{"entry retired", assistantLine("m1", 0, "hello") + relocatedLine("/elsewhere/entirely")},
+		{"session left", assistantLine("m1", 0, "hello") + relocatedLine("/elsewhere/entirely")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -259,5 +273,32 @@ func TestReader_KeepsTheHeatAHookWroteWhileTheFileWasRead(t *testing.T) {
 				t.Errorf("entry = %v, want the heat the hook wrote while the file was read", entry)
 			}
 		})
+	}
+}
+
+func TestReader_ReadsOnFromWhereAnEarlierBuildRetiredASessionThatLeft(t *testing.T) {
+	a := newAdvancing(t)
+	path := mainPath(t)
+	kept := assistantLine("m1", 0, "hello")
+	out := relocatedLine("/elsewhere/entirely")
+	writeFile(t, path, kept+out)
+	a.register(path, "")
+	left := follow.File{Path: path, Size: int64(len(kept + out)), Offset: int64(len(kept + out)), NextSegment: 1, MessageIDs: []string{"m1"}}
+	if err := a.registry.Update(project, follow.File{Path: path}, left); err != nil {
+		t.Fatal(err)
+	}
+	retireInFile(t, a.dir, path, "relocated")
+	appendFile(t, path, userLine(1)+relocatedLine(root)+userLine(2))
+	a.answer = follow.Stored
+
+	a.reader.Advance(path)
+
+	if len(a.handed) != 1 {
+		t.Fatalf("reads handed to the store = %d, want one", len(a.handed))
+	}
+	wantLines(t, a.handed[0], userLine(2))
+	stored := a.stored()
+	if len(stored) != 1 || stored[0]["retired"] != nil || stored[0]["outside"] != nil {
+		t.Errorf("registry file holds %v, want the entry neither retired nor outside", stored)
 	}
 }

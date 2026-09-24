@@ -278,36 +278,15 @@ func TestDoctorSaysTheSessionFilesCouldNotBePutBackOnTheReadingPath(t *testing.T
 	}
 }
 
-func TestDoctorLeavesARetiredSessionFileAlone(t *testing.T) {
-	e := newEnv(t)
-	var res resident
-	e.startProxy(res.handler())
-	e.enable(proxytest.WithProxy)
-	path := e.registeredButNeverRead()
-	e.sandbox.RetireSessionFile(e.status().Hash, path)
-	before := e.registryBytes()
-	e.stdout.Reset()
-
-	_, out := e.doctor()
-
-	if got := e.registryBytes(); got != before {
-		t.Errorf("doctor changed the registry:\n%s\nwas:\n%s", got, before)
-	}
-	if got := res.reports(); len(got) != 0 {
-		t.Errorf("the resident process was told %+v about a file whose reading stopped for good", got)
-	}
-	if strings.Contains(out, "never-read") {
-		t.Errorf("doctor = %q, want no reading asked for a retired entry", out)
-	}
-}
-func TestDoctorDoesNotCountARetiredSessionFileAsUnregistered(t *testing.T) {
+func TestDoctorDoesNotCountASessionFileAnEarlierBuildRetiredAsUnregistered(t *testing.T) {
 	e := newEnv(t)
 	var res resident
 	e.startProxy(res.handler())
 	e.enable(proxytest.WithProxy)
 	path := e.sessionFile(sessionMarker+"-1", e.deps.Now().Add(-48*time.Hour))
+	appendLine(t, path, `{"type":"relocated","relocatedCwd":"/elsewhere/entirely"}`)
 	e.registerFile(e.canonicalRoot(), path, "")
-	e.sandbox.RetireSessionFile(e.status().Hash, path)
+	e.sandbox.RetireAsAnEarlierBuild(e.status().Hash, path)
 	e.stdout.Reset()
 
 	_, out := e.doctor()
@@ -315,14 +294,14 @@ func TestDoctorDoesNotCountARetiredSessionFileAsUnregistered(t *testing.T) {
 	status := e.statusOutput()
 
 	if !strings.Contains(out, "every session file of this project is registered") {
-		t.Errorf("doctor = %q, want a retired entry counted as registered", out)
+		t.Errorf("doctor = %q, want an entry an earlier build retired counted as registered", out)
 	}
 	for _, unwanted := range []string{"predate its grant", "to register them", "could not determine why"} {
 		if strings.Contains(out, unwanted) {
-			t.Errorf("doctor = %q, want no %q about a file whose reading stopped for good", out, unwanted)
+			t.Errorf("doctor = %q, want no %q about a file an earlier build retired", out, unwanted)
 		}
 		if strings.Contains(status, unwanted) {
-			t.Errorf("status = %q, want no %q about a file whose reading stopped for good", status, unwanted)
+			t.Errorf("status = %q, want no %q about a file an earlier build retired", status, unwanted)
 		}
 	}
 }

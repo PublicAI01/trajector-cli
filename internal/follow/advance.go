@@ -74,9 +74,11 @@ type Reader struct {
 // An entry whose file vanished leaves the registry: its cursor can
 // never advance again and no search finds the file to register it a
 // second time. An entry whose session moved out of the directories
-// consent covers stays, retired: the file is still on disk, and the
-// retirement is what keeps a later registration from reading it from
-// its start and sending again what was sent already.
+// consent covers stays, and is read on: its cursor moves past what the
+// session writes outside, and what it writes after it comes back is
+// kept again. An agent file is outside while its session's main file
+// is: only the main file holds the lines that say where the session
+// went.
 //
 // Advance reports whether the project's next entry may be read.
 func (rd Reader) Advance(path string) bool {
@@ -106,7 +108,21 @@ func (rd Reader) round(path string) (next, more bool) {
 	}
 	capture := rd.Capture
 	capture.ProjectSubpath = f.Subpath
-	res, err := Read(f, capture, rd.Options)
+	// The agent file is observed before its main file is looked at. A
+	// move is written to the main file before anything the session
+	// writes after it, so a move out that precedes any byte this read
+	// takes is already on disk when the main file is looked at, whether
+	// or not a reader consumed it yet, and in whatever order the
+	// session's files are read.
+	st, err := StatFile(f.Path)
+	if err != nil {
+		return true, false
+	}
+	outside, err := rd.sessionOutside(f.Path)
+	if err != nil {
+		return true, false
+	}
+	res, err := readObserved(f, st, capture, rd.Options, outside)
 	if err != nil {
 		// A file that could not be read this time — a metadata file
 		// caught mid-write, say — keeps its cursor and is read again
@@ -124,9 +140,6 @@ func (rd Reader) round(path string) (next, more bool) {
 	case res.Reaction == Vanished:
 		_ = rd.Registry.Remove(rd.ProjectIDHash, f.Path)
 		return true, false
-	case res.Stopped:
-		_ = rd.Registry.Retire(rd.ProjectIDHash, f, res.File, Relocated)
-		return true, false
 	}
 	// The cursor carries when it was last moved, so a surface can say
 	// when a file was last read without a clock of its own.
@@ -137,4 +150,19 @@ func (rd Reader) round(path string) (next, more bool) {
 		return true, false
 	}
 	return true, res.More
+}
+
+// sessionOutside reports whether the session the agent file at path
+// belongs to is outside, or was since its main file's cursor, as
+// sessionWasOutside answers it. A main file, and an agent file whose
+// main file is not registered, answer for themselves.
+func (rd Reader) sessionOutside(path string) (bool, error) {
+	if _, file := identify(path); file == "" {
+		return false, nil
+	}
+	main, ok, err := rd.Registry.entry(rd.ProjectIDHash, SessionOf(path)+linesExt)
+	if err != nil || !ok {
+		return false, err
+	}
+	return sessionWasOutside(main, rd.Options)
 }

@@ -160,13 +160,39 @@ func TestRegistry_FilesAreOrderedByPath(t *testing.T) {
 	}
 }
 
-func TestRegistry_EntriesListsRetiredFilesThatFilesLeavesOut(t *testing.T) {
-	r := follow.Open(t.TempDir())
-	a, b := abs(t, "a.jsonl"), abs(t, "b.jsonl")
-	mustRegister(t, r, project, a, b)
-	if err := r.Retire(project, follow.File{Path: b}, follow.File{Path: b}, follow.Relocated); err != nil {
+// retireInFile writes a retirement onto the entry for path the way a
+// build that writes it would: straight into the registry file.
+func retireInFile(t *testing.T, dir, path string, why follow.Retirement) {
+	t.Helper()
+	file := filepath.Join(dir, project+".json")
+	data, err := os.ReadFile(file)
+	if err != nil {
 		t.Fatal(err)
 	}
+	var reg map[string]any
+	if err := json.Unmarshal(data, &reg); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range reg["files"].([]any) {
+		if entry := f.(map[string]any); entry["path"] == path {
+			entry["retired"] = string(why)
+		}
+	}
+	if data, err = json.Marshal(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRegistry_EntriesListsRetiredFilesThatFilesLeavesOut(t *testing.T) {
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	a, b := abs(t, "a.jsonl"), abs(t, "b.jsonl")
+	mustRegister(t, r, project, a, b)
+	const later follow.Retirement = "a-reason-of-a-later-build"
+	retireInFile(t, dir, b, later)
 
 	files, err := r.Files(project)
 	if err != nil {
@@ -187,8 +213,28 @@ func TestRegistry_EntriesListsRetiredFilesThatFilesLeavesOut(t *testing.T) {
 	if want := []string{a, b}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Entries() paths = %v, want %v", got, want)
 	}
-	if entries[1].Retired != follow.Relocated {
+	if entries[1].Retired != later {
 		t.Errorf("Entries()[1] = %+v, want the retirement it was given", entries[1])
+	}
+}
+
+func TestRegistry_ReadsAnEntryAnEarlierBuildRetiredForLeavingAsOutside(t *testing.T) {
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	path := abs(t, "a.jsonl")
+	mustRegister(t, r, project, path)
+	left := follow.File{Path: path, Inode: 7, Size: 90, Offset: 90, NextSegment: 1, MessageIDs: []string{"msg_a"}}
+	if err := r.Update(project, follow.File{Path: path}, left); err != nil {
+		t.Fatal(err)
+	}
+	retireInFile(t, dir, path, "relocated")
+
+	files, err := r.Files(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || !sameFile(files[0], left) || !files[0].Outside || files[0].Retired != "" {
+		t.Errorf("Files() = %+v, want the entry listed outside, with the cursor the earlier build left", files)
 	}
 }
 
@@ -205,9 +251,6 @@ func TestRegistry_UpdateFromACursorThatMovedChangesNothing(t *testing.T) {
 	late := follow.File{Path: path, Inode: 7, Size: 30, Offset: 30, NextSegment: 1, MessageIDs: []string{"msg_b"}}
 	if err := r.Update(project, start, late); err == nil {
 		t.Error("Update from a cursor that moved = nil, want an error")
-	}
-	if err := r.Retire(project, start, late, follow.Relocated); err == nil {
-		t.Error("Retire from a cursor that moved = nil, want an error")
 	}
 	files, err := r.Files(project)
 	if err != nil {

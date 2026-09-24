@@ -1,10 +1,15 @@
 package proxytest
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"slices"
 
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
 // RegisteredFile is one file an enabled project reads and how far it
@@ -64,13 +69,47 @@ func (s *Sandbox) RewindCursor(projectIDHash, path string) {
 	}
 }
 
-// RetireSessionFile stops one entry from ever being read again, as a
-// reader that found the session outside what consent covers does. The
-// entry stays in the registry, which is what retirement means.
-func (s *Sandbox) RetireSessionFile(projectIDHash, path string) {
+// RetireAsAnEarlierBuild writes one entry as builds before this one
+// left a session that moved out of the project: the cursor stands just
+// past the first relocated line of the session file, and the entry
+// carries "retired": "relocated". Those builds retired an entry only
+// once they had read past that line, so the file must hold one. The
+// registry file name and the retirement are spelled here as those
+// builds spelled them: what is simulated is bytes on disk, and a
+// rename in this build must not move them.
+func (s *Sandbox) RetireAsAnEarlierBuild(projectIDHash, path string) {
 	s.t.Helper()
-	f := s.registered(projectIDHash, path)
-	if err := s.registry().Retire(projectIDHash, f, f, follow.Relocated); err != nil {
+	content, err := fsatomic.ReadFile(path)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	offset, found := 0, false
+	for line := range bytes.Lines(content) {
+		offset += len(line)
+		if found = bytes.Contains(line, []byte(`"type":"relocated"`)); found {
+			break
+		}
+	}
+	if !found {
+		s.t.Fatalf("%s holds no relocated line for an earlier build to have read past", path)
+	}
+	file := filepath.Join(s.layout.FollowDir(), projectIDHash+".json")
+	err = fsatomic.Update(file, 0o600, func(old []byte) ([]byte, error) {
+		var reg map[string]any
+		if err := json.Unmarshal(old, &reg); err != nil {
+			return nil, err
+		}
+		files, _ := reg["files"].([]any)
+		for _, f := range files {
+			if entry, ok := f.(map[string]any); ok && entry["path"] == path {
+				entry["offset"], entry["size"] = offset, len(content)
+				entry["retired"] = "relocated"
+				return json.Marshal(reg)
+			}
+		}
+		return nil, fmt.Errorf("no file registered at %s", path)
+	})
+	if err != nil {
 		s.t.Fatal(err)
 	}
 }

@@ -91,10 +91,12 @@ late, or a session killed before its last hook. A cold file is never
 looked at until a hook names it again. Each read starts from where the
 last left off, so a run killed before it advances a cursor simply reads
 the same bytes again, and the spool absorbs the repeat by record id. A
-file whose session moves to a
-directory consent does not cover is retired: the registry keeps the
-entry and enabling the project again does not read that file from its
-start, so its lines are never stored and sent a second time.
+file whose session moves to a directory consent does not cover stays
+registered: what the session writes while it is outside is passed over
+and never stored, in its main file and in its agent files alike, and a
+rewrite of the file does not change that. Reading resumes after the
+session comes back. Enabling the project again does not read the file
+from its start, so its lines are never stored and sent a second time.
 
 ## Capture
 
