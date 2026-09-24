@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -219,5 +220,44 @@ func TestReader_GivesEachRecordThePositionOfTheEntryItCameFrom(t *testing.T) {
 	}
 	if got.ClientVersion != capture.ClientVersion || got.Injection != capture.Injection {
 		t.Errorf("record capture = %+v, want the rest as the run stated it", got)
+	}
+}
+
+func TestReader_KeepsTheHeatAHookWroteWhileTheFileWasRead(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"cursor advanced", assistantLine("m1", 0, "hello")},
+		{"entry retired", assistantLine("m1", 0, "hello") + relocatedLine("/elsewhere/entirely")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newAdvancing(t)
+			path := mainPath(t)
+			writeFile(t, path, tc.content)
+			a.register(path, "")
+			at := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
+			a.reader.Store = func(follow.ReadResult) follow.Storing {
+				if err := a.registry.Warm(project, path, 42, at); err != nil {
+					t.Fatal(err)
+				}
+				return follow.Stored
+			}
+
+			a.reader.Advance(path)
+
+			stored := a.stored()
+			if len(stored) != 1 {
+				t.Fatalf("registry file holds %v, want one entry", stored)
+			}
+			entry := stored[0]
+			if string(entry["offset"]) != strconv.Itoa(len(tc.content)) {
+				t.Errorf("offset = %s, want the cursor past what was read", entry["offset"])
+			}
+			if string(entry["pid"]) != "42" || string(entry["last_event"]) != `"`+at.Format(time.RFC3339)+`"` {
+				t.Errorf("entry = %v, want the heat the hook wrote while the file was read", entry)
+			}
+		})
 	}
 }

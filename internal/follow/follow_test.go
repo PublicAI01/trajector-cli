@@ -218,7 +218,7 @@ func TestRegistry_UpdateFromACursorThatMovedChangesNothing(t *testing.T) {
 	}
 }
 
-func TestRegistry_UpdateReplacesWholeEntry(t *testing.T) {
+func TestRegistry_UpdateReplacesTheCursor(t *testing.T) {
 	dir := t.TempDir()
 	r := follow.Open(dir)
 	a, b := abs(t, "a.jsonl"), abs(t, "b.jsonl")

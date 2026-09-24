@@ -60,6 +60,18 @@ type File struct {
 	Told bool `json:"told,omitzero"`
 }
 
+// advancedTo is f with the fields a reader owns taken from read: where
+// reading stands, what it consumed, when it last moved, and why it
+// stopped for good. Every other field has a writer of its own — the
+// registration, the hooks that mark a session hot or cold, the notice
+// that a session was told — and an entry a reader writes back keeps
+// those as they stand now, not as they stood when the read began.
+func (f File) advancedTo(read File) File {
+	f.Inode, f.Size, f.Offset, f.NextSegment = read.Inode, read.Size, read.Offset, read.NextSegment
+	f.MessageIDs, f.ReadAt, f.Retired = read.MessageIDs, read.ReadAt, read.Retired
+	return f
+}
+
 // hotWindow is how long a hook event keeps a file hot on its own,
 // with no process to vouch for the session: a session that says
 // nothing for a day is over, whatever its process is doing.

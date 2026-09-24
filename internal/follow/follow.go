@@ -223,10 +223,11 @@ func (r *Registry) Entries(projectIDHash string) ([]File, error) {
 	return entries, nil
 }
 
-// Update replaces the whole entry whose path is to.Path with to, but
-// only while the entry's cursor still stands where from says. An entry
-// whose Offset or NextSegment moved since from was read is left as it
-// is, and Update fails: to was made from a cursor that is no longer the
+// Update writes what reading of to.Path reached — the fields a reader
+// owns, as advancedTo names them — onto its entry, but only while the
+// entry's cursor still stands where from says. An entry whose Offset
+// or NextSegment moved since from was read is left as it is, and
+// Update fails: to was made from a cursor that is no longer the
 // entry's, and writing it would put the cursor past lines that no
 // record of the other reader holds.
 func (r *Registry) Update(projectIDHash string, from, to File) error {
@@ -248,7 +249,7 @@ func (r *Registry) Update(projectIDHash string, from, to File) error {
 		if cur := reg.Files[i]; cur.Offset != from.Offset || cur.NextSegment != from.NextSegment {
 			return nil, errCursorMoved
 		}
-		reg.Files[i] = to
+		reg.Files[i] = reg.Files[i].advancedTo(to)
 		return encode(reg)
 	})
 }
