@@ -13,6 +13,12 @@ All notable changes to trajector are documented here. The format follows
   had before you enabled it, used to make one segment of the whole
   file. A line longer than 8 MiB is a segment of its own; lines are
   never split, and a line longer than 32 MiB is still not read.
+- The reason `status`, `doctor` and the diagnostic bundle give for a
+  redaction pause now states what sets it: a session file line read
+  without the newline that ends it. It said before that session
+  records changed shape, but since 0.3.2 a shape this build does not
+  know holds back only its own segment and pauses nothing. The way
+  out is the same: `trajector upgrade`, then `trajector doctor`.
 
 ### Fixed
 

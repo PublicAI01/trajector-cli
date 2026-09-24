@@ -430,7 +430,7 @@ func TestDoctorResumesARedactionPauseThisBuildSetOnceItReadsTheFilesCleanly(t *t
 	if got := e.sandbox.PausedReason(); got != "" {
 		t.Errorf("PausedReason = %q, want the pause lifted by the build that set it", got)
 	}
-	const want = "recording resumed: this build read the session files again and found nothing it cannot redact"
+	const want = "recording resumed: this build read the session files again and every line it read ended in a newline"
 	if !strings.Contains(e.stdout.String(), want) {
 		t.Errorf("doctor = %s, want %q", e.stdout.String(), want)
 	}

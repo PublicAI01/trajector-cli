@@ -10,8 +10,8 @@
 // happens once the finding is made:
 //
 //   - Stop. The reader contradicted itself: a line cut short of its
-//     newline, which a reader never hands over. Reading pauses until a
-//     build that covers the shape is installed.
+//     newline, which a reader never hands over. Reading pauses under
+//     routing.PauseRedactionDrift, which states why.
 //   - Quarantine. The line holds a field naming where the session ran
 //     that the anchored list does not know, so this build cannot mask
 //     it. The segment is kept on this machine and never uploaded;

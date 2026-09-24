@@ -65,10 +65,14 @@ const (
 	// pause is not the same fact as a changed agreement and must not
 	// be reported as one.
 	PauseConsentUnreadable PauseReason = "consent_unreadable"
-	// PauseRedactionDrift suspends recording when session records took
-	// a shape this build's redaction does not cover: what it cannot
-	// redact must not leave the device, and a pause is the only way
-	// to be sure nothing does.
+	// PauseRedactionDrift suspends recording when a read of a session
+	// file contradicted itself: it handed over a line cut short of its
+	// newline, which a reader never does. Nothing that read produced
+	// can be trusted to be masked, and a pause is the only way to be
+	// sure none of it leaves the device. A line of a shape this build
+	// does not know sets no pause: only its own segment is held on
+	// this machine. The stored value keeps its first name, because a
+	// table written by an earlier build carries it.
 	PauseRedactionDrift PauseReason = "redaction_drift"
 )
 
@@ -81,9 +85,10 @@ const DoctorCommand = "trajector doctor"
 // The commands that lift a pause are named once here. A redaction-drift
 // pause is lifted by two of them in order, and both halves of that
 // promise are spelled from these names: the build is replaced first,
-// and only the second command reads the session files and decides
-// whether the new build covers them. consentWayOut writes a new consent
-// record, and so is the one way out of a record that cannot be read.
+// and only the second command reads the session files again and
+// decides whether the build now returns every line whole. consentWayOut
+// writes a new consent record, and so is the one way out of a record
+// that cannot be read.
 const (
 	signedOutWayOut = "trajector login"
 	consentWayOut   = "trajector enable"
@@ -114,7 +119,7 @@ func (r PauseReason) Why() string {
 	case PauseConsentUnreadable:
 		return "the consent record could not be read"
 	case PauseRedactionDrift:
-		return "session records changed shape in a way this build's redaction does not cover"
+		return "a session file line was read without the newline that ends it, so what was read cannot be trusted"
 	default:
 		return string(r)
 	}

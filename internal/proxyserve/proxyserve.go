@@ -157,8 +157,8 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		},
 		Logf: logf,
 		// A record this build cannot mask must not leave the device,
-		// and neither may the ones behind it: recording pauses until a
-		// build that covers the shape is installed. The routing table
+		// and neither may the ones behind it: recording pauses under
+		// routing.PauseRedactionDrift, which states why. The routing table
 		// is the one place a pause is written, and the proxy re-reads
 		// it on its next lookup.
 		OnUnmaskableRecord: func() {

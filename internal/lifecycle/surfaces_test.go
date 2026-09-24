@@ -493,7 +493,7 @@ func TestStatusTellsARedactionPauseFromAnAgreementPause(t *testing.T) {
 	e := newEnv(t)
 	e.sandbox.Pause(proxytest.PauseRedactionDrift)
 	out := e.statusOutput()
-	if !strings.Contains(out, "Recording is paused everywhere") || !strings.Contains(out, "redaction does not cover") {
+	if !strings.Contains(out, "Recording is paused everywhere") || !strings.Contains(out, "read without the newline that ends it") {
 		t.Errorf("status = %q, want the redaction pause explained", out)
 	}
 	if strings.Contains(out, "agreement") {

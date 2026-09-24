@@ -242,7 +242,8 @@ func TestStatusTellsTheTwoRecordingPausesApart(t *testing.T) {
 
 	a, b := dashboard(agreement), dashboard(redaction)
 	wants(t, "status", a, "Recording is paused everywhere", "the data agreement changed", "fix:  trajector enable")
-	wants(t, "status", b, "Recording is paused everywhere", "redaction does not cover", "fix:  trajector upgrade")
+	wants(t, "status", b, "Recording is paused everywhere", "read without the newline that ends it", "fix:  trajector upgrade")
+	rejects(t, "status", b, "changed shape")
 	paused := enabledDevice()
 	paused.Project.PauseReason = routing.PauseRedactionDrift
 	wants(t, "status", dashboard(paused), "Contributing; recording is paused for now (see Device above).")
@@ -261,7 +262,7 @@ func TestDoctorTellsTheTwoRecordingPausesApart(t *testing.T) {
 	if problems != 1 {
 		t.Errorf("problems = %d, want the pause counted once", problems)
 	}
-	wants(t, "doctor", out, "error: recording is paused everywhere", "redaction does not cover", "fix:  trajector upgrade")
+	wants(t, "doctor", out, "error: recording is paused everywhere", "read without the newline that ends it", "fix:  trajector upgrade")
 	rejects(t, "doctor", out, "agreement")
 }
 

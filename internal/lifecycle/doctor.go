@@ -39,13 +39,11 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	if err != nil {
 		return 0, err
 	}
-	// A pause this build set over a line shape it could not mask is
+	// A pause this build set over a line read without its newline is
 	// lifted here too, without waiting for another build, when this
-	// build reads the same files cleanly now: the shape may have been
-	// held against a rule this build has since stopped reporting, or
-	// the segment it was set over may now be held on this machine
-	// instead. Nothing else lifts it, so a device whose reason is gone
-	// would otherwise record nothing until an upgrade arrived.
+	// build reads the same files whole now. Nothing else lifts it, so a
+	// device whose reason is gone would otherwise record nothing until
+	// an upgrade arrived.
 	rescanned := false
 	if !resumed {
 		rescanned, err = m.resumeAfterCleanRescan()
@@ -65,7 +63,7 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	// are written in is the order the user reads them.
 	f := &report.Findings{}
 	if rescanned {
-		f.Fixed("recording resumed: this build read the session files again and found nothing it cannot redact")
+		f.Fixed("recording resumed: this build read the session files again and every line it read ended in a newline")
 		f.Detail("Session files are read again from where reading stopped.")
 	}
 	if resumed {
