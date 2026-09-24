@@ -103,6 +103,7 @@ func readerWith(registry *follow.Registry, store func(follow.ReadResult) follow.
 }
 
 func TestReader_TwoReadersOfOneFileLoseNoLine(t *testing.T) {
+	follow.SetEntryLockWait(t, 10*time.Millisecond)
 	registry := follow.Open(t.TempDir())
 	path := mainPath(t)
 	first, second := userLine(1), userLine(2)
@@ -157,6 +158,7 @@ func TestReader_TwoReadersOfOneFileLoseNoLine(t *testing.T) {
 }
 
 func TestReader_LeavesAFileAnotherReaderHoldsForTheNextRun(t *testing.T) {
+	follow.SetEntryLockWait(t, 10*time.Millisecond)
 	registry := follow.Open(t.TempDir())
 	path := mainPath(t)
 	line := userLine(1)
@@ -194,6 +196,7 @@ func TestReader_LeavesAFileAnotherReaderHoldsForTheNextRun(t *testing.T) {
 }
 
 func TestReader_LeavesAFileAReaderInAnotherProcessHoldsForTheNextRun(t *testing.T) {
+	follow.SetEntryLockWait(t, 10*time.Millisecond)
 	dir := t.TempDir()
 	registryDir := filepath.Join(dir, "follow")
 	registry := follow.Open(registryDir)

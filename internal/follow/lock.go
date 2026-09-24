@@ -10,28 +10,29 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
-// Bounds of the lock one read of an entry holds. entryLockStale is
+// entryLockStale bounds the lock one read of an entry holds. It is
 // longer than the slowest read of one segment and the storing of it —
 // a line of maxLineBytes read, redacted, and written to disk — so a
-// lock that old can only belong to a reader that died. entryLockWait
-// is short against both the stale bound and the time a session hook
-// waits for a read it asked for: a reader that finds the entry held
-// leaves it to the holder, and the next run reads what is left.
-const (
-	entryLockStale = 2 * time.Minute
-	entryLockWait  = 2 * time.Second
-)
+// lock that old can only belong to a reader that died.
+const entryLockStale = 2 * time.Minute
+
+// entryLockWait is how long a reader waits for an entry another reader
+// holds. It is short against both the stale bound and the time a
+// session hook waits for a read it asked for: a reader that finds the
+// entry held leaves it to the holder, and the next run reads what is
+// left. Only tests change it.
+var entryLockWait = 2 * time.Second
 
 // lockEntry takes the lock that makes one read of path — read, store,
 // write the cursor back — the only one on this device. ok is false
-// when another reader still holds the entry after entryLockWait.
+// when another reader still holds the entry after wait.
 //
 // Readers in one process wait on each other here before they contend
 // for the lock file, so a live reader in this process is never judged
 // stale by another one in it. The lock file is what readers in other
 // processes contend for.
-func (r *Registry) lockEntry(projectIDHash, path string) (unlock func(), ok bool) {
-	deadline := time.Now().Add(entryLockWait)
+func (r *Registry) lockEntry(projectIDHash, path string, wait time.Duration) (unlock func(), ok bool) {
+	deadline := time.Now().Add(wait)
 	target := r.entryLockPath(projectIDHash, path)
 	release, ok := inProcess.lock(target, deadline)
 	if !ok {

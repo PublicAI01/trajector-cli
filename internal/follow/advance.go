@@ -75,7 +75,7 @@ type Reader struct {
 //
 // Advance reports whether the project's next entry may be read.
 func (rd Reader) Advance(path string) bool {
-	unlock, ok := rd.Registry.lockEntry(rd.ProjectIDHash, path)
+	unlock, ok := rd.Registry.lockEntry(rd.ProjectIDHash, path, entryLockWait)
 	if !ok {
 		return true
 	}
