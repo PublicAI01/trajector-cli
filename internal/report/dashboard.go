@@ -241,23 +241,20 @@ func projectLines(d Diagnosis) []string {
 
 // signalLines states what reading the project's session files noticed
 // about their shape, as facts about the lines: while recording is
-// paused for a shape this build's redaction does not cover, which
-// fields that were; always, how many lines lacked what a record is
-// later read by. Each line is a count or a field name, never a value
-// from a session file. Only one count names a next step, and only
-// while a setting readable here would change it; for the others the
-// pause carries its own and the user has none to take.
+// paused for a read that ended in a line without a newline, how many
+// reads of this project did; always, how many lines lacked what a
+// record is later read by. Each line is a count, never a value from a
+// session file. A field holding a path this build does not cover is
+// not stated under the pause: it holds back only its own segment,
+// which the spool section counts, and pauses nothing. Only one count
+// names a next step, and only while a setting readable here would
+// change it; for the others the pause carries its own and the user has
+// none to take.
 func signalLines(d Diagnosis) []string {
 	s := d.SessionFiles.Signals
 	var lines []string
-	if d.Project.PauseReason == routing.PauseRedactionDrift {
-		if len(s.UnanchoredPathFields) > 0 {
-			lines = append(lines, fmt.Sprintf("Fields in this project's session files holding a path that this build's redaction does not cover: %s.",
-				strings.Join(s.UnanchoredPathFields, ", ")))
-		}
-		if s.IncompleteSegments > 0 {
-			lines = append(lines, fmt.Sprintf("%d read(s) of this project's session files ended in a line without a newline.", s.IncompleteSegments))
-		}
+	if d.Project.PauseReason == routing.PauseRedactionDrift && s.IncompleteSegments > 0 {
+		lines = append(lines, fmt.Sprintf("%d read(s) of this project's session files ended in a line without a newline.", s.IncompleteSegments))
 	}
 	if s.AssistantLinesWithoutMessageID > 0 {
 		lines = append(lines, fmt.Sprintf("%d of %d assistant lines in this project's session files carried no message id.",

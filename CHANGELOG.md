@@ -19,6 +19,11 @@ All notable changes to trajector are documented here. The format follows
   records changed shape, but since 0.3.2 a shape this build does not
   know holds back only its own segment and pauses nothing. The way
   out is the same: `trajector upgrade`, then `trajector doctor`.
+- While a redaction pause stands, `status` no longer lists under the
+  project the fields holding a path this build does not cover. Such a
+  field holds back only its own segment, which the spool section
+  counts; under the pause, `status` states only how many reads ended
+  in a line without a newline.
 
 ### Fixed
 

@@ -596,14 +596,11 @@ func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
 			reject: []string{"trajector doctor` to", "redaction does not cover"},
 		},
 		{
-			name:    "fields named while recording is paused for them",
+			name:    "only what paused recording is stated under the pause",
 			signals: stopped,
 			pause:   routing.PauseRedactionDrift,
-			want: []string{
-				"Fields in this project's session files holding a path that this build's redaction does not cover: $.attachment.snapshot.newDir, $.someNewPath.",
-				"1 read(s) of this project's session files ended in a line without a newline.",
-			},
-			reject: []string{"mood-ring", "claude-holodeck"},
+			want:    []string{"1 read(s) of this project's session files ended in a line without a newline."},
+			reject:  []string{"$.someNewPath", "redaction does not cover", "mood-ring", "claude-holodeck"},
 		},
 		{
 			name:    "fields not named once the pause is lifted",
