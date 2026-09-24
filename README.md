@@ -84,7 +84,16 @@ support. On Windows, run trajector under
 [WSL](https://learn.microsoft.com/windows/wsl/install): install a Linux
 distribution and use the command above inside it. The v0.1.0 Windows
 archives are still on the releases page — they are what they were, a
-release behind and untested. Homebrew and Scoop are not available yet.
+release behind and untested. Scoop is not available.
+
+On macOS, Homebrew works too:
+
+```sh
+brew install publicai01/tap/trajector
+```
+
+A Homebrew install is updated by `brew upgrade trajector`; `trajector
+upgrade` says so rather than replacing a binary Homebrew manages.
 
 Then pair the device and enable a project:
 

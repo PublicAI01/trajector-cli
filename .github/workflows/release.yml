@@ -32,9 +32,14 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
       # The attestation is what lets a user prove a downloaded archive was
-      # built by this workflow from this repository's source.
+      # built by this workflow from this repository's source. The Homebrew
+      # tap is written after the release is published, so a tap that
+      # cannot be written fails the step above with the archives already
+      # public: they are attested whenever the build produced them.
       - uses: actions/attest-build-provenance@v4
+        if: ${{ !cancelled() && hashFiles('dist/trajector_checksums.txt') != '' }}
         with:
           # No dist/*.zip: Windows is not published (see .goreleaser.yaml),
           # and a pattern matching nothing fails this step. Restore it

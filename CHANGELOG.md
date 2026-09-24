@@ -6,6 +6,13 @@ All notable changes to trajector are documented here. The format follows
 
 ## [0.3.4] - 2026-09-24
 
+### Added
+
+- trajector is published to a Homebrew tap: on macOS,
+  `brew install publicai01/tap/trajector`. `trajector upgrade` on such
+  an install says to run `brew upgrade trajector` instead of replacing
+  the binary Homebrew manages.
+
 ### Changed
 
 - A session file is now read in segments of at most 8 MiB of lines
