@@ -112,12 +112,13 @@ func TestReader_TwoReadersOfOneFileLoseNoLine(t *testing.T) {
 	var spool firstWriterWins
 
 	shortStored := make(chan struct{})
+	stored := sync.OnceFunc(func() { close(shortStored) })
 	longEntered := make(chan struct{})
 	shortDone := make(chan struct{})
 	longDone := make(chan struct{})
 	short := readerWith(registry, func(res follow.ReadResult) follow.Storing {
 		spool.store(res)
-		close(shortStored)
+		stored()
 		select {
 		case <-longEntered:
 		case <-longDone:
@@ -157,7 +158,7 @@ func TestReader_TwoReadersOfOneFileLoseNoLine(t *testing.T) {
 	}
 }
 
-func TestReader_LeavesAFileAnotherReaderHoldsForTheNextRun(t *testing.T) {
+func TestReader_LeavesAFileAnotherReaderHoldsToThatReader(t *testing.T) {
 	follow.SetEntryLockWait(t, 10*time.Millisecond)
 	registry := follow.Open(t.TempDir())
 	path := mainPath(t)
@@ -166,10 +167,11 @@ func TestReader_LeavesAFileAnotherReaderHoldsForTheNextRun(t *testing.T) {
 	mustRegister(t, registry, project, path)
 
 	holderEntered := make(chan struct{})
+	enter := sync.OnceFunc(func() { close(holderEntered) })
 	waiterDone := make(chan struct{})
 	holderDone := make(chan struct{})
 	holder := readerWith(registry, func(follow.ReadResult) follow.Storing {
-		close(holderEntered)
+		enter()
 		<-waiterDone
 		return follow.Stored
 	})
@@ -192,6 +194,50 @@ func TestReader_LeavesAFileAnotherReaderHoldsForTheNextRun(t *testing.T) {
 	}
 	if f := registeredEntry(t, registry, path); f.Offset != int64(len(line)) || f.NextSegment != 1 {
 		t.Errorf("cursor = %+v, want it where the holder moved it", f)
+	}
+}
+
+func TestReader_LinesWrittenAfterAWaitingReaderGaveUpAreStoredOnceTheHolderLetsGo(t *testing.T) {
+	follow.SetEntryLockWait(t, 10*time.Millisecond)
+	registry := follow.Open(t.TempDir())
+	path := mainPath(t)
+	first, second := userLine(1), userLine(2)
+	writeFile(t, path, first)
+	mustRegister(t, registry, project, path)
+	var spool firstWriterWins
+
+	holderEntered := make(chan struct{})
+	enter := sync.OnceFunc(func() { close(holderEntered) })
+	gaveUp := make(chan struct{})
+	holderDone := make(chan struct{})
+	holder := readerWith(registry, func(res follow.ReadResult) follow.Storing {
+		spool.store(res)
+		enter()
+		<-gaveUp
+		return follow.Stored
+	})
+	waiter := readerWith(registry, func(follow.ReadResult) follow.Storing {
+		t.Error("the store was handed a read of a file another reader holds")
+		return follow.Stored
+	})
+
+	go func() {
+		defer close(holderDone)
+		holder.Advance(path)
+	}()
+	<-holderEntered
+	waiter.Advance(path)
+	appendFile(t, path, second)
+	close(gaveUp)
+	<-holderDone
+
+	for i, line := range []string{first, second} {
+		if !spool.holds(line) {
+			t.Errorf("line %d is in no stored segment once the holder let go, want every line written before then stored", i+1)
+		}
+	}
+	if f := registeredEntry(t, registry, path); f.Offset != int64(len(first+second)) {
+		t.Errorf("cursor = %+v, want it at the end of the file", f)
 	}
 }
 

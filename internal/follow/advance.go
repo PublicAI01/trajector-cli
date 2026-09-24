@@ -65,8 +65,12 @@ type Reader struct {
 // cursor make two records with one id and different lines; the store
 // keeps the first, and the cursor the second one writes can pass lines
 // that only the discarded one held. An entry another reader holds is
-// left to it: its cursor stays where that reader puts it, and the next
-// run reads what is left. The lock is taken again for every round, so
+// left to it: its cursor stays where that reader puts it. A holder
+// that a reader in this process gave up on reads one round more once
+// it lets go, so lines written before that reader left are read by the
+// time the holder's Advance returns. Nothing marks a holder that a
+// reader in another process gave up on: what that reader came for
+// waits for the next run. The lock is taken again for every round, so
 // what one holder may keep it for is one segment, not one file — and,
 // in a round from byte 0 that meets the segment bound before any
 // relocated line, one pass over the rest of the file to find one.
@@ -91,14 +95,26 @@ func (rd Reader) Advance(path string) bool {
 }
 
 // round is one round of Advance: at most one segment read, stored, and
-// written back. next is what Advance reports; more reports that the
-// cursor moved to a segment's bound and lines past it wait.
+// written back. next is what Advance reports; more reports that lines
+// past what the round read wait: the cursor moved to a segment's
+// bound, or a reader in this process gave up waiting for the entry
+// while the round held it, and the file may have grown past what the
+// round observed.
 func (rd Reader) round(path string) (next, more bool) {
 	unlock, ok := rd.Registry.lockEntry(rd.ProjectIDHash, path, entryLockWait)
 	if !ok {
 		return true, false
 	}
-	defer unlock()
+	defer func() {
+		if unlock() && next {
+			more = true
+		}
+	}()
+	return rd.roundHeld(path)
+}
+
+// roundHeld is the part of round that runs under the entry's lock.
+func (rd Reader) roundHeld(path string) (next, more bool) {
 	f, ok, err := rd.Registry.entry(rd.ProjectIDHash, path)
 	if err != nil || !ok {
 		return true, false

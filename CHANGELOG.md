@@ -44,8 +44,11 @@ All notable changes to trajector are documented here. The format follows
   never uploaded, and this release does not upload them: they are
   still in the session file on your machine, but the point read to is
   past them. Now one reader at a time reads a given file, in one
-  process or across processes, and a reader that finds the file busy
-  leaves it to the next read.
+  process or across processes. A reader that waits more than two
+  seconds for a busy file gives up. When the reader holding the file
+  is in the same process, it reads the file once more before its read
+  ends; otherwise the lines the other reader came for wait for the
+  next read.
 - A routing table that exists but cannot be read or parsed no longer
   stops recording without a word. Nothing is recorded, and traffic
   goes where the Security entry below says. `status` now opens with
