@@ -403,12 +403,12 @@ func (s *Store) update(mutate func(*tableFile)) error {
 	})
 }
 
-// UnreadableError is a table that exists and cannot be read or parsed.
-// A missing table is never one: that is the state of a device where
-// nothing was enabled. While the table cannot be read no token
-// resolves, so traffic is still forwarded and nothing is recorded; the
-// error is what lets a surface say so instead of reporting a device
-// with nothing enabled.
+// UnreadableError is a table that cannot be read or parsed. The store
+// never returns one for a missing table: to the store, that is a device
+// where nothing was enabled. The proxy's Table does, and where traffic
+// goes while the table cannot be read is stated once, on Table. The
+// error is what lets a surface say that nothing is recorded instead of
+// reporting a device with nothing enabled.
 type UnreadableError struct {
 	Path string
 	Err  error

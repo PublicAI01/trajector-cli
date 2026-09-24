@@ -33,6 +33,10 @@ type decision struct {
 	// itself is never carried here: it can embed a password, and the
 	// proxy log is a file.
 	projectIDHash string
+	// tableNeverRead marks an exchange whose token the routing table
+	// could not place: the table cannot be read, and this process never
+	// read it. Nothing is forwarded for it; see refuseTableNeverRead.
+	tableNeverRead bool
 }
 
 // newTransport is the forwarding path's own connection pool. Left nil,
@@ -66,7 +70,11 @@ func (s *Server) newForwarder() http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		d := s.decide(r)
-		if d.unroutable {
+		switch {
+		case d.tableNeverRead:
+			s.refuseTableNeverRead(w)
+			return
+		case d.unroutable:
 			s.refuseUnroutable(w, d)
 			return
 		}
@@ -109,6 +117,26 @@ func (s *Server) refuseUnroutable(w http.ResponseWriter, d *decision) {
 		http.StatusBadGateway)
 }
 
+// refuseTableNeverRead answers an exchange that carries a token while
+// the routing table cannot be read and this process never read it. The
+// token may name a project chained to a third-party relay, and the
+// default upstream would then receive the relay's credential headers:
+// the same guess refuseUnroutable declines. A process that read the
+// table once keeps forwarding every token that table named, so only a
+// proxy that never knew where anything goes answers this. The reply
+// names nothing internal, only the command that says why: status reads
+// a missing table as nothing enabled and cannot tell this state from
+// that one, while doctor reports both an unreadable table and an
+// injection that outlived its grant.
+func (s *Server) refuseTableNeverRead(w http.ResponseWriter) {
+	s.cfg.Logf("refusing to forward: the routing table could not be read and this proxy has not read it since it started, so where this token's traffic goes is unknown; nothing was sent upstream. %s", tableNeverReadRemedy)
+	http.Error(w, "trajector: nothing was forwarded, because this device cannot tell where this project's traffic goes. "+
+		tableNeverReadRemedy,
+		http.StatusBadGateway)
+}
+
+const tableNeverReadRemedy = "Run `trajector doctor` to see why."
+
 func (s *Server) decide(r *http.Request) *decision {
 	// The idle clock is touched here, before anything is asked about this
 	// exchange, because the question it answers — is this proxy still
@@ -146,6 +174,10 @@ func (s *Server) decide(r *http.Request) *decision {
 		d.restPath = rest
 		recordToken = token
 		found, verdict := s.cfg.Table.Lookup(token)
+		if !verdict.Forwards() {
+			d.tableNeverRead = true
+			return d
+		}
 		if verdict.Resolves() {
 			route = found
 			upstream = found.Upstream

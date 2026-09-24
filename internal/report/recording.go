@@ -18,8 +18,10 @@ const (
 	// in the way.
 	RecordingOn RecordingState = iota
 	// RecordingTableUnreadable is a routing table that exists and
-	// cannot be read. No token resolves, so no project on this device
-	// captures anything, and whether a pause stands is unknown.
+	// cannot be read. A token the proxy's last good read named is only
+	// forwarded to the upstream that read gave it, so no project on
+	// this device captures anything, and whether a pause stands is
+	// unknown.
 	RecordingTableUnreadable
 	// RecordingPausedDeviceWide is a pause of any reason. No project on
 	// this device captures anything while it stands.

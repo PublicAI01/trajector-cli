@@ -47,18 +47,40 @@ All notable changes to trajector are documented here. The format follows
   process or across processes, and a reader that finds the file busy
   leaves it to the next read.
 - A routing table that exists but cannot be read or parsed no longer
-  stops recording without a word. Traffic is still forwarded and
-  nothing is recorded, as before. `status` now opens with `Recording:
-  STOPPED on this device (routing table unreadable)` and exits 1;
-  `status`, `doctor`, the diagnostic bundle and any command that needs
-  the table name the file and the failure, and say to move the file
-  aside and then run `trajector enable` in each project you enabled.
-  `doctor` reports it and changes nothing: it no longer stops at the
-  table, and it leaves the file and each project's injection as they
-  are. `trajector doctor bundle` still writes its archive. A session
-  that runs while the table cannot be read is told once that nothing
-  of it is recorded. A missing table is still the state of a device
-  where nothing is enabled, not an error.
+  stops recording without a word. Nothing is recorded, and traffic
+  goes where the Security entry below says. `status` now opens with
+  `Recording: STOPPED on this device (routing table unreadable)` and
+  exits 1; `status`, `doctor`, the diagnostic bundle and any command
+  that needs the table name the file and the failure. All but the
+  bundle also state the steps out: move the file aside; for each
+  project you enabled that goes through a relay, write the relay's URL
+  back to `ANTHROPIC_BASE_URL` in its `.claude/settings.local.json`,
+  and for one that uses the official endpoint, delete that line; then
+  run `trajector enable` in each of them. `doctor` reports it and
+  changes nothing: it no longer stops at the table, and it leaves the
+  file and each project's injection as they are. `trajector doctor
+  bundle` still writes its archive. A session that runs while the
+  table cannot be read is told once that nothing of it is recorded.
+  `status` still reads a missing table as a device where nothing is
+  enabled; the proxy does not (see Security). `enable` no longer
+  grants the official endpoint to a project whose settings still carry
+  trajector's base URL while the table records no grant for it, as
+  after the table was moved aside: it refuses and states the same
+  steps. `doctor` reports such an injection instead of removing it.
+
+### Security
+
+- A proxy whose routing table stops being readable, or goes missing,
+  no longer sends enabled projects' traffic to the official endpoint.
+  Before, every token then resolved to nothing and went to the default
+  upstream, so a project chained to a third-party relay sent the
+  relay's credential headers there. The proxy now keeps forwarding
+  each token to the upstream the last table it read recorded, and
+  records nothing. A proxy that has not read the table since it
+  started, because the file cannot be read or is not there, refuses a
+  request that carries a token, with 502 and a line that says to run
+  `trajector doctor`, instead of guessing where it goes. While the
+  table can be read, nothing changes.
 
 ## [0.3.3] - 2026-09-21
 

@@ -1,8 +1,11 @@
 package apiproxy_test
 
 import (
+	"errors"
 	"io"
+	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -293,34 +296,104 @@ func TestPausedDeviceForwardsWithoutRecording(t *testing.T) {
 	}
 }
 
-func TestARoutingTableThatCannotBeReadForwardsWithoutRecording(t *testing.T) {
-	tests := []struct {
-		name  string
-		spoil func(*proxytest.Sandbox)
-	}{
-		{name: "a table that does not parse", spoil: (*proxytest.Sandbox).CorruptRoutingTable},
-		{name: "a table no read succeeds on", spoil: (*proxytest.Sandbox).BlockRoutingTable},
+// spoilers are the ways a routing table stops being readable. Moving
+// the table aside is also what a user does to a table they were told
+// cannot be read, and a proxy started with no table at all meets the
+// same spoiler before anything was granted.
+var spoilers = []struct {
+	name  string
+	spoil func(*testing.T, *proxytest.Sandbox)
+}{
+	{name: "a table that does not parse", spoil: func(_ *testing.T, s *proxytest.Sandbox) { s.CorruptRoutingTable() }},
+	{name: "a table no read succeeds on", spoil: func(_ *testing.T, s *proxytest.Sandbox) { s.BlockRoutingTable() }},
+	{name: "a table that is not there", spoil: moveTableAside},
+}
+
+func moveTableAside(t *testing.T, s *proxytest.Sandbox) {
+	t.Helper()
+	path := s.RoutingTablePath()
+	if err := os.Rename(path, path+".aside"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
+}
+
+func TestATableThatBreaksKeepsForwardingWhereItLastSaidAndRecordsNothing(t *testing.T) {
+	for _, tt := range spoilers {
 		t.Run(tt.name, func(t *testing.T) {
 			e := proxytest.New(t)
-			tt.spoil(e.Sandbox())
+			defaultUp := e.Upstream
+			relay := fakeupstream.New(t)
+			e.WriteTable(activeTable("tok1", relay.URL()))
+			relay.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_read"}`)})
+			e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
+			e.WaitRawcalls(1)
 
-			respBody := `{"id":"msg_unrouted"}`
-			e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(respBody)})
-			resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
+			tt.spoil(t, e.Sandbox())
+			time.Sleep(10 * time.Millisecond)
+
+			respBody := `{"id":"msg_broken"}`
+			relay.Enqueue(fakeupstream.Response{Body: []byte(respBody)})
+			defaultUp.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_default"}`)})
+			resp := e.Post("/t/tok1/v1/messages", `{"m":2}`, nil)
 			body, _ := io.ReadAll(resp.Body)
 			if resp.StatusCode != 200 || string(body) != respBody {
 				t.Fatalf("an unreadable table changed the exchange: %d %s", resp.StatusCode, body)
 			}
-			if reqs := e.Upstream.Requests(); len(reqs) != 1 || reqs[0].URL != "/v1/messages" {
-				t.Errorf("upstream requests = %+v, want the traffic forwarded", reqs)
+			if reqs := relay.Requests(); len(reqs) != 2 {
+				t.Errorf("relay requests = %+v, want both exchanges forwarded where the grant said", reqs)
+			}
+			if reqs := defaultUp.Requests(); len(reqs) != 0 {
+				t.Errorf("default upstream received %+v, want nothing: the relay's credential headers must not reach it", reqs)
+			}
+			if stored := e.Rawcalls(); len(stored) != 1 {
+				t.Errorf("spool holds %d rawcalls, want only the one recorded while the table could be read", len(stored))
+			}
+
+			e.Post("/t/never-granted/v1/messages", `{"m":3}`, nil)
+			if reqs := defaultUp.Requests(); len(reqs) != 1 {
+				t.Errorf("default upstream requests = %+v, want a token the last table did not name forwarded there, as before", reqs)
+			}
+		})
+	}
+}
+
+func TestATableUnreadableSinceTheProxyStartedRefusesATokenRatherThanGuess(t *testing.T) {
+	for _, tt := range spoilers {
+		t.Run(tt.name, func(t *testing.T) {
+			e := proxytest.New(t)
+			tt.spoil(t, e.Sandbox())
+
+			e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_guess"}`)})
+			resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != http.StatusBadGateway || !strings.Contains(string(body), "trajector doctor") {
+				t.Fatalf("status = %d (%s), want 502 naming `trajector doctor`", resp.StatusCode, body)
+			}
+			if strings.Contains(string(body), "routing") {
+				t.Errorf("body = %s, want no internal detail in the reply", body)
+			}
+			if reqs := e.Upstream.Requests(); len(reqs) != 0 {
+				t.Errorf("default upstream received %+v, want nothing forwarded to a guess", reqs)
 			}
 			if stored := e.Rawcalls(); len(stored) != 0 {
-				t.Errorf("spool holds %d rawcalls, want none for a token no table resolves", len(stored))
+				t.Errorf("spool holds %d rawcalls, want none", len(stored))
 			}
-			if h := e.Healthz(); h.RecordedToday != 0 {
-				t.Errorf("recorded_today = %d with a table that cannot be read", h.RecordedToday)
+		})
+	}
+}
+
+func TestSelfcheckOfATableNeverReadNamesNoUpstream(t *testing.T) {
+	for _, tt := range spoilers {
+		t.Run(tt.name, func(t *testing.T) {
+			e := proxytest.New(t)
+			tt.spoil(t, e.Sandbox())
+
+			reply := e.Selfcheck("tok1")
+			if reply.Decision != string(routing.NeverRead) || reply.TokenKnown || reply.Recording {
+				t.Fatalf("selfcheck = %+v, want a token no table ever placed", reply)
+			}
+			if reply.UpstreamOrigin != "" {
+				t.Errorf("upstream_origin = %q, want empty: nothing is forwarded for this token", reply.UpstreamOrigin)
 			}
 		})
 	}
@@ -360,11 +433,6 @@ func TestPausedTrafficKeepsTheProxyAlive(t *testing.T) {
 	}
 }
 
-// unreadableTable is a routing table that does not parse. The proxy
-// keeps forwarding at the default upstream — a table it cannot read must
-// not cost the user their traffic — but no token resolves against it.
-const unreadableTable = `{"projects": {`
-
 // TestUnresolvedTrafficKeepsTheProxyAlive is the other half of
 // TestPausedTrafficKeepsTheProxyAlive. That one pinned that the idle
 // clock must not be tied to the *recording* decision; this one pins that
@@ -377,11 +445,19 @@ const unreadableTable = `{"projects": {`
 // idle timeout after boot however much traffic was flowing, and the next
 // request of a live session met a closed port. Traffic here keeps
 // flowing for several timeouts; if the proxy exits under it, a request
-// fails and this test says so.
+// fails and this test says so. The table here was read once and then
+// broke, and it never named the token: the one of those states in which
+// a token still forwards at the default upstream. A proxy that never
+// read a table refuses a token instead of guessing where it goes.
 func TestUnresolvedTrafficKeepsTheProxyAlive(t *testing.T) {
 	const idle = 300 * time.Millisecond
 	e := proxytest.New(t, proxytest.WithIdleTimeout(idle))
-	e.WriteTable(unreadableTable)
+	e.WriteTable(`{"projects":{}}`)
+	e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_read"}`)})
+	if resp := e.Post("/t/tok1/v1/messages", `{"m":0}`, nil); resp.StatusCode != 200 {
+		t.Fatalf("status = %d while the table could be read, want the exchange forwarded", resp.StatusCode)
+	}
+	e.Sandbox().CorruptRoutingTable()
 
 	started := time.Now()
 	for i := 0; time.Since(started) < 3*idle; i++ {

@@ -467,6 +467,7 @@ func TestCompressedResponseRecordedDecoded(t *testing.T) {
 
 func TestHotReloadedTableEnablesTokenWithoutRestart(t *testing.T) {
 	e := proxytest.New(t)
+	e.WriteTable(`{"projects":{}}`)
 	defaultUp := e.Upstream
 	project := fakeupstream.New(t)
 

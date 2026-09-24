@@ -169,9 +169,12 @@ type Selfcheck struct {
 	// Decision and PauseReason carry the routing verdict verbatim, so a
 	// surface above the proxy can explain why recording is off instead
 	// of only reporting that it is.
-	Decision       string `json:"decision"`
-	PauseReason    string `json:"pause_reason,omitempty"`
-	ProjectIDHash  string `json:"project_id_hash"`
+	Decision      string `json:"decision"`
+	PauseReason   string `json:"pause_reason,omitempty"`
+	ProjectIDHash string `json:"project_id_hash"`
+	// UpstreamOrigin is empty when the verdict forwards nothing: an
+	// exchange for this token would be refused, so no upstream would
+	// receive it, and naming the default one would say otherwise.
 	UpstreamOrigin string `json:"upstream_origin"`
 	SpoolWritable  bool   `json:"spool_writable"`
 }
@@ -568,6 +571,10 @@ func (s *Server) serveTokenInternal(w http.ResponseWriter, r *http.Request, toke
 	if verdict.Resolves() {
 		upstream = route.Upstream
 	}
+	origin := ""
+	if verdict.Forwards() {
+		origin = envelope.Origin(upstream, s.cfg.Dialect.OfficialUpstream)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Selfcheck{
 		Service:        ServiceName,
@@ -577,7 +584,7 @@ func (s *Server) serveTokenInternal(w http.ResponseWriter, r *http.Request, toke
 		Decision:       string(verdict.Decision),
 		PauseReason:    string(verdict.PauseReason),
 		ProjectIDHash:  route.ProjectIDHash,
-		UpstreamOrigin: envelope.Origin(upstream, s.cfg.Dialect.OfficialUpstream),
+		UpstreamOrigin: origin,
 		SpoolWritable:  s.cfg.Spool.Writable() == nil,
 	})
 }

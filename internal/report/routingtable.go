@@ -12,8 +12,9 @@ import (
 
 // The routing table records which projects are enabled. When it exists
 // and cannot be read, which projects those are is unknown, and unknown
-// is not "none enabled": no token resolves, so traffic is forwarded and
-// nothing is recorded, on every project of the device at once.
+// is not "none enabled": a token the proxy's last good read named is
+// still forwarded to the upstream that read gave it, and nothing is
+// recorded, on every project of the device at once.
 //
 // No command of trajector's ends it. The file is the only record of
 // the grants, so moving or rewriting it is the user's decision, and a

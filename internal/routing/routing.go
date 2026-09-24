@@ -43,6 +43,17 @@ const (
 	// ForwardOnlyPaused means recording is suspended device-wide while
 	// every grant stands.
 	ForwardOnlyPaused Decision = "paused"
+	// ForwardOnlyUnreadable means the table cannot be read now, and the
+	// last table this process read names the token: forward at the
+	// upstream that table recorded and record nothing. Which grants
+	// stand now is unknown, and unknown is not consent.
+	ForwardOnlyUnreadable Decision = "unreadable"
+	// NeverRead means the table cannot be read and this process has
+	// never read it, so where the token's traffic goes is not known at
+	// all. Nothing may be forwarded for it: the default upstream is a
+	// guess, and for a project chained to a third-party relay the guess
+	// sends the relay's credential headers to the official endpoint.
+	NeverRead Decision = "never_read"
 )
 
 // PauseReason is the device-wide pause written into the routing table.
@@ -197,8 +208,13 @@ type Verdict struct {
 // Records reports whether this exchange may be recorded.
 func (v Verdict) Records() bool { return v.Decision == Record }
 
-// Resolves reports whether the token names a project at all.
-func (v Verdict) Resolves() bool { return v.Decision != Unknown }
+// Resolves reports whether the token names a project: whether the
+// Route returned beside the verdict says where to forward.
+func (v Verdict) Resolves() bool { return v.Decision != Unknown && v.Decision != NeverRead }
+
+// Forwards reports whether this exchange may be forwarded at all. It is
+// false only for NeverRead.
+func (v Verdict) Forwards() bool { return v.Decision != NeverRead }
 
 type tableFile struct {
 	// PausedReason, when set, suspends recording for every project at
@@ -242,15 +258,28 @@ type upstreamMoveRecord struct {
 }
 
 // Table is a cached view of the on-disk routing table, safe for
-// concurrent lookups.
+// concurrent lookups. While the file cannot be read, the table keeps
+// what it last read: every token that table named keeps forwarding
+// where it was granted to, and none is recorded.
+//
+// A missing file is a file that cannot be read. After this process read
+// the table, a missing file is most likely one moved aside by hand, while
+// the injections it routed still stand; reading it as an empty table
+// would send every one of those tokens to the default upstream. Before
+// this process read it, a missing file places no token: a request that
+// carries one is refused, and a request that carries none goes to the
+// default upstream as always.
 type Table struct {
 	path string
 	ttl  time.Duration
 
-	mu           sync.Mutex
+	mu sync.Mutex
+	// routes, revoked and pausedReason are the last table this process
+	// read. read reports that such a read happened at all.
 	routes       map[string]Route
 	revoked      map[string]bool
 	pausedReason PauseReason
+	read         bool
 	checkedAt    time.Time
 	mtime        time.Time
 	size         int64
@@ -273,7 +302,20 @@ func (t *Table) Lookup(token string) (Route, Verdict) {
 	defer t.mu.Unlock()
 	t.refreshLocked()
 	r, known := t.routes[token]
-	v := verdictFor(known, t.revoked[token], t.pausedReason)
+	var v Verdict
+	switch {
+	case t.loadErr == nil:
+		v = verdictFor(known, t.revoked[token], t.pausedReason)
+	case known:
+		v = Verdict{Decision: ForwardOnlyUnreadable}
+	case !t.read:
+		v = Verdict{Decision: NeverRead}
+	default:
+		// The last table read did not name the token either, so the
+		// token is unknown as it was then: the default upstream is
+		// where such traffic went while the table could be read.
+		v = Verdict{Decision: Unknown}
+	}
 	if !v.Resolves() {
 		return Route{}, v
 	}
@@ -297,9 +339,8 @@ func verdictFor(known, revoked bool, paused PauseReason) Verdict {
 	}
 }
 
-// Err reports the most recent load failure, for status and doctor
-// surfaces. A missing file is the normal nothing-enabled state, not an
-// error.
+// Err reports the most recent load failure. A missing file is one, as
+// the Table type states.
 func (t *Table) Err() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -316,18 +357,13 @@ func (t *Table) refreshLocked() {
 
 	info, err := os.Stat(t.path)
 	if err != nil {
-		// Consent is unverifiable without a readable table, so no token
-		// may resolve; forwarding is unaffected by design.
-		t.routes, t.revoked, t.pausedReason = nil, nil, ""
-		if os.IsNotExist(err) {
-			t.loadErr = nil
-		} else {
-			t.loadErr = &UnreadableError{Path: t.path, Err: err}
-		}
+		// Consent is unverifiable without a readable table, so nothing
+		// records; the last table read still says where traffic goes.
+		t.loadErr = &UnreadableError{Path: t.path, Err: err}
 		t.mtime, t.size = time.Time{}, 0
 		return
 	}
-	if t.routes != nil && info.ModTime().Equal(t.mtime) && info.Size() == t.size && t.loadErr == nil {
+	if t.read && t.loadErr == nil && info.ModTime().Equal(t.mtime) && info.Size() == t.size {
 		return
 	}
 
@@ -336,12 +372,12 @@ func (t *Table) refreshLocked() {
 	// surfaces here as a spurious load error.
 	data, err := fsatomic.ReadFile(t.path)
 	if err != nil {
-		t.routes, t.revoked, t.loadErr = nil, nil, &UnreadableError{Path: t.path, Err: err}
+		t.loadErr = &UnreadableError{Path: t.path, Err: err}
 		return
 	}
 	var f tableFile
 	if err := json.Unmarshal(data, &f); err != nil {
-		t.routes, t.revoked, t.loadErr = nil, nil, &UnreadableError{Path: t.path, Err: err}
+		t.loadErr = &UnreadableError{Path: t.path, Err: err}
 		return
 	}
 	routes := make(map[string]Route, len(f.Projects))
@@ -352,6 +388,6 @@ func (t *Table) refreshLocked() {
 			revoked[token] = true
 		}
 	}
-	t.routes, t.revoked, t.pausedReason, t.loadErr = routes, revoked, f.PausedReason, nil
+	t.routes, t.revoked, t.pausedReason, t.read, t.loadErr = routes, revoked, f.PausedReason, true, nil
 	t.mtime, t.size = info.ModTime(), info.Size()
 }
