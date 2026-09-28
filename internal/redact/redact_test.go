@@ -1113,6 +1113,23 @@ func TestBoundedCredentialValueOverRedactionGuards(t *testing.T) {
 	})
 }
 
+func TestPasswordWithCredentialContextIsRedacted(t *testing.T) {
+	t.Parallel()
+	password := "hunter" + "42deploy"
+	assertFieldRedactionCases(t, []stringRedactionCase{
+		{
+			name:  "password passed to a login call is redacted",
+			input: `login("deploy", "` + password + `")`,
+			want:  `login("deploy", "REDACTED")`,
+		},
+		{
+			name:  "password beside a host and a user is redacted",
+			input: "host: 10.20.30.40:5432\nuser: deploy\npassword: " + password,
+			want:  "host: 10.20.30.40:5432\nuser: deploy\npassword: REDACTED",
+		},
+	})
+}
+
 // Pins that single-char "masks" and arbitrary <…> wrappers do NOT count as
 // placeholders, so credentials that happen to be short or bracket-wrapped
 // still get redacted. The opposite cases (`***`, `<password>`, etc.) are

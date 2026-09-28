@@ -4,6 +4,50 @@ All notable changes to trajector are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- Masking rules are updated to betterleaks v1.8.1. Its one generic
+  rule is now four (API key, password, user name and credential URI),
+  and the rule set grows from 325 to 417 rules. Rules rated below
+  medium confidence, which are the generic API key, password and user
+  name rules, are not used: they matched ordinary settings,
+  placeholders and URL query values, and a password match ran on past
+  `&` to the end of a URL.
+- A value under a key that names a secret is masked when it has the
+  shape of one: at least 8 characters that mix letters with digits or
+  symbols (under a password key, letters alone will do when they are
+  not spelled as words), that do not repeat themselves, and that are
+  not a placeholder, a name joined with `_`, `-`, `.` or `/`, or a
+  reference such as a path, a URL, a variable or a publishable key.
+  The keys are those that end in `password`, `passwd`, `pwd`, `密码`,
+  `口令`, `token`, `secret`, `api_key`, `access_key`, `secret_key` or
+  `private_key` (so `X-Api-Key`, `client_secret` and `auth_token`
+  too), those whose last word is `key`, `auth`, `credential`,
+  `credentials` or `creds`, as in `SIGNING_KEY` or `encryptionKey`,
+  and `pw`, `AK` and `SK`. A trailing number does not change a key
+  (`API_KEY_2`). The key and value may be written as `key: value`,
+  `key=value`, a JSON field, a markdown bold key, an index assignment
+  (`env["KEY"] = "…"`) or two arguments of a call
+  (`setenv("KEY", "…")`). Each key of a chain on one line, as in
+  `api_key=…&client_secret=…` or `token=abc,secret=…`, is read on its
+  own. A value too short for the entropy check, such as a 20-character
+  hex API key or a 16-character password, was masked before only by
+  the generic rule above.
+- A password next to a login target is masked when it is at least 4
+  characters of printable ASCII with no space, quote, bracket, `$`,
+  `;` or backslash, and is not a placeholder or a reference such as a
+  path, a URL or a variable. That is a value under an unquoted
+  password key within three lines of `user@host`, an IPv4 address or
+  a `host:` line, unless it ends in `,` or `;` as an entry of a code
+  literal does; a value after `user@host pass` or
+  `user@host:port password`, where the word must end at a space or a
+  separator, so `passwordless` and `passphrase` are other words; and
+  the `-p` argument of `sshpass`. A secret-shaped token that ends a
+  line after `user@host:port` is masked too. Two or more AWS access
+  key ids with no separator between them are masked as one.
+
 ## [0.3.4] - 2026-09-24
 
 ### Added

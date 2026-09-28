@@ -9,14 +9,14 @@ import "regexp"
 // credential formats the other secret layers don't reliably flag.
 //
 // The betterleaks layer's coverage of these differs per prefix (verified
-// against the vendored betterleaks v1.5.0 rule source):
+// against the vendored betterleaks v1.8.1 rule source):
 //   - sb_secret_: the supabase-project-api-key rule is a *composite* rule
-//     (RequiredRules: supabase-project-url) that only fires when a matching
+//     (components: supabase-project-url) that only fires when a matching
 //     "*.supabase.co" URL is present in the same content, on top of an
 //     entropy<=4.0 filter. A secret captured on its own therefore passes
 //     straight through regardless of entropy.
 //   - sbp_: the supabase-management-token rule fires standalone (no
-//     RequiredRules), but only matches an exact 40-character lowercase body
+//     components), but only matches an exact 40-character lowercase body
 //     and is further filtered by entropy<=3.5 and a two-digit minimum. A
 //     high-entropy 40-char sbp_ token captured alone IS caught by
 //     betterleaks; what this layer adds for sbp_ is coverage of bodies at
@@ -69,8 +69,8 @@ import "regexp"
 // the four assignable prefixes (AKIA long-term user key, ASIA temporary
 // session key, ABIA bearer token, ACCA context-specific credential) followed
 // by a 16-character base32 body. betterleaks' aws-access-token rule matches
-// that shape on its own, but it is a *composite* rule (RequiredRules:
-// aws-secret-access-key, WithinLines 5): it only fires when a secret access
+// that shape on its own, but it is a *composite* rule (components:
+// aws-secret-access-key, within 5L): it only fires when a secret access
 // key sits within five lines of the id. An id captured alone — in prose, in
 // tool output, in the `aws_access_key_id = ...` line of a credentials file,
 // or as the value of `AWS_ACCESS_KEY_ID=` — never reaches its filter. The
@@ -102,11 +102,15 @@ import "regexp"
 // behind it. The trailing \b stays: an AWS id body is a fixed length and a
 // Slack body excludes `_`, so the anchor cannot truncate a real secret, and
 // it keeps the fixed-length AWS pattern from firing inside a longer
-// uppercase identifier.
+// uppercase identifier. Two or more ids glued together are one run: the
+// anchor holds after the last of them, and the run is masked as one
+// region, so a pasted list with its separators lost is not left whole.
+// The generic key rule of the pattern layer used to take that run; it is
+// filtered out below medium confidence (see minRuleConfidence).
 var providerTokenPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`sb_secret_[A-Za-z0-9_-]{20,}`),
 	regexp.MustCompile(`sbp_[a-z0-9_-]{20,}`),
-	regexp.MustCompile(`(?:AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}\b`),
+	regexp.MustCompile(`(?:(?:AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16})+\b`),
 	regexp.MustCompile(`xox[abeoprs]-[0-9A-Za-z-]{10,}\b`),
 }
 

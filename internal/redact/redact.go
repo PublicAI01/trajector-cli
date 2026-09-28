@@ -177,8 +177,27 @@ var (
 	// newDetector builds the pattern layer. It is a variable so a test can
 	// make construction fail: the refusal in JSONLBytes is the guarantee,
 	// and a guarantee no test can reach is not one.
-	newDetector = detect.NewDetectorDefaultConfig
+	newDetector = newDefaultDetector
 )
+
+// minRuleConfidence keeps betterleaks findings rated at least this
+// confident. The findings below it come from the generic key, password
+// and username rules when no nearby context marks the value as a
+// credential: they match ordinary settings, placeholders and URL query
+// values, and an unquoted password match runs on past `&` to the end of
+// the URL. A keyed value too short for the entropy layer, such as
+// `api_key: ` followed by 20 hex characters, is then no longer masked by
+// this layer; layer 6 masks it instead (see credentials.go).
+const minRuleConfidence = "medium"
+
+func newDefaultDetector() (*detect.Detector, error) {
+	d, err := detect.NewDetectorDefaultConfig()
+	if err != nil {
+		return nil, err
+	}
+	d.MinConfidence = minRuleConfidence
+	return d, nil
+}
 
 // loadDetector builds the betterleaks detector once and remembers how it
 // went. The error is kept rather than dropped: this layer carries 260+
@@ -247,7 +266,9 @@ var connectionStringRules = []connectionStringRule{
 //     formats betterleaks misses in isolation (e.g. Supabase sb_secret_)
 //  4. Credentialed URIs: URLs containing userinfo passwords
 //  5. Database connection strings: JDBC, keyword DSNs, and semicolon strings
-//  6. Bounded credential key/value pairs: DB_PASSWORD=...
+//  6. Credentials named by their surroundings: DB_PASSWORD=..., a key
+//     that names a secret over a value shaped like one, a password
+//     beside a login target (see credentials.go)
 //  7. PII detection: email and phone patterns (on by default)
 //
 // A string is redacted if ANY method flags it.
@@ -256,7 +277,8 @@ func redactString(s string) string {
 }
 
 // redactDeterministic masks only what layers 2-6 recognize: a credential
-// named by its own format, never one merely judged to look random.
+// named by its own format or by what surrounds it, never a value judged
+// random on its own.
 //
 // It exists for the protected fields of jsonFieldPolicy. The entropy
 // layer is the only layer those fields ever needed protection from — a
@@ -351,8 +373,10 @@ func detectLayers(s string, full bool) []taggedRegion {
 	// 5. Database and connection-string detection (secrets — always on).
 	regions = append(regions, detectConnectionStrings(s)...)
 
-	// 6. Bounded credential key/value detection (secrets — always on).
+	// 6. Credentials named by their surroundings (secrets — always on).
 	regions = append(regions, detectCredentialValues(s)...)
+	regions = append(regions, detectKeyedCredentials(s)...)
+	regions = append(regions, detectLoginPasswords(s)...)
 
 	// 7. PII detection (on by default, and only on a full scan: a
 	// protected field keeping its PII is a standing decision of its own,
@@ -586,12 +610,21 @@ func isRepeatedCharPlaceholder(s string) bool {
 	return true
 }
 
-func isCredentialJSONSecretKey(key string, credentialContext bool) bool {
+// isCredentialJSONValue is the document walk's verdict on one key and
+// its value. A DB-prefixed password key, or a bare password key in a
+// credential-shaped object, makes any non-placeholder value a
+// credential. Any other key that names a secret needs a value shaped
+// like one: the same verdict findKeyedValues reaches in text.
+func isCredentialJSONValue(key, value string, credentialContext bool) bool {
+	if !hasNonPlaceholderPasswordValue(value) {
+		return false
+	}
 	normalized := normalizeCredentialJSONKey(key)
-	if credentialJSONKeyRegex.MatchString(normalized) {
+	if credentialJSONKeyRegex.MatchString(normalized) ||
+		credentialContext && genericPasswordKeyRegex.MatchString(normalized) {
 		return true
 	}
-	return credentialContext && genericPasswordKeyRegex.MatchString(normalized)
+	return namesOpaqueSecret(key, value)
 }
 
 func isCredentialJSONObject(obj map[string]any) bool {
@@ -993,7 +1026,7 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 	var repls []jsonReplacement
 	// elementCredential collects the values some key named a credential.
 	// An array has no field names, so its elements are walked with an
-	// empty key (see the []any arm below) and isCredentialJSONSecretKey
+	// empty key (see the []any arm below) and isCredentialJSONValue
 	// can never reach them: until 2026-09-16 the same secret in
 	// {"db":{"password":"hunter2hunter",…}} and in
 	// {"argv":[…,"hunter2hunter"]} was masked in the first place and
@@ -1098,7 +1131,7 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 			// recognizable token kept the rest of itself in the clear,
 			// while one nothing recognized was masked entirely. It is a
 			// key-name verdict, not an entropy one, so it holds under both.
-			credentialKey := isCredentialJSONSecretKey(key, credentialContext) && hasNonPlaceholderPasswordValue(val)
+			credentialKey := isCredentialJSONValue(key, val, credentialContext)
 			if credentialKey {
 				redacted, deterministic = redactedPlaceholder, redactedPlaceholder
 			}
@@ -1222,13 +1255,16 @@ func shannonEntropy(s string) float64 {
 	if len(s) == 0 {
 		return 0
 	}
-	freq := make(map[byte]int)
+	var freq [256]int
 	for i := range len(s) {
 		freq[s[i]]++
 	}
 	length := float64(len(s))
 	var entropy float64
 	for _, count := range freq {
+		if count == 0 {
+			continue
+		}
 		p := float64(count) / length
 		entropy -= p * math.Log2(p)
 	}
