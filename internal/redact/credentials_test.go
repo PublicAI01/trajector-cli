@@ -186,6 +186,9 @@ func TestSecretNamedKeyOverRedactionGuards(t *testing.T) {
 		"secret: webhookSecretARN",
 		"token: @scope/package-name",
 		"--- PASS: TestJSONLBytesKeepsTheRecord/SecretNamedKey (0.00s)",
+		"api_key: sk-****" + fakeAlnum16[8:],
+		"token: " + fakeAlnum16[:8] + "..." + fakeAlnum16[8:],
+		`{"api_key": "` + fakeAlnum16[:8] + "****" + fakeHex20[:8] + `"}`,
 	}
 	var cases []stringRedactionCase
 	for _, in := range unchanged {
@@ -268,6 +271,7 @@ func TestLoginPasswordOverRedactionGuards(t *testing.T) {
 		"password built by concatenation beside a host":             "ssh " + fakeLoginHost + "\npassword: '\" + pw + \"'",
 		"password word run into a longer word after a login target": "ssh " + fakeLoginHost + " passwordless login works",
 		"pass run into a longer word after a login target":          fakeLoginHost + " passphrase prompt",
+		"masked password beside a host":                             "ssh " + fakeLoginHost + "\npassword: " + fakeAlnum16[:4] + "****" + fakeAlnum16[12:],
 	}
 	var cases []stringRedactionCase
 	for name, in := range unchanged {

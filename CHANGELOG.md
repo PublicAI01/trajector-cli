@@ -47,6 +47,10 @@ All notable changes to trajector are documented here. The format follows
   the `-p` argument of `sshpass`. A secret-shaped token that ends a
   line after `user@host:port` is masked too. Two or more AWS access
   key ids with no separator between them are masked as one.
+- The two rules above do not take a value that holds `***` or `...`
+  for a secret: that is a key shown masked or cut short, such as
+  `sk-****Ab12`. A database password key, a connection string and a
+  JSON password beside host and user keys still mask such a value.
 
 ## [0.3.4] - 2026-09-24
 

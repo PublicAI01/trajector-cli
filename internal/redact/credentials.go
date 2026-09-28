@@ -261,7 +261,7 @@ func isOpaqueValue(value string, lettersAlone bool, minEntropy float64) bool {
 			return false
 		}
 	}
-	if isPlaceholderSecretValue(value) || isReferenceValue(value) {
+	if isPlaceholderSecretValue(value) || isShownMaskedOrCutShort(value) || isReferenceValue(value) {
 		return false
 	}
 	core := longestUnseparatedRun(value)
@@ -327,7 +327,27 @@ func isLoginSecretValue(value string) bool {
 			return false
 		}
 	}
-	return !isPlaceholderSecretValue(value) && !isReferenceValue(value)
+	return !isPlaceholderSecretValue(value) && !isShownMaskedOrCutShort(value) && !isReferenceValue(value)
+}
+
+// placeholderSecretMarks are the substrings of a key shown masked or cut
+// short ("sk-****Ab12", "Ab12...Yz89"): what is left after something
+// else hid the secret. A generated secret holds neither. A vendor's
+// documented sample ("…EXAMPLE") is not one of them, for the reason
+// given in providers.go: masking an example costs a few characters of
+// it.
+var placeholderSecretMarks = []string{"***", "..."}
+
+// isShownMaskedOrCutShort reports whether a value holds one of
+// placeholderSecretMarks. Only the verdicts that read a value by its
+// shape (isOpaqueValue, isLoginSecretValue) ask it. A value under a
+// database password key or in a connection string is masked unless it
+// is a placeholder, and a value cut short there can still hold most of
+// the password.
+func isShownMaskedOrCutShort(value string) bool {
+	return slices.ContainsFunc(placeholderSecretMarks, func(mark string) bool {
+		return strings.Contains(value, mark)
+	})
 }
 
 // namesOpaqueSecret is the one verdict that holds with no context at all:

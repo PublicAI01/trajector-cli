@@ -1130,6 +1130,45 @@ func TestPasswordWithCredentialContextIsRedacted(t *testing.T) {
 	})
 }
 
+func TestPasswordShownMaskedOrCutShortIsRedactedUnderADatabaseKeyOrInAConnectionString(t *testing.T) {
+	t.Parallel()
+	cutShort := "hun" + "..." + "ter2"
+	assertFieldRedactionCases(t, []stringRedactionCase{
+		{
+			name:  "database password key with a value cut short",
+			input: "DB_PASSWORD=" + cutShort,
+			want:  "DB_PASSWORD=REDACTED",
+		},
+		{
+			name:  "database password key with a value shown masked",
+			input: "DB_PASSWORD=pa**ss***word",
+			want:  "DB_PASSWORD=REDACTED",
+		},
+		{
+			name:  "keyword connection string",
+			input: "host=db user=u password=" + cutShort + " dbname=x",
+			want:  "REDACTED",
+		},
+		{
+			name:  "semicolon connection string",
+			input: "Server=db;User Id=u;Password=" + cutShort + ";",
+			want:  "REDACTED;",
+		},
+	})
+	assertRawRedactionCases(t, []stringRedactionCase{
+		{
+			name:  "password key beside host and user keys",
+			input: `{"host":"db","user":"u","password":"` + cutShort + `"}`,
+			want:  `{"host":"db","user":"u","password":"REDACTED"}`,
+		},
+		{
+			name:  "database password key",
+			input: `{"db_password":"` + cutShort + `"}`,
+			want:  `{"db_password":"REDACTED"}`,
+		},
+	})
+}
+
 // Pins that single-char "masks" and arbitrary <…> wrappers do NOT count as
 // placeholders, so credentials that happen to be short or bracket-wrapped
 // still get redacted. The opposite cases (`***`, `<password>`, etc.) are
