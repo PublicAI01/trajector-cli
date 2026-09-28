@@ -59,6 +59,11 @@ type Case struct {
 	// with its line ending removed. It is nil for a fixture that ships
 	// no stream.
 	Records [][]byte
+	// Restored holds, for a stream in which a record refers to an image
+	// or document payload, each such record as it reads with every
+	// reference put back: the record this client recorded, before the
+	// batch rewrote it. It is nil for a fixture that ships none.
+	Restored [][]byte
 }
 
 // Meta is the fixture's own statement of what it covers.
@@ -140,6 +145,9 @@ func Load(dir string) ([]Case, error) {
 			return nil, err
 		}
 		if c.Records, err = readRecords(filepath.Join(base, "records.jsonl")); err != nil {
+			return nil, err
+		}
+		if c.Restored, err = readRecords(filepath.Join(base, "records.restored.jsonl")); err != nil {
 			return nil, err
 		}
 		cases = append(cases, c)

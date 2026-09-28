@@ -247,3 +247,147 @@ func TestBuild_WithUploadOnTheReadResultCopyIsMaskedAsText(t *testing.T) {
 		t.Fatalf("a Read result was rewritten, or no longer passed through redaction:\n%.300s", body)
 	}
 }
+
+// callInProject is callWithImage for a given project.
+func callInProject(t *testing.T, id, sessionKey, project, payload string, at time.Time) spool.Entry {
+	t.Helper()
+	return storedRawcall(t, id, sessionKey, project,
+		`{"model":"m","metadata":{"user_id":"`+sessionKey+`"},"messages":[{"role":"user","content":[`+
+			`{"type":"tool_result","tool_use_id":"toolu_01","content":[`+pngBlock(payload)+`]}]}]}`,
+		`{"id":"`+id+`","type":"message","content":[]}`, at)
+}
+
+// copyKinds names how each packed record carries its image copies, in
+// stream order.
+func copyKinds(t *testing.T, b batch.Batch, payload string) []string {
+	t.Helper()
+	var kinds []string
+	for _, body := range packedBodies(t, b) {
+		for _, src := range sourcesIn(body) {
+			switch {
+			case bytes.Contains([]byte(src), []byte(`"type":"base64"`)):
+				kinds = append(kinds, "original")
+			case bytes.Contains([]byte(src), []byte(`"type":"sha256_ref","media_type":"image/png","sha256":"`+digest(payload)+`"}`)):
+				kinds = append(kinds, "reference")
+			default:
+				t.Fatalf("unexpected source %s", src)
+			}
+		}
+	}
+	return kinds
+}
+
+// The service can place the rawcalls of one session identity in one
+// session for each project and UTC date. A reference is only ever to a
+// payload of the same project and UTC date, so it resolves wherever the
+// service places the record. The date is the UTC date the record
+// states: a record written just before midnight UTC and one written
+// just after it are on two dates, and a time given in another zone
+// counts by its UTC date, not by its local one.
+func TestBuild_ARawcallRefersOnlyToAPayloadOfTheSameProjectAndUTCDate(t *testing.T) {
+	x := constructedPNG(t, 40)
+	east := time.FixedZone("UTC+8", 8*60*60)
+	in := spool.Entries{
+		callInProject(t, "req-1", "agent-user", "hash-p1", x, time.Date(2026, 8, 3, 22, 0, 0, 0, time.UTC)),
+		// 07:30 on 4 August in UTC+8 is 23:30 on 3 August in UTC.
+		callInProject(t, "req-2", "agent-user", "hash-p1", x, time.Date(2026, 8, 4, 7, 30, 0, 0, east)),
+		callInProject(t, "req-3", "agent-user", "hash-p1", x, time.Date(2026, 8, 3, 23, 59, 59, 999_999_999, time.UTC)),
+		callInProject(t, "req-4", "agent-user", "hash-p1", x, time.Date(2026, 8, 4, 0, 0, 0, 1, time.UTC)),
+		callInProject(t, "req-5", "agent-user", "hash-p2", x, time.Date(2026, 8, 4, 0, 0, 1, 0, time.UTC)),
+		callInProject(t, "req-6", "agent-user", "hash-p2", x, time.Date(2026, 8, 4, 0, 0, 2, 0, time.UTC)),
+	}
+	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{Sent: func(string, string) bool { return false }})
+	if err != nil || len(refused) != 0 {
+		t.Fatalf("Build = %v, refused %+v", err, refused)
+	}
+	want := []string{"original", "reference", "reference", "original", "original", "reference"}
+	if got := copyKinds(t, b, x); !slices.Equal(got, want) {
+		t.Fatalf("copies = %v, want %v: one original for each project and UTC date", got, want)
+	}
+	if len(b.Originals) != 3 {
+		t.Fatalf("Originals = %v, want one for each project and UTC date", b.Originals)
+	}
+}
+
+// The same holds across batches: what an acknowledged batch carried in
+// full on one UTC date is not referred to from the next date.
+func TestBuild_APayloadSentOnOneUTCDateGoesInFullAgainOnTheNext(t *testing.T) {
+	x := constructedPNG(t, 40)
+	first, _, err := batch.Build("batch-1", buildTime, "test",
+		spool.Entries{callInProject(t, "req-1", "agent-user", "hash-p1", x, time.Date(2026, 8, 3, 23, 59, 59, 0, time.UTC))},
+		batch.Run{}, mediablock.Policy{Sent: func(string, string) bool { return false }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := func(scope, d string) bool {
+		return slices.Contains(first.Originals, mediablock.Original{Scope: scope, Digest: d})
+	}
+	second, _, err := batch.Build("batch-2", buildTime, "test", spool.Entries{
+		callInProject(t, "req-2", "agent-user", "hash-p1", x, time.Date(2026, 8, 4, 0, 0, 1, 0, time.UTC)),
+		callInProject(t, "req-3", "other-user", "hash-p1", x, time.Date(2026, 8, 3, 23, 59, 59, 500_000_000, time.UTC)),
+		callInProject(t, "req-4", "agent-user", "hash-p1", x, time.Date(2026, 8, 3, 23, 59, 59, 500_000_000, time.UTC)),
+	}, batch.Run{}, mediablock.Policy{Sent: sent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stream order: agent-user's calls oldest first, then other-user's.
+	want := []string{"reference", "original", "original"}
+	if got := copyKinds(t, second, x); !slices.Equal(got, want) {
+		t.Fatalf("copies = %v, want %v", got, want)
+	}
+}
+
+// A rawcall that states no session identity is a session of its own on
+// the service side. Nothing in it refers to a payload, not even to an
+// earlier copy in the same record, and nothing refers to it.
+func TestBuild_ARawcallWithNoSessionIdentityCarriesEveryCopyInFull(t *testing.T) {
+	x := constructedPNG(t, 40)
+	twice := `{"model":"m","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":[` +
+		pngBlock(x) + `,` + pngBlock(x) + `]}]}]}`
+	in := spool.Entries{
+		storedRawcall(t, "req-1", "", "hash-p1", twice, `{"id":"req-1","type":"message","content":[]}`, buildTime),
+		storedRawcall(t, "req-2", "", "hash-p1", twice, `{"id":"req-2","type":"message","content":[]}`, buildTime.Add(time.Second)),
+	}
+	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{Sent: func(string, string) bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"original", "original", "original", "original"}
+	if got := copyKinds(t, b, x); !slices.Equal(got, want) {
+		t.Fatalf("copies = %v, want %v", got, want)
+	}
+	if len(b.Originals) != 0 {
+		t.Fatalf("Originals = %v, want none: no later record can refer to them", b.Originals)
+	}
+}
+
+// withStatedTimestamp is the entry with its record's capture timestamp
+// replaced by text that no clock wrote.
+func withStatedTimestamp(t *testing.T, e spool.Entry, stated string) spool.Entry {
+	t.Helper()
+	was := `"timestamp":"` + e.Timestamp.UTC().Format(time.RFC3339Nano) + `"`
+	if !bytes.Contains(e.Raw, []byte(was)) {
+		t.Fatalf("record states no timestamp %s", was)
+	}
+	e.Raw = bytes.Replace(e.Raw, []byte(was), []byte(`"timestamp":"`+stated+`"`), 1)
+	return e
+}
+
+// The service reads a date as the first ten characters of the stated
+// timestamp, and it can count characters in a different unit than
+// bytes. Two stated timestamps that differ within those ten characters
+// must not share a scope, even when their first ten bytes are the same.
+func TestBuild_AStatedTimestampBeyondASCIIIsTakenWhole(t *testing.T) {
+	x := constructedPNG(t, 40)
+	in := spool.Entries{
+		withStatedTimestamp(t, callInProject(t, "req-1", "agent-user", "hash-p1", x, buildTime), "2026-0é-03"),
+		withStatedTimestamp(t, callInProject(t, "req-2", "agent-user", "hash-p1", x, buildTime.Add(time.Second)), "2026-0é-04"),
+	}
+	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{Sent: func(string, string) bool { return false }})
+	if err != nil || len(refused) != 0 {
+		t.Fatalf("Build = %v, refused %+v", err, refused)
+	}
+	if got, want := copyKinds(t, b, x), []string{"original", "original"}; !slices.Equal(got, want) {
+		t.Fatalf("copies = %v, want %v", got, want)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -58,10 +59,17 @@ func storedRawcall(t *testing.T, id, sessionKey, projectHash, requestBody, respo
 	}
 }
 
+// simpleRawcall is a recorded call whose request states sessionKey as
+// its session identity, or states none when sessionKey is empty, and
+// whose index entry agrees with it.
 func simpleRawcall(t *testing.T, id, sessionKey string, at time.Time) spool.Entry {
 	t.Helper()
+	metadata := ""
+	if sessionKey != "" {
+		metadata = `"metadata":{"user_id":"` + sessionKey + `"},`
+	}
 	return storedRawcall(t, id, sessionKey, "hash-p1",
-		`{"model":"m","messages":[{"role":"user","content":"hello"}]}`,
+		`{"model":"m",`+metadata+`"messages":[{"role":"user","content":"hello"}]}`,
 		`{"id":"`+id+`","type":"message"}`, at)
 }
 
@@ -621,5 +629,50 @@ func TestBuildMasksAnObservedPathAndLeavesGitsIdentifiersAlone(t *testing.T) {
 		if !strings.Contains(stream, want) {
 			t.Errorf("the stream no longer carries %q as git printed it: %s", want, stream)
 		}
+	}
+}
+
+// The scope of a rawcall's images is the session identity its own
+// record states. The day index can disagree with the record — lost,
+// hand-edited, or damaged — and a scope taken from it would let a
+// record refer to a payload of another of the service's sessions.
+func TestBuild_ARawcallIsScopedByTheSessionItsRecordStatesNotByTheIndex(t *testing.T) {
+	x := constructedPNG(t, 40)
+	indexedAs := func(e spool.Entry, key string) spool.Entry {
+		e.SessionKey = key
+		return e
+	}
+	cases := []struct {
+		name string
+		in   spool.Entries
+		want []string
+	}{
+		{
+			name: "the index joins two sessions",
+			in: spool.Entries{
+				indexedAs(callInProject(t, "req-1", "user-a", "hash-p1", x, buildTime), "user-a"),
+				indexedAs(callInProject(t, "req-2", "user-b", "hash-p1", x, buildTime.Add(time.Second)), "user-a"),
+			},
+			want: []string{"original", "original"},
+		},
+		{
+			name: "the index splits one session",
+			in: spool.Entries{
+				indexedAs(callInProject(t, "req-1", "user-a", "hash-p1", x, buildTime), "user-a"),
+				indexedAs(callInProject(t, "req-2", "user-a", "hash-p1", x, buildTime.Add(time.Second)), "user-b"),
+			},
+			want: []string{"original", "reference"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b, refused, err := batch.Build("batch-1", buildTime, "test", c.in, batch.Run{}, mediablock.Policy{Sent: func(string, string) bool { return false }})
+			if err != nil || len(refused) != 0 {
+				t.Fatalf("Build = %v, refused %+v", err, refused)
+			}
+			if got := copyKinds(t, b, x); !slices.Equal(got, c.want) {
+				t.Fatalf("copies = %v, want %v", got, c.want)
+			}
+		})
 	}
 }

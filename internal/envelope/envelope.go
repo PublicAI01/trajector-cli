@@ -323,6 +323,10 @@ func (e Envelope) Timestamp() time.Time {
 	return t
 }
 
+// StatedTimestamp is the capture timestamp as the record states it,
+// unparsed: the text a receiver of the record reads.
+func (e Envelope) StatedTimestamp() string { return e.rec.Capture.Timestamp }
+
 // ProjectIDHash is the consenting project this rawcall came from.
 func (e Envelope) ProjectIDHash() string { return e.rec.Capture.ProjectIDHash }
 

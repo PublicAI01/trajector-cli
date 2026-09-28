@@ -1,9 +1,12 @@
 package upload_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"maps"
 	"testing"
 
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/conformance"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
@@ -59,4 +62,76 @@ func fixtureAck(t *testing.T, c conformance.Case) func(fakeplatform.Request) fak
 		body["batch_id"] = uploadedBatchID(t, r)
 		return fakeplatform.JSON(c.Response.Status, body)
 	}
+}
+
+// Some shared fixtures carry a stream in which a record refers to an
+// image that an earlier record of the batch carries in full, and give
+// that record as it was recorded, before the batch rewrote it. Stored
+// as recorded and uploaded after an acknowledgement that said
+// "block_refs": true, with no image acknowledged before, the records
+// must go up as the fixture's stream, byte for byte: each copy the
+// stream carries in full goes up in full, and each reference in it is
+// the one this client writes. The service reads the same stream and
+// resolves every reference in it in the session it places the record
+// in.
+func TestSharedFixturesUploadTheRecordedCallsAsTheirStream(t *testing.T) {
+	checked := 0
+	for _, c := range sharedFixtures(t) {
+		if c.Restored == nil {
+			continue
+		}
+		checked++
+		t.Run(c.Name, func(t *testing.T) {
+			if says, _ := c.Response.Body["block_refs"].(bool); !says {
+				t.Fatal("the fixture's answer does not say block_refs: true, so no batch after it could refer to an image")
+			}
+			f := newFixture(t)
+			f.server.StubFunc("POST", "/v1/batches", fixtureAck(t, c))
+			f.storeCallRepeating(t, "req-0", "")
+			if _, err := f.uploader.Flush(true); err != nil {
+				t.Fatalf("Flush: %v", err)
+			}
+
+			recorded := map[string][]byte{}
+			for _, r := range c.Restored {
+				recorded[requestIDOf(t, r)] = r
+			}
+			var want bytes.Buffer
+			for _, r := range c.Records {
+				want.Write(r)
+				raw := r
+				if rec, ok := recorded[requestIDOf(t, r)]; ok {
+					raw = rec
+				}
+				env, err := envelope.Parse(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := f.spool.Write(env); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := f.uploader.Flush(true); err != nil {
+				t.Fatalf("Flush: %v", err)
+			}
+			reqs := f.server.Requests()
+			if got := uploadedStream(t, reqs[len(reqs)-1]); !bytes.Equal(got, want.Bytes()) {
+				t.Errorf("uploaded stream differs from the fixture's:\n got %s\nwant %s", got, want.Bytes())
+			}
+		})
+	}
+	if checked == 0 {
+		t.Error("no fixture gives a record as it was recorded")
+	}
+}
+
+func requestIDOf(t *testing.T, record []byte) string {
+	t.Helper()
+	var v struct {
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(record, &v); err != nil || v.RequestID == "" {
+		t.Fatalf("a fixture record names no request id: %v", err)
+	}
+	return v.RequestID
 }

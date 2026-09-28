@@ -16,7 +16,10 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/klauspost/compress/zstd"
 
@@ -202,8 +205,8 @@ func (a placement) before(b placement) bool {
 // decided once, when the entry is read, so every pass after that is
 // the same pass for every kind.
 //
-// scope is the session the record's image and document blocks are
-// counted in, empty for a record that names none. mask applies rewrite
+// scope is the scope the record's image and document blocks are
+// counted in, empty for a record that has none. mask applies rewrite
 // to the bytes that hold those blocks, before it masks them, and to
 // nothing else.
 type packable struct {
@@ -213,16 +216,71 @@ type packable struct {
 	mask  func(rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error)
 }
 
-// blockScope names the session a record's blocks are counted in. The
+// A scope names the session a record's blocks are counted in. The
 // recording path is part of the name: a rawcall names its session one
 // way and a session file another, the two are never converted into
 // each other, and a reference is only ever to a payload that the same
-// path carried.
-func blockScope(path, session string) string {
+// path carried. A record with no scope never refers to a payload, and
+// no other record refers to its payloads.
+//
+// A reference must resolve in the session the service places the
+// record in, so a scope never spans two of the service's sessions. It
+// can be smaller than one: that costs one more original of a payload,
+// never a reference that does not resolve.
+
+// rawcallScope is the scope of a rawcall: the session identity the
+// request states, the project, and the UTC date the record states. The
+// service places the rawcalls of one session identity in one session
+// when it can read a session from that identity, and otherwise in one
+// session for each project and UTC date. A scope that names all three
+// is inside the service's session in both cases. A session that runs
+// past midnight UTC, or across projects, sends each image in full once
+// more for each new date or project.
+//
+// A rawcall that states no session identity is a session of its own on
+// the service side, so it has no scope.
+func rawcallScope(session, projectIDHash, timestamp string) string {
 	if session == "" {
 		return ""
 	}
-	return path + "\x00" + session
+	return scopeName(envelope.KindRawcall.Source, session, projectIDHash, statedDate(timestamp))
+}
+
+// segmentScope is the scope of a segment: the session the segment
+// states, which is the session the service places it in.
+func segmentScope(session string) string {
+	if session == "" {
+		return ""
+	}
+	return scopeName(envelope.KindSegment.Source, session)
+}
+
+// scopeName joins the parts of a scope. Each part is quoted, so two
+// different lists of parts never give the same name, whatever bytes a
+// session identity holds.
+func scopeName(parts ...string) string {
+	var b strings.Builder
+	for _, part := range parts {
+		b.WriteString(strconv.Quote(part))
+	}
+	return b.String()
+}
+
+// statedDate is the date part of a timestamp as the record states it:
+// its first ten characters, which is how the service reads the date.
+// Every record states its timestamp in UTC as RFC 3339, so this is the
+// UTC date, YYYY-MM-DD. A timestamp that is not all ASCII is taken
+// whole: the service can count its characters in a different unit, and
+// the whole text never puts two records in one scope when their dates
+// differ.
+func statedDate(timestamp string) string {
+	const dateLen = len("2006-01-02")
+	for i := range len(timestamp) {
+		if timestamp[i] >= utf8.RuneSelf {
+			return timestamp
+		}
+	}
+	return timestamp[:min(dateLen, len(timestamp))]
 }
 
 // read reads one entry by what its bytes declare, never by what the
@@ -241,17 +299,16 @@ func read(e spool.Entry) (packable, error) {
 		if err != nil {
 			return packable{}, err
 		}
-		// The day index is advisory: a rawcall it missed still carries
-		// its session identity in its own envelope, and adjacency must
-		// not degrade just because the index was lost.
-		session := e.SessionKey
-		if session == "" {
-			session = env.SessionKey()
-		}
+		// The session identity is read from the record, never from the
+		// day index: the index is advisory and can be lost or disagree
+		// with the record, and the scope built from this identity must
+		// stay inside the session the service places the record in. The
+		// cost is one more decoding of the request body per rawcall.
+		session := env.SessionKey()
 		return packable{
 			entry: e,
 			at:    placement{slot: rawcallSlot, session: session, unnamed: session == "", when: e.Timestamp, id: e.ID},
-			scope: blockScope(kind.Source, session),
+			scope: rawcallScope(session, env.ProjectIDHash(), env.StatedTimestamp()),
 			mask: func(rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
 				return maskRawcall(kind, e, env, rewrite)
 			},
@@ -269,7 +326,7 @@ func read(e spool.Entry) (packable, error) {
 				slot: sessionRecordSlot, session: seg.SessionID, unnamed: seg.SessionID == "",
 				file: seg.File, index: seg.SegmentIndex, when: captureTime(seg.Capture), id: seg.RecordID,
 			},
-			scope: blockScope(kind.Source, seg.SessionID),
+			scope: segmentScope(seg.SessionID),
 			mask: func(rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
 				return maskSegment(kind, seg, rewrite)
 			},

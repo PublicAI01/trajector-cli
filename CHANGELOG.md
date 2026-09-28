@@ -39,7 +39,9 @@ All notable changes to trajector are documented here. The format follows
   Only the `source` of the block changes; signatures, message ids and
   the order of blocks stay as recorded. Until the service says so,
   every copy goes up in full. A long session that reads images again
-  and again uploads much less.
+  and again uploads much less. For a session recorded by the proxy, a
+  reference is only to a copy of the same project and the same UTC
+  date, so an image goes up in full once more after midnight UTC.
 
 ### Security
 

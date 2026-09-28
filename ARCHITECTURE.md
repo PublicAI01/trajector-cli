@@ -142,7 +142,11 @@ service has said in its last acknowledgement that it restores them, a
 copy that the service already holds becomes a reference to it; the
 record of which copies the service holds grows only on an
 acknowledgement, so a lost record costs a copy sent again, never a
-reference that cannot be resolved.
+reference that cannot be resolved. A reference is only to a copy of
+the same session as the service groups records, or of a part of that
+session: a rawcall refers within its session identity, project and
+UTC date, and a rawcall that states no session identity refers to
+nothing.
 
 The key rules are strict because they guard against double counting and
 data loss:
