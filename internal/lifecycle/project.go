@@ -14,6 +14,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 // ErrDeclined reports that the user answered no to the data agreement.
@@ -115,6 +116,13 @@ func (m *Machine) Disable(projectDir string, purge bool, io IO) error {
 	token, paired := m.deviceToken()
 	if !paired {
 		return fmt.Errorf("%w: --purge needs one to authenticate the deletion request; run `trajector login` and retry `trajector disable --purge`", ErrNotPaired)
+	}
+	// The service deletes the images and documents this project's data
+	// carried, so nothing uploaded later may refer to them. This goes
+	// first: a deletion that goes through while its answer is lost must
+	// not leave the record of them standing.
+	if err := upload.ForgetSentBlocks(m.deps.Layout.UploadDir()); err != nil {
+		return fmt.Errorf("the project is disabled locally, but no deletion was requested: forgetting which images and documents were uploaded failed: %w; retry with `trajector disable --purge`", err)
 	}
 	if err := m.service.RequestDeletion(token, w.hash); err != nil {
 		var status *platform.StatusError

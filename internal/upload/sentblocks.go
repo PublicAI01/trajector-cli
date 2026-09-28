@@ -1,10 +1,15 @@
 package upload
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 
 	"github.com/PublicAI01/trajector-cli/internal/mediablock"
 )
@@ -38,7 +43,24 @@ const (
 // safe: every digest here was taken by a service that can resolve it.
 // A file that is lost, cut, or unreadable reads as empty, and the next
 // copy of each payload goes up in full.
+//
+// What the file holds is true of one place only: the service this
+// device uploads to, under the account its device token belongs to, as
+// that account's data stood when the payloads were acknowledged. Holder
+// names that place (see holderOf), and the file is only read in the
+// place it names. Anything that can change the place, or take away
+// data the service held there, invalidates the file:
+//
+//   - another device token: pairing again, or signing out and in, can
+//     put the device under another account;
+//   - another service: the service address this device uploads to;
+//   - a deletion this device asks for: the service deletes the data the
+//     payloads were in. ForgetSentBlocks records such an event.
+//
+// Each of them changes the holder, so the file stops being read at
+// once, whichever process caused the change.
 type sentBlocks struct {
+	Holder   string        `json:"holder"`
 	Sessions []sentSession `json:"sessions"`
 }
 
@@ -55,6 +77,50 @@ func loadSentBlocks(dir string) *sentBlocks {
 
 func (s *sentBlocks) save(dir string) error {
 	return writeJSON(filepath.Join(dir, sentBlocksName), s)
+}
+
+// sentBlocksEpochName is the file that names the last event on this
+// device that took away data the service held: see ForgetSentBlocks.
+// Like sent-blocks.json, it is not among BookkeepingFiles: it is a
+// random value and tells a diagnosis nothing.
+const sentBlocksEpochName = "sent-blocks.epoch"
+
+type sentBlocksEpoch struct {
+	Epoch string `json:"epoch"`
+}
+
+// ForgetSentBlocks makes the record of which payloads the service
+// holds useless from now on, in this process and in every other. Call
+// it for every event on this device after which the service may no
+// longer hold what it acknowledged: signing out, pairing, and a request
+// to delete uploaded data. The next copy of each payload then goes up
+// in full. Call it before the event, where it can go first: a failure
+// here must not leave the event done and the record still read.
+func ForgetSentBlocks(dir string) error {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(dir, sentBlocksEpochName), sentBlocksEpoch{Epoch: hex.EncodeToString(nonce[:])}); err != nil {
+		return err
+	}
+	// The new epoch alone is enough; the old record goes as well, since
+	// it no longer has a use.
+	if err := os.Remove(filepath.Join(dir, sentBlocksName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// holderOf names the place that holds what the file records: the
+// service address, the device token, and the epoch. It is a digest, so
+// the file never holds the token. Each part is quoted, so no two lists
+// of parts give one name.
+func holderOf(dir, service, token string) string {
+	var epoch sentBlocksEpoch
+	readJSON(filepath.Join(dir, sentBlocksEpochName), &epoch)
+	sum := sha256.Sum256([]byte(strconv.Quote(service) + strconv.Quote(token) + strconv.Quote(epoch.Epoch)))
+	return hex.EncodeToString(sum[:])
 }
 
 // sessionName is how the file names a scope.

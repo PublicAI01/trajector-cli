@@ -13,6 +13,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 // constructedImage is a few dozen bytes of valid PNG, never a real
@@ -196,5 +197,114 @@ func TestFlush_ReplacesImagesWithPlaceholdersWhileUploadIsTurnedOff(t *testing.T
 	f.storeCallRepeating(t, "req-3", x)
 	if got := f.uploadWith(t, x); got != "original" {
 		t.Fatalf("a placeholder is not the image; once upload is on again the image went up as %s", got)
+	}
+}
+
+// sentAndRepeated uploads an image and then a repeat of it, and checks
+// that the repeat went up as a reference: the state every test below
+// starts its event from.
+func (f *fixture) sentAndRepeated(t *testing.T, x string) {
+	t.Helper()
+	f.storeCallRepeating(t, "req-1", x)
+	if got := f.uploadWith(t, x); got != "original" {
+		t.Fatalf("first upload carried the image as %s", got)
+	}
+	f.storeCallRepeating(t, "req-2", x)
+	if got := f.uploadWith(t, x); got != "reference" {
+		t.Fatalf("a repeat of an acknowledged image went up as %s", got)
+	}
+}
+
+// A new device token can put the device under another account, where
+// nothing this device sent before is held. The first batch under it
+// refers to nothing; once the service acknowledges under the new token
+// that it resolves references, repeats become references again.
+func TestFlush_SendsTheImageInFullAgainUnderAnotherDeviceToken(t *testing.T) {
+	f := newFixture(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
+	x := constructedImage(t)
+	f.sentAndRepeated(t, x)
+
+	f.token = "dev-tok-another"
+	f.storeCallRepeating(t, "req-3", x)
+	if got := f.uploadWith(t, x); got != "original" {
+		t.Fatalf("under another device token a repeated image went up as %s", got)
+	}
+	f.storeCallRepeating(t, "req-4", x)
+	if got := f.uploadWith(t, x); got != "reference" {
+		t.Fatalf("after an acknowledgement under the new token a repeat went up as %s", got)
+	}
+}
+
+// Another service address is another service: nothing the first one
+// acknowledged is held there. A proxy started with a new address reads
+// the same files.
+func TestFlush_SendsTheImageInFullAgainToAnotherService(t *testing.T) {
+	f := newFixture(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
+	x := constructedImage(t)
+	f.sentAndRepeated(t, x)
+
+	f.server = fakeplatform.New(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
+	f.uploader = f.newUploader(t)
+	f.storeCallRepeating(t, "req-3", x)
+	if got := f.uploadWith(t, x); got != "original" {
+		t.Fatalf("to another service a repeated image went up as %s", got)
+	}
+}
+
+// ForgetSentBlocks runs in another process than the uploader, which
+// keeps what it read of the record in memory. The next batch of the
+// running uploader still refers to nothing.
+func TestFlush_SendsTheImageInFullAgainOnceAnotherProcessForgetsWhatWasSent(t *testing.T) {
+	f := newFixture(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
+	x := constructedImage(t)
+	f.sentAndRepeated(t, x)
+
+	if err := upload.ForgetSentBlocks(f.dir); err != nil {
+		t.Fatal(err)
+	}
+	f.storeCallRepeating(t, "req-3", x)
+	if got := f.uploadWith(t, x); got != "original" {
+		t.Fatalf("after the record was forgotten a repeated image went up as %s", got)
+	}
+	f.storeCallRepeating(t, "req-4", x)
+	if got := f.uploadWith(t, x); got != "reference" {
+		t.Fatalf("after a later acknowledgement a repeat went up as %s", got)
+	}
+}
+
+// The event can come while a batch is on its way. The service may have
+// taken away what that batch carried as well, so its payloads are not
+// remembered, although it is acknowledged.
+func TestFlush_RemembersNothingOfABatchAcknowledgedAfterTheRecordWasForgotten(t *testing.T) {
+	f := newFixture(t)
+	echo := fakeplatform.EchoAck(platform.Handshake{BlockRefs: true})
+	forgetting := false
+	f.server.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		if forgetting {
+			if err := upload.ForgetSentBlocks(f.dir); err != nil {
+				t.Error(err)
+			}
+		}
+		return echo(r)
+	})
+	x := constructedImage(t)
+	f.storeCallRepeating(t, "req-0", "")
+	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+		t.Fatalf("Flush = %+v, %v", got, err)
+	}
+
+	forgetting = true
+	f.storeCallRepeating(t, "req-1", x)
+	if got := f.uploadWith(t, x); got != "original" {
+		t.Fatalf("first upload carried the image as %s", got)
+	}
+	forgetting = false
+	f.storeCallRepeating(t, "req-2", x)
+	if got := f.uploadWith(t, x); got != "original" {
+		t.Fatalf("a repeat of an image acknowledged after the record was forgotten went up as %s", got)
 	}
 }

@@ -36,6 +36,13 @@ func (m *Machine) Login(io IO) error {
 
 // pair runs the browser pairing flow and signs the device in.
 func (m *Machine) pair(io IO) error {
+	// A new pairing can be under another account, where none of the
+	// images and documents this device sent before are held. The record
+	// goes before the service is asked for anything: once the service
+	// has issued a token, a failure here would throw that token away.
+	if err := upload.ForgetSentBlocks(m.deps.Layout.UploadDir()); err != nil {
+		return fmt.Errorf("forgetting which images and documents were uploaded: %w", err)
+	}
 	pairing, err := m.service.StartPairing(m.deps.Version)
 	if err != nil {
 		return fmt.Errorf("starting pairing: %w", err)
@@ -135,6 +142,12 @@ func (m *Machine) Logout(io IO) error {
 	// whole command can simply be run again.
 	if err := m.routes.Pause(routing.PauseSignedOut); err != nil {
 		return fmt.Errorf("pausing recording: %w", err)
+	}
+	// The next pairing can be under another account. The record of the
+	// images and documents the service holds goes with this pairing, so
+	// nothing uploaded later refers to them.
+	if err := upload.ForgetSentBlocks(m.deps.Layout.UploadDir()); err != nil {
+		return fmt.Errorf("forgetting which images and documents were uploaded: %w", err)
 	}
 	if err := m.service.RevokeDevice(token); err != nil && !errors.Is(err, platform.ErrAlreadyRevoked) {
 		// An already-revoked token is the goal state and stays silent;

@@ -146,7 +146,11 @@ reference that cannot be resolved. A reference is only to a copy of
 the same session as the service groups records, or of a part of that
 session: a rawcall refers within its session identity, project and
 UTC date, and a rawcall that states no session identity refers to
-nothing.
+nothing. The record is only read for the service address and the
+device token it was written under, and signing out, pairing again and
+a request to delete uploaded data make it useless, so each of them
+costs copies sent again and never a reference to content the service
+no longer holds.
 
 The key rules are strict because they guard against double counting and
 data loss:

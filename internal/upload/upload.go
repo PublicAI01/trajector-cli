@@ -230,7 +230,9 @@ type Uploader struct {
 	refusals int
 
 	// sent is what sent-blocks.json holds, read on first use. This
-	// process is the only one that writes it.
+	// process is the only one that adds to it; another process only
+	// makes it useless, through ForgetSentBlocks, which the holder
+	// check sees on the next batch.
 	sent *sentBlocks
 }
 
@@ -616,7 +618,8 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 		// the lease has nothing left to protect.
 		return l.release()
 	}
-	b, refused, err := batch.Build(l.id(), u.deps.Now(), u.deps.Version, entries, u.deps.Run(), u.blockPolicy())
+	holder := u.holder(token)
+	b, refused, err := batch.Build(l.id(), u.deps.Now(), u.deps.Version, entries, u.deps.Run(), u.blockPolicy(holder))
 	if err != nil {
 		u.noteAttempt(err)
 		return fmt.Errorf("upload: %w", err)
@@ -663,7 +666,7 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 	res.Batches++
 	res.Records += len(b.Packed)
 	u.applyHandshake(ack.Handshake)
-	u.noteSentBlocks(l, ack.Handshake, b.Originals)
+	u.noteSentBlocks(l, ack.Handshake, b.Originals, holder, u.holder(token))
 	u.noteUpload(Receipt{
 		BatchID: ack.BatchID,
 		Records: len(b.Packed),
@@ -675,31 +678,56 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 
 // blockPolicy is what one batch does with its image and document
 // payloads. References are written only when the last acknowledgement
-// said the service puts them back. A retry may refer too: each of its
-// references points at a payload an acknowledged batch carried or that
-// the retry carries itself, so whichever attempt the service keeps can
-// be read back whole.
-func (u *Uploader) blockPolicy() mediablock.Policy {
+// said the service puts them back, and only when the record of sent
+// payloads is about the holder this batch goes to: an acknowledgement
+// from that holder has to say so first, even before a batch refers
+// within itself. A retry may refer too: each of its references points
+// at a payload an acknowledged batch carried or that the retry carries
+// itself, so whichever attempt the service keeps can be read back
+// whole.
+func (u *Uploader) blockPolicy(holder string) mediablock.Policy {
 	policy := mediablock.Policy{Omit: u.deps.OmitImagesAndDocuments()}
-	if LoadHandshake(u.deps.Dir).BlockRefs {
-		policy.Sent = u.sentBlocks().has
+	if sent := u.sentBlocks(); LoadHandshake(u.deps.Dir).BlockRefs && sent.Holder == holder {
+		policy.Sent = sent.has
 	}
 	return policy
 }
 
+// holder names where this device's batches go now; see sentBlocks.
+func (u *Uploader) holder(token string) string {
+	return holderOf(u.deps.Dir, u.deps.Service.BaseURL(), token)
+}
+
 // noteSentBlocks remembers the payloads an acknowledged batch carried in
 // full, when the acknowledgement said the service puts references back.
-// A retry adds nothing: the service may have kept an earlier attempt
-// and ignored this one, and the earlier attempt could have carried a
-// placeholder where this one carried the payload. Bookkeeping only — a
-// failure to persist costs nothing but the next copies going up in
-// full.
-func (u *Uploader) noteSentBlocks(l lease, h platform.Handshake, originals []mediablock.Original) {
-	if l.resumed || !h.BlockRefs || len(originals) == 0 {
+// built is the holder the batch was built for, and now the holder after
+// its acknowledgement. When they differ, something took away what the
+// service held while the batch was on its way, possibly this batch's
+// payloads too, and nothing is remembered. Otherwise a record about
+// another holder is replaced by an empty one about this one.
+//
+// A retry adds no payloads: the service may have kept an earlier
+// attempt and ignored this one, and the earlier attempt could have
+// carried a placeholder where this one carried the payload.
+// Bookkeeping only — a failure to persist costs nothing but the next
+// copies going up in full.
+func (u *Uploader) noteSentBlocks(l lease, h platform.Handshake, originals []mediablock.Original, built, now string) {
+	if !h.BlockRefs || built != now {
 		return
 	}
 	sent := u.sentBlocks()
-	sent.add(originals)
+	changed := false
+	if sent.Holder != now {
+		*sent = sentBlocks{Holder: now}
+		changed = true
+	}
+	if !l.resumed && len(originals) > 0 {
+		sent.add(originals)
+		changed = true
+	}
+	if !changed {
+		return
+	}
 	if err := sent.save(u.deps.Dir); err != nil {
 		u.deps.Logf("upload: persisting which image and document payloads were sent: %v", err)
 	}
