@@ -8,6 +8,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/mediablock"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
@@ -25,7 +26,7 @@ func TestTheEnvelopeSerializesEveryContractFieldInOrder(t *testing.T) {
 	seg := storedSegment(t, "sess-1", "", 0, buildTime, "{}\n")
 	snap := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime.Add(time.Minute), `{"agentId":"x"}`)
 
-	b, refused, err := batch.Build("batch-42", buildTime, "1.2.3", spool.Entries{rc, seg, snap}, batch.Run{RecordedToday: 3})
+	b, refused, err := batch.Build("batch-42", buildTime, "1.2.3", spool.Entries{rc, seg, snap}, batch.Run{RecordedToday: 3}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
 	}
@@ -65,7 +66,7 @@ func TestTheEnvelopeSerializesEveryContractFieldInOrder(t *testing.T) {
 
 func TestSessionRecordItemsCarryNoUpstreamFields(t *testing.T) {
 	seg := storedSegment(t, "sess-1", "", 0, buildTime, "{}\n")
-	b, refused, err := batch.Build("batch-1", buildTime, "test", spool.Entries{seg}, batch.Run{})
+	b, refused, err := batch.Build("batch-1", buildTime, "test", spool.Entries{seg}, batch.Run{}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
 	}
@@ -78,7 +79,7 @@ func TestSessionRecordItemsCarryNoUpstreamFields(t *testing.T) {
 
 func TestGarbledRawcallIsMarkedInTheIndex(t *testing.T) {
 	rc := storedRawcall(t, "req-g", "s", "hash-p1", `{"model":"m"}`, "not json", buildTime)
-	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(rc), batch.Run{})
+	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(rc), batch.Run{}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
 	}
@@ -99,7 +100,7 @@ func TestParseIndexRefusesOtherVersions(t *testing.T) {
 
 func TestBuildEmitsTheCurrentSchemaVersion(t *testing.T) {
 	rc := simpleRawcall(t, "req-1", "session-a", buildTime)
-	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(rc), batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(rc), batch.Run{}, mediablock.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}

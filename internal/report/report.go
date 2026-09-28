@@ -27,6 +27,18 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
+// ImageUploadState is the one option of the user config file a
+// surface states: whether image and document content goes up, or
+// only a placeholder for it.
+type ImageUploadState struct {
+	// Placeholders says the user turned their upload off.
+	Placeholders bool
+	// ConfigErr, when non-nil, is why the user config file could not be
+	// read. A file that cannot be read turns image and document upload
+	// off, so Placeholders is then true.
+	ConfigErr error
+}
+
 // SpoolState is the capture spool as one readable value.
 type SpoolState struct {
 	// Dir is where the spool lives, named in the sentences about it.
@@ -173,7 +185,10 @@ type Diagnosis struct {
 	// Version is the build that produced this diagnosis, which every
 	// surface leads with and the version gates are judged against.
 	Version string
-	Project ProjectStatus
+	// ImageUpload is what goes up of image and document content, read
+	// from the user config file for this diagnosis.
+	ImageUpload ImageUploadState
+	Project     ProjectStatus
 	// EnabledProjects counts the projects contributing from this
 	// device, which is what the verdict line states when recording is
 	// on. It is the whole device's count and not this project's, so a

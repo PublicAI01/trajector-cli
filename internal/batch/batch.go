@@ -21,6 +21,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/mediablock"
 	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
@@ -53,6 +54,10 @@ type Batch struct {
 	// redaction is indexed in the envelope by the new id and named here
 	// by the id its file has.
 	Packed spool.Entries
+	// Originals names every image or document payload the records carry
+	// in full, by scope and digest. Once the service acknowledges the
+	// batch, it holds each of them, and a later batch may refer to them.
+	Originals []mediablock.Original
 }
 
 // Refusal is one entry Build set aside instead of packing: a record
@@ -79,7 +84,12 @@ func (r Refusal) ID() string { return r.Entry.ID }
 // or slows the rest and the caller learns of every refusal at once. The
 // error reports what failed the build itself; a zero batch with a nil
 // error means no packable entry was left.
-func Build(id string, createdAt time.Time, clientVersion string, in spool.Entries, run Run) (Batch, []Refusal, error) {
+//
+// Before a record is masked, the image and document content it carries
+// is rewritten under blocks, by the one pass every kind of record goes
+// through, and redaction then masks what the rewrite left. The zero
+// policy sends the content as it is.
+func Build(id string, createdAt time.Time, clientVersion string, in spool.Entries, run Run, blocks mediablock.Policy) (Batch, []Refusal, error) {
 	if id == "" {
 		return Batch{}, nil, fmt.Errorf("batch: a batch needs an id")
 	}
@@ -106,12 +116,19 @@ func Build(id string, createdAt time.Time, clientVersion string, in spool.Entrie
 		packed spool.Entries
 	)
 	ix := newIndex(id, createdAt, clientVersion, run)
+	pass := mediablock.NewPass(blocks)
 	for _, p := range ready {
-		item, masked, err := p.mask()
+		var rewritten mediablock.Rewritten
+		rewrite := func(masked []byte) []byte {
+			rewritten = pass.Rewrite(p.scope, masked)
+			return rewritten.Data
+		}
+		item, masked, err := p.mask(rewrite)
 		if err != nil {
 			refused = append(refused, Refusal{Entry: p.entry, Err: err})
 			continue
 		}
+		pass.Keep(rewritten)
 		ix.add(item, int64(masked.Len()))
 		stream.Write(masked.Bytes())
 		packed = append(packed, p.entry)
@@ -131,7 +148,7 @@ func Build(id string, createdAt time.Time, clientVersion string, in spool.Entrie
 	if err != nil {
 		return Batch{}, refused, err
 	}
-	return Batch{ID: id, Envelope: env, Records: redact.AlreadyRedacted(compressed), Packed: packed}, refused, nil
+	return Batch{ID: id, Envelope: env, Records: redact.AlreadyRedacted(compressed), Packed: packed, Originals: pass.Originals()}, refused, nil
 }
 
 // The slots, in the order their records ride in the stream.
@@ -184,10 +201,28 @@ func (a placement) before(b placement) bool {
 // sits in the stream and how it is masked and indexed. The kind is
 // decided once, when the entry is read, so every pass after that is
 // the same pass for every kind.
+//
+// scope is the session the record's image and document blocks are
+// counted in, empty for a record that names none. mask applies rewrite
+// to the bytes that hold those blocks, before it masks them, and to
+// nothing else.
 type packable struct {
 	entry spool.Entry
 	at    placement
-	mask  func() (IndexItem, redact.RedactedBytes, error)
+	scope string
+	mask  func(rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error)
+}
+
+// blockScope names the session a record's blocks are counted in. The
+// recording path is part of the name: a rawcall names its session one
+// way and a session file another, the two are never converted into
+// each other, and a reference is only ever to a payload that the same
+// path carried.
+func blockScope(path, session string) string {
+	if session == "" {
+		return ""
+	}
+	return path + "\x00" + session
 }
 
 // read reads one entry by what its bytes declare, never by what the
@@ -216,8 +251,9 @@ func read(e spool.Entry) (packable, error) {
 		return packable{
 			entry: e,
 			at:    placement{slot: rawcallSlot, session: session, unnamed: session == "", when: e.Timestamp, id: e.ID},
-			mask: func() (IndexItem, redact.RedactedBytes, error) {
-				return maskRawcall(kind, e, env)
+			scope: blockScope(kind.Source, session),
+			mask: func(rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
+				return maskRawcall(kind, e, env, rewrite)
 			},
 		}, nil
 	case envelope.KindSegment:
@@ -233,8 +269,9 @@ func read(e spool.Entry) (packable, error) {
 				slot: sessionRecordSlot, session: seg.SessionID, unnamed: seg.SessionID == "",
 				file: seg.File, index: seg.SegmentIndex, when: captureTime(seg.Capture), id: seg.RecordID,
 			},
-			mask: func() (IndexItem, redact.RedactedBytes, error) {
-				return maskSegment(kind, seg)
+			scope: blockScope(kind.Source, seg.SessionID),
+			mask: func(rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
+				return maskSegment(kind, seg, rewrite)
 			},
 		}, nil
 	case envelope.KindMetaSnapshot:
@@ -248,7 +285,7 @@ func read(e spool.Entry) (packable, error) {
 				slot: sessionRecordSlot, session: snap.SessionID, unnamed: snap.SessionID == "",
 				file: snap.File, index: snapshotOrder, when: captureTime(snap.Capture), id: snap.RecordID,
 			},
-			mask: func() (IndexItem, redact.RedactedBytes, error) {
+			mask: func(func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
 				return maskMetaSnapshot(kind, snap)
 			},
 		}, nil
@@ -265,7 +302,7 @@ func read(e spool.Entry) (packable, error) {
 				slot: hookRecordSlot, session: snap.SessionID, unnamed: snap.SessionID == "",
 				when: captureTime(snap.Capture), id: snap.RecordID,
 			},
-			mask: func() (IndexItem, redact.RedactedBytes, error) {
+			mask: func(func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
 				return maskGitSnapshot(kind, snap)
 			},
 		}, nil
@@ -281,16 +318,16 @@ func captureTime(capture envelope.Capture) time.Time {
 	return at
 }
 
-// maskRawcall masks one rawcall and indexes it. The index copies what
-// the rawcall's own envelope says.
-func maskRawcall(kind envelope.Kind, e spool.Entry, env envelope.Envelope) (IndexItem, redact.RedactedBytes, error) {
+// maskRawcall rewrites one rawcall's blocks, masks it, and indexes it.
+// The index copies what the rawcall's own envelope says.
+func maskRawcall(kind envelope.Kind, e spool.Entry, env envelope.Envelope, rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
 	// The batch and every record in it declare one version, so a record
 	// stored under an earlier one is restated before it is masked.
 	stored, err := env.Restated()
 	if err != nil {
 		return IndexItem{}, redact.RedactedBytes{}, err
 	}
-	masked, err := redact.JSONLBytes(stored)
+	masked, err := redact.JSONLBytes(rewrite(stored))
 	if err != nil {
 		// An unmaskable record must not be shipped.
 		return IndexItem{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
@@ -302,11 +339,19 @@ func maskRawcall(kind envelope.Kind, e spool.Entry, env envelope.Envelope) (Inde
 	return item, masked, nil
 }
 
-// maskSegment masks one segment as a whole and then serializes it: the
-// lines are the unit redaction knows, and a second pass over the
-// serialized record would see them as one string and undo the field
-// policy that kept signatures intact.
-func maskSegment(kind envelope.Kind, seg envelope.Segment) (IndexItem, redact.RedactedBytes, error) {
+// maskSegment rewrites the blocks in one segment's lines, masks the
+// segment as a whole, and then serializes it: the lines are the unit
+// redaction knows, and a second pass over the serialized record would
+// see them as one string and undo the field policy that kept signatures
+// intact. The blocks are rewritten in the lines for the same reason: in
+// the serialized record they are inside one string and no longer
+// objects.
+//
+// The rewrite comes first because redaction reads a Read result's copy
+// of the content as text and masks parts of it: a placeholder taken
+// after that would state a digest and a size of no content at all.
+func maskSegment(kind envelope.Kind, seg envelope.Segment, rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
+	seg.Lines = string(rewrite([]byte(seg.Lines)))
 	masked, err := redact.RedactSegment(seg)
 	if err != nil {
 		return IndexItem{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)

@@ -50,8 +50,33 @@ func TestMalformedConfigFileFailsCommandsLoudly(t *testing.T) {
 	e := clitest.New(t)
 	e.WriteConfig("{not json")
 
-	got := e.Run("status")
+	got := e.Run("upload")
 	if got.Exit != 1 || !strings.Contains(got.Stderr, "config.json") {
-		t.Errorf("status = exit %d, stderr %q, want the unreadable config named", got.Exit, got.Stderr)
+		t.Errorf("upload = exit %d, stderr %q, want the unreadable config named", got.Exit, got.Stderr)
+	}
+}
+
+func TestStatusShowsAMalformedConfigFileAndThatImagesGoUpAsPlaceholders(t *testing.T) {
+	e := clitest.New(t)
+	e.WriteConfig(`{"upload_images_and_documents":true,`)
+
+	got := e.InProject("status")
+	if got.Exit != 1 {
+		t.Errorf("status = exit %d, want 1 for a config file no other command runs on", got.Exit)
+	}
+	for _, want := range []string{"Images and documents: placeholders only, because config.json cannot be read.", "config.json", "Not signed in"} {
+		if !strings.Contains(got.Stdout, want) {
+			t.Errorf("stdout = %q, want it to contain %q", got.Stdout, want)
+		}
+	}
+}
+
+func TestStatusShowsImagesAndDocumentsAsPlaceholdersWhenTurnedOff(t *testing.T) {
+	e := clitest.New(t)
+	e.WriteConfig(`{"upload_images_and_documents":false}`)
+
+	got := e.InProject("status")
+	if !strings.Contains(got.Stdout, "Images and documents: placeholders only") {
+		t.Errorf("stdout = %q, want the placeholder mode stated", got.Stdout)
 	}
 }

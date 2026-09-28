@@ -53,7 +53,7 @@ func (a *app) disableCmd(args []string) int {
 // reading the text.
 func (a *app) statusCmd(args []string) int {
 	problems := 0
-	exit := a.with("usage: trajector status", args, 0, func(m *lifecycle.Machine, cwd string) error {
+	exit := a.withMachine(a.surfaceMachine, "usage: trajector status", args, 0, func(m *lifecycle.Machine, cwd string) error {
 		var err error
 		problems, err = m.Status(cwd, a.io())
 		return err
@@ -105,7 +105,7 @@ const doctorUsage = `usage: trajector doctor [bundle | requeue <batch-id>|--all 
            for good; use it to give up on a batch that will never upload`
 
 func (a *app) bundleCmd(args []string) int {
-	return a.with("usage: trajector doctor bundle", args, 0, func(m *lifecycle.Machine, cwd string) error {
+	return a.withMachine(a.surfaceMachine, "usage: trajector doctor bundle", args, 0, func(m *lifecycle.Machine, cwd string) error {
 		_, err := m.DoctorBundle(cwd, a.io())
 		return err
 	})

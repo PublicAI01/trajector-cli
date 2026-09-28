@@ -13,6 +13,8 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/userconfig"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // Dashboard prints the device dashboard: the one-line verdict, then
@@ -74,7 +76,26 @@ func deviceSection(d Diagnosis) *section {
 	if d.StaleDiscoveryHook {
 		s.warnFix(staleDiscoveryHookFact, staleDiscoveryHookWhy, fixDoctor)
 	}
+	imageUploadLine(s, d.ImageUpload)
 	return s
+}
+
+// imageUploadLine states what goes up of image and document content.
+// A config file that cannot be read is a problem of its own: every
+// other command refuses to run on it.
+func imageUploadLine(s *section, st ImageUploadState) {
+	switch {
+	case st.ConfigErr != nil:
+		s.problem(fmt.Sprintf("Images and documents: placeholders only, because %s cannot be read.", userdirs.ConfigFileName),
+			fmt.Sprintf("%v; %s.", st.ConfigErr, userconfig.UnreadableConsequence),
+			"")
+	case st.Placeholders:
+		s.linef("Images and documents: placeholders only; their content is not uploaded (%s is false in %s). "+
+			"Notebook images that older Claude Code versions keep are uploaded as they are; see PRIVACY.md.",
+			userconfig.UploadImagesAndDocumentsKey, userdirs.ConfigFileName)
+	default:
+		s.linef("Images and documents: uploaded.")
+	}
 }
 
 // projectSection states what holds for the project status was run in.

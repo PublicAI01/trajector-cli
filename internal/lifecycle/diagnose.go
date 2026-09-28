@@ -14,6 +14,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
+	"github.com/PublicAI01/trajector-cli/internal/userconfig"
 )
 
 // sessionFileReading says how much a diagnosis pays to learn about the
@@ -41,6 +42,8 @@ const (
 // carries, so a surface never has to ask again.
 func (m *Machine) diagnose(dir string, reading sessionFileReading) (report.Diagnosis, error) {
 	d := report.Diagnosis{Version: m.deps.Version}
+	cfg, err := userconfig.Read(m.deps.Layout.ConfigFile())
+	d.ImageUpload = report.ImageUploadState{Placeholders: cfg.OmitsImagesAndDocuments(), ConfigErr: err}
 	st, err := m.observeProject(dir)
 	if err != nil {
 		return d, err

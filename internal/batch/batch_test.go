@@ -13,6 +13,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/mediablock"
 	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
@@ -139,7 +140,7 @@ func TestBuildLaysOutSameSessionRecordsAdjacently(t *testing.T) {
 		simpleRawcall(t, "req-n1", "", buildTime.Add(3*time.Second)),
 		simpleRawcall(t, "req-b2", "session-b", buildTime.Add(4*time.Second)),
 	)
-	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestBuildRecordsRoundTripThroughTheIndex(t *testing.T) {
 		simpleRawcall(t, "req-2", "session-a", buildTime.Add(time.Second)),
 		simpleRawcall(t, "req-3", "", buildTime.Add(2*time.Second)),
 	)
-	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestBuildMasksSecretsBeforePacking(t *testing.T) {
 	rc := storedRawcall(t, "req-1", "session-a", "hash-p1",
 		`{"model":"m","messages":[{"role":"user","content":"the key is `+fakeSecret+`"}]}`,
 		`{"id":"req-1","type":"message"}`, buildTime)
-	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(rc), batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(rc), batch.Run{}, mediablock.Policy{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -205,7 +206,7 @@ func TestBuildPreservesThinkingSignatures(t *testing.T) {
 		`{"model":"m","messages":[{"role":"user","content":"hello"}]}`,
 		`{"id":"req-1","type":"message","content":[{"type":"thinking","thinking":"plan","signature":"`+fakeSignature+`"}]}`,
 		buildTime)
-	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(rc), batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(rc), batch.Run{}, mediablock.Policy{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -224,7 +225,7 @@ func TestBuildEnvelopeCarriesIdentityIndexAndRunMetadata(t *testing.T) {
 		SpoolUsageBytes:  4096,
 		SpoolQuotaBytes:  2 << 30,
 	}
-	b, _, err := batch.Build("batch-42", buildTime, "1.2.3", rawcalls(rc), run)
+	b, _, err := batch.Build("batch-42", buildTime, "1.2.3", rawcalls(rc), run, mediablock.Policy{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -254,7 +255,7 @@ func TestBuild_WritesTheCurrentSchemaVersion(t *testing.T) {
 	segment := storedSegment(t, "sess-1", "", 0, buildTime, `{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
 	snapshot := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime, `{"agentId":"x"}`)
 	in := spool.Entries{simpleRawcall(t, "req-1", "session-a", buildTime), segment, snapshot}
-	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
+	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
 	}
@@ -331,7 +332,7 @@ func TestBuild_OrdersRawcallsFirstThenRecordsBySessionFileAndIndex(t *testing.T)
 	rc := simpleRawcall(t, "req-z", "session-z", later)
 
 	in := spool.Entries{rc, meta, seg2, other, sub, seg0, seg1}
-	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -349,7 +350,7 @@ func TestBuild_MasksSegmentsAndSnapshotsBeforePacking(t *testing.T) {
 		`{"type":"user","cwd":"/home/dev/proj","message":{"role":"user","content":"key `+fakeSecret+`"}}`+"\n")
 	snapshot := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime, `{"agentId":"x","note":"`+fakeSecret+`"}`)
 	in := spool.Entries{segment, snapshot}
-	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
+	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
 	}
@@ -382,7 +383,7 @@ func TestBuild_MasksSegmentsAndSnapshotsBeforePacking(t *testing.T) {
 func TestBuild_SegmentSignatureSurvivesPacking(t *testing.T) {
 	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"` + fakeSignature + `"}]}}` + "\n"
 	in := spool.Entries{storedSegment(t, "sess-1", "", 0, buildTime, line)}
-	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -417,7 +418,7 @@ func TestBuild_RefusesRecordsItCannotReadOrMask(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			in := spool.Entries{tc.rec, good}
-			b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{})
+			b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{})
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
@@ -443,7 +444,7 @@ func TestBuildPacksTheRestAndReturnsEveryRefusalAtOnce(t *testing.T) {
 	brokenTwo := spool.Entry{Kind: envelope.KindRawcall, ID: "req-broken-2", Timestamp: buildTime.Add(time.Second), Raw: []byte("{}")}
 	good := simpleRawcall(t, "req-good", "session-a", buildTime)
 
-	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(good, brokenOne, brokenTwo), batch.Run{})
+	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(good, brokenOne, brokenTwo), batch.Run{}, mediablock.Policy{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -470,7 +471,7 @@ func TestBuildPacksTheRestAndReturnsEveryRefusalAtOnce(t *testing.T) {
 
 func TestBuildOfOnlyUnpackableRecordsReturnsNoBatchAndNoError(t *testing.T) {
 	broken := spool.Entry{Kind: envelope.KindRawcall, ID: "req-broken", Timestamp: buildTime, Raw: []byte("not a rawcall at all")}
-	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(broken), batch.Run{})
+	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(broken), batch.Run{}, mediablock.Policy{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -483,14 +484,14 @@ func TestBuildOfOnlyUnpackableRecordsReturnsNoBatchAndNoError(t *testing.T) {
 }
 
 func TestBuildRefusesAnEmptyBatch(t *testing.T) {
-	if _, _, err := batch.Build("batch-1", buildTime, "test", spool.Entries{}, batch.Run{}); err == nil {
+	if _, _, err := batch.Build("batch-1", buildTime, "test", spool.Entries{}, batch.Run{}, mediablock.Policy{}); err == nil {
 		t.Fatal("expected an error for an empty batch")
 	}
 }
 
 func TestBuildRefusesAMissingID(t *testing.T) {
 	rc := simpleRawcall(t, "req-1", "session-a", buildTime)
-	if _, _, err := batch.Build("", buildTime, "test", rawcalls(rc), batch.Run{}); err == nil {
+	if _, _, err := batch.Build("", buildTime, "test", rawcalls(rc), batch.Run{}, mediablock.Policy{}); err == nil {
 		t.Fatal("expected an error for a missing batch id")
 	}
 }
@@ -514,7 +515,7 @@ func TestBuildSessionAdjacencySurvivesALostIndex(t *testing.T) {
 	}
 
 	order := func(rcs []spool.Entry) string {
-		b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(rcs...), batch.Run{})
+		b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(rcs...), batch.Run{}, mediablock.Policy{})
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -549,7 +550,7 @@ func TestBuildLaysTheStreamOutProxyThenSessionThenHook(t *testing.T) {
 
 	// The order given is the reverse of the order required, so the
 	// result can only come from the layout and not from the input.
-	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(hook, seg, rawcall), batch.Run{})
+	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(hook, seg, rawcall), batch.Run{}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build = %v, refused %+v", err, refused)
 	}
@@ -572,7 +573,7 @@ func TestBuildOrdersObservationsOfOneSessionByWhenTheyWereMade(t *testing.T) {
 	earlier := storedGitSnapshot(t, "s-1", "SessionStart", headA, buildTime, nil)
 	other := storedGitSnapshot(t, "s-0", "SessionStart", headA, buildTime.Add(2*time.Minute), nil)
 
-	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(later, other, earlier), batch.Run{})
+	b, refused, err := batch.Build("batch-1", buildTime, "test", rawcalls(later, other, earlier), batch.Run{}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build = %v, refused %+v", err, refused)
 	}
@@ -586,7 +587,7 @@ func TestBuildIndexesAnObservationWithoutTheFieldsOnlyARawcallHas(t *testing.T) 
 	const head = "d0cf90f327430f11f8a68493a58f402fa11d7c9e"
 	snap := storedGitSnapshot(t, "s-1", "SessionStart", head, buildTime, nil)
 
-	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(snap), batch.Run{})
+	b, _, err := batch.Build("batch-1", buildTime, "test", rawcalls(snap), batch.Run{}, mediablock.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -608,7 +609,7 @@ func TestBuildMasksAnObservedPathAndLeavesGitsIdentifiersAlone(t *testing.T) {
 		NewBlob: "2394262ce26c44c0fe958c60825b1ef29d94f397",
 	}}
 	b, refused, err := batch.Build("batch-1", buildTime, "test",
-		rawcalls(storedGitSnapshot(t, "s-1", "PostToolUse", head, buildTime, changed)), batch.Run{})
+		rawcalls(storedGitSnapshot(t, "s-1", "PostToolUse", head, buildTime, changed)), batch.Run{}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build = %v, refused %+v", err, refused)
 	}

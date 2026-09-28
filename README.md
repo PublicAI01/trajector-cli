@@ -148,10 +148,12 @@ deleting the binary alone leaves the settings injections behind.
 | `internal/sessionline` | What one line of a session file is, and the facts the format states in it |
 | `internal/drift` | What the lines no longer match about the shape this build was written against |
 | `internal/redact` | Masking secrets on this machine before anything is uploaded |
+| `internal/mediablock` | Image and document content on its way into a batch: a repeated copy becomes a reference, and every copy a placeholder when their upload is off |
 | `internal/batch` | A set of records prepared for one upload |
 | `internal/upload` | Draining the spool to the service in acknowledged batches |
 | `internal/claudesettings` | Reading and writing Claude Code's own settings files |
 | `internal/userdirs` | Where trajector's files live on this machine |
+| `internal/userconfig` | The options a user sets by hand in `config.json` |
 | `internal/platform` | The client for the trajector service API |
 | `internal/tokenstore` | The device pairing secret, in the OS keyring or owner-only files |
 | `internal/fsatomic` | Atomic file writes, and updates serialized across processes |

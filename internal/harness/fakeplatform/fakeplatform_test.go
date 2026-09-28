@@ -11,6 +11,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/mediablock"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
@@ -113,7 +114,7 @@ func TestRecordIDsBySourceGroupsTheIndexBySource(t *testing.T) {
 		storedRecord(t, envelope.KindSegment, seg.RecordID, segBytes),
 		storedRecord(t, envelope.KindMetaSnapshot, snap.RecordID, snapBytes),
 	}
-	b, refused, err := batch.Build("b-1", at, "test", in, batch.Run{})
+	b, refused, err := batch.Build("b-1", at, "test", in, batch.Run{}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {
 		t.Fatalf("Build: %v, refused %+v", err, refused)
 	}

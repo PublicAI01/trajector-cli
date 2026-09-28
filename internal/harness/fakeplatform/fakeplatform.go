@@ -138,6 +138,24 @@ func Refuses451(authorizeURL, message string) Response {
 	})
 }
 
+// EchoAck acknowledges whatever batch an upload names, with h as the
+// handshake beside the batch id. A field h leaves at its zero value is
+// left out of the answer, which is the service saying nothing about it.
+// An upload whose batch id cannot be read gets status 590, so a test
+// never passes against an acknowledgement of nothing.
+func EchoAck(h platform.Handshake) func(Request) Response {
+	return func(r Request) Response {
+		ix, err := UploadedIndex(r)
+		if err != nil {
+			return Response{Status: 590, Body: []byte(err.Error())}
+		}
+		return JSON(http.StatusOK, struct {
+			BatchID string `json:"batch_id"`
+			platform.Handshake
+		}{ix.BatchID, h})
+	}
+}
+
 // JSON builds a response with a JSON-encoded body.
 func JSON(status int, v any) Response {
 	body, err := json.Marshal(v)

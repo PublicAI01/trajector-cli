@@ -291,7 +291,12 @@ func saveHandshake(dir string, h storedHandshake) error {
 // alone, so the stored value survives it. Every writer of the handshake
 // file merges through here, or the file would mean different things
 // depending on who wrote it last.
+//
+// BlockRefs is the one exception: it is never left alone. The latest
+// word stands, and silence means the service does not put references
+// back, so a service that stops saying it stops receiving them.
 func mergeHandshake(stored, update platform.Handshake) platform.Handshake {
+	stored.BlockRefs = update.BlockRefs
 	if update.MinClientVersion != "" {
 		stored.MinClientVersion = update.MinClientVersion
 	}

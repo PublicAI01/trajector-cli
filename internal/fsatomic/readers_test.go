@@ -12,7 +12,7 @@ import (
 // collision that fsatomic.ReadFile absorbs cannot occur there.
 var plainReadFiles = map[string]bool{
 	// The user config file has no writer in this codebase.
-	"internal/cli/cli.go": true,
+	"internal/userconfig/userconfig.go": true,
 	// Lock files are created exclusively and removed, never replaced.
 	"internal/fsatomic/fsatomic.go": true,
 	// /proc/version is provided by the kernel.

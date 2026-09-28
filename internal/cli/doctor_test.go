@@ -1,6 +1,10 @@
 package cli_test
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,6 +74,56 @@ func TestDoctorBundleWritesAnArchiveInTheWorkingDirectory(t *testing.T) {
 	}
 	if !strings.Contains(got.Stdout, name) {
 		t.Errorf("stdout = %q, want the bundle name %s reported", got.Stdout, name)
+	}
+}
+
+func TestDoctorBundleIsWrittenWhenTheConfigFileCannotBeReadAndSaysWhy(t *testing.T) {
+	e := clitest.New(t)
+	e.At(time.Date(2026, 8, 7, 10, 0, 0, 0, time.UTC))
+	e.WriteConfig(`{"upload_images_and_documents":true,`)
+
+	got := e.InProject("doctor", "bundle")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d (stderr: %q), want the bundle written for the report that needs it most", got.Exit, got.Stderr)
+	}
+	var diagnosis struct {
+		ImageUpload struct {
+			Placeholders bool   `json:"placeholders"`
+			ConfigErr    string `json:"config_err"`
+		} `json:"image_upload"`
+	}
+	if err := json.Unmarshal(bundleEntry(t, filepath.Join(e.Project(), "trajector-doctor-20260807-100000.tar.gz"), "diagnosis.json"), &diagnosis); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diagnosis.ImageUpload.ConfigErr, "config.json") || !diagnosis.ImageUpload.Placeholders {
+		t.Errorf("image_upload = %+v, want the unreadable file named and placeholders stated", diagnosis.ImageUpload)
+	}
+}
+
+func bundleEntry(t *testing.T, archive, name string) []byte {
+	t.Helper()
+	f, err := os.Open(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	zr, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(zr)
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			t.Fatalf("%s has no %s: %v", archive, name, err)
+		}
+		if hdr.Name == name {
+			data, err := io.ReadAll(tr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return data
+		}
 	}
 }
 

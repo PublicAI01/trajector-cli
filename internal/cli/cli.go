@@ -7,7 +7,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +22,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
+	"github.com/PublicAI01/trajector-cli/internal/userconfig"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -208,6 +208,10 @@ type runtimeEnv struct {
 	// that talks to it, not with the command line.
 	platformURL string
 	releasesURL string
+	// configErr is why the user config file could not be read. The
+	// options then hold what userconfig gives a failed read, and a
+	// command refuses to run on those.
+	configErr error
 }
 
 func resolveEnv() (runtimeEnv, error) {
@@ -233,10 +237,8 @@ func resolveEnv() (runtimeEnv, error) {
 	if addr := os.Getenv(ProxyAddrEnv); addr != "" {
 		env.proxyAddr = addr
 	}
-	cfg, err := readUserConfig(layout.ConfigFile())
-	if err != nil {
-		return runtimeEnv{}, err
-	}
+	cfg, err := userconfig.Read(layout.ConfigFile())
+	env.configErr = err
 	if cfg.PlatformURL != "" {
 		env.platformURL = cfg.PlatformURL
 	}
@@ -246,47 +248,38 @@ func resolveEnv() (runtimeEnv, error) {
 	return env, nil
 }
 
-// userConfig is what the user config file may override. Both entries
-// name a place this machine will trust with something: where captured
-// data and the device token go, and where the next binary comes from.
-type userConfig struct {
-	PlatformURL string `json:"platform_url"`
-	ReleasesURL string `json:"releases_url"`
-}
-
-// readUserConfig reads the overrides from the user config file. Neither
-// is ever read from an environment variable: a repository's committed
-// settings reach this process's environment through the session hooks,
-// and must not be able to choose where data goes or where a replacement
-// binary comes from. An absent file means no overrides; an unreadable
-// one fails the command loudly rather than silently using a default the
-// user thought they had changed.
-func readUserConfig(path string) (userConfig, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return userConfig{}, nil
-	}
-	if err != nil {
-		return userConfig{}, err
-	}
-	var cfg userConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return userConfig{}, fmt.Errorf("reading %s: %w", path, err)
-	}
-	return cfg, nil
-}
-
 // machine assembles the lifecycle machine for this invocation.
 func (a *app) machine() (*lifecycle.Machine, error) {
 	return machineAt("")
 }
 
+// surfaceMachine is machine for a command that only reports this
+// device's state: status and the diagnostic bundle. It runs on a user
+// config file that cannot be read, with the options userconfig gives a
+// failed read, because showing why the file cannot be read is part of
+// its job, and neither command sends anything to a place the file
+// names; every other command refuses.
+func (a *app) surfaceMachine() (*lifecycle.Machine, error) {
+	return openMachine("", true)
+}
+
 // machineAt is machine with the proxy address overridden, for the
 // serve modes that take an --addr flag.
 func machineAt(addr string) (*lifecycle.Machine, error) {
+	return openMachine(addr, false)
+}
+
+// openMachine assembles the machine. A user config file that cannot be
+// read stops it unless showsConfigErr: the defaults it would run on
+// could name a service the user changed away from, and the device token
+// goes wherever that names.
+func openMachine(addr string, showsConfigErr bool) (*lifecycle.Machine, error) {
 	env, err := resolveEnv()
 	if err != nil {
 		return nil, err
+	}
+	if env.configErr != nil && !showsConfigErr {
+		return nil, env.configErr
 	}
 	if addr != "" {
 		env.proxyAddr = addr
@@ -337,11 +330,16 @@ func (a *app) fail(err error) int {
 // prelude is what every command needs before it can do anything: the
 // working directory and the machine.
 func (a *app) prelude() (*lifecycle.Machine, string, error) {
+	return a.preludeWith(a.machine)
+}
+
+// preludeWith is prelude on a machine that open assembles.
+func (a *app) preludeWith(open func() (*lifecycle.Machine, error)) (*lifecycle.Machine, string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, "", err
 	}
-	m, err := a.machine()
+	m, err := open()
 	if err != nil {
 		return nil, "", err
 	}
@@ -412,6 +410,11 @@ func (a *app) preparse(usage string, args []string, known []string) (int, bool) 
 // stripped are gone, and what remains is a flag the command reads from
 // a positional slot.
 func (a *app) with(usage string, args []string, nargs int, do func(m *lifecycle.Machine, cwd string) error, known ...string) int {
+	return a.withMachine(a.machine, usage, args, nargs, do, known...)
+}
+
+// withMachine is with on a machine that open assembles.
+func (a *app) withMachine(open func() (*lifecycle.Machine, error), usage string, args []string, nargs int, do func(m *lifecycle.Machine, cwd string) error, known ...string) int {
 	if code, answered := a.preparse(usage, args, known); answered {
 		return code
 	}
@@ -419,7 +422,7 @@ func (a *app) with(usage string, args []string, nargs int, do func(m *lifecycle.
 		fmt.Fprintln(a.stderr, usage)
 		return 2
 	}
-	m, cwd, err := a.prelude()
+	m, cwd, err := a.preludeWith(open)
 	if err != nil {
 		return a.fail(err)
 	}

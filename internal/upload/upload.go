@@ -20,6 +20,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/mediablock"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/redact"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
@@ -173,6 +174,11 @@ type Deps struct {
 	// happens. The uploader has no say over recording; the caller that
 	// does is told, and decides.
 	OnUnmaskableRecord func()
+	// OmitImagesAndDocuments reports whether the user turned image and
+	// document upload off. It is asked once per batch, so a change
+	// reaches the next batch built, including records captured before
+	// it. Nil means they are uploaded.
+	OmitImagesAndDocuments func() bool
 }
 
 // Uploader drains the spool into batches. One Uploader serializes its
@@ -222,6 +228,10 @@ type Uploader struct {
 	// acknowledged upload resets them.
 	timeouts int
 	refusals int
+
+	// sent is what sent-blocks.json holds, read on first use. This
+	// process is the only one that writes it.
+	sent *sentBlocks
 }
 
 // New validates the wiring and builds an uploader.
@@ -240,6 +250,9 @@ func New(deps Deps) (*Uploader, error) {
 	}
 	if deps.Now == nil {
 		deps.Now = time.Now
+	}
+	if deps.OmitImagesAndDocuments == nil {
+		deps.OmitImagesAndDocuments = func() bool { return false }
 	}
 	return &Uploader{deps: deps}, nil
 }
@@ -603,7 +616,7 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 		// the lease has nothing left to protect.
 		return l.release()
 	}
-	b, refused, err := batch.Build(l.id(), u.deps.Now(), u.deps.Version, entries, u.deps.Run())
+	b, refused, err := batch.Build(l.id(), u.deps.Now(), u.deps.Version, entries, u.deps.Run(), u.blockPolicy())
 	if err != nil {
 		u.noteAttempt(err)
 		return fmt.Errorf("upload: %w", err)
@@ -650,6 +663,7 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 	res.Batches++
 	res.Records += len(b.Packed)
 	u.applyHandshake(ack.Handshake)
+	u.noteSentBlocks(l, ack.Handshake, b.Originals)
 	u.noteUpload(Receipt{
 		BatchID: ack.BatchID,
 		Records: len(b.Packed),
@@ -657,6 +671,45 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 		At:      u.deps.Now().UTC(),
 	})
 	return nil
+}
+
+// blockPolicy is what one batch does with its image and document
+// payloads. References are written only when the last acknowledgement
+// said the service puts them back. A retry may refer too: each of its
+// references points at a payload an acknowledged batch carried or that
+// the retry carries itself, so whichever attempt the service keeps can
+// be read back whole.
+func (u *Uploader) blockPolicy() mediablock.Policy {
+	policy := mediablock.Policy{Omit: u.deps.OmitImagesAndDocuments()}
+	if LoadHandshake(u.deps.Dir).BlockRefs {
+		policy.Sent = u.sentBlocks().has
+	}
+	return policy
+}
+
+// noteSentBlocks remembers the payloads an acknowledged batch carried in
+// full, when the acknowledgement said the service puts references back.
+// A retry adds nothing: the service may have kept an earlier attempt
+// and ignored this one, and the earlier attempt could have carried a
+// placeholder where this one carried the payload. Bookkeeping only — a
+// failure to persist costs nothing but the next copies going up in
+// full.
+func (u *Uploader) noteSentBlocks(l lease, h platform.Handshake, originals []mediablock.Original) {
+	if l.resumed || !h.BlockRefs || len(originals) == 0 {
+		return
+	}
+	sent := u.sentBlocks()
+	sent.add(originals)
+	if err := sent.save(u.deps.Dir); err != nil {
+		u.deps.Logf("upload: persisting which image and document payloads were sent: %v", err)
+	}
+}
+
+func (u *Uploader) sentBlocks() *sentBlocks {
+	if u.sent == nil {
+		u.sent = loadSentBlocks(u.deps.Dir)
+	}
+	return u.sent
 }
 
 // dropWithdrawn takes out of a batch every rawcall whose project has

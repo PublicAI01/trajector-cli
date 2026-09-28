@@ -16,7 +16,7 @@ const appDir = "trajector"
 
 // On-disk names. Each appears exactly once in the repository.
 const (
-	configFileName   = "config.json"
+	ConfigFileName   = "config.json"
 	routingTableName = "proxy_projects.json"
 	consentFileName  = "consent.json"
 	spoolDirName     = "rawcalls"
@@ -75,7 +75,7 @@ func Resolve(env Env) (Layout, error) {
 // override. It lives in the user's own config directory, where nothing
 // inside a repository can write, which is what makes it a trustworthy
 // source for where captured data is sent.
-func (l Layout) ConfigFile() string { return filepath.Join(l.config, configFileName) }
+func (l Layout) ConfigFile() string { return filepath.Join(l.config, ConfigFileName) }
 
 // RoutingTable is the token-to-project routing table read by the proxy.
 func (l Layout) RoutingTable() string { return filepath.Join(l.config, routingTableName) }

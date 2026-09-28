@@ -129,6 +129,21 @@ tool-call pairing, and signatures), packs them with same-session records
 adjacent for compression, zstd-compresses the batch, and uploads it with
 a client-generated idempotency key.
 
+Image and document content is not text, so redaction cannot look into
+it. Before redaction, one pass that every kind of record goes through
+rewrites only the `source` of such a block, and the content that a
+Read result keeps on a session line. When the user turns their upload
+off in `config.json`, every copy becomes a placeholder that states a
+digest, the media type, the size and, for a PNG, JPEG or GIF image, the
+width and height — except the images that older versions of Claude Code
+keep from a notebook's cell outputs, which the pass does not rewrite.
+Otherwise, when the
+service has said in its last acknowledgement that it restores them, a
+copy that the service already holds becomes a reference to it; the
+record of which copies the service holds grows only on an
+acknowledgement, so a lost record costs a copy sent again, never a
+reference that cannot be resolved.
+
 The key rules are strict because they guard against double counting and
 data loss:
 

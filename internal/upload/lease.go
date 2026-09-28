@@ -25,6 +25,11 @@ import (
 type lease struct {
 	dir string
 	p   pending
+	// resumed says an earlier attempt already offered this id. The
+	// service may have stored that attempt and lost only its
+	// acknowledgement, so an acknowledgement of this one does not say
+	// which attempt the service keeps.
+	resumed bool
 }
 
 // openLease mints a fresh batch id for these records and persists the
@@ -54,7 +59,7 @@ func openLease(dir string, entries spool.Entries) (lease, error) {
 // the same id for the same records.
 func resumeLease(dir string) (lease, bool, error) {
 	p, ok, err := loadPending(dir)
-	return lease{dir: dir, p: p}, ok, err
+	return lease{dir: dir, p: p, resumed: true}, ok, err
 }
 
 func (l lease) id() string { return l.p.BatchID }

@@ -30,6 +30,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
+	"github.com/PublicAI01/trajector-cli/internal/userconfig"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -165,6 +166,17 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 			if err := routing.OpenStore(layout.RoutingTable()).PauseByBuild(routing.PauseRedactionDrift, a.Version); err != nil {
 				logf("upload: warning: a record could not be masked and recording could not be paused: %v", err)
 			}
+		},
+		// Read for every batch rather than once at start, so turning
+		// image and document upload off takes effect without restarting
+		// the proxy. A file that cannot be read turns it off, as
+		// userconfig states; the failure is logged, and status states it.
+		OmitImagesAndDocuments: func() bool {
+			cfg, err := userconfig.Read(layout.ConfigFile())
+			if err != nil {
+				logf("upload: warning: %v; %s", err, userconfig.UnreadableConsequence)
+			}
+			return cfg.OmitsImagesAndDocuments()
 		},
 	})
 	if err != nil {

@@ -63,6 +63,15 @@ type diagnosisWire struct {
 	// belongs to the default configuration directory while the device
 	// names another one.
 	StaleDiscoveryHook bool `json:"stale_discovery_hook"`
+	// ImageUpload says whether image and document content went up or
+	// only placeholders for it, and why the user config file could not
+	// be read when it could not.
+	ImageUpload imageUploadWire `json:"image_upload"`
+}
+
+type imageUploadWire struct {
+	Placeholders bool   `json:"placeholders"`
+	ConfigErr    string `json:"config_err,omitempty"`
 }
 
 type projectWire struct {
@@ -255,6 +264,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 	}
 	return mustJSON(diagnosisWire{
 		EnabledProjects: d.EnabledProjects,
+		ImageUpload:     imageUploadWire{Placeholders: d.ImageUpload.Placeholders, ConfigErr: errString(d.ImageUpload.ConfigErr)},
 		Project: projectWire{
 			Root:                   d.Project.Root,
 			ProjectIDHash:          d.Project.Hash,

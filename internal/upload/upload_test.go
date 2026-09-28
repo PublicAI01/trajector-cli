@@ -36,6 +36,9 @@ type fixture struct {
 	// unmaskable counts the times the uploader reported a record it
 	// could not mask.
 	unmaskable int
+	// omitImages stands in for the user config file: whether image and
+	// document upload is turned off.
+	omitImages bool
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -75,9 +78,10 @@ func (f *fixture) newUploader(t *testing.T) *upload.Uploader {
 		Run: func() batch.Run {
 			return batch.Run{RecordedToday: 5, SpoolUsageBytes: sp.Usage(), SpoolQuotaBytes: sp.Quota()}
 		},
-		Logf:               func(format string, args ...any) { fmt.Fprintf(&f.logs, format+"\n", args...) },
-		Now:                func() time.Time { return f.now },
-		OnUnmaskableRecord: func() { f.unmaskable++ },
+		Logf:                   func(format string, args ...any) { fmt.Fprintf(&f.logs, format+"\n", args...) },
+		Now:                    func() time.Time { return f.now },
+		OnUnmaskableRecord:     func() { f.unmaskable++ },
+		OmitImagesAndDocuments: func() bool { return f.omitImages },
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -6,6 +6,41 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- You can stop the upload of image and document content. Set
+  `"upload_images_and_documents": false` in `config.json` in your user
+  config directory. Each image or document whose content a call holds
+  as base64 then goes up as a placeholder: the SHA-256 digest of that
+  text, its media type and, when the text decodes, its size in bytes
+  and, for a PNG, JPEG or GIF image, its width and height. The copy of
+  an image or PDF that the Read tool keeps in a session file goes up as
+  the same placeholder. The images that older versions of Claude Code
+  keep from a notebook's cell outputs are not covered: they are
+  uploaded whatever the setting says. The next upload uses the
+  setting, also for records captured before you changed it. You do
+  not have to restart the proxy. If the option is not in the file,
+  image and document content is uploaded. `trajector status` shows
+  which of the two is in effect, and with upload off it names the
+  notebook images the setting does not cover.
+- `trajector status` and `trajector doctor bundle` now run when
+  `config.json` cannot be read. They say why, and that images and
+  documents go up as placeholders until the file reads again; the
+  proxy log says the same. Every other command still stops on such a
+  file.
+
+### Changed
+
+- An image or document block that a session sends again no longer
+  goes up in full each time. When the service says that it can restore
+  them, a later copy of the block in the same session goes up as a
+  reference: the SHA-256 digest of the base64 text of a copy that the
+  service already holds.
+  Only the `source` of the block changes; signatures, message ids and
+  the order of blocks stay as recorded. Until the service says so,
+  every copy goes up in full. A long session that reads images again
+  and again uploads much less.
+
 ### Security
 
 - Masking rules are updated to betterleaks v1.8.1. Its one generic

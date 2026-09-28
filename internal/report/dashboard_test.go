@@ -430,3 +430,36 @@ func TestStatusHasAWordForEveryRecordKindItCanCount(t *testing.T) {
 		})
 	}
 }
+
+func TestStatusStatesWhatGoesUpOfImagesAndDocuments(t *testing.T) {
+	cases := []struct {
+		name  string
+		state report.ImageUploadState
+		want  string
+	}{
+		{"by default", report.ImageUploadState{}, "Images and documents: uploaded."},
+		{"turned off", report.ImageUploadState{Placeholders: true}, "Images and documents: placeholders only; their content is not uploaded (upload_images_and_documents is false in config.json). " +
+			"Notebook images that older Claude Code versions keep are uploaded as they are; see PRIVACY.md."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := device()
+			d.ImageUpload = tc.state
+			out := dashboard(d)
+			wants(t, "status", out, tc.want)
+			rejects(t, "status", out, "config.json cannot be read")
+		})
+	}
+}
+
+func TestStatusNamesAConfigFileItCannotReadAndThatImagesGoUpAsPlaceholdersUntilItReads(t *testing.T) {
+	d := device()
+	d.ImageUpload = report.ImageUploadState{Placeholders: true, ConfigErr: errors.New("reading /cfg/config.json: unexpected end of JSON input")}
+	var out strings.Builder
+	if problems := report.Dashboard(&out, report.Style{}, d); problems != 1 {
+		t.Fatalf("problems = %d, want the unreadable file counted", problems)
+	}
+	wants(t, "status", out.String(),
+		"Images and documents: placeholders only, because config.json cannot be read.",
+		"reading /cfg/config.json: unexpected end of JSON input; images and documents go up as placeholders until it reads.")
+}

@@ -85,6 +85,12 @@ type Handshake struct {
 	SegmentFlushAgeSeconds int64  `json:"segment_flush_age_seconds,omitempty"`
 	SpoolQuotaBytes        int64  `json:"spool_quota_bytes,omitempty"`
 	Notice                 string `json:"notice,omitempty"`
+	// BlockRefs says the service puts a reference to an image or
+	// document payload back from a copy it already holds. Unlike every
+	// other field here, absent means no: the service must say it on
+	// every acknowledgement, because a reference sent to a service that
+	// cannot put it back loses the payload.
+	BlockRefs bool `json:"block_refs,omitzero"`
 }
 
 // Safe returns the handshake with its free text made printable. Both
