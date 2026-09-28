@@ -4,9 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 )
 
@@ -103,21 +101,15 @@ func (s Source) Generate() ([]string, error) {
 // normal absence Find reports.
 func LoadSegments(dir string) ([]SegmentCase, error) {
 	root := filepath.Join(dir, "segments")
-	entries, err := os.ReadDir(root)
+	names, err := caseDirs(root)
 	if err != nil {
 		return nil, err
 	}
 	var cases []SegmentCase
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		base := filepath.Join(root, e.Name())
-		if _, err := os.Stat(filepath.Join(base, "case.json")); err != nil {
-			continue
-		}
-		c := SegmentCase{Name: e.Name()}
-		if err := readJSON(filepath.Join(base, "case.json"), &c.Meta); err != nil {
+	for _, name := range names {
+		base := filepath.Join(root, name)
+		c := SegmentCase{Name: name}
+		if err := readJSON(filepath.Join(base, caseFile), &c.Meta); err != nil {
 			return nil, err
 		}
 		if err := readJSON(filepath.Join(base, "source.json"), &c.Source); err != nil {
@@ -132,6 +124,5 @@ func LoadSegments(dir string) ([]SegmentCase, error) {
 		c.Segments = want.Segments
 		cases = append(cases, c)
 	}
-	slices.SortFunc(cases, func(a, b SegmentCase) int { return strings.Compare(a.Name, b.Name) })
 	return cases, nil
 }

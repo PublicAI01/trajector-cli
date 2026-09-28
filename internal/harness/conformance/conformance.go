@@ -18,10 +18,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
@@ -115,24 +115,19 @@ func Find() (dir string, tried []string) {
 	return "", tried
 }
 
-// Load reads every case under dir, sorted by name so test output is
+// Load reads every case under dir, in name order so test output is
 // stable.
 func Load(dir string) ([]Case, error) {
-	entries, err := os.ReadDir(filepath.Join(dir, "batches"))
+	root := filepath.Join(dir, "batches")
+	names, err := caseDirs(root)
 	if err != nil {
 		return nil, err
 	}
 	var cases []Case
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		base := filepath.Join(dir, "batches", e.Name())
-		if _, err := os.Stat(filepath.Join(base, "case.json")); err != nil {
-			continue
-		}
-		c := Case{Name: e.Name()}
-		if err := readJSON(filepath.Join(base, "case.json"), &c.Meta); err != nil {
+	for _, name := range names {
+		base := filepath.Join(root, name)
+		c := Case{Name: name}
+		if err := readJSON(filepath.Join(base, caseFile), &c.Meta); err != nil {
 			return nil, err
 		}
 		if err := readJSON(filepath.Join(base, "response.json"), &c.Response); err != nil {
@@ -149,8 +144,35 @@ func Load(dir string) ([]Case, error) {
 		}
 		cases = append(cases, c)
 	}
-	sort.Slice(cases, func(i, j int) bool { return cases[i].Name < cases[j].Name })
 	return cases, nil
+}
+
+// caseFile is the file every case directory holds, stating what the
+// case covers.
+const caseFile = "case.json"
+
+// caseDirs returns the name of every directory under root, in name
+// order (os.ReadDir sorts by file name). Each of them is a case, and one without its case file is an
+// error rather than a directory passed over: both sides must read every
+// case, and a case whose file name is misspelt would otherwise drop out
+// of the run with nothing failing. Files beside the directories are not
+// cases and are left alone.
+func caseDirs(root string) ([]string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, e.Name(), caseFile)); err != nil {
+			return nil, fmt.Errorf("conformance case %s cannot be read: %w", e.Name(), err)
+		}
+		names = append(names, e.Name())
+	}
+	return names, nil
 }
 
 func readJSON(path string, into any) error {
