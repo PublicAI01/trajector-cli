@@ -11,6 +11,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
@@ -36,7 +37,7 @@ func TestResendPendingReadsOnlyItsOwnBatchsRecords(t *testing.T) {
 		t.Skip("root reads a file whatever its mode, so an unreadable record cannot be staged")
 	}
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "aaa-unrelated", time.Now().UTC())
 	f.storeRawcall(t, "req-pending", time.Now().UTC().Add(time.Second))
 	writePending(t, f.dir, "b-pinned", spool.Entry{Kind: envelope.KindRawcall, ID: "req-pending"})

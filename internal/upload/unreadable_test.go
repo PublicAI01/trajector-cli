@@ -8,12 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 func TestATornRawcallIsSetAsideAndTheRestUploads(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-good", time.Now().UTC())
 	f.storeRawcall(t, "req-torn", time.Now().UTC().Add(time.Second))
 	torn := f.tearStoredRawcall(t, "req-torn")
@@ -68,7 +70,7 @@ func TestATornRawcallIsSetAsideAndTheRestUploads(t *testing.T) {
 
 func TestAFlushOfOnlyTornRawcallsSetsThemAsideWithoutUploading(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-torn", time.Now().UTC())
 	f.tearStoredRawcall(t, "req-torn")
 
@@ -98,7 +100,7 @@ func TestAFlushOfOnlyTornRawcallsSetsThemAsideWithoutUploading(t *testing.T) {
 func TestAPendingBatchWithATornRecordResendsTheRestUnderTheSameID(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", rejectStub(503, "down"))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	f.storeRawcall(t, "req-2", time.Now().UTC().Add(time.Second))
 
@@ -139,7 +141,7 @@ func TestAnUnreadablePendingRecordIsSetAsideAndUploadsResume(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
-			f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 			f.storeRawcall(t, "req-1", time.Now().UTC())
 			writePendingBytes(t, f.dir, tc.pending)
 
@@ -171,7 +173,7 @@ func TestAnUnreadablePendingRecordIsSetAsideAndUploadsResume(t *testing.T) {
 
 func TestAPendingRecordThatCannotBeReadStillStopsTheFlush(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	// A directory at the pending path fails the read itself, which is
 	// the unknown case: the record may still be valid, so nothing may

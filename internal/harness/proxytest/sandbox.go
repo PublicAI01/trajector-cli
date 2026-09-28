@@ -287,3 +287,16 @@ func (s *Sandbox) ProjectsWithRawcalls() map[string]int {
 	}
 	return counts
 }
+
+// WriteUserConfig replaces the user config file with content verbatim,
+// so a test can write a file that does not parse.
+func (s *Sandbox) WriteUserConfig(content string) {
+	s.t.Helper()
+	path := s.layout.ConfigFile()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		s.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		s.t.Fatal(err)
+	}
+}

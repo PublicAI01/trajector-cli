@@ -131,7 +131,7 @@ func SpawnDevice(t *testing.T, home, version, service string) *SpawnedDevice {
 		ExecPath:  procbin.Self(t, trajectorBehavior),
 		ProxyAddr: IdleAddr(t),
 	}
-	d.Sandbox.pointAtService(service)
+	d.Sandbox.WriteUserConfig(`{"platform_url":"` + service + `"}`)
 	t.Setenv(cli.ProxyAddrEnv, d.ProxyAddr)
 	d.proxy = proxylife.For(layout, version, d.ExecPath, d.ProxyAddr, nil)
 	t.Cleanup(func() { _ = d.proxy.StopGone() })

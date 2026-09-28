@@ -1,7 +1,6 @@
 package cli_test
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
 // newUploadEnv is a paired clitest environment whose service
@@ -19,28 +19,8 @@ func newUploadEnv(t *testing.T) *clitest.Env {
 	t.Helper()
 	e := clitest.New(t)
 	e.Paired()
-	stubEchoAck(t, e.Service())
+	e.Service().StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	return e
-}
-
-// TODO: converge the three sibling ack builders (echoAck in upload,
-// stubEchoAck here, ackBatch in lifecycle) into fakeplatform the next
-// time ack semantics change.
-func stubEchoAck(t *testing.T, service *fakeplatform.Server) {
-	t.Helper()
-	service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
-		parts, err := fakeplatform.Parts(r)
-		if err != nil {
-			return fakeplatform.JSON(590, map[string]any{"error": err.Error()})
-		}
-		var env struct {
-			BatchID string `json:"batch_id"`
-		}
-		if err := json.Unmarshal(parts["batch"], &env); err != nil || env.BatchID == "" {
-			return fakeplatform.JSON(590, map[string]any{"error": "no batch id in envelope"})
-		}
-		return fakeplatform.JSON(200, map[string]any{"batch_id": env.BatchID})
-	})
 }
 
 // captured upgrades a seeded rawcall to the shape a real capture
@@ -181,7 +161,7 @@ func TestUploadWithoutForceRespectsThresholds(t *testing.T) {
 
 func TestUploadWhileSignedOutPausesAndKeepsData(t *testing.T) {
 	e := clitest.New(t)
-	stubEchoAck(t, e.Service())
+	e.Service().StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	seedRawcall(e, "req-1", time.Now().UTC())
 	p := e.StartProxy()
 	defer p.Stop()

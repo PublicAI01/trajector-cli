@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -22,7 +23,7 @@ import (
 // withdrew, which is what `disable` tells them cannot happen.
 func TestFlushNeverSendsRecordsOfAProjectThatWithdrewConsent(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcallFor(t, "req-still-granted", "hash-granted", time.Now().UTC())
 	// What the race leaves behind: captured for a project whose consent
 	// has since been withdrawn, and missed by disable's purge.
@@ -58,7 +59,7 @@ func TestFlushNeverSendsRecordsOfAProjectThatWithdrewConsent(t *testing.T) {
 // later flush would resend an id with nothing behind it.
 func TestFlushWithEveryRecordWithdrawnReleasesTheBatch(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcallFor(t, "req-gone", "hash-withdrawn", time.Now().UTC())
 	f.withdrawn["hash-withdrawn"] = true
 

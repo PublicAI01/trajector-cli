@@ -41,25 +41,34 @@ func TestSharedContractFixtures(t *testing.T) {
 
 	seen := map[upload.Disposition]bool{}
 	versions := map[any]bool{}
+	notices := map[noticeForm]bool{}
 	for _, c := range cases {
 		seen[c.Meta.Expect] = true
 		versions[c.Envelope["schema_version"]] = true
+		if c.Meta.Expect == upload.Ack {
+			notices[noticeFormOf(c)] = true
+		}
 		t.Run(c.Name, func(t *testing.T) {
 			f := newFixture(t)
+			if c.Meta.Expect == upload.Ack {
+				f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{Notice: priorNotice}))
+			}
+			answer := func(fakeplatform.Request) fakeplatform.Response {
+				return fakeplatform.JSON(c.Response.Status, c.Response.Body)
+			}
+			if c.Meta.Expect == upload.Ack {
+				answer = fakeplatform.Echoes(c.Response.Status, c.Response.Body)
+			}
 			f.server.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
-				body := map[string]any{}
-				for k, v := range c.Response.Body {
-					body[k] = v
-				}
-				if c.Meta.Expect == upload.Ack {
-					body["batch_id"] = uploadedBatchID(t, r)
-				}
-				resp := fakeplatform.JSON(c.Response.Status, body)
+				resp := answer(r)
 				for k, v := range c.Response.Headers {
 					resp.Header.Set(k, v)
 				}
 				return resp
 			})
+			if c.Meta.Expect == upload.Ack {
+				flushPriorNotice(t, f)
+			}
 			f.storeRawcall(t, "req-1", time.Now().UTC())
 
 			res, _ := f.uploader.Flush(true)
@@ -84,6 +93,51 @@ func TestSharedContractFixtures(t *testing.T) {
 		if !versions[want] {
 			t.Errorf("no fixture carries schema_version %q", want)
 		}
+	}
+	// The notice is the one handshake field an acknowledgement can both
+	// keep and clear; a set without both forms checks only one of them.
+	for _, want := range []noticeForm{noticeMissing, noticeEmpty} {
+		if !notices[want] {
+			t.Errorf("no acknowledged fixture has the notice %s", want)
+		}
+	}
+}
+
+// priorNotice is what an earlier acknowledgement told the user, so that
+// each acknowledged fixture shows whether it keeps that notice or clears
+// it. A fresh device has no notice, and there both answers look the same.
+const priorNotice = "a notice from an earlier acknowledgement"
+
+// flushPriorNotice runs the one acknowledged upload, stubbed ahead of
+// the fixture's own answer, that leaves priorNotice stored.
+func flushPriorNotice(t *testing.T, f *fixture) {
+	t.Helper()
+	f.storeRawcall(t, "req-0", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err != nil {
+		t.Fatalf("the upload that gives the prior notice: %v", err)
+	}
+	if got := upload.LoadHandshake(f.dir).Notice; got != priorNotice {
+		t.Fatalf("stored notice = %q, want the prior notice %q", got, priorNotice)
+	}
+}
+
+type noticeForm string
+
+const (
+	noticeMissing noticeForm = "key missing"
+	noticeEmpty   noticeForm = "key present and empty"
+	noticeText    noticeForm = "key present with text"
+)
+
+func noticeFormOf(c conformance.Case) noticeForm {
+	v, ok := c.Response.Body["notice"]
+	switch {
+	case !ok:
+		return noticeMissing
+	case v == "":
+		return noticeEmpty
+	default:
+		return noticeText
 	}
 }
 
@@ -172,6 +226,9 @@ var handshakeFigures = map[string]func(platform.Handshake) int64{
 // carries reached the handshake this client kept, so the next flush is
 // run on the service's numbers rather than on the ones this binary
 // shipped with.
+//
+// The notice follows its own rule: a key left out keeps the notice
+// stored before, and a key sent empty clears it.
 func assertHandshakeStored(t *testing.T, f *fixture, c conformance.Case) {
 	t.Helper()
 	stored := upload.LoadHandshake(f.dir)
@@ -183,6 +240,13 @@ func assertHandshakeStored(t *testing.T, f *fixture, c conformance.Case) {
 		if got := read(stored); got != int64(sent) {
 			t.Errorf("stored %s = %d, the service sent %d", key, got, int64(sent))
 		}
+	}
+	want := priorNotice
+	if sent, ok := c.Response.Body["notice"].(string); ok {
+		want = platform.SafeServiceText(sent)
+	}
+	if stored.Notice != want {
+		t.Errorf("stored notice = %q, want %q (the fixture's notice %s)", stored.Notice, want, noticeFormOf(c))
 	}
 }
 

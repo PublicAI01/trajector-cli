@@ -178,6 +178,7 @@ var bundleOmits = map[string]string{
 	"Project.Hooks":           "which hooks stand in the settings file is carried as one flag per hook this release installs; a name this release never installs is not one of them",
 	"Project.InjectedBaseURL": "the injected base URL addresses this device's own proxy, whose address the bundle names, and the token it carries is carried masked",
 	"Project.InjectionAgrees": "whether the injection is the one the grant calls for is a comparison of the granted and the injected token, and the bundle carries both",
+	"Handshake.ClearsNotice":  "the flag is how one reply withdraws a notice, and it is never stored: the stored handshake shows the result as a notice that is gone",
 }
 
 // bundleContext is what a fact says nothing without. Such a fact is

@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
+	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
 // appendLine adds one line to a session file, as Claude Code adds one
@@ -70,7 +72,7 @@ func waitForTheSegmentToBeSent(t *testing.T, e *env) {
 func TestEnableAfterASessionLeftTheProjectKeepsItsCursorAndSendsItsSegmentOnce(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
-	e.service.StubFunc("POST", "/v1/batches", ackBatch(nil))
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	servedProxy(t, e)
 	root := e.canonicalRoot()
 	path := e.putSessionFile(discover.Encode(root)+"/0f1e2d3c.jsonl",

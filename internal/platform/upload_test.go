@@ -266,6 +266,49 @@ func TestUploadBatchAckWordingCannotDrawOnTheTerminal(t *testing.T) {
 	}
 }
 
+func TestUploadBatchAckTellsAnEmptyNoticeFromAMissingOne(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   string
+		clears bool
+	}{
+		{"notice key empty", `{"batch_id":"batch-1","notice":""}`, true},
+		{"notice key missing", `{"batch_id":"batch-1"}`, false},
+		{"notice key null", `{"batch_id":"batch-1","notice":null}`, false},
+		{"notice key with text", `{"batch_id":"batch-1","notice":"scheduled maintenance"}`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, server := client(t)
+			h := http.Header{}
+			h.Set("Content-Type", "application/json")
+			server.Stub("POST", "/v1/batches", fakeplatform.Response{Status: 200, Header: h, Body: []byte(tt.body)})
+
+			ack, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ack.Handshake.ClearsNotice != tt.clears {
+				t.Errorf("ClearsNotice = %v, want %v", ack.Handshake.ClearsNotice, tt.clears)
+			}
+		})
+	}
+}
+
+func TestUploadBatchReadsANoticeTheFakeServiceClears(t *testing.T) {
+	c, server := client(t)
+	server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{FlushBytes: 1024, ClearsNotice: true}))
+
+	ack, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte(`{"schema_version":"3","batch_id":"batch-1"}`), redact.AlreadyRedacted([]byte("z")), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := platform.Handshake{FlushBytes: 1024, ClearsNotice: true}
+	if ack.Handshake != want {
+		t.Errorf("handshake = %+v, want %+v", ack.Handshake, want)
+	}
+}
+
 func TestUploadBatch429CarriesRetryAfterSeconds(t *testing.T) {
 	h := http.Header{}
 	h.Set("Retry-After", "7")

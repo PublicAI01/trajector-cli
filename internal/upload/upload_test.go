@@ -186,36 +186,9 @@ func writePendingBytes(t *testing.T, dir string, data []byte) {
 	}
 }
 
-// echoAck acknowledges whatever batch id the request carries, plus any
-// handshake fields.
-//
-// TODO: converge the three sibling ack builders (echoAck here,
-// stubEchoAck in cli, ackBatch in lifecycle) into fakeplatform the
-// next time ack semantics change.
-func echoAck(t *testing.T, handshake map[string]any) func(fakeplatform.Request) fakeplatform.Response {
-	return func(r fakeplatform.Request) fakeplatform.Response {
-		t.Helper()
-		body := map[string]any{"batch_id": uploadedBatchID(t, r)}
-		for k, v := range handshake {
-			body[k] = v
-		}
-		return fakeplatform.JSON(200, body)
-	}
-}
-
 func uploadedBatchID(t *testing.T, r fakeplatform.Request) string {
 	t.Helper()
-	parts, err := fakeplatform.Parts(r)
-	if err != nil {
-		t.Fatalf("reading upload request: %v", err)
-	}
-	var env struct {
-		BatchID string `json:"batch_id"`
-	}
-	if err := json.Unmarshal(parts["batch"], &env); err != nil {
-		t.Fatalf("reading batch envelope: %v", err)
-	}
-	return env.BatchID
+	return uploadedIndex(t, r).BatchID
 }
 
 func TestUnforcedFlushBelowThresholdsLeavesTheSpoolAlone(t *testing.T) {
@@ -239,7 +212,7 @@ func TestUnforcedFlushBelowThresholdsLeavesTheSpoolAlone(t *testing.T) {
 
 func TestForcedFlushUploadsAndDeletesAcknowledgedRecords(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	f.storeRawcall(t, "req-2", time.Now().UTC())
 
@@ -305,7 +278,7 @@ func TestEmptySpoolFlushesToNothing(t *testing.T) {
 
 func TestAgedRecordsTriggerAnUnforcedFlush(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
 
 	res, err := f.uploader.Flush(false)
@@ -320,7 +293,7 @@ func TestAgedRecordsTriggerAnUnforcedFlush(t *testing.T) {
 func TestFailedUploadKeepsRecordsAndRetriesUnderTheSameBatchID(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(503, map[string]any{"error": "down"}))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	usageBefore := f.spool.Usage()
 
@@ -370,12 +343,12 @@ func TestAnAckNamingAnotherBatchIsNotTrusted(t *testing.T) {
 
 func TestHandshakeTunesThresholdsQuotaAndSurfaces(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, map[string]any{
-		"min_client_version": "2.0.0",
-		"flush_bytes":        1,
-		"flush_age_seconds":  86400,
-		"spool_quota_bytes":  1 << 20,
-		"notice":             "an upgrade is available",
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{
+		MinClientVersion: "2.0.0",
+		FlushBytes:       1,
+		FlushAgeSeconds:  86400,
+		SpoolQuotaBytes:  1 << 20,
+		Notice:           "an upgrade is available",
 	}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	if _, err := f.uploader.Flush(true); err != nil {
@@ -404,7 +377,7 @@ func TestHandshakeTunesThresholdsQuotaAndSurfaces(t *testing.T) {
 
 func TestADrainSplitsIntoBoundedBatches(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, map[string]any{"flush_bytes": 1}))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{FlushBytes: 1}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	if _, err := f.uploader.Flush(true); err != nil {
 		t.Fatal(err)
@@ -428,7 +401,7 @@ func TestADrainSplitsIntoBoundedBatches(t *testing.T) {
 func TestAPendingBatchWhoseRecordsWereWithdrawnIsReleased(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(503, map[string]any{"error": "down"}))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -452,7 +425,7 @@ func TestAPendingBatchWhoseRecordsWereWithdrawnIsReleased(t *testing.T) {
 
 func TestBatchesCarryRunMetadata(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	if _, err := f.uploader.Flush(true); err != nil {
 		t.Fatal(err)
@@ -502,7 +475,7 @@ func TestNewRejectsMissingWiring(t *testing.T) {
 
 func TestCloseRunsAFinalFlushAndThenRefusesToFlush(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
 
 	if err := f.uploader.Close(time.Minute); err != nil {
@@ -532,7 +505,7 @@ func TestCloseRunsAFinalFlushAndThenRefusesToFlush(t *testing.T) {
 
 func TestCloseUploadsRecordsBelowTheUploadThresholds(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
 	if err := f.uploader.Close(time.Minute); err != nil {
@@ -610,7 +583,7 @@ func (f *fixture) uploadCount() int {
 func TestARejectedBatchIsQuarantinedAndUnblocksUploads(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", rejectStub(400, "bad multipart"))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
 	_, err := f.uploader.Flush(true)
@@ -727,7 +700,7 @@ func TestAnUnclassifiedFailureCarriesNoOutcome(t *testing.T) {
 func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
 	if _, err := f.uploader.Flush(true); err == nil || !strings.Contains(err.Error(), "9.9.9") {
@@ -763,7 +736,7 @@ func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
 func TestAnAuthorizationGatePausesAutomaticFlushesWithoutTouchingData(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses451("https://dashboard.example.com/authorization", ""))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -864,7 +837,7 @@ func TestAVersionRefusalRelaysWhatTheServiceSaid(t *testing.T) {
 	const said = "Upload format 0.1.x is retired on 2026-09-01."
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", said))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", f.now)
 
 	res, err := f.uploader.Flush(true)
@@ -948,7 +921,7 @@ func TestRateLimitingDefersAutomaticFlushes(t *testing.T) {
 	limited := fakeplatform.JSON(429, map[string]any{})
 	limited.Header.Set("Retry-After", "120")
 	f.server.Stub("POST", "/v1/batches", limited)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -974,7 +947,7 @@ func TestAForcedFlushIgnoresTheRateLimitPause(t *testing.T) {
 	limited := fakeplatform.JSON(429, map[string]any{})
 	limited.Header.Set("Retry-After", "3600")
 	f.server.Stub("POST", "/v1/batches", limited)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -991,7 +964,7 @@ func TestTheRetryAfterPauseIsCapped(t *testing.T) {
 	limited := fakeplatform.JSON(429, map[string]any{})
 	limited.Header.Set("Retry-After", "86400")
 	f.server.Stub("POST", "/v1/batches", limited)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -1007,7 +980,7 @@ func TestTheRetryAfterPauseIsCapped(t *testing.T) {
 func TestARateLimitWithoutRetryAfterDefersAutomaticFlushes(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(429, map[string]any{}))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
 
 	res, err := f.uploader.Flush(true)
@@ -1039,15 +1012,15 @@ func TestARateLimitWithoutRetryAfterDefersAutomaticFlushes(t *testing.T) {
 
 func TestAnAckOmittingASettingLeavesTheStoredValueAlone(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, map[string]any{
-		"min_client_version": "1.5.0",
-		"flush_bytes":        1,
-		"flush_age_seconds":  3600,
-		"spool_quota_bytes":  1 << 20,
-		"notice":             "an upgrade is available",
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{
+		MinClientVersion: "1.5.0",
+		FlushBytes:       1,
+		FlushAgeSeconds:  3600,
+		SpoolQuotaBytes:  1 << 20,
+		Notice:           "an upgrade is available",
 	}))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, map[string]any{"spool_quota_bytes": 2 << 20}))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{SpoolQuotaBytes: 2 << 20}))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	want := platform.Handshake{
 		MinClientVersion: "1.5.0",
 		FlushBytes:       1,
@@ -1083,14 +1056,43 @@ func TestAnAckOmittingASettingLeavesTheStoredValueAlone(t *testing.T) {
 	}
 }
 
+func TestAnAckClearingTheNoticeRemovesOnlyTheStoredNotice(t *testing.T) {
+	f := newFixture(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{
+		MinClientVersion: "1.5.0",
+		FlushBytes:       1,
+		SpoolQuotaBytes:  1 << 20,
+		Notice:           "complete the form at https://example.com/form",
+	}))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{ClearsNotice: true}))
+
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err != nil {
+		t.Fatal(err)
+	}
+	f.storeRawcall(t, "req-2", time.Now().UTC())
+	if _, err := f.uploader.Flush(true); err != nil {
+		t.Fatal(err)
+	}
+
+	want := platform.Handshake{
+		MinClientVersion: "1.5.0",
+		FlushBytes:       1,
+		SpoolQuotaBytes:  1 << 20,
+	}
+	if h := upload.LoadHandshake(f.dir); h != want {
+		t.Errorf("handshake after an ack clearing the notice = %+v, want %+v", h, want)
+	}
+}
+
 func TestAVersionRefusalPreservesTheRestOfTheStoredHandshake(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, map[string]any{
-		"flush_bytes":       1,
-		"spool_quota_bytes": 1 << 20,
-		"notice":            "an upgrade is available",
-		"block_refs":        true,
-		"block_refs_epoch":  "0",
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{
+		FlushBytes:      1,
+		SpoolQuotaBytes: 1 << 20,
+		Notice:          "an upgrade is available",
+		BlockRefs:       true,
+		BlockRefsEpoch:  "0",
 	}))
 	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 
@@ -1123,7 +1125,7 @@ func TestConsecutiveTimeoutsBackOffAndRetryTheSameBatch(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", timeoutStub())
 	f.server.Stub("POST", "/v1/batches", timeoutStub())
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
 	_, err := f.uploader.Flush(true)
@@ -1186,9 +1188,9 @@ func TestConsecutiveTimeoutsBackOffAndRetryTheSameBatch(t *testing.T) {
 func TestAnAcknowledgedUploadResetsTheTimeoutEscalation(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", timeoutStub())
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.server.Stub("POST", "/v1/batches", timeoutStub())
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -1278,7 +1280,7 @@ func TestARefusedCredentialStopsAutomaticFlushesAndIsNotASignedOutDevice(t *test
 func TestPairingAgainAfterARefusedCredentialResumesTheNextAutomaticFlush(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	if _, err := f.uploader.Flush(true); err == nil {
 		t.Fatal("the refusal did not surface as an error")
@@ -1330,7 +1332,7 @@ func TestARefusedEndpointKeepsTheBatchAndStopsAutomaticFlushes(t *testing.T) {
 func TestAnAcknowledgedForcedFlushEndsTheRefusedEndpointWait(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	if _, err := f.uploader.Flush(true); err == nil {
 		t.Fatal("the refusal did not surface as an error")
@@ -1457,7 +1459,7 @@ func TestAnAcknowledgedUploadClearsBothRecordedAccessRefusals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(tc.status, map[string]any{"error": "refused"}))
-			f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 			f.storeRawcall(t, "req-1", f.now)
 			if _, err := f.uploader.Flush(true); err == nil {
 				t.Fatal("the refusal did not surface as an error")

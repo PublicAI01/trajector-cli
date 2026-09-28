@@ -1,10 +1,9 @@
 // Package fakeplatform is a scripted stand-in for the trajector service
 // API. Upload and pairing seam tests stub endpoints per method and path
-// and assert against the recorded requests.
-//
-// TODO: this package is the convergence target for the three sibling
-// batch-ack builders (echoAck in upload, stubEchoAck in cli, ackBatch
-// in lifecycle); fold them in the next time ack semantics change.
+// and assert against the recorded requests. An accepted upload is
+// answered by Acknowledges, from a Handshake in the client's own wire
+// struct, or by Echoes, from a body a shared fixture gives verbatim;
+// both echo the batch id the upload carried.
 package fakeplatform
 
 import (
@@ -12,12 +11,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
@@ -138,21 +140,57 @@ func Refuses451(authorizeURL, message string) Response {
 	})
 }
 
-// EchoAck acknowledges whatever batch an upload names, with h as the
-// handshake beside the batch id. A field h leaves at its zero value is
-// left out of the answer, which is the service saying nothing about it.
-// An upload whose batch id cannot be read gets status 590, so a test
-// never passes against an acknowledgement of nothing.
-func EchoAck(h platform.Handshake) func(Request) Response {
+// acknowledgement is the body of an accepted upload. Its Notice shadows
+// the handshake's own field: the handshake leaves an empty notice out,
+// and a notice the service clears is sent present and empty.
+type acknowledgement struct {
+	BatchID string `json:"batch_id"`
+	platform.Handshake
+	Notice *string `json:"notice,omitempty"`
+}
+
+// Acknowledges answers an upload with a 200 that echoes the batch id the
+// upload carried and sends handshake in the client's own wire struct. An
+// upload whose envelope names no batch id is answered with status 590,
+// so a test never passes against an acknowledgement of nothing. A
+// handshake with ClearsNotice set is sent with the notice key present
+// and empty, which is how the service withdraws a notice it gave before.
+func Acknowledges(handshake platform.Handshake) func(Request) Response {
 	return func(r Request) Response {
 		ix, err := UploadedIndex(r)
 		if err != nil {
-			return Response{Status: 590, Body: []byte(err.Error())}
+			return JSON(590, map[string]any{"error": err.Error()})
 		}
-		return JSON(http.StatusOK, struct {
-			BatchID string `json:"batch_id"`
-			platform.Handshake
-		}{ix.BatchID, h})
+		if ix.BatchID == "" {
+			return JSON(590, map[string]any{"error": "no batch id in envelope"})
+		}
+		body := acknowledgement{BatchID: ix.BatchID, Handshake: handshake}
+		if handshake.Notice != "" || handshake.ClearsNotice {
+			body.Notice = new(handshake.Notice)
+		}
+		return JSON(http.StatusOK, body)
+	}
+}
+
+// Echoes answers an upload with status and body as given, except that
+// the body's batch_id is the one the upload carried. The body is not
+// changed. Like Acknowledges, an upload whose envelope names no batch
+// id is answered with status 590.
+func Echoes(status int, body map[string]any) func(Request) Response {
+	return func(r Request) Response {
+		ix, err := UploadedIndex(r)
+		if err != nil {
+			return JSON(590, map[string]any{"error": err.Error()})
+		}
+		if ix.BatchID == "" {
+			return JSON(590, map[string]any{"error": "no batch id in envelope"})
+		}
+		echoed := maps.Clone(body)
+		if echoed == nil {
+			echoed = map[string]any{}
+		}
+		echoed["batch_id"] = ix.BatchID
+		return JSON(status, echoed)
 	}
 }
 
@@ -302,7 +340,8 @@ func RecordIDsBySource(batchPart []byte) (map[string][]string, error) {
 }
 
 // UploadedIndex reads the index part of one recorded upload, for
-// asserting which batch id carried which record ids. It sends nothing and changes no stub.
+// asserting which batch id carried which record ids. It sends nothing
+// and changes no stub.
 func UploadedIndex(r Request) (batch.Index, error) {
 	parts, err := Parts(r)
 	if err != nil {
@@ -313,4 +352,23 @@ func UploadedIndex(r Request) (batch.Index, error) {
 		return batch.Index{}, fmt.Errorf("fakeplatform: %w", err)
 	}
 	return ix, nil
+}
+
+// UploadedRecords decompresses the record stream of one recorded
+// upload. It sends nothing and changes no stub.
+func UploadedRecords(r Request) ([]byte, error) {
+	parts, err := Parts(r)
+	if err != nil {
+		return nil, err
+	}
+	zr, err := zstd.NewReader(bytes.NewReader(parts["records"]))
+	if err != nil {
+		return nil, fmt.Errorf("fakeplatform: opening the record stream: %w", err)
+	}
+	defer zr.Close()
+	stream, err := io.ReadAll(zr)
+	if err != nil {
+		return nil, fmt.Errorf("fakeplatform: decompressing the record stream: %w", err)
+	}
+	return stream, nil
 }

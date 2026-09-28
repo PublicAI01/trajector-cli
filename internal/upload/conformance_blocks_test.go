@@ -3,13 +3,13 @@ package upload_test
 import (
 	"bytes"
 	"encoding/json"
-	"maps"
 	"slices"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/conformance"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -31,8 +31,8 @@ func TestSharedFixturesDecideWhetherTheNextBatchRefersToImages(t *testing.T) {
 		seen[says] = true
 		t.Run(c.Name, func(t *testing.T) {
 			f := newFixture(t)
-			f.server.StubFunc("POST", "/v1/batches", fixtureAck(t, c))
-			x := constructedImage(t)
+			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Echoes(c.Response.Status, c.Response.Body))
+			x := proxytest.ConstructedImage(t)
 			f.acknowledgedOnce(t)
 
 			f.storeCallRepeating(t, "req-1", x)
@@ -53,17 +53,6 @@ func TestSharedFixturesDecideWhetherTheNextBatchRefersToImages(t *testing.T) {
 		if !seen[says] {
 			t.Errorf("no acknowledging fixture with block_refs=%v", says)
 		}
-	}
-}
-
-// fixtureAck answers every batch with the fixture's body, the echoed
-// batch id being the one this client sent.
-func fixtureAck(t *testing.T, c conformance.Case) func(fakeplatform.Request) fakeplatform.Response {
-	t.Helper()
-	return func(r fakeplatform.Request) fakeplatform.Response {
-		body := maps.Clone(c.Response.Body)
-		body["batch_id"] = uploadedBatchID(t, r)
-		return fakeplatform.JSON(c.Response.Status, body)
 	}
 }
 
@@ -89,7 +78,7 @@ func TestSharedFixturesUploadTheRecordedCallsAsTheirStream(t *testing.T) {
 				t.Fatal("the fixture's answer does not say block_refs: true, so no batch after it could refer to an image")
 			}
 			f := newFixture(t)
-			f.server.StubFunc("POST", "/v1/batches", fixtureAck(t, c))
+			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Echoes(c.Response.Status, c.Response.Body))
 			f.storeCallRepeating(t, "req-0", "")
 			if _, err := f.uploader.Flush(true); err != nil {
 				t.Fatalf("Flush: %v", err)
@@ -165,9 +154,9 @@ func epochOf(c conformance.Case) string {
 }
 
 // switchingAck answers with the fixture *current points at.
-func switchingAck(t *testing.T, current **conformance.Case) func(fakeplatform.Request) fakeplatform.Response {
+func switchingAck(current **conformance.Case) func(fakeplatform.Request) fakeplatform.Response {
 	return func(r fakeplatform.Request) fakeplatform.Response {
-		return fixtureAck(t, **current)(r)
+		return fakeplatform.Echoes((*current).Response.Status, (*current).Response.Body)(r)
 	}
 }
 
@@ -189,8 +178,8 @@ func TestSharedFixturesInANewEpochMakeTheNextBatchSendImagesInFull(t *testing.T)
 	}
 	f := newFixture(t)
 	current := before
-	f.server.StubFunc("POST", "/v1/batches", switchingAck(t, &current))
-	x := constructedImage(t)
+	f.server.StubFunc("POST", "/v1/batches", switchingAck(&current))
+	x := proxytest.ConstructedImage(t)
 	f.acknowledgedOnce(t)
 	f.sentAndRepeated(t, x)
 
@@ -220,8 +209,8 @@ func TestSharedFixturesThatWithholdBlockRefsKeepWhatWasSent(t *testing.T) {
 			}
 			f := newFixture(t)
 			current := &refs[i]
-			f.server.StubFunc("POST", "/v1/batches", switchingAck(t, &current))
-			x, y := constructedImage(t), anotherImage(t)
+			f.server.StubFunc("POST", "/v1/batches", switchingAck(&current))
+			x, y := proxytest.ConstructedImage(t), anotherImage(t)
 			f.acknowledgedOnce(t)
 			f.sentAndRepeated(t, x)
 

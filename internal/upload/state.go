@@ -308,7 +308,9 @@ func mergeRefusal(stored, refusal platform.Handshake) platform.Handshake {
 
 // mergeHandshake overlays update onto stored under the handshake's
 // declared semantics: a zero field means the service left that setting
-// alone, so the stored value survives it. Every writer of the handshake file merges through mergeAck or
+// alone, so the stored value survives it. The notice is the exception
+// in one direction: an update that clears it removes the stored one.
+// Every writer of the handshake file merges through mergeAck or
 // mergeRefusal, or the file would mean different things depending on
 // who wrote it last.
 //
@@ -343,7 +345,7 @@ func mergeHandshake(stored, update platform.Handshake, from handshakeSource) pla
 	if update.SpoolQuotaBytes > 0 {
 		stored.SpoolQuotaBytes = update.SpoolQuotaBytes
 	}
-	if update.Notice != "" {
+	if update.Notice != "" || update.ClearsNotice {
 		stored.Notice = update.Notice
 	}
 	return stored

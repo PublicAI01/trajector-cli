@@ -43,6 +43,13 @@ All notable changes to trajector are documented here. The format follows
   reference is only to a copy of the same project and the same UTC
   date, so an image goes up in full once more after midnight UTC.
 
+### Fixed
+
+- A notice from the service no longer stays in `status` and `doctor`
+  after the service withdraws it. An acknowledgement that sends the
+  notice empty now clears the stored notice; one that leaves the notice
+  out still keeps it.
+
 ### Security
 
 - Masking rules are updated to betterleaks v1.8.1. Its one generic

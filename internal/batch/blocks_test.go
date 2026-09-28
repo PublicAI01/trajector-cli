@@ -101,7 +101,7 @@ func TestBuild_BothRecordingPathsOmitABlockInOneShape(t *testing.T) {
 	if len(proxy) != 1 || len(transcript) != 1 {
 		t.Fatalf("sources: proxy %v, transcript %v", proxy, transcript)
 	}
-	want := `"source":{"type":"omitted","media_type":"image/png","sha256":"` + digest(x) + `","bytes":`
+	want := `"source":{"type":"` + mediablock.SourceOmitted + `","media_type":"image/png","sha256":"` + digest(x) + `","bytes":`
 	if proxy[0] != transcript[0] || !bytes.HasPrefix([]byte(proxy[0]), []byte(want)) {
 		t.Fatalf("the two paths left different placeholders:\n%s\n%s", proxy[0], transcript[0])
 	}
@@ -137,7 +137,7 @@ func TestBuild_ALaterRecordOfASessionRefersToAnEarlierRecordOfTheBatch(t *testin
 		switch {
 		case bytes.Contains([]byte(src), []byte(`"type":"base64"`)):
 			kinds = append(kinds, "original")
-		case bytes.Contains([]byte(src), []byte(`"type":"sha256_ref","media_type":"image/png","sha256":"`+digest(x)+`"}`)):
+		case bytes.Contains([]byte(src), []byte(`"type":"`+mediablock.SourceReference+`","media_type":"image/png","sha256":"`+digest(x)+`"}`)):
 			kinds = append(kinds, "reference")
 		default:
 			t.Fatalf("unexpected source %s", src)
@@ -177,7 +177,7 @@ func TestBuild_ThePayloadsAnAcknowledgedBatchCarriedAreReferredTo(t *testing.T) 
 		t.Fatal(err)
 	}
 	bodies := packedBodies(t, b)
-	if !bytes.Contains([]byte(bodies[0]), []byte(`"sha256_ref"`)) || bytes.Contains([]byte(bodies[0]), []byte(x)) {
+	if !bytes.Contains([]byte(bodies[0]), []byte(mediablock.SourceReference)) || bytes.Contains([]byte(bodies[0]), []byte(x)) {
 		t.Fatal("a payload the service holds went up in full")
 	}
 	if !bytes.Contains([]byte(bodies[1]), []byte(y)) {
@@ -267,7 +267,7 @@ func copyKinds(t *testing.T, b batch.Batch, payload string) []string {
 			switch {
 			case bytes.Contains([]byte(src), []byte(`"type":"base64"`)):
 				kinds = append(kinds, "original")
-			case bytes.Contains([]byte(src), []byte(`"type":"sha256_ref","media_type":"image/png","sha256":"`+digest(payload)+`"}`)):
+			case bytes.Contains([]byte(src), []byte(`"type":"`+mediablock.SourceReference+`","media_type":"image/png","sha256":"`+digest(payload)+`"}`)):
 				kinds = append(kinds, "reference")
 			default:
 				t.Fatalf("unexpected source %s", src)

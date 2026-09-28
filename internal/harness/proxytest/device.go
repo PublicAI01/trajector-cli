@@ -1,8 +1,6 @@
 package proxytest
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
@@ -29,19 +27,6 @@ func (s *Sandbox) SetDeviceToken(token string) {
 func (s *Sandbox) ClearDeviceToken() {
 	s.t.Helper()
 	if err := tokenstore.Files(s.layout.SecretsDir()).ClearDeviceToken(); err != nil {
-		s.t.Fatal(err)
-	}
-}
-
-// pointAtService writes the user config file that tells a process this
-// test spawns which service to upload to.
-func (s *Sandbox) pointAtService(url string) {
-	s.t.Helper()
-	path := s.layout.ConfigFile()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		s.t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(`{"platform_url":"`+url+`"}`), 0o600); err != nil {
 		s.t.Fatal(err)
 	}
 }

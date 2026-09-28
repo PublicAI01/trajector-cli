@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -18,7 +19,7 @@ func rateLimited(retryAfter string) fakeplatform.Response {
 func TestAPauseTheServiceAskedForOutlivesTheProcessThatWasToldIt(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", rateLimited("3600"))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", f.now.Add(-25*time.Hour))
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -41,7 +42,7 @@ func TestAPauseTheServiceAskedForOutlivesTheProcessThatWasToldIt(t *testing.T) {
 func TestAPauseEndsWhenItsTimeRunsOut(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", rateLimited("120"))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", f.now.Add(-25*time.Hour))
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -64,7 +65,7 @@ func TestAnAcknowledgementEndsThePauseThatPrecededIt(t *testing.T) {
 	// service has shown it will accept.
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", rateLimited("3600"))
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", f.now.Add(-25*time.Hour))
 
 	if _, err := f.uploader.Flush(true); err == nil {
@@ -195,7 +196,7 @@ func TestEveryStandingNamesWhatIsTrueAndTheGatesNameWhatEndsThem(t *testing.T) {
 
 func TestAMinimumThisBuildMeetsIsNotAReasonToStop(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, map[string]any{"min_client_version": "0.9.0"}))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{MinClientVersion: "0.9.0"}))
 	f.storeRawcall(t, "req-1", f.now.Add(-25*time.Hour))
 
 	if _, err := f.uploader.Flush(true); err != nil {

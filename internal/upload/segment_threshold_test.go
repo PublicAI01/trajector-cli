@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -41,7 +43,7 @@ func TestFreshSessionFileRecordsStayBelowTheirOwnThreshold(t *testing.T) {
 
 func TestSessionFileRecordsLeaveAfterFiveMinutesNotADay(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeTailSegment(t, "sess-1", f.now.Add(-6*time.Minute))
 	f.storeRawcall(t, "req-1", f.now)
 
@@ -56,7 +58,7 @@ func TestSessionFileRecordsLeaveAfterFiveMinutesNotADay(t *testing.T) {
 
 func TestSessionFileRecordThresholdsFollowTheHandshake(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, map[string]any{"segment_flush_age_seconds": 3600}))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{SegmentFlushAgeSeconds: 3600}))
 	f.storeTailSegment(t, "sess-1", f.now.Add(-6*time.Minute))
 	if _, err := f.uploader.Flush(true); err != nil {
 		t.Fatal(err)
@@ -77,7 +79,7 @@ func TestSessionFileRecordThresholdsFollowTheHandshake(t *testing.T) {
 
 func TestFlushRecordsSendsFreshSessionFileRecordsAtOnce(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeTailSegment(t, "sess-1", f.now)
 
 	res, err := f.uploader.FlushRecords()

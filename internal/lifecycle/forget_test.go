@@ -7,6 +7,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
 const (
@@ -91,7 +92,7 @@ func TestForget_DeletesBothKindsAndLeavesOtherSessions(t *testing.T) {
 
 func TestForget_UploadedRecordsAreNotAffected(t *testing.T) {
 	e := newEnv(t)
-	e.service.StubFunc("POST", "/v1/batches", ackBatch(nil))
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	servedProxy(t, e)
 	seedSessionRawcall(e, "req-uploaded", sessionOne)
 	segmentID, snapshotID := seedSessionRecords(e, sessionOne)

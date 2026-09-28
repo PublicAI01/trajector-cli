@@ -13,6 +13,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/conformance"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
 // The fixtures that carry a record stream carry more than an answer:
@@ -322,7 +323,7 @@ func TestFixturesRoundTripThroughTheUploader(t *testing.T) {
 		ran++
 		t.Run(c.Name, func(t *testing.T) {
 			f := newFixture(t)
-			f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 			want, err := batch.ParseIndex(c.EnvelopeBytes)
 			if err != nil {
 				t.Fatal(err)

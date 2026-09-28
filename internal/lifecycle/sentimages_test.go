@@ -1,43 +1,57 @@
 package lifecycle_test
 
 import (
-	"bytes"
-	"encoding/base64"
-	"image"
-	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
-// A command that can leave the service without the images and documents
-// this device uploaded must make the device send them in full again:
-// a reference to one of them would not resolve. Each test starts from a
-// repeat of an uploaded image going up as a reference, runs the
-// command, and checks that the next repeat goes up in full.
-
-func constructedImage(t *testing.T) string {
+// uploadImage stores one call that repeats the image and uploads it
+// through the served proxy, and reports how that upload carried the
+// image.
+func (e *env) uploadImage(t *testing.T, id, x string) string {
 	t.Helper()
-	img := image.NewGray(image.Rect(0, 0, 2, 2))
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		t.Fatal(err)
+	e.sandbox.SeedRawcall(id, "hash-images", time.Now().UTC(), proxytest.WithImage(x))
+	if err := e.machine().Upload(true, e.io()); err != nil {
+		t.Fatalf("upload: %v", err)
 	}
-	return base64.StdEncoding.EncodeToString(buf.Bytes())
+	reqs := e.service.Requests()
+	return proxytest.BlockForm(t, reqs[len(reqs)-1], x)
 }
 
-// imageUploaded makes the service take an image and a reference to it.
+func TestUploadSendsPlaceholdersWhenTheUserTurnedImageUploadOff(t *testing.T) {
+	e := newEnv(t)
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
+	e.sandbox.WriteUserConfig(`{"upload_images_and_documents":false}`)
+	servedProxy(t, e)
+
+	if got := e.uploadImage(t, "req-1", proxytest.ConstructedImage(t)); got != "placeholder" {
+		t.Errorf("with image upload turned off the image went up as %s", got)
+	}
+}
+
+// A command that can leave the service without the images and documents
+// this device uploaded must make the device send them in full again:
+// a reference to one of them would not resolve. Each test below starts
+// from a repeat of an uploaded image going up as a reference, runs the
+// command, and checks that the next repeat goes up in full.
+
+// imageUploaded serves the machine's own proxy and makes the service
+// take an image and a reference to it.
 func (e *env) imageUploaded(t *testing.T, x string) {
 	t.Helper()
-	e.service.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
-	if got := e.sandbox.UploadImage(e.service, "req-1", x); got != "original" {
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true}))
+	servedProxy(t, e)
+	if got := e.uploadImage(t, "req-1", x); got != "original" {
 		t.Fatalf("first upload carried the image as %s", got)
 	}
-	if got := e.sandbox.UploadImage(e.service, "req-2", x); got != "reference" {
+	if got := e.uploadImage(t, "req-2", x); got != "reference" {
 		t.Fatalf("a repeat of an acknowledged image went up as %s", got)
 	}
 }
@@ -45,7 +59,7 @@ func (e *env) imageUploaded(t *testing.T, x string) {
 func TestLogoutMakesTheNextUploadSendImagesInFull(t *testing.T) {
 	e := newEnv(t)
 	e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(200, map[string]any{}))
-	x := constructedImage(t)
+	x := proxytest.ConstructedImage(t)
 	e.imageUploaded(t, x)
 
 	if err := e.machine().Logout(e.io()); err != nil {
@@ -53,14 +67,14 @@ func TestLogoutMakesTheNextUploadSendImagesInFull(t *testing.T) {
 	}
 	// The same token back, so only what logout itself did is tested.
 	e.seedDeviceToken()
-	if got := e.sandbox.UploadImage(e.service, "req-3", x); got != "original" {
+	if got := e.uploadImage(t, "req-3", x); got != "original" {
 		t.Errorf("after logout a repeated image went up as %s", got)
 	}
 }
 
 func TestPairingMakesTheNextUploadSendImagesInFull(t *testing.T) {
 	e := newEnv(t)
-	x := constructedImage(t)
+	x := proxytest.ConstructedImage(t)
 	e.imageUploaded(t, x)
 
 	// A pairing that hands back the very token this device held, so
@@ -70,7 +84,7 @@ func TestPairingMakesTheNextUploadSendImagesInFull(t *testing.T) {
 	if err := e.machine().Login(e.io()); err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	if got := e.sandbox.UploadImage(e.service, "req-3", x); got != "original" {
+	if got := e.uploadImage(t, "req-3", x); got != "original" {
 		t.Errorf("after pairing again a repeated image went up as %s", got)
 	}
 }
@@ -98,13 +112,13 @@ func TestPairingDoesNotStartWhenTheRecordOfSentImagesCannotBeForgotten(t *testin
 
 func TestLoginOnAPairedDeviceKeepsReferringToImages(t *testing.T) {
 	e := newEnv(t)
-	x := constructedImage(t)
+	x := proxytest.ConstructedImage(t)
 	e.imageUploaded(t, x)
 
 	if err := e.machine().Login(e.io()); err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	if got := e.sandbox.UploadImage(e.service, "req-3", x); got != "reference" {
+	if got := e.uploadImage(t, "req-3", x); got != "reference" {
 		t.Errorf("after a login that changed nothing a repeated image went up as %s", got)
 	}
 }
@@ -112,26 +126,26 @@ func TestLoginOnAPairedDeviceKeepsReferringToImages(t *testing.T) {
 func TestPurgeMakesTheNextUploadSendImagesInFull(t *testing.T) {
 	e := newEnv(t)
 	e.service.Stub("POST", "/v1/data-deletions", fakeplatform.JSON(202, map[string]any{}))
-	x := constructedImage(t)
+	x := proxytest.ConstructedImage(t)
 	e.imageUploaded(t, x)
 
 	if err := e.machine().Disable(e.project, true, e.io()); err != nil {
 		t.Fatalf("disable --purge: %v", err)
 	}
-	if got := e.sandbox.UploadImage(e.service, "req-3", x); got != "original" {
+	if got := e.uploadImage(t, "req-3", x); got != "original" {
 		t.Errorf("after a deletion request a repeated image went up as %s", got)
 	}
 }
 
 func TestDisableWithoutPurgeKeepsReferringToImages(t *testing.T) {
 	e := newEnv(t)
-	x := constructedImage(t)
+	x := proxytest.ConstructedImage(t)
 	e.imageUploaded(t, x)
 
 	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if got := e.sandbox.UploadImage(e.service, "req-3", x); got != "reference" {
+	if got := e.uploadImage(t, "req-3", x); got != "reference" {
 		t.Errorf("after a disable that deleted nothing uploaded a repeated image went up as %s", got)
 	}
 }

@@ -138,20 +138,6 @@ func parseBatch(r fakeplatform.Request) (uploadedBatch, error) {
 	return b, nil
 }
 
-// ackBatch acknowledges an upload under the batch id it carried, the
-// way the live service answers a well-formed batch.
-//
-// TODO: converge the sibling ack builders (echoAck in upload,
-// stubEchoAck in cli, ackBatch in lifecycle and here) into fakeplatform
-// the next time ack semantics change.
-func ackBatch(r fakeplatform.Request) fakeplatform.Response {
-	b, err := parseBatch(r)
-	if err != nil {
-		return fakeplatform.JSON(590, map[string]any{"error": err.Error()})
-	}
-	return fakeplatform.JSON(200, map[string]any{"batch_id": b.BatchID})
-}
-
 // aged is a capture old enough that the upload thresholds no longer
 // hold it back.
 func aged() time.Time { return time.Now().UTC().Add(-25 * time.Hour) }

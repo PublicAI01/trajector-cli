@@ -13,6 +13,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 )
 
 // servedProxy runs the machine's own proxy assembly for the test and
@@ -39,7 +40,7 @@ func servedProxy(t *testing.T, e *env) {
 
 func TestUploadReportsEachOutcomeThroughTheResidentProxy(t *testing.T) {
 	e := newEnv(t)
-	e.service.StubFunc("POST", "/v1/batches", ackBatch(nil))
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	servedProxy(t, e)
 	m := e.machine()
 
@@ -320,8 +321,8 @@ func TestUploadRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 
 func TestUploadReportsProgressBeforeAPauseStopsTheDrain(t *testing.T) {
 	e := newEnv(t)
-	e.service.StubFunc("POST", "/v1/batches", ackBatch(map[string]any{"flush_bytes": 1}))
-	e.service.StubFunc("POST", "/v1/batches", ackBatch(nil))
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{FlushBytes: 1}))
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	e.service.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 	servedProxy(t, e)
 	m := e.machine()

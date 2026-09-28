@@ -335,27 +335,6 @@ func parseBatch(r fakeplatform.Request) (uploadedBatch, error) {
 	return b, nil
 }
 
-// ackBatch acknowledges an upload under the batch id it carried, the
-// way the live service answers a well-formed batch; extra fields ride
-// along in the acknowledgement body.
-//
-// TODO: converge the three sibling ack builders (echoAck in upload,
-// stubEchoAck in cli, ackBatch here) into fakeplatform the next time
-// ack semantics change.
-func ackBatch(extra map[string]any) func(fakeplatform.Request) fakeplatform.Response {
-	return func(r fakeplatform.Request) fakeplatform.Response {
-		b, err := parseBatch(r)
-		if err != nil {
-			return fakeplatform.JSON(590, map[string]any{"error": err.Error()})
-		}
-		body := map[string]any{"batch_id": b.BatchID}
-		for k, v := range extra {
-			body[k] = v
-		}
-		return fakeplatform.JSON(200, body)
-	}
-}
-
 func (e *env) seedDeviceToken() {
 	e.t.Helper()
 	e.sandbox.SetDeviceToken("dev-tok-fake")

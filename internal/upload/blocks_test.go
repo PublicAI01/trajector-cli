@@ -12,23 +12,14 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/mediablock"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
-// constructedImage is a few dozen bytes of valid PNG, never a real
-// screenshot.
-func constructedImage(t *testing.T) string {
-	t.Helper()
-	img := image.NewGray(image.Rect(0, 0, 2, 2))
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		t.Fatal(err)
-	}
-	return base64.StdEncoding.EncodeToString(buf.Bytes())
-}
-
-// anotherImage is a constructed PNG that differs from constructedImage.
+// anotherImage is a constructed PNG that differs from
+// proxytest.ConstructedImage.
 func anotherImage(t *testing.T) string {
 	t.Helper()
 	img := image.NewGray(image.Rect(0, 0, 3, 2))
@@ -77,23 +68,13 @@ func (f *fixture) uploadWith(t *testing.T, payload string) string {
 		t.Fatalf("Flush: %v", err)
 	}
 	reqs := f.server.Requests()
-	stream := string(uploadedStream(t, reqs[len(reqs)-1]))
-	switch {
-	case strings.Contains(stream, payload):
-		return "original"
-	case strings.Contains(stream, `"type":"sha256_ref"`):
-		return "reference"
-	case strings.Contains(stream, `"type":"omitted"`):
-		return "placeholder"
-	}
-	t.Fatalf("the upload carries no copy of the image")
-	return ""
+	return proxytest.BlockForm(t, reqs[len(reqs)-1], payload)
 }
 
 func TestFlush_SendsNoReferenceUntilTheServiceSaysItResolvesThem(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{}))
-	x := constructedImage(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
+	x := proxytest.ConstructedImage(t)
 
 	f.storeCallRepeating(t, "req-1", x)
 	f.storeCallRepeating(t, "req-2", x)
@@ -105,15 +86,15 @@ func TestFlush_SendsNoReferenceUntilTheServiceSaysItResolvesThem(t *testing.T) {
 		t.Fatalf("with no word from the service, a repeated image went up as %s", got)
 	}
 	stream := string(uploadedStream(t, f.server.Requests()[0]))
-	if strings.Count(stream, x) != 2 || strings.Contains(stream, "sha256_ref") {
+	if strings.Count(stream, x) != 2 || strings.Contains(stream, mediablock.SourceReference) {
 		t.Fatal("a batch referred to its own earlier copy before the service said it resolves references")
 	}
 }
 
 func TestFlush_RefersToAnImageThatAnAcknowledgedBatchCarried(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
-	x := constructedImage(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true}))
+	x := proxytest.ConstructedImage(t)
 
 	f.storeCallRepeating(t, "req-1", x)
 	if got := f.uploadWith(t, x); got != "original" {
@@ -132,10 +113,10 @@ func TestFlush_RefersToAnImageThatAnAcknowledgedBatchCarried(t *testing.T) {
 
 func TestFlush_RemembersAnImageOnlyOnceABatchCarryingItIsAcknowledged(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true}))
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(503, map[string]any{"error": "down"}))
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
-	x := constructedImage(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true}))
+	x := proxytest.ConstructedImage(t)
 
 	f.storeCallRepeating(t, "req-0", "")
 	if _, err := f.uploader.Flush(true); err != nil {
@@ -158,8 +139,8 @@ func TestFlush_RemembersAnImageOnlyOnceABatchCarryingItIsAcknowledged(t *testing
 
 func TestFlush_SendsTheImageInFullAgainWhenTheRecordOfSentImagesIsLost(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
-	x := constructedImage(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true}))
+	x := proxytest.ConstructedImage(t)
 
 	f.storeCallRepeating(t, "req-1", x)
 	f.uploadWith(t, x)
@@ -175,9 +156,9 @@ func TestFlush_SendsTheImageInFullAgainWhenTheRecordOfSentImagesIsLost(t *testin
 
 func TestFlush_StopsReferringWhenAnAcknowledgementNoLongerSaysSo(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{FlushBytes: 1 << 20}))
-	x := constructedImage(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true}))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{FlushBytes: 1 << 20}))
+	x := proxytest.ConstructedImage(t)
 
 	f.storeCallRepeating(t, "req-1", x)
 	f.uploadWith(t, x)
@@ -193,8 +174,8 @@ func TestFlush_StopsReferringWhenAnAcknowledgementNoLongerSaysSo(t *testing.T) {
 
 func TestFlush_ReplacesImagesWithPlaceholdersWhileUploadIsTurnedOff(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
-	x := constructedImage(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true}))
+	x := proxytest.ConstructedImage(t)
 
 	f.omitImages = true
 	f.storeCallRepeating(t, "req-1", x)
@@ -203,7 +184,7 @@ func TestFlush_ReplacesImagesWithPlaceholdersWhileUploadIsTurnedOff(t *testing.T
 		t.Fatalf("with upload turned off the image went up as %s", got)
 	}
 	stream := string(uploadedStream(t, f.server.Requests()[0]))
-	if strings.Count(stream, `"type":"omitted"`) != 2 {
+	if strings.Count(stream, `"type":"`+mediablock.SourceOmitted+`"`) != 2 {
 		t.Fatal("not every copy was replaced by a placeholder")
 	}
 
@@ -235,8 +216,8 @@ func (f *fixture) sentAndRepeated(t *testing.T, x string) {
 // that it resolves references, repeats become references again.
 func TestFlush_SendsTheImageInFullAgainUnderAnotherDeviceToken(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
-	x := constructedImage(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true}))
+	x := proxytest.ConstructedImage(t)
 	f.sentAndRepeated(t, x)
 
 	f.token = "dev-tok-another"
@@ -255,12 +236,12 @@ func TestFlush_SendsTheImageInFullAgainUnderAnotherDeviceToken(t *testing.T) {
 // the same files.
 func TestFlush_SendsTheImageInFullAgainToAnotherService(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
-	x := constructedImage(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true}))
+	x := proxytest.ConstructedImage(t)
 	f.sentAndRepeated(t, x)
 
 	f.server = fakeplatform.New(t)
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true}))
 	f.uploader = f.newUploader(t)
 	f.storeCallRepeating(t, "req-3", x)
 	if got := f.uploadWith(t, x); got != "original" {
@@ -273,8 +254,8 @@ func TestFlush_SendsTheImageInFullAgainToAnotherService(t *testing.T) {
 // running uploader still refers to nothing.
 func TestFlush_SendsTheImageInFullAgainOnceAnotherProcessForgetsWhatWasSent(t *testing.T) {
 	f := newFixture(t)
-	f.server.StubFunc("POST", "/v1/batches", fakeplatform.EchoAck(platform.Handshake{BlockRefs: true}))
-	x := constructedImage(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true}))
+	x := proxytest.ConstructedImage(t)
 	f.sentAndRepeated(t, x)
 
 	if err := upload.ForgetSentBlocks(f.dir); err != nil {
@@ -295,7 +276,7 @@ func TestFlush_SendsTheImageInFullAgainOnceAnotherProcessForgetsWhatWasSent(t *t
 // remembered, although it is acknowledged.
 func TestFlush_RemembersNothingOfABatchAcknowledgedAfterTheRecordWasForgotten(t *testing.T) {
 	f := newFixture(t)
-	echo := fakeplatform.EchoAck(platform.Handshake{BlockRefs: true})
+	echo := fakeplatform.Acknowledges(platform.Handshake{BlockRefs: true})
 	forgetting := false
 	f.server.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
 		if forgetting {
@@ -305,7 +286,7 @@ func TestFlush_RemembersNothingOfABatchAcknowledgedAfterTheRecordWasForgotten(t 
 		}
 		return echo(r)
 	})
-	x := constructedImage(t)
+	x := proxytest.ConstructedImage(t)
 	f.storeCallRepeating(t, "req-0", "")
 	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
 		t.Fatalf("Flush = %+v, %v", got, err)
@@ -338,7 +319,7 @@ func (f *fixture) acknowledgedOnce(t *testing.T) {
 // epoch *epoch holds, read when the batch arrives.
 func ackSaying(refs *bool, epoch *string) func(fakeplatform.Request) fakeplatform.Response {
 	return func(r fakeplatform.Request) fakeplatform.Response {
-		return fakeplatform.EchoAck(platform.Handshake{BlockRefs: *refs, BlockRefsEpoch: *epoch})(r)
+		return fakeplatform.Acknowledges(platform.Handshake{BlockRefs: *refs, BlockRefsEpoch: *epoch})(r)
 	}
 }
 
@@ -351,7 +332,7 @@ func TestFlush_SendsTheImageInFullAgainOnceTheServiceStatesANewEpoch(t *testing.
 	f := newFixture(t)
 	refs, epoch := true, "0"
 	f.server.StubFunc("POST", "/v1/batches", ackSaying(&refs, &epoch))
-	x := constructedImage(t)
+	x := proxytest.ConstructedImage(t)
 	f.acknowledgedOnce(t)
 	f.sentAndRepeated(t, x)
 
@@ -379,7 +360,7 @@ func TestFlush_KeepsWhatWasSentThroughAnAcknowledgementThatWithholdsBlockRefs(t 
 	f := newFixture(t)
 	refs, epoch := true, "0"
 	f.server.StubFunc("POST", "/v1/batches", ackSaying(&refs, &epoch))
-	x, y := constructedImage(t), anotherImage(t)
+	x, y := proxytest.ConstructedImage(t), anotherImage(t)
 	f.acknowledgedOnce(t)
 	f.sentAndRepeated(t, x)
 
@@ -417,7 +398,7 @@ func TestFlush_KeepsWhatWasSentThroughAnUpgradeRefusal(t *testing.T) {
 		}
 		return ack(r)
 	})
-	x := constructedImage(t)
+	x := proxytest.ConstructedImage(t)
 	f.acknowledgedOnce(t)
 	f.sentAndRepeated(t, x)
 
@@ -444,7 +425,7 @@ func TestFlush_ForgetsWhatWasSentWhenTheServiceStopsStatingItsEpoch(t *testing.T
 	f := newFixture(t)
 	refs, epoch := true, "0"
 	f.server.StubFunc("POST", "/v1/batches", ackSaying(&refs, &epoch))
-	x := constructedImage(t)
+	x := proxytest.ConstructedImage(t)
 	f.acknowledgedOnce(t)
 	f.sentAndRepeated(t, x)
 
@@ -508,7 +489,7 @@ func TestFlush_SendsTheImageInFullAgainAfterANewEpochThatCouldNotBeKeptOnDisk(t 
 		}
 		return ack(r)
 	})
-	x := constructedImage(t)
+	x := proxytest.ConstructedImage(t)
 	f.acknowledgedOnce(t)
 	f.sentAndRepeated(t, x)
 
@@ -539,7 +520,7 @@ func TestFlush_RefersToNothingAfterAWithheldBlockRefsThatCouldNotBeKeptOnDisk(t 
 		}
 		return ack(r)
 	})
-	x := constructedImage(t)
+	x := proxytest.ConstructedImage(t)
 	f.acknowledgedOnce(t)
 	f.sentAndRepeated(t, x)
 

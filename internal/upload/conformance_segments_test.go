@@ -10,6 +10,8 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/conformance"
+	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
@@ -67,7 +69,7 @@ func TestSegmentFixturesMatchHowThisClientCutsAFile(t *testing.T) {
 				t.Errorf("a second read made %d more segments, want none", len(made)-before)
 			}
 
-			f.server.StubFunc("POST", "/v1/batches", echoAck(t, nil))
+			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 			res, err := f.uploader.Flush(true)
 			if err != nil || res.Outcome != upload.Uploaded {
 				t.Fatalf("flush = %+v, %v, want every segment uploaded", res, err)

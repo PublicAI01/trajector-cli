@@ -16,6 +16,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/proxyserve"
 )
@@ -45,7 +46,7 @@ func (e *env) waitExit(done <-chan error, within time.Duration) {
 func TestServeHostsCaptureAndTheFlushEndpoint(t *testing.T) {
 	e := newEnv(t)
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	e.service.StubFunc("POST", "/v1/batches", ackBatch)
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 
 	served := e.serve(io.Discard, io.Discard)
 	e.waitHealthy()
@@ -147,7 +148,7 @@ func TestServeFinishesItsExitFlushBeforeReleasingThePort(t *testing.T) {
 			conn.Close()
 		}
 		portHeldDuringUpload <- err == nil
-		return ackBatch(r)
+		return fakeplatform.Acknowledges(platform.Handshake{})(r)
 	})
 
 	served := e.serve(io.Discard, io.Discard)
@@ -193,7 +194,7 @@ func TestASlowExitFlushReleasesThePortAndLeavesItsRecordsToTheSuccessor(t *testi
 			}
 		default:
 		}
-		return ackBatch(r)
+		return fakeplatform.Acknowledges(platform.Handshake{})(r)
 	})
 
 	predecessor := e.serve(io.Discard, io.Discard)
@@ -271,7 +272,7 @@ func TestProxyTakeoverNeverUploadsARecordUnderTwoBatchIDs(t *testing.T) {
 			default:
 			}
 		}
-		return fakeplatform.JSON(200, map[string]any{"batch_id": b.BatchID})
+		return fakeplatform.Acknowledges(platform.Handshake{})(r)
 	})
 
 	predecessor := e.serve(io.Discard, io.Discard)

@@ -72,8 +72,9 @@ func (e *UploadTimeoutError) Unwrap() error { return e.cause }
 
 // Handshake is what the service tells the client alongside a batch
 // acknowledgement: the minimum client version it will keep accepting,
-// updated thresholds, and an optional notice for the user. Zero values
-// mean the service left a setting alone.
+// updated thresholds, and an optional notice for the user. Each field
+// has its own zero-value rule, and mergeHandshake in package upload is
+// the one place that applies them.
 type Handshake struct {
 	MinClientVersion string `json:"min_client_version,omitempty"`
 	FlushBytes       int64  `json:"flush_bytes,omitempty"`
@@ -97,6 +98,12 @@ type Handshake struct {
 	// It is opaque. Like BlockRefs, the latest acknowledgement's word
 	// stands, and absent reads as empty.
 	BlockRefsEpoch string `json:"block_refs_epoch,omitempty"`
+	// ClearsNotice is the service sending the notice key with an empty
+	// value: the notice it gave before no longer applies. A notice is a
+	// sentence about now, not a setting, so an acknowledgement that
+	// leaves the key out keeps the old one and an empty value removes
+	// it. It is a fact about one acknowledgement and is never stored.
+	ClearsNotice bool `json:"-"`
 }
 
 // Safe returns the handshake with its free text made printable. Both
@@ -336,6 +343,9 @@ func (c *Client) UploadBatch(deviceToken, batchID string, envelope []byte, recor
 
 	var reply struct {
 		BatchID string `json:"batch_id"`
+		// Notice shadows the handshake's own field, so that a key sent
+		// with an empty value stays apart from a key not sent at all.
+		Notice *string `json:"notice"`
 		Handshake
 	}
 	if err := json.Unmarshal(data, &reply); err != nil {
@@ -344,7 +354,12 @@ func (c *Client) UploadBatch(deviceToken, batchID string, envelope []byte, recor
 	if reply.BatchID != batchID {
 		return BatchAck{}, fmt.Errorf("platform: acknowledgement names batch %q, uploaded %q", reply.BatchID, batchID)
 	}
-	return BatchAck{BatchID: reply.BatchID, Handshake: reply.Handshake.Safe()}, nil
+	handshake := reply.Handshake
+	if reply.Notice != nil {
+		handshake.Notice = *reply.Notice
+		handshake.ClearsNotice = *reply.Notice == ""
+	}
+	return BatchAck{BatchID: reply.BatchID, Handshake: handshake.Safe()}, nil
 }
 
 // uploadFailure classifies a transport-level upload error: a deadline

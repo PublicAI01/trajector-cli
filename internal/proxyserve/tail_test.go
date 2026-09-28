@@ -15,6 +15,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxyserve"
 )
 
@@ -203,7 +204,7 @@ func TestProgressReportRefusesAFileThatIsNotRegistered(t *testing.T) {
 func TestProgressReportOfASessionEndReadsFlushesAndCools(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
-	e.service.StubFunc("POST", "/v1/batches", ackBatch)
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	_, hash := e.enabledProject()
 	path := e.sessionFile(hash, "s.jsonl", sessionLine)
 	e.warm(hash, path)
@@ -352,7 +353,7 @@ func TestProgressReportAnswersBeforeTheFlushRuns(t *testing.T) {
 		default:
 		}
 		<-held
-		return ackBatch(r)
+		return fakeplatform.Acknowledges(platform.Handshake{})(r)
 	})
 
 	served := e.serve(io.Discard, io.Discard)
@@ -383,7 +384,7 @@ func TestProgressReportAnswersBeforeTheFlushRuns(t *testing.T) {
 func TestSweepSendsTheRecordsItReadsAtOnce(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
-	e.service.StubFunc("POST", "/v1/batches", ackBatch)
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	e.assembly.SweepInterval = 50 * time.Millisecond
 	_, hash := e.enabledProject()
 	hot := e.sessionFile(hash, "hot.jsonl", "")

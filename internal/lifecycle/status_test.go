@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 )
 
@@ -302,6 +304,34 @@ func TestStatusRelaysAServiceNoticeAsOneWholeLine(t *testing.T) {
 	}
 	if strings.Count(out, notice) != 1 {
 		t.Errorf("status = %q, want the notice said once", out)
+	}
+}
+
+func TestStatusStopsRelayingANoticeTheServiceWithdrew(t *testing.T) {
+	e := newEnv(t)
+	notice := "complete the form at https://example.com/form"
+	e.sandbox.SeedHandshake(proxytest.Handshake{Notice: notice})
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{FlushBytes: 1 << 20}))
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{ClearsNotice: true}))
+	servedProxy(t, e)
+	m := e.machine()
+
+	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
+	if err := m.Upload(true, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	e.stdout.Reset()
+	if out := e.statusOutput(); !strings.Contains(out, notice) {
+		t.Fatalf("status after an ack that left the notice out = %q, want the notice still relayed", out)
+	}
+
+	e.sandbox.SeedRawcall("req-2", "hash-p1", time.Now().UTC())
+	if err := m.Upload(true, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	e.stdout.Reset()
+	if out := e.statusOutput(); strings.Contains(out, notice) || strings.Contains(out, "Notice from the service") {
+		t.Errorf("status after an ack that cleared the notice = %q, want no notice", out)
 	}
 }
 
