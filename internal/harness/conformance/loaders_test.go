@@ -26,6 +26,10 @@ var loaders = []struct {
 		c, err := conformance.LoadRedaction(dir)
 		return len(c), err
 	}},
+	{"blocks", func(dir string) (int, error) {
+		c, err := conformance.LoadBlocks(dir)
+		return len(c), err
+	}},
 }
 
 func writeFile(t *testing.T, path, content string) {
