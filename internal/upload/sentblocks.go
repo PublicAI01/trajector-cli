@@ -4,9 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -106,11 +103,11 @@ func ForgetSentBlocks(dir string) error {
 	if err := writeJSON(filepath.Join(dir, sentBlocksEpochName), sentBlocksEpoch{Epoch: hex.EncodeToString(nonce[:])}); err != nil {
 		return err
 	}
-	// The new epoch alone is enough; the old record goes as well, since
-	// it no longer has a use.
-	if err := os.Remove(filepath.Join(dir, sentBlocksName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
+	// The new epoch alone makes the old record unread, so emptying it
+	// is only tidying, and a failure to empty it is no failure of this
+	// call. It is replaced, not removed: on Windows a file that another
+	// process holds open cannot be removed.
+	_ = (&sentBlocks{}).save(dir)
 	return nil
 }
 

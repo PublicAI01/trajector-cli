@@ -562,3 +562,13 @@ func TestFlush_RefersToNothingAfterAWithheldBlockRefsThatCouldNotBeKeptOnDisk(t 
 		t.Fatalf("once an acknowledgement said block_refs again a repeated image went up as %s", got)
 	}
 }
+
+func TestForgetSentBlocks_SucceedsWhenTheOldRecordCannotBeEmptied(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sent-blocks.json", "occupied"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := upload.ForgetSentBlocks(dir); err != nil {
+		t.Errorf("ForgetSentBlocks = %v, want nil: the new epoch alone makes the old record unread", err)
+	}
+}
