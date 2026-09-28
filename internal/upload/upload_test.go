@@ -25,7 +25,10 @@ type fixture struct {
 	uploader *upload.Uploader
 	dir      string
 	rejected string
-	token    string
+	// handshakeBytes is the stored handshake takesNoWrites hid and
+	// takesWritesAgain puts back.
+	handshakeBytes []byte
+	token          string
 	// logs collects what the uploader reports through its Logf seam.
 	logs strings.Builder
 	// now is the uploader's clock; tests advance it to cross gates.
@@ -1086,6 +1089,8 @@ func TestAVersionRefusalPreservesTheRestOfTheStoredHandshake(t *testing.T) {
 		"flush_bytes":       1,
 		"spool_quota_bytes": 1 << 20,
 		"notice":            "an upgrade is available",
+		"block_refs":        true,
+		"block_refs_epoch":  "0",
 	}))
 	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 
@@ -1103,6 +1108,7 @@ func TestAVersionRefusalPreservesTheRestOfTheStoredHandshake(t *testing.T) {
 		FlushBytes:       1,
 		SpoolQuotaBytes:  1 << 20,
 		Notice:           "an upgrade is available",
+		BlockRefsEpoch:   "0",
 	}
 	if h := upload.LoadHandshake(f.dir); h != want {
 		t.Errorf("handshake after the version refusal = %+v, want %+v", h, want)

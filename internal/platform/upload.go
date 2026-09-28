@@ -91,6 +91,12 @@ type Handshake struct {
 	// every acknowledgement, because a reference sent to a service that
 	// cannot put it back loses the payload.
 	BlockRefs bool `json:"block_refs,omitzero"`
+	// BlockRefsEpoch names the state of the service's data for this
+	// account: it changes when the service deletes data this device
+	// may have uploaded, which this device has no other way to learn.
+	// It is opaque. Like BlockRefs, the latest acknowledgement's word
+	// stands, and absent reads as empty.
+	BlockRefsEpoch string `json:"block_refs_epoch,omitempty"`
 }
 
 // Safe returns the handshake with its free text made printable. Both

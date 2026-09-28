@@ -234,6 +234,13 @@ type Uploader struct {
 	// makes it useless, through ForgetSentBlocks, which the holder
 	// check sees on the next batch.
 	sent *sentBlocks
+
+	// refsWithheld is whether the last acknowledgement this process
+	// received withheld block_refs. The stored handshake says the same
+	// unless storing it failed, and a batch built on a stored yes the
+	// service has since taken back could refer to what it cannot put
+	// back.
+	refsWithheld bool
 }
 
 // New validates the wiring and builds an uploader.
@@ -618,7 +625,7 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 		// the lease has nothing left to protect.
 		return l.release()
 	}
-	holder := u.holder(token)
+	holder := u.holder(token, LoadHandshake(u.deps.Dir).BlockRefsEpoch)
 	b, refused, err := batch.Build(l.id(), u.deps.Now(), u.deps.Version, entries, u.deps.Run(), u.blockPolicy(holder))
 	if err != nil {
 		u.noteAttempt(err)
@@ -666,7 +673,12 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 	res.Batches++
 	res.Records += len(b.Packed)
 	u.applyHandshake(ack.Handshake)
-	u.noteSentBlocks(l, ack.Handshake, b.Originals, holder, u.holder(token))
+	u.refsWithheld = !ack.Handshake.BlockRefs
+	// The holder after the acknowledgement is named by the epoch it
+	// states, not by the stored one: storing it is best-effort, and a
+	// new epoch taken for the old one would remember this batch's
+	// payloads under a holder that may no longer have them.
+	u.noteSentBlocks(l, ack.Handshake, b.Originals, holder, u.holder(token, ack.Handshake.BlockRefsEpoch))
 	u.noteUpload(Receipt{
 		BatchID: ack.BatchID,
 		Records: len(b.Packed),
@@ -678,50 +690,55 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 
 // blockPolicy is what one batch does with its image and document
 // payloads. References are written only when the last acknowledgement
-// said the service puts them back, and only when the record of sent
+// said the service puts them back — as stored, and as this process
+// received it, since storing it may have failed — and only when the record of sent
 // payloads is about the holder this batch goes to: an acknowledgement
-// from that holder has to say so first, even before a batch refers
+// has to come from that holder first, even before a batch refers
 // within itself. A retry may refer too: each of its references points
 // at a payload an acknowledged batch carried or that the retry carries
 // itself, so whichever attempt the service keeps can be read back
 // whole.
 func (u *Uploader) blockPolicy(holder string) mediablock.Policy {
 	policy := mediablock.Policy{Omit: u.deps.OmitImagesAndDocuments()}
-	if sent := u.sentBlocks(); LoadHandshake(u.deps.Dir).BlockRefs && sent.Holder == holder {
+	if sent := u.sentBlocks(); !u.refsWithheld && LoadHandshake(u.deps.Dir).BlockRefs && sent.Holder == holder {
 		policy.Sent = sent.has
 	}
 	return policy
 }
 
-// holder names where this device's batches go now; see sentBlocks.
-func (u *Uploader) holder(token string) string {
-	return holderOf(u.deps.Dir, u.deps.Service.BaseURL(), token)
+// holder names where this device's batches go under the service epoch
+// given; see sentBlocks.
+func (u *Uploader) holder(token, serviceEpoch string) string {
+	return holderOf(u.deps.Dir, u.deps.Service.BaseURL(), token, serviceEpoch)
 }
 
-// noteSentBlocks remembers the payloads an acknowledged batch carried in
-// full, when the acknowledgement said the service puts references back.
-// built is the holder the batch was built for, and now the holder after
-// its acknowledgement. When they differ, something took away what the
-// service held while the batch was on its way, possibly this batch's
-// payloads too, and nothing is remembered. Otherwise a record about
-// another holder is replaced by an empty one about this one.
+// noteSentBlocks settles the record of sent payloads after an
+// acknowledgement. built is the holder the batch was built for, and now
+// the holder after its acknowledgement.
 //
-// A retry adds no payloads: the service may have kept an earlier
+// A record about a holder other than now is emptied first, whatever the
+// acknowledgement says: the holder it names may come back, a service
+// that stopped stating its epoch and states the old one again, and what
+// it held may have gone in between. The record never comes back to
+// life.
+//
+// The payloads the batch carried in full are then remembered, but only
+// when the acknowledgement said the service puts references back, when
+// nothing changed the holder while the batch was on its way (the
+// service may have taken away what it carried as well), and when this
+// was the batch's first attempt: the service may have kept an earlier
 // attempt and ignored this one, and the earlier attempt could have
 // carried a placeholder where this one carried the payload.
 // Bookkeeping only — a failure to persist costs nothing but the next
 // copies going up in full.
 func (u *Uploader) noteSentBlocks(l lease, h platform.Handshake, originals []mediablock.Original, built, now string) {
-	if !h.BlockRefs || built != now {
-		return
-	}
 	sent := u.sentBlocks()
 	changed := false
 	if sent.Holder != now {
 		*sent = sentBlocks{Holder: now}
 		changed = true
 	}
-	if !l.resumed && len(originals) > 0 {
+	if h.BlockRefs && built == now && !l.resumed && len(originals) > 0 {
 		sent.add(originals)
 		changed = true
 	}
@@ -936,7 +953,7 @@ func (u *Uploader) settleFailure(token string, l lease, packed spool.Entries, er
 // handshake instead of replacing it. Bookkeeping only — a failure to
 // persist costs nothing but the next flush using older settings.
 func (u *Uploader) applyHandshake(h platform.Handshake) {
-	merged := mergeHandshake(LoadHandshake(u.deps.Dir), h)
+	merged := mergeAck(LoadHandshake(u.deps.Dir), h)
 	u.deps.Spool.SetQuota(merged.SpoolQuotaBytes)
 	if err := saveHandshake(u.deps.Dir, storedHandshake{
 		Handshake:  merged,

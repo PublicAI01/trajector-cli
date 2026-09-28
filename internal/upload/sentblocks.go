@@ -55,7 +55,9 @@ const (
 //     put the device under another account;
 //   - another service: the service address this device uploads to;
 //   - a deletion this device asks for: the service deletes the data the
-//     payloads were in. ForgetSentBlocks records such an event.
+//     payloads were in. ForgetSentBlocks records such an event;
+//   - a deletion this device cannot see, made on the service's side:
+//     the service says so by a new epoch in its acknowledgements.
 //
 // Each of them changes the holder, so the file stops being read at
 // once, whichever process caused the change.
@@ -113,13 +115,19 @@ func ForgetSentBlocks(dir string) error {
 }
 
 // holderOf names the place that holds what the file records: the
-// service address, the device token, and the epoch. It is a digest, so
-// the file never holds the token. Each part is quoted, so no two lists
-// of parts give one name.
-func holderOf(dir, service, token string) string {
+// service address, the device token, this device's epoch, and the
+// epoch the service stated. It is a digest, so the file never holds
+// the token. Each part is quoted, so no two lists of parts give one
+// name.
+func holderOf(dir, service, token, serviceEpoch string) string {
 	var epoch sentBlocksEpoch
 	readJSON(filepath.Join(dir, sentBlocksEpochName), &epoch)
-	sum := sha256.Sum256([]byte(strconv.Quote(service) + strconv.Quote(token) + strconv.Quote(epoch.Epoch)))
+	parts := []string{service, token, epoch.Epoch, serviceEpoch}
+	var name []byte
+	for _, part := range parts {
+		name = strconv.AppendQuote(name, part)
+	}
+	sum := sha256.Sum256(name)
 	return hex.EncodeToString(sum[:])
 }
 

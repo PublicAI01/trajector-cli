@@ -286,17 +286,45 @@ func saveHandshake(dir string, h storedHandshake) error {
 	return writeJSON(filepath.Join(dir, handshakeName), h)
 }
 
+// handshakeSource is what a handshake update arrived in. The service
+// states its epoch only in an acknowledgement; a refusal says nothing
+// about the service's data.
+type handshakeSource int
+
+const (
+	fromAck handshakeSource = iota
+	fromRefusal
+)
+
+// mergeAck overlays what an acknowledgement said onto stored.
+func mergeAck(stored, ack platform.Handshake) platform.Handshake {
+	return mergeHandshake(stored, ack, fromAck)
+}
+
+// mergeRefusal overlays what a refusal said onto stored.
+func mergeRefusal(stored, refusal platform.Handshake) platform.Handshake {
+	return mergeHandshake(stored, refusal, fromRefusal)
+}
+
 // mergeHandshake overlays update onto stored under the handshake's
 // declared semantics: a zero field means the service left that setting
-// alone, so the stored value survives it. Every writer of the handshake
-// file merges through here, or the file would mean different things
-// depending on who wrote it last.
+// alone, so the stored value survives it. Every writer of the handshake file merges through mergeAck or
+// mergeRefusal, or the file would mean different things depending on
+// who wrote it last.
 //
-// BlockRefs is the one exception: it is never left alone. The latest
-// word stands, and silence means the service does not put references
-// back, so a service that stops saying it stops receiving them.
-func mergeHandshake(stored, update platform.Handshake) platform.Handshake {
+// BlockRefs and BlockRefsEpoch are never left alone: the latest word
+// stands. Silence about BlockRefs means the service does not put
+// references back, so a service that stops saying it stops receiving
+// them; silence about BlockRefsEpoch is an epoch of its own, so a
+// service that stops saying it makes the record of sent payloads
+// useless rather than trusted. Only an acknowledgement has a word about
+// the epoch: a refusal stops references until the next acknowledgement
+// and keeps the stored epoch.
+func mergeHandshake(stored, update platform.Handshake, from handshakeSource) platform.Handshake {
 	stored.BlockRefs = update.BlockRefs
+	if from == fromAck {
+		stored.BlockRefsEpoch = update.BlockRefsEpoch
+	}
 	if update.MinClientVersion != "" {
 		stored.MinClientVersion = update.MinClientVersion
 	}
@@ -418,7 +446,7 @@ func (u *Uploader) noteUpgradeRequired(minVersion, message string) {
 		return
 	}
 	u.noteRefusal(func(h *storedHandshake) {
-		h.Handshake = mergeHandshake(h.Handshake, platform.Handshake{MinClientVersion: minVersion})
+		h.Handshake = mergeRefusal(h.Handshake, platform.Handshake{MinClientVersion: minVersion})
 		h.UpgradeMessage = message
 	}, "the required client version")
 }

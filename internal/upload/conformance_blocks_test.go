@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"maps"
+	"slices"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
@@ -18,7 +19,8 @@ import (
 // verbatim apart from the echoed batch id: the batch after it carries a
 // repeated image as a reference exactly when the fixture's answer says
 // "block_refs": true. A fixture set without both kinds of answer would
-// prove only one half of the rule.
+// prove only one half of the rule. A batch with no image goes first, so
+// the service has stated its epoch before the image goes up.
 func TestSharedFixturesDecideWhetherTheNextBatchRefersToImages(t *testing.T) {
 	seen := map[bool]bool{}
 	for _, c := range sharedFixtures(t) {
@@ -31,6 +33,7 @@ func TestSharedFixturesDecideWhetherTheNextBatchRefersToImages(t *testing.T) {
 			f := newFixture(t)
 			f.server.StubFunc("POST", "/v1/batches", fixtureAck(t, c))
 			x := constructedImage(t)
+			f.acknowledgedOnce(t)
 
 			f.storeCallRepeating(t, "req-1", x)
 			if got := f.uploadWith(t, x); got != "original" {
@@ -134,4 +137,110 @@ func requestIDOf(t *testing.T, record []byte) string {
 		t.Fatalf("a fixture record names no request id: %v", err)
 	}
 	return v.RequestID
+}
+
+// acknowledgingFixtures are the shared fixtures that acknowledge a
+// batch, by what their answer says about block references.
+func acknowledgingFixtures(t *testing.T) (refs, withheld []conformance.Case) {
+	t.Helper()
+	for _, c := range sharedFixtures(t) {
+		if c.Meta.Expect != upload.Ack {
+			continue
+		}
+		if _, ok := c.Response.Body["block_refs_epoch"].(string); !ok {
+			continue
+		}
+		if says, _ := c.Response.Body["block_refs"].(bool); says {
+			refs = append(refs, c)
+		} else {
+			withheld = append(withheld, c)
+		}
+	}
+	return refs, withheld
+}
+
+func epochOf(c conformance.Case) string {
+	epoch, _ := c.Response.Body["block_refs_epoch"].(string)
+	return epoch
+}
+
+// switchingAck answers with the fixture *current points at.
+func switchingAck(t *testing.T, current **conformance.Case) func(fakeplatform.Request) fakeplatform.Response {
+	return func(r fakeplatform.Request) fakeplatform.Response {
+		return fixtureAck(t, **current)(r)
+	}
+}
+
+// Two shared answers that say "block_refs": true in different epochs
+// are the service before and after a deletion made on its side. After
+// the answer in the new epoch, a repeated image goes up in full again.
+func TestSharedFixturesInANewEpochMakeTheNextBatchSendImagesInFull(t *testing.T) {
+	refs, _ := acknowledgingFixtures(t)
+	var before, after *conformance.Case
+	for i := range refs {
+		for j := range refs {
+			if epochOf(refs[i]) != epochOf(refs[j]) {
+				before, after = &refs[i], &refs[j]
+			}
+		}
+	}
+	if before == nil {
+		t.Fatal("no two acknowledging fixtures say block_refs: true in different epochs")
+	}
+	f := newFixture(t)
+	current := before
+	f.server.StubFunc("POST", "/v1/batches", switchingAck(t, &current))
+	x := constructedImage(t)
+	f.acknowledgedOnce(t)
+	f.sentAndRepeated(t, x)
+
+	current = after
+	f.storeCallRepeating(t, "req-3", x)
+	f.uploadWith(t, x)
+	f.storeCallRepeating(t, "req-4", x)
+	if got := f.uploadWith(t, x); got != "original" {
+		t.Errorf("after %s answered in epoch %q, following %s in epoch %q, a repeated image went up as %s",
+			after.Name, epochOf(*after), before.Name, epochOf(*before), got)
+	}
+}
+
+// A shared answer that states the epoch and withholds block_refs keeps
+// what an earlier batch had acknowledged in the same epoch, and adds
+// nothing of its own batch.
+func TestSharedFixturesThatWithholdBlockRefsKeepWhatWasSent(t *testing.T) {
+	refs, withheld := acknowledgingFixtures(t)
+	if len(withheld) == 0 {
+		t.Fatal("no acknowledging fixture states an epoch and withholds block_refs")
+	}
+	for _, w := range withheld {
+		t.Run(w.Name, func(t *testing.T) {
+			i := slices.IndexFunc(refs, func(c conformance.Case) bool { return epochOf(c) == epochOf(w) })
+			if i < 0 {
+				t.Fatalf("no fixture says block_refs: true in epoch %q", epochOf(w))
+			}
+			f := newFixture(t)
+			current := &refs[i]
+			f.server.StubFunc("POST", "/v1/batches", switchingAck(t, &current))
+			x, y := constructedImage(t), anotherImage(t)
+			f.acknowledgedOnce(t)
+			f.sentAndRepeated(t, x)
+
+			current = &w
+			f.storeCallRepeating(t, "req-3", y)
+			f.uploadWith(t, y)
+			current = &refs[i]
+			f.storeCallRepeating(t, "req-4", "")
+			if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+				t.Fatalf("Flush = %+v, %v", got, err)
+			}
+			f.storeCallRepeating(t, "req-5", x)
+			if got := f.uploadWith(t, x); got != "reference" {
+				t.Errorf("an image acknowledged before %s went up as %s", w.Name, got)
+			}
+			f.storeCallRepeating(t, "req-6", y)
+			if got := f.uploadWith(t, y); got != "original" {
+				t.Errorf("an image of the batch %s answered went up as %s", w.Name, got)
+			}
+		})
+	}
 }

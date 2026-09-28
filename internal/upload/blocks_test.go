@@ -28,6 +28,20 @@ func constructedImage(t *testing.T) string {
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
+// anotherImage is a constructed PNG that differs from constructedImage.
+func anotherImage(t *testing.T) string {
+	t.Helper()
+	img := image.NewGray(image.Rect(0, 0, 3, 2))
+	for i := range img.Pix {
+		img.Pix[i] = 200
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
 // storeCallRepeating stores a call of session sess-1 whose request
 // repeats the image in a tool result, the way every call after a Read
 // of it does. An empty payload stores a call with no image at all.
@@ -306,5 +320,245 @@ func TestFlush_RemembersNothingOfABatchAcknowledgedAfterTheRecordWasForgotten(t 
 	f.storeCallRepeating(t, "req-2", x)
 	if got := f.uploadWith(t, x); got != "original" {
 		t.Fatalf("a repeat of an image acknowledged after the record was forgotten went up as %s", got)
+	}
+}
+
+// acknowledgedOnce uploads a call with no image, so the service has
+// stated its epoch before the test's first image goes up: a batch built
+// before an epoch was known is not remembered.
+func (f *fixture) acknowledgedOnce(t *testing.T) {
+	t.Helper()
+	f.storeCallRepeating(t, "req-0", "")
+	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+		t.Fatalf("Flush = %+v, %v", got, err)
+	}
+}
+
+// ackSaying answers every batch with block_refs as *refs says and the
+// epoch *epoch holds, read when the batch arrives.
+func ackSaying(refs *bool, epoch *string) func(fakeplatform.Request) fakeplatform.Response {
+	return func(r fakeplatform.Request) fakeplatform.Response {
+		return fakeplatform.EchoAck(platform.Handshake{BlockRefs: *refs, BlockRefsEpoch: *epoch})(r)
+	}
+}
+
+// The service states a new epoch when it deleted data that this device
+// may have uploaded: a deletion made on the service's side, which this
+// device cannot see. The batch that the new epoch answers was built
+// before this device knew, and nothing it carried is remembered; the
+// batch after it carries the image in full.
+func TestFlush_SendsTheImageInFullAgainOnceTheServiceStatesANewEpoch(t *testing.T) {
+	f := newFixture(t)
+	refs, epoch := true, "0"
+	f.server.StubFunc("POST", "/v1/batches", ackSaying(&refs, &epoch))
+	x := constructedImage(t)
+	f.acknowledgedOnce(t)
+	f.sentAndRepeated(t, x)
+
+	epoch = "1"
+	f.storeCallRepeating(t, "req-3", x)
+	if got := f.uploadWith(t, x); got != "reference" {
+		t.Fatalf("the batch built before the new epoch was known carried the image as %s", got)
+	}
+	f.storeCallRepeating(t, "req-4", x)
+	if got := f.uploadWith(t, x); got != "original" {
+		t.Fatalf("after a new epoch a repeated image went up as %s", got)
+	}
+	f.storeCallRepeating(t, "req-5", x)
+	if got := f.uploadWith(t, x); got != "reference" {
+		t.Fatalf("after an acknowledgement in the new epoch a repeat went up as %s", got)
+	}
+}
+
+// An acknowledgement that states the epoch and withholds block_refs
+// says that the service could not keep what that batch carried where a
+// reference finds it. Nothing of that batch is remembered, and the next
+// batch refers to nothing. What was remembered before stays: the epoch
+// did not change.
+func TestFlush_KeepsWhatWasSentThroughAnAcknowledgementThatWithholdsBlockRefs(t *testing.T) {
+	f := newFixture(t)
+	refs, epoch := true, "0"
+	f.server.StubFunc("POST", "/v1/batches", ackSaying(&refs, &epoch))
+	x, y := constructedImage(t), anotherImage(t)
+	f.acknowledgedOnce(t)
+	f.sentAndRepeated(t, x)
+
+	refs = false
+	f.storeCallRepeating(t, "req-3", y)
+	if got := f.uploadWith(t, y); got != "original" {
+		t.Fatalf("first upload carried the second image as %s", got)
+	}
+	refs = true
+	f.storeCallRepeating(t, "req-4", "")
+	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+		t.Fatalf("Flush = %+v, %v", got, err)
+	}
+	f.storeCallRepeating(t, "req-5", x)
+	if got := f.uploadWith(t, x); got != "reference" {
+		t.Fatalf("an image remembered before the withheld acknowledgement went up as %s", got)
+	}
+	f.storeCallRepeating(t, "req-6", y)
+	if got := f.uploadWith(t, y); got != "original" {
+		t.Fatalf("an image of the batch whose acknowledgement withheld block_refs went up as %s", got)
+	}
+}
+
+// A refusal of this client's version says nothing about the service's
+// data. It stops references until the next acknowledgement, and what
+// was remembered stays: only an acknowledgement changes the epoch.
+func TestFlush_KeepsWhatWasSentThroughAnUpgradeRefusal(t *testing.T) {
+	f := newFixture(t)
+	refs, epoch := true, "0"
+	ack := ackSaying(&refs, &epoch)
+	refuse := false
+	f.server.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		if refuse {
+			return fakeplatform.Refuses426("9.9.9", "")
+		}
+		return ack(r)
+	})
+	x := constructedImage(t)
+	f.acknowledgedOnce(t)
+	f.sentAndRepeated(t, x)
+
+	refuse = true
+	f.storeCallRepeating(t, "req-3", "")
+	if _, err := f.uploader.Flush(true); err == nil {
+		t.Fatal("the refused upload reported no error")
+	}
+	refuse = false
+	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+		t.Fatalf("Flush after the refusal = %+v, %v", got, err)
+	}
+	f.storeCallRepeating(t, "req-4", x)
+	if got := f.uploadWith(t, x); got != "reference" {
+		t.Fatalf("after an upgrade refusal a repeat of an acknowledged image went up as %s", got)
+	}
+}
+
+// A service rolled back to a build that neither resolves references nor
+// states an epoch may delete data meanwhile without counting it. When
+// it states the old epoch again, the record of sent payloads must not
+// come back to life.
+func TestFlush_ForgetsWhatWasSentWhenTheServiceStopsStatingItsEpoch(t *testing.T) {
+	f := newFixture(t)
+	refs, epoch := true, "0"
+	f.server.StubFunc("POST", "/v1/batches", ackSaying(&refs, &epoch))
+	x := constructedImage(t)
+	f.acknowledgedOnce(t)
+	f.sentAndRepeated(t, x)
+
+	refs, epoch = false, ""
+	f.storeCallRepeating(t, "req-3", "")
+	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+		t.Fatalf("Flush = %+v, %v", got, err)
+	}
+	refs, epoch = true, "0"
+	f.storeCallRepeating(t, "req-4", "")
+	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+		t.Fatalf("Flush = %+v, %v", got, err)
+	}
+	f.storeCallRepeating(t, "req-5", x)
+	if got := f.uploadWith(t, x); got != "original" {
+		t.Fatalf("back in the old epoch, a repeat of an image acknowledged before went up as %s", got)
+	}
+}
+
+// takesNoWrites makes the stored handshake refuse to be written, while
+// everything else in the upload directory still reads and writes: an
+// empty directory stands where the file was, so the rename that
+// replaces the file fails on every platform. takesWritesAgain puts the
+// file back as it was. A permission bit would not do: on Windows it
+// toggles read-only and nothing else.
+func (f *fixture) takesNoWrites(t *testing.T) {
+	path := filepath.Join(f.dir, "handshake.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	f.handshakeBytes = data
+	if err := os.Remove(path); err != nil {
+		t.Error(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Error(err)
+	}
+}
+
+func (f *fixture) takesWritesAgain(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(f.dir, "handshake.json")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, f.handshakeBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFlush_SendsTheImageInFullAgainAfterANewEpochThatCouldNotBeKeptOnDisk(t *testing.T) {
+	f := newFixture(t)
+	refs, epoch := true, "0"
+	ack := ackSaying(&refs, &epoch)
+	unwritable := false
+	f.server.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		if unwritable {
+			f.takesNoWrites(t)
+		}
+		return ack(r)
+	})
+	x := constructedImage(t)
+	f.acknowledgedOnce(t)
+	f.sentAndRepeated(t, x)
+
+	epoch, unwritable = "1", true
+	f.storeCallRepeating(t, "req-3", x)
+	if got := f.uploadWith(t, x); got != "reference" {
+		t.Fatalf("the batch built before the new epoch was known carried the image as %s", got)
+	}
+	unwritable = false
+	f.takesWritesAgain(t)
+	if !strings.Contains(f.logs.String(), "persisting the service handshake") {
+		t.Fatalf("the handshake was kept on disk after all; logs:\n%s", f.logs.String())
+	}
+	f.storeCallRepeating(t, "req-4", x)
+	if got := f.uploadWith(t, x); got != "original" {
+		t.Fatalf("after a new epoch that could not be kept on disk a repeated image went up as %s", got)
+	}
+}
+
+func TestFlush_RefersToNothingAfterAWithheldBlockRefsThatCouldNotBeKeptOnDisk(t *testing.T) {
+	f := newFixture(t)
+	refs, epoch := true, "0"
+	ack := ackSaying(&refs, &epoch)
+	unwritable := false
+	f.server.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		if unwritable {
+			f.takesNoWrites(t)
+		}
+		return ack(r)
+	})
+	x := constructedImage(t)
+	f.acknowledgedOnce(t)
+	f.sentAndRepeated(t, x)
+
+	refs, unwritable = false, true
+	f.storeCallRepeating(t, "req-3", "")
+	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+		t.Fatalf("Flush = %+v, %v", got, err)
+	}
+	refs, unwritable = true, false
+	f.takesWritesAgain(t)
+	if !upload.LoadHandshake(f.dir).BlockRefs {
+		t.Fatal("the withheld block_refs was kept on disk after all")
+	}
+	f.storeCallRepeating(t, "req-4", x)
+	if got := f.uploadWith(t, x); got != "original" {
+		t.Fatalf("right after an acknowledgement that withheld block_refs a repeated image went up as %s", got)
+	}
+	f.storeCallRepeating(t, "req-5", x)
+	if got := f.uploadWith(t, x); got != "reference" {
+		t.Fatalf("once an acknowledgement said block_refs again a repeated image went up as %s", got)
 	}
 }
