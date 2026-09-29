@@ -14,15 +14,15 @@ import (
 // agreementVersionFloor is the version the terms before these carried.
 // A version that does not pass it leaves every earlier acceptance
 // current, so nobody is asked to reconfirm and the pause never fires.
-const agreementVersionFloor = "2026-08-31"
+const agreementVersionFloor = "2026-09-21"
 
 // The version, the agreement text, and PRIVACY.md state the same terms.
 // The three hashes below pin them to each other: changing any one of the
 // three without the other two fails the test.
 const (
-	pinnedAgreementVersionSHA256 = "36eba6c30dda0fe6c912880e41d47f87fb0e2bb52235931710c1e86bcb2b9632"
-	pinnedAgreementTextSHA256    = "fedab0ddc08a8de49b0b6e274c6adab5224cce243541be433136ca9fb384aa87"
-	pinnedPrivacyMarkdownSHA256  = "6dd22561f5b6dcca2fcb8ad8d39cd32a67473aa46df8a1e8c4182189968c3a90"
+	pinnedAgreementVersionSHA256 = "a0a764f496b11bbb3022c173ff5a4e9c638e30325954dcb66bfd955780d89939"
+	pinnedAgreementTextSHA256    = "55c4a486a20ef88d8fe726933781f0f1ccd1fb1b3bf2d243bc882597dc576861"
+	pinnedPrivacyMarkdownSHA256  = "da298c0b43baf94d5f7112dba61ee2575dbbb7d84188f80e3b8018458ed67155"
 )
 
 const privacyMarkdownPath = "../../PRIVACY.md"
@@ -106,6 +106,9 @@ func TestAgreementText_KeepsTheWordingsThatMustNotWeaken(t *testing.T) {
 		"Tool results, however, are kept as\n   observed: their text may contain file paths from your machine",
 		"the few fields whose value is, by construction, the\n   directory the session ran in are replaced with a placeholder",
 		"Every other path a record holds is uploaded the\n   same way, as observed",
+		"it cannot see\n   what an image or a PDF shows",
+		"for a PNG, JPEG or GIF image, its\n   width and height",
+		"Images that older versions of Claude Code keep\n   from a notebook's cell outputs are uploaded whatever this setting\n   says",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("agreement text lost the wording %q", want)
@@ -116,6 +119,9 @@ func TestAgreementText_KeepsTheWordingsThatMustNotWeaken(t *testing.T) {
 	}
 	if strings.Contains(text, "identify where your project lives") {
 		t.Error("agreement text claims every field that locates the project is masked; only the few that are the session's own directory are")
+	}
+	if strings.Contains(text, "as it is") {
+		t.Error("agreement text says an image or a document is uploaded as it is; the copy a Read result keeps is still masked as text")
 	}
 	if strings.Contains(text, "we do not read") {
 		t.Error("agreement text weakens 'never constructed' into a promise not to read")

@@ -4,7 +4,7 @@ This page describes everything trajector does with data on your machine and
 what leaves it. The client is fully open source; every statement here can be
 checked against the code in this repository.
 
-It describes version 2026-09-21 of the data agreement — the version
+It describes version 2026-09-29 of the data agreement — the version
 `trajector enable` shows you in full and records when you accept it. The
 agreement and this page state the same terms and change together; the
 version is the day the build carrying those terms was released.
@@ -124,9 +124,40 @@ on your machine, in a place nothing uploads from, and reading goes on from
 the next record; `trajector status` and `trajector doctor` say how many are
 held, a later build that reads them cleanly uploads them the next time you
 run `trajector doctor`, and `trajector forget <session-id>` deletes them.
-**Unredacted data never leaves your machine.** Known limitation: masking
+**Unredacted text never leaves your machine.** Known limitations: masking
 applies to values only — a secret placed in a JSON key position is not
-masked, because keys are structure and the pass never rewrites them.
+masked, because keys are structure and the pass never rewrites them. A
+password that looks like a plain word, such as `password: hunter2hunter`,
+can be left as written when no login target such as `user@host` is within
+three lines of it, because nothing tells it apart from ordinary text. A
+password that contains `***` or `...` can be left as written too, because
+a value shown masked or cut short looks the same.
+
+**Images and documents.** Claude Code sends an image or a PDF document to
+the API as base64 content inside a message: a screenshot you paste, or a
+file that a tool such as `Read` opens. trajector records this content with
+the rest of the call. **Redaction cannot see what an image or a PDF
+shows**: it masks text, and this content is not text. A key, a password, or
+another person's personal data in a screenshot goes up with it.
+
+You can stop this. Set `"upload_images_and_documents": false` in
+`config.json` in your user config directory. Then each image and document
+is uploaded only as a placeholder: the SHA-256 digest of its base64
+content, its media type, its size in bytes and, for a PNG, JPEG or GIF
+image, its width and height. This covers the image or document in the
+call, and the copy that Claude Code keeps in its session file when a tool
+such as `Read` opens an image or a PDF. One copy is not covered: older
+versions of Claude Code may also keep the images that a notebook's cells
+output, in the session file's record of a `Read` of that notebook. That
+copy is uploaded whatever the setting says; current versions of Claude
+Code do not keep it. The next upload uses the setting, also for records
+that were captured before you changed it. If the setting is not in the
+file, images and documents are uploaded. If `config.json` cannot be read
+while the proxy runs, images and documents go up as placeholders until it
+can, and `trajector status` says so and why. `trajector status` always
+shows which of the two is in effect. Your rewards do not change
+with this setting. When data from a session that has placeholders is
+delivered, it is labelled as such.
 
 ## Settings we ask you to change
 
@@ -221,6 +252,13 @@ never silent. Each batch carries a client-side
 idempotency key, so a retried upload can never be counted twice. Local
 records are deleted **only after** the service acknowledges the batch by
 echoing that key; any other answer leaves your data in place for retry.
+
+A session often sends the same image again with each later call. When the
+trajector service states that it can restore them, each image or document
+goes up in full at least once in each session — for a call recorded by the
+proxy, at least once in each project and UTC day — and a later copy goes
+up as the SHA-256 digest of its base64 content. The service puts each copy
+back in the data it delivers.
 
 Contributed data is sold to third-party buyers and contributors are
 compensated. That fact is public by design; buyer identity and commercial

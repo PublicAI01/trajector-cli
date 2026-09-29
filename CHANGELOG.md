@@ -42,6 +42,14 @@ All notable changes to trajector are documented here. The format follows
   and again uploads much less. For a session recorded by the proxy, a
   reference is only to a copy of the same project and the same UTC
   date, so an image goes up in full once more after midnight UTC.
+- The data agreement says that masking reads text only: it cannot see
+  what an image or a PDF shows, so a key or a password in a screenshot
+  goes up with it unless you turn image and document upload off. It
+  says what a placeholder holds, and that the images older versions of
+  Claude Code keep from a notebook's cell outputs are uploaded
+  whatever the setting says. `PRIVACY.md` says the same and says how
+  a repeated image goes up. The agreement version moves to
+  2026-09-29, so `enable` asks once more.
 
 ### Fixed
 

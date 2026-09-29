@@ -3,7 +3,7 @@ package consent
 // AgreementVersion identifies the agreement text below. Bumping it
 // makes every earlier acceptance stale: capture pauses until the user
 // reconfirms, so recorded consent always matches the current terms.
-const AgreementVersion = "2026-09-21"
+const AgreementVersion = "2026-09-29"
 
 // AgreementText is shown in full before the explicit yes/no prompt.
 // It states the actual client behavior and must be kept truthful to
@@ -56,8 +56,17 @@ machine.
    observed: their text may contain file paths from your machine, and
    trajector does not rewrite it, because rewriting it would destroy
    the data itself. Every other path a record holds is uploaded the
-   same way, as observed. Unredacted data does not leave your
-   machine.
+   same way, as observed. Masking reads text only: it cannot see
+   what an image or a PDF shows, so a key or a password in a
+   screenshot you paste, or in a PDF a tool opens, goes up with it.
+   Setting "upload_images_and_documents" to false in config.json in
+   your user config directory uploads each image, and each PDF or
+   other document sent as base64, as a placeholder instead: its
+   digest, its type, its size and, for a PNG, JPEG or GIF image, its
+   width and height. Images that older versions of Claude Code keep
+   from a notebook's cell outputs are uploaded whatever this setting
+   says. Apart from images and documents, unredacted data does not
+   leave your machine.
 
 3. What the data is used for. Uploaded records are combined into
    datasets that are sold or licensed to third parties. You receive

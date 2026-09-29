@@ -212,7 +212,8 @@ WSL boundary; doctor points this out.
 - Recording failures never interrupt forwarding.
 - Observed truth is never rewritten.
 - Credential headers are never written to disk.
-- Unredacted data never leaves the machine.
+- Every record passes redaction before it leaves the machine; redaction
+  masks text, and what it cannot read is stated in [PRIVACY.md](PRIVACY.md).
 - An injected base URL implies an active token and every session
   hook; enable either reaches that state or undoes what it wrote. Files
   shared with other writers — the routing table, the consent file, the

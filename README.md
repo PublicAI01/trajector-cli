@@ -48,8 +48,10 @@ Design commitments:
   whether the exchange is being recorded.
 - Only projects you explicitly enable are captured; everything else connects
   straight to the upstream.
-- Credential headers are never written to disk; unredacted data never leaves
-  your machine.
+- Credential headers are never written to disk; unredacted text never leaves
+  your machine. Redaction cannot see what an image or a PDF shows, so images
+  and documents are uploaded unless you turn their upload off (see
+  [PRIVACY.md](PRIVACY.md)).
 - Consent is revocable at any time (`disable`, `logout`, `uninstall`).
 - The client is fully open source, so everything it does on your machine can
   be audited in this repository.
