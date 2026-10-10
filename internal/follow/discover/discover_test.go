@@ -345,6 +345,67 @@ func TestWalk_CollectsSubagentFiles(t *testing.T) {
 	}
 }
 
+func TestWalk_CollectsWorkflowAgentFilesOneLevelUnderWorkflows(t *testing.T) {
+	tr := newTree(t)
+	main := tr.session(t, tr.root, "sid", time.Now())
+	proj := tr.project(t, tr.root)
+	runs := filepath.Join(proj, "sid", "subagents", "workflows")
+	agentLog := writeFile(t, filepath.Join(runs, "wf_1", "agent-1.jsonl"))
+	agentMeta := writeFile(t, filepath.Join(runs, "wf_1", "agent-1.meta.json"))
+	secondRun := writeFile(t, filepath.Join(runs, "wf_2", "agent-2.jsonl"))
+	writeFile(t, filepath.Join(runs, "wf_1", "journal.jsonl"))
+	writeFile(t, filepath.Join(runs, "wf_1", "deeper", "agent-3.jsonl"))
+	writeFile(t, filepath.Join(runs, "not-a-run", "agent-4.jsonl"))
+	writeFile(t, filepath.Join(proj, "sid", "workflows", "wf_1.json"))
+	outside := canonicalTempDir(t)
+	writeFile(t, filepath.Join(outside, "agent-5.jsonl"))
+	if err := os.Symlink(outside, filepath.Join(runs, "wf_link")); err != nil {
+		t.Fatal(err)
+	}
+
+	res := mustWalk(t, tr)
+
+	want := []string{main, agentLog, agentMeta, secondRun}
+	slices.Sort(want)
+	slices.Sort(res.Files)
+	if !slices.Equal(res.Files, want) {
+		t.Errorf("Files = %v, want %v", res.Files, want)
+	}
+	if !slices.Equal(res.Sessions, []string{main}) {
+		t.Errorf("Sessions = %v, want %v: agent files are not sessions", res.Sessions, []string{main})
+	}
+	kept := res.OnlySessions(func(session string) bool { return session == main })
+	slices.Sort(kept.Files)
+	if !slices.Equal(kept.Files, want) {
+		t.Errorf("OnlySessions(main).Files = %v, want %v: workflow agent files belong to their session", kept.Files, want)
+	}
+}
+
+func TestWalk_AWorkflowDirectoryThatCannotBeListedIsPassedOver(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory this process cannot list")
+	}
+	tr := newTree(t)
+	main := tr.session(t, tr.root, "sid", time.Now())
+	proj := tr.project(t, tr.root)
+	flat := writeFile(t, filepath.Join(proj, "sid", "subagents", "agent-1.jsonl"))
+	runs := filepath.Join(proj, "sid", "subagents", "workflows")
+	writeFile(t, filepath.Join(runs, "wf_1", "agent-2.jsonl"))
+	if err := os.Chmod(runs, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(runs, 0o755) })
+
+	res := mustWalk(t, tr)
+
+	want := []string{main, flat}
+	slices.Sort(want)
+	slices.Sort(res.Files)
+	if !slices.Equal(res.Files, want) || res.Gaps.Any() {
+		t.Errorf("Files = %v, Gaps = %+v; want %v and no gap", res.Files, res.Gaps, want)
+	}
+}
+
 func TestOnlySessions_KeepsTheChosenSessionsWithTheirAgentFiles(t *testing.T) {
 	tr := newTree(t)
 	day := 24 * time.Hour

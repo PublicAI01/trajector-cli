@@ -158,6 +158,8 @@ func TestFile_MainSession(t *testing.T) {
 		{"a session's own file", "/p/-home-u-proj/sid-1.jsonl", true},
 		{"an agent file beside it", "/p/-home-u-proj/sid-1/subagents/agent-a.jsonl", false},
 		{"an agent metadata file", "/p/-home-u-proj/sid-1/subagents/agent-a.meta.json", false},
+		{"an agent file of a workflow run", "/p/-home-u-proj/sid-1/subagents/workflows/wf_1/agent-a.jsonl", false},
+		{"an agent metadata file of a workflow run", "/p/-home-u-proj/sid-1/subagents/workflows/wf_1/agent-a.meta.json", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := (follow.File{Path: tc.path}).MainSession(); got != tc.want {

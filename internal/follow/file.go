@@ -3,7 +3,6 @@ package follow
 import (
 	"math"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -160,13 +159,12 @@ func Group(files []File, path string) []File {
 // extension. It is the one definition of what makes a session's
 // files one group, and it is path arithmetic alone — a group holds
 // together whether or not the files are on disk. A main file
-// <dir>/<sid>.jsonl and the agent files under <dir>/<sid>/subagents/
-// yield the same name. A path that is neither belongs to no session
-// but its own.
+// <dir>/<sid>.jsonl and the agent files under <dir>/<sid>/, at the
+// places agentFileOf accepts, yield the same name. A path that is
+// neither belongs to no session but its own.
 func SessionOf(path string) string {
-	dir := filepath.Dir(path)
-	if filepath.Base(dir) == SubagentsDir && IsAgentFile(filepath.Base(path)) {
-		return filepath.Dir(dir)
+	if sessionDir, _, ok := agentFileOf(path); ok {
+		return sessionDir
 	}
 	if name, ok := strings.CutSuffix(path, linesExt); ok {
 		return name
@@ -197,7 +195,7 @@ type Retirement string
 const relocated Retirement = "relocated"
 
 // MainSession reports whether f is a session's own file rather than
-// an agent file kept beside it under subagents/. Counting sessions
+// an agent file kept under the session's directory. Counting sessions
 // means counting these.
 func (f File) MainSession() bool {
 	_, file := identify(f.Path)

@@ -306,7 +306,7 @@ func TestProgressReportReadsTheAgentFilesBesideTheNamedOne(t *testing.T) {
 	named := e.sessionFile(hash, "sess.jsonl", sessionLine)
 	// A subagent's lines live beside the main file, under the session's
 	// own directory; a hook registers them but never names them.
-	agent := filepath.Join(filepath.Dir(named), "sess", follow.SubagentsDir, "agent-x.jsonl")
+	agent := filepath.Join(filepath.Dir(named), "sess", "subagents", "agent-x.jsonl")
 	if err := os.MkdirAll(filepath.Dir(agent), 0o700); err != nil {
 		t.Fatal(err)
 	}

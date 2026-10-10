@@ -505,6 +505,36 @@ func TestEnable_RegistersExistingSessionFiles(t *testing.T) {
 	}
 }
 
+func TestEnable_RegistersTheWorkflowAgentFilesOfExistingSessions(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	main := e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
+	run := filepath.Join(filepath.Dir(main), "s-1", "subagents", "workflows", "wf_0a1b-2c")
+	if err := os.MkdirAll(run, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for _, name := range []string{"agent-a.jsonl", "agent-a.meta.json", "journal.jsonl"} {
+		p := filepath.Join(run, name)
+		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if name != "journal.jsonl" {
+			want = append(want, p)
+		}
+	}
+
+	e.enable(proxytest.WithProxy)
+
+	got := e.registeredPaths(e.canonicalRoot())
+	want = append(want, main)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("registered = %q, want %q", got, want)
+	}
+}
+
 // readingEarlierLine is what enable says once it has asked for the
 // files it registered to be read.
 func readingEarlierLine(n int) string {

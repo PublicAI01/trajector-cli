@@ -458,9 +458,17 @@ func TestRead_ARewriteOfAFileOutsideKeepsNothingUntilTheSessionComesBack(t *test
 	}
 }
 
-// agentPath is where the agent file of the session mainPath names sits.
-func agentPath(mainPath string) string {
-	return filepath.Join(strings.TrimSuffix(mainPath, ".jsonl"), follow.SubagentsDir, "agent-a1.jsonl")
+// agentPlaces are the directories, under the directory of the session
+// a main file names, that hold its agent files.
+var agentPlaces = []struct{ name, dir string }{
+	{name: "beside the other agents", dir: "subagents"},
+	{name: "in a workflow run", dir: filepath.Join("subagents", "workflows", "wf_1")},
+}
+
+// agentPath is where an agent file of the session mainPath names sits,
+// in the directory dir under the session's directory.
+func agentPath(mainPath, dir string) string {
+	return filepath.Join(strings.TrimSuffix(mainPath, ".jsonl"), dir, "agent-a1.jsonl")
 }
 
 func TestReader_AnAgentFileIsOutsideWhileItsMainFileIs(t *testing.T) {
@@ -471,67 +479,76 @@ func TestReader_AnAgentFileIsOutsideWhileItsMainFileIs(t *testing.T) {
 		{name: "main file first", order: func(main, agent string) []string { return []string{main, agent} }},
 		{name: "agent file first", order: func(main, agent string) []string { return []string{agent, main} }},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			a := newAdvancing(t)
-			main := mainPath(t)
-			agent := agentPath(main)
-			writeFile(t, main, userLine(1))
-			writeFile(t, agent, userLine(11))
-			a.register(main, "")
-			a.register(agent, "")
-			kept := func(paths ...string) []string {
-				a.handed = nil
-				for _, p := range paths {
-					a.reader.Advance(p)
+	for _, place := range agentPlaces {
+		for _, tt := range tests {
+			t.Run(place.name+"/"+tt.name, func(t *testing.T) {
+				a := newAdvancing(t)
+				main := mainPath(t)
+				agent := agentPath(main, place.dir)
+				writeFile(t, main, userLine(1))
+				writeFile(t, agent, userLine(11))
+				a.register(main, "")
+				a.register(agent, "")
+				kept := func(paths ...string) []string {
+					a.handed = nil
+					for _, p := range paths {
+						a.reader.Advance(p)
+					}
+					var lines []string
+					for _, res := range a.handed {
+						lines = append(lines, segmentLines(t, res)...)
+					}
+					return lines
 				}
-				var lines []string
-				for _, res := range a.handed {
-					lines = append(lines, segmentLines(t, res)...)
+				if got, want := kept(main, agent), []string{userLine(1), userLine(11)}; !slices.Equal(got, want) {
+					t.Fatalf("lines kept before the move = %q, want %q", got, want)
 				}
-				return lines
-			}
-			if got, want := kept(main, agent), []string{userLine(1), userLine(11)}; !slices.Equal(got, want) {
-				t.Fatalf("lines kept before the move = %q, want %q", got, want)
-			}
 
-			appendFile(t, main, relocatedLine("/elsewhere")+userLine(2))
-			appendFile(t, agent, userLine(12))
-			if got := kept(tt.order(main, agent)...); got != nil {
-				t.Errorf("lines kept while the session is outside = %q, want none", got)
-			}
-			if got := a.entry(agent); got.Offset != int64(len(userLine(11)+userLine(12))) {
-				t.Errorf("agent cursor offset = %d, want it past the lines written outside", got.Offset)
-			}
+				appendFile(t, main, relocatedLine("/elsewhere")+userLine(2))
+				appendFile(t, agent, userLine(12))
+				if got := kept(tt.order(main, agent)...); got != nil {
+					t.Errorf("lines kept while the session is outside = %q, want none", got)
+				}
+				if got := a.entry(agent); got.Offset != int64(len(userLine(11)+userLine(12))) {
+					t.Errorf("agent cursor offset = %d, want it past the lines written outside", got.Offset)
+				}
 
-			appendFile(t, main, relocatedLine(root)+userLine(3))
-			appendFile(t, agent, userLine(13))
-			if got, want := kept(main, agent), []string{userLine(3), userLine(13)}; !slices.Equal(got, want) {
-				t.Errorf("lines kept after the session came back = %q, want %q", got, want)
-			}
-		})
+				appendFile(t, main, relocatedLine(root)+userLine(3))
+				appendFile(t, agent, userLine(13))
+				if got, want := kept(main, agent), []string{userLine(3), userLine(13)}; !slices.Equal(got, want) {
+					t.Errorf("lines kept after the session came back = %q, want %q", got, want)
+				}
+			})
+		}
 	}
 }
 
 func TestReader_AnAgentMetadataFileWrittenWhileItsSessionIsOutsideIsNeverSnapshotted(t *testing.T) {
-	a := newAdvancing(t)
-	main := mainPath(t)
-	meta := strings.TrimSuffix(agentPath(main), ".jsonl") + ".meta.json"
-	writeFile(t, main, userLine(1)+relocatedLine("/elsewhere"))
-	a.register(main, "")
-	a.register(meta, "")
-	a.reader.Advance(main)
-	writeFile(t, meta, `{"agentType":"a","description":"written outside"}`)
+	for _, place := range agentPlaces {
+		t.Run(place.name, func(t *testing.T) {
+			a := newAdvancing(t)
+			main := mainPath(t)
+			meta := strings.TrimSuffix(agentPath(main, place.dir), ".jsonl") + ".meta.json"
+			writeFile(t, main, userLine(1)+relocatedLine("/elsewhere"))
+			a.register(main, "")
+			a.register(meta, "")
+			a.reader.Advance(main)
+			writeFile(t, meta, `{"agentType":"a","description":"written outside"}`)
 
-	a.reader.Advance(meta)
-	appendFile(t, main, relocatedLine(root))
-	a.reader.Advance(main)
-	a.reader.Advance(meta)
+			a.reader.Advance(meta)
+			appendFile(t, main, relocatedLine(root))
+			a.reader.Advance(main)
+			a.reader.Advance(meta)
 
-	for _, res := range a.handed {
-		if len(res.Snapshots) != 0 {
-			t.Errorf("snapshots = %+v, want none of what the file held while its session was outside", res.Snapshots)
-		}
+			if len(a.handed) == 0 {
+				t.Fatal("nothing was handed on, want the reads of both files")
+			}
+			for _, res := range a.handed {
+				if len(res.Snapshots) != 0 {
+					t.Errorf("snapshots = %+v, want none of what the file held while its session was outside", res.Snapshots)
+				}
+			}
+		})
 	}
 }
 
@@ -781,6 +798,8 @@ func TestRead_SubagentFileNaming(t *testing.T) {
 		{name: "main file", path: filepath.Join(dir, sessionID+".jsonl"), content: userLine(1), wantSession: sessionID, wantFile: ""},
 		{name: "agent lines", path: filepath.Join(dir, sessionID, "subagents", "agent-a1.jsonl"), content: userLine(1), wantSession: sessionID, wantFile: "subagents/agent-a1.jsonl"},
 		{name: "agent metadata", path: filepath.Join(dir, sessionID, "subagents", "agent-a1.meta.json"), content: `{"agentType":"a"}`, wantSession: sessionID, wantFile: "subagents/agent-a1.meta.json"},
+		{name: "workflow agent lines", path: filepath.Join(dir, sessionID, "subagents", "workflows", "wf_9a-b_1", "agent-a2.jsonl"), content: userLine(1), wantSession: sessionID, wantFile: "subagents/workflows/wf_9a-b_1/agent-a2.jsonl"},
+		{name: "workflow agent metadata", path: filepath.Join(dir, sessionID, "subagents", "workflows", "wf_9a-b_1", "agent-a2.meta.json"), content: `{"agentType":"workflow-subagent"}`, wantSession: sessionID, wantFile: "subagents/workflows/wf_9a-b_1/agent-a2.meta.json"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -834,6 +853,37 @@ func TestSiblings(t *testing.T) {
 			filepath.Join("subagents", "agent-a.meta.json"),
 			filepath.Join("subagents", "agent-b.jsonl"),
 		}},
+		{name: "agent files of workflow runs one level under workflows", setup: func(t *testing.T, dir string) {
+			sub := filepath.Join(dir, sessionID, "subagents")
+			runs := filepath.Join(sub, "workflows")
+			writeFile(t, filepath.Join(sub, "agent-a.jsonl"), "")
+			writeFile(t, filepath.Join(runs, "wf_2", "agent-c.jsonl"), "")
+			writeFile(t, filepath.Join(runs, "wf_1", "agent-b.meta.json"), "")
+			writeFile(t, filepath.Join(runs, "wf_1", "agent-b.jsonl"), "")
+			writeFile(t, filepath.Join(runs, "wf_1", "journal.jsonl"), "")
+			writeFile(t, filepath.Join(runs, "wf_1", "deeper", "agent-d.jsonl"), "")
+			writeFile(t, filepath.Join(runs, "wf_1", "workflows", "wf_3", "agent-e.jsonl"), "")
+			writeFile(t, filepath.Join(runs, "run-1", "agent-f.jsonl"), "")
+			writeFile(t, filepath.Join(runs, "wf_bad.name", "agent-g.jsonl"), "")
+			writeFile(t, filepath.Join(runs, "agent-h.jsonl"), "")
+			writeFile(t, filepath.Join(runs, "wf_file"), "")
+			writeFile(t, filepath.Join(dir, sessionID, "workflows", "wf_1.json"), "{}")
+			writeFile(t, filepath.Join(dir, sessionID, "workflows", "scripts", "agent-i.jsonl"), "")
+		}, want: []string{
+			filepath.Join("subagents", "agent-a.jsonl"),
+			filepath.Join("subagents", "workflows", "wf_1", "agent-b.jsonl"),
+			filepath.Join("subagents", "workflows", "wf_1", "agent-b.meta.json"),
+			filepath.Join("subagents", "workflows", "wf_2", "agent-c.jsonl"),
+		}},
+		{name: "a run directory that is a link", setup: func(t *testing.T, dir string) {
+			outside := filepath.Join(dir, "outside")
+			writeFile(t, filepath.Join(outside, "agent-x.jsonl"), "")
+			runs := filepath.Join(dir, sessionID, "subagents", "workflows")
+			writeFile(t, filepath.Join(runs, "wf_real", "agent-a.jsonl"), "")
+			symlink(t, outside, filepath.Join(runs, "wf_link"))
+		}, want: []string{
+			filepath.Join("subagents", "workflows", "wf_real", "agent-a.jsonl"),
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -844,10 +894,95 @@ func TestSiblings(t *testing.T) {
 			for i, w := range tt.want {
 				want[i] = filepath.Join(dir, sessionID, w)
 			}
-			if got == nil || !slices.Equal(got, want) {
+			if !slices.Equal(got, want) {
 				t.Errorf("Siblings() = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestSiblings_AWorkflowsDirectoryThatIsALinkIsNotFollowed(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(dir, "outside")
+	writeFile(t, filepath.Join(outside, "wf_1", "agent-y.jsonl"), "")
+	sub := filepath.Join(dir, sessionID, "subagents")
+	writeFile(t, filepath.Join(sub, "agent-a.jsonl"), "")
+	symlink(t, outside, filepath.Join(sub, "workflows"))
+
+	got := follow.Siblings(filepath.Join(dir, sessionID+".jsonl"))
+
+	if want := []string{filepath.Join(sub, "agent-a.jsonl")}; !slices.Equal(got, want) {
+		t.Errorf("Siblings() = %q, want %q", got, want)
+	}
+}
+
+func TestSiblings_AWorkflowDirectoryThatCannotBeListedIsPassedOver(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory this process cannot list")
+	}
+	for _, tt := range []struct {
+		name   string
+		locked string
+		want   []string
+	}{
+		{name: "a run directory", locked: filepath.Join("workflows", "wf_2"), want: []string{"agent-a.jsonl", filepath.Join("workflows", "wf_1", "agent-b.jsonl")}},
+		{name: "the workflows directory", locked: "workflows", want: []string{"agent-a.jsonl"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			sub := filepath.Join(dir, sessionID, "subagents")
+			writeFile(t, filepath.Join(sub, "agent-a.jsonl"), "")
+			writeFile(t, filepath.Join(sub, "workflows", "wf_1", "agent-b.jsonl"), "")
+			writeFile(t, filepath.Join(sub, "workflows", "wf_2", "agent-c.jsonl"), "")
+			locked := filepath.Join(sub, tt.locked)
+			if err := os.Chmod(locked, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+
+			got := follow.Siblings(filepath.Join(dir, sessionID+".jsonl"))
+
+			want := make([]string, len(tt.want))
+			for i, w := range tt.want {
+				want[i] = filepath.Join(sub, w)
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("Siblings() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestSiblings_ManyRunsWithManyAgents(t *testing.T) {
+	dir := t.TempDir()
+	runs := filepath.Join(dir, sessionID, "subagents", "workflows")
+	var want []string
+	for run := range 4 {
+		for agent := range 12 {
+			for _, ext := range []string{".jsonl", ".meta.json"} {
+				p := filepath.Join(runs, fmt.Sprintf("wf_%02d", run), fmt.Sprintf("agent-%02d%s", agent, ext))
+				writeFile(t, p, "")
+				want = append(want, p)
+			}
+		}
+	}
+
+	got := follow.Siblings(filepath.Join(dir, sessionID+".jsonl"))
+
+	slices.Sort(want)
+	if !slices.Equal(slices.Sorted(slices.Values(got)), want) {
+		t.Errorf("Siblings() listed %d files, want %d: %q", len(got), len(want), got)
+	}
+}
+
+// symlink makes link point at target.
+func symlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -186,13 +186,15 @@ func TestGroupHoldsASessionsFilesAndNoOthers(t *testing.T) {
 		{Path: main},
 		{Path: agent},
 		{Path: abs(t, "s/subagents/agent-x.meta.json")},
+		{Path: abs(t, "s/subagents/workflows/wf_1/agent-y.jsonl")},
 		{Path: abs(t, "other.jsonl")},
 		{Path: abs(t, "other/subagents/agent-x.jsonl")},
+		{Path: abs(t, "other/subagents/workflows/wf_1/agent-y.jsonl")},
 	}
-	for _, path := range []string{main, agent} {
+	for _, path := range []string{main, agent, files[3].Path} {
 		got := follow.Group(files, path)
-		if len(got) != 3 || got[0].Path != main {
-			t.Errorf("Group(_, %q) = %+v, want the main file and its two agent files", filepath.Base(path), got)
+		if len(got) != 4 || got[0].Path != main {
+			t.Errorf("Group(_, %q) = %+v, want the main file and its three agent files", filepath.Base(path), got)
 		}
 	}
 	if got := follow.Group(files, abs(t, "gone.jsonl")); len(got) != 0 {

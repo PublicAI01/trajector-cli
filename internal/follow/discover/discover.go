@@ -74,7 +74,7 @@ type Ambiguity = follow.Ambiguity
 type Result struct {
 	// Files are the absolute paths of every session file found: the
 	// main <sid>.jsonl files and the agent-*.jsonl and agent-*.meta.json
-	// files under <sid>/subagents/.
+	// files that follow.AgentFiles lists under <sid>/.
 	Files []string
 	// Sessions are the absolute paths of the main <sid>.jsonl files,
 	// the subset of Files that is a session's own file. The walk knows
@@ -273,7 +273,7 @@ func collect(hit string, res *Result) error {
 			}
 			res.mods[p] = info.ModTime()
 		case e.IsDir():
-			if err := collectAgents(filepath.Join(p, follow.SubagentsDir), res); err != nil {
+			if err := collectAgents(p, res); err != nil {
 				return err
 			}
 		}
@@ -281,19 +281,18 @@ func collect(hit string, res *Result) error {
 	return nil
 }
 
-func collectAgents(dir string, res *Result) error {
-	entries, err := os.ReadDir(dir)
+// collectAgents gathers the agent files of the session whose directory
+// is sessionDir. A directory with no agent files is not an error: most
+// directories beside the session files are not sessions at all.
+func collectAgents(sessionDir string, res *Result) error {
+	files, err := follow.AgentFiles(sessionDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	for _, e := range entries {
-		if e.Type().IsRegular() && follow.IsAgentFile(e.Name()) {
-			res.Files = append(res.Files, filepath.Join(dir, e.Name()))
-		}
-	}
+	res.Files = append(res.Files, files...)
 	return nil
 }
 

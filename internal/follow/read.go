@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -14,9 +16,19 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/sessionline"
 )
 
-// SubagentsDir is the directory beside a session's main file, under a
+// subagentsDir is the directory beside a session's main file, under a
 // directory named after the session, that holds its agent files.
-const SubagentsDir = "subagents"
+const subagentsDir = "subagents"
+
+// workflowsDir is the directory under subagentsDir that holds one
+// directory per workflow run, and each run directory holds the agent
+// files of the agents that run started.
+const workflowsDir = "workflows"
+
+// runDirName is the set of names a workflow run directory may have. A
+// directory with another name is not a run directory, and nothing in
+// it is an agent file.
+var runDirName = regexp.MustCompile(`^wf_[A-Za-z0-9_-]+$`)
 
 const (
 	linesExt    = ".jsonl"
@@ -394,32 +406,98 @@ func readMeta(res ReadResult, st Stat, capture envelope.Capture, sessionOutside 
 // the session's directory: "" for the main file, and the path under the
 // session directory for an agent file.
 func identify(path string) (sessionID, file string) {
-	dir := filepath.Dir(path)
-	if filepath.Base(dir) == SubagentsDir {
-		return filepath.Base(filepath.Dir(dir)), SubagentsDir + "/" + filepath.Base(path)
+	if sessionDir, file, ok := agentFileOf(path); ok {
+		return filepath.Base(sessionDir), file
 	}
 	return strings.TrimSuffix(filepath.Base(path), linesExt), ""
 }
 
-// Siblings lists the agent files of a session by their fixed place,
-// <dir>/<session>/subagents/, next to the session's main file. It is
-// the one directory listing this package does, and a session with no
-// such directory has no siblings. Only regular files are listed: a
-// link could lead outside the session directory.
-func Siblings(mainPath string) []string {
-	sessionID := strings.TrimSuffix(filepath.Base(mainPath), linesExt)
-	dir := filepath.Join(filepath.Dir(mainPath), sessionID, SubagentsDir)
-	found := []string{}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return found
+// agentFileOf names the session directory an agent file belongs to and
+// the file's place in that directory, in slash form. An agent file is
+// kept in one of two places: directly under <session>/subagents/, or
+// under <session>/subagents/workflows/<run>/ where runDirName accepts
+// the run directory's name. ok is false for any other path. It is the
+// one definition of where an agent file is: it is path arithmetic
+// alone, and AgentFiles lists exactly the places it accepts.
+func agentFileOf(p string) (sessionDir, file string, ok bool) {
+	name := filepath.Base(p)
+	if !isAgentFile(name) {
+		return "", "", false
 	}
-	for _, e := range entries {
-		if e.Type().IsRegular() && IsAgentFile(e.Name()) {
-			found = append(found, filepath.Join(dir, e.Name()))
+	dir := filepath.Dir(p)
+	if filepath.Base(dir) == subagentsDir {
+		return filepath.Dir(dir), path.Join(subagentsDir, name), true
+	}
+	run := filepath.Base(dir)
+	workflows := filepath.Dir(dir)
+	subagents := filepath.Dir(workflows)
+	if runDirName.MatchString(run) && filepath.Base(workflows) == workflowsDir && filepath.Base(subagents) == subagentsDir {
+		return filepath.Dir(subagents), path.Join(subagentsDir, workflowsDir, run, name), true
+	}
+	return "", "", false
+}
+
+// Siblings lists the agent files of the session mainPath is the main
+// file of, as AgentFiles lists them. A session with no agent files,
+// or whose subagents/ directory cannot be listed, has no siblings.
+func Siblings(mainPath string) []string {
+	found, _ := AgentFiles(SessionOf(mainPath))
+	return found
+}
+
+// AgentFiles lists the agent files of the session whose directory is
+// sessionDir, at the places agentFileOf accepts: the regular files
+// under <session>/subagents/, then those under each run directory of
+// <session>/subagents/workflows/. Nothing deeper is listed. Only regular
+// files and real directories are followed under subagents/: a link
+// could lead outside the session directory. These are the only
+// directory listings this package does. The error is the one from
+// listing subagents/ itself, so a session with no such directory
+// reports fs.ErrNotExist. A workflows/ or run directory that cannot be
+// listed is passed over, and what the other directories hold is still
+// listed.
+func AgentFiles(sessionDir string) ([]string, error) {
+	dir := filepath.Join(sessionDir, subagentsDir)
+	found, hasWorkflows, err := listAgentFiles(dir)
+	if err != nil {
+		return nil, err
+	}
+	if !hasWorkflows {
+		return found, nil
+	}
+	runsDir := filepath.Join(dir, workflowsDir)
+	runs, err := os.ReadDir(runsDir)
+	if err != nil {
+		return found, nil
+	}
+	for _, run := range runs {
+		if !run.IsDir() || !runDirName.MatchString(run.Name()) {
+			continue
+		}
+		if inRun, _, err := listAgentFiles(filepath.Join(runsDir, run.Name())); err == nil {
+			found = append(found, inRun...)
 		}
 	}
-	return found
+	return found, nil
+}
+
+// listAgentFiles lists the regular agent files directly in dir, and
+// reports whether dir holds a real directory named workflowsDir.
+func listAgentFiles(dir string) (found []string, hasWorkflows bool, err error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, false, err
+	}
+	found = []string{}
+	for _, e := range entries {
+		switch {
+		case e.Type().IsRegular() && isAgentFile(e.Name()):
+			found = append(found, filepath.Join(dir, e.Name()))
+		case e.IsDir() && e.Name() == workflowsDir:
+			hasWorkflows = true
+		}
+	}
+	return found, hasWorkflows, nil
 }
 
 // IsSessionFile reports whether name is the name of a session's main
@@ -428,9 +506,9 @@ func IsSessionFile(name string) bool {
 	return strings.HasSuffix(name, linesExt)
 }
 
-// IsAgentFile reports whether name is the name of an agent file under
-// SubagentsDir: its lines, or the metadata beside them.
-func IsAgentFile(name string) bool {
+// isAgentFile reports whether name is the name of an agent file: its
+// lines, or the metadata beside them.
+func isAgentFile(name string) bool {
 	return strings.HasPrefix(name, agentPrefix) && (strings.HasSuffix(name, linesExt) || strings.HasSuffix(name, metaExt))
 }
 
