@@ -155,7 +155,8 @@ func (t *tailer) progress(ev apiproxy.Progress) bool {
 // onStart marks the sweep a proxy runs on its way in, where that does
 // not hold: a proxy that has just bound the port must not open an
 // upload before it can be drained — the takeover of its port waits on
-// the exit flush, which waits on that upload's lock.
+// the exit flush, which waits on that upload's lock. That sweep also
+// reads the cold entries that readLeftBehind picks out.
 func (t *tailer) sweep(onStart bool) {
 	now := t.reader.Now()
 	projects, err := t.reader.Registry.Projects()
@@ -174,7 +175,10 @@ func (t *tailer) sweep(onStart bool) {
 		if err != nil {
 			continue
 		}
-		hot, _ := follow.Split(files, now, t.alive)
+		hot, cold := follow.Split(files, now, t.alive)
+		if onStart && t.readLeftBehind(project, cold) {
+			read = true
+		}
 		for _, f := range hot {
 			st, err := follow.StatFile(f.Path)
 			if err != nil {
@@ -210,6 +214,28 @@ func (t *tailer) sweep(onStart bool) {
 	case read:
 		t.flushDue()
 	}
+}
+
+// readLeftBehind reads the cold entries kept from earlier builds that
+// have lines left to read, and reports whether it read any. A session
+// that ended while an earlier build was the resident process is cold,
+// and that build never read these entries, so the first sweep of this
+// one is the read they are owed. Every other cold file stays unread
+// until a hook names it again.
+func (t *tailer) readLeftBehind(project sessionread.Project, cold []follow.File) bool {
+	read := false
+	for _, f := range cold {
+		if !f.KeptFromEarlierBuilds() {
+			continue
+		}
+		st, err := follow.StatFile(f.Path)
+		if err != nil || (f.React(st) == follow.Continue && f.Behind(st) == 0) {
+			continue
+		}
+		t.reader.Read(project, []follow.File{f})
+		read = true
+	}
+	return read
 }
 
 // project is the enabled project a registry belongs to, by hash. A

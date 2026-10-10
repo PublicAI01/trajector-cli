@@ -406,35 +406,47 @@ func readMeta(res ReadResult, st Stat, capture envelope.Capture, sessionOutside 
 // the session's directory: "" for the main file, and the path under the
 // session directory for an agent file.
 func identify(path string) (sessionID, file string) {
-	if sessionDir, file, ok := agentFileOf(path); ok {
+	if sessionDir, file, at := agentFileOf(path); at != notAgentFile {
 		return filepath.Base(sessionDir), file
 	}
 	return strings.TrimSuffix(filepath.Base(path), linesExt), ""
 }
 
-// agentFileOf names the session directory an agent file belongs to and
-// the file's place in that directory, in slash form. An agent file is
-// kept in one of two places: directly under <session>/subagents/, or
-// under <session>/subagents/workflows/<run>/ where runDirName accepts
-// the run directory's name. ok is false for any other path. It is the
-// one definition of where an agent file is: it is path arithmetic
-// alone, and AgentFiles lists exactly the places it accepts.
-func agentFileOf(p string) (sessionDir, file string, ok bool) {
+// place is which of the places agentFileOf accepts holds a file.
+type place int
+
+const (
+	notAgentFile place = iota
+	// inSubagents is directly under <session>/subagents/.
+	inSubagents
+	// inWorkflowRun is under <session>/subagents/workflows/<run>/.
+	inWorkflowRun
+)
+
+// agentFileOf names the session directory an agent file belongs to,
+// the file's place in that directory in slash form, and which place
+// holds it. An agent file is kept in one of two places: directly under
+// <session>/subagents/, or under <session>/subagents/workflows/<run>/
+// where runDirName accepts the run directory's name. at is notAgentFile
+// for any other path. It is the one definition of where an agent file
+// is: it is path arithmetic alone, and AgentFiles lists exactly the
+// places it accepts.
+func agentFileOf(p string) (sessionDir, file string, at place) {
 	name := filepath.Base(p)
 	if !isAgentFile(name) {
-		return "", "", false
+		return "", "", notAgentFile
 	}
 	dir := filepath.Dir(p)
 	if filepath.Base(dir) == subagentsDir {
-		return filepath.Dir(dir), path.Join(subagentsDir, name), true
+		return filepath.Dir(dir), path.Join(subagentsDir, name), inSubagents
 	}
 	run := filepath.Base(dir)
 	workflows := filepath.Dir(dir)
 	subagents := filepath.Dir(workflows)
 	if runDirName.MatchString(run) && filepath.Base(workflows) == workflowsDir && filepath.Base(subagents) == subagentsDir {
-		return filepath.Dir(subagents), path.Join(subagentsDir, workflowsDir, run, name), true
+		return filepath.Dir(subagents), path.Join(subagentsDir, workflowsDir, run, name), inWorkflowRun
 	}
-	return "", "", false
+	return "", "", notAgentFile
 }
 
 // Siblings lists the agent files of the session mainPath is the main

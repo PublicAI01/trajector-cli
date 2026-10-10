@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -404,5 +405,90 @@ func TestSweepSendsTheRecordsItReadsAtOnce(t *testing.T) {
 	}
 	if !eventually(t, 10*time.Second, func() bool { return len(e.sandbox.Records()) == 0 }) {
 		t.Errorf("spool holds %d records after the sweep's flush, want 0", len(e.sandbox.Records()))
+	}
+}
+
+func TestStartSweepReadsAColdWorkflowAgentFileLeftUnreadAndNoOtherColdFile(t *testing.T) {
+	proxytest.RequireSessionSources(t)
+	e := newEnv(t)
+	_, hash := e.enabledProject()
+	main := e.sessionFile(hash, "sess.jsonl", sessionLine)
+	place := func(rel string) string {
+		path := filepath.Join(filepath.Dir(main), "sess", "subagents", filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(`{"type":"assistant","message":{"id":"m2"}}`+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		e.sandbox.RegisterSessionFile(hash, path, "")
+		return path
+	}
+	inRun := place("workflows/wf_1/agent-x.jsonl")
+	flat := place("agent-y.jsonl")
+	e.cool(hash, main)
+
+	served := e.serve(io.Discard, io.Discard)
+	e.waitHealthy()
+	defer e.stopServed(served)
+
+	if !eventually(t, 5*time.Second, func() bool { return e.entry(hash, inRun).Offset > 0 }) {
+		t.Fatalf("workflow agent file = %+v, want read by the sweep on the way in", e.entry(hash, inRun))
+	}
+	if n := len(e.sandbox.Records()); n != 1 {
+		t.Errorf("records = %d, want the workflow agent file's one segment", n)
+	}
+	for _, path := range []string{main, flat} {
+		if f := e.entry(hash, path); f.Offset != 0 || f.ReadAt != "" {
+			t.Errorf("%s = %+v, want a cold file never read", filepath.Base(path), f)
+		}
+	}
+	if f := e.entry(hash, inRun); f.LastEvent != "" || f.PID != 0 {
+		t.Errorf("workflow agent file = %+v, want left cold", f)
+	}
+}
+
+func TestStartSweepLeavesAColdWorkflowAgentFileReadToItsEnd(t *testing.T) {
+	proxytest.RequireSessionSources(t)
+	e := newEnv(t)
+	_, hash := e.enabledProject()
+	main := e.sessionFile(hash, "sess.jsonl", sessionLine)
+	place := func(run string) string {
+		path := filepath.Join(filepath.Dir(main), "sess", "subagents", "workflows", run, "agent-x.jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(`{"type":"assistant","message":{"id":"m2"}}`+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		e.sandbox.RegisterSessionFile(hash, path, "")
+		return path
+	}
+	readToEnd := place("wf_1")
+	unread := place("wf_2")
+	from := e.entry(hash, readToEnd)
+	st, err := follow.StatFile(readToEnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	to := follow.File{Path: readToEnd, Inode: st.Inode, Size: st.Size, Offset: st.Size, NextSegment: 1, ReadAt: "2026-01-01T00:00:00Z"}
+	if err := e.registry().Update(hash, from, to); err != nil {
+		t.Fatal(err)
+	}
+	e.cool(hash, main)
+	before := e.entry(hash, readToEnd)
+
+	served := e.serve(io.Discard, io.Discard)
+	e.waitHealthy()
+	defer e.stopServed(served)
+
+	if !eventually(t, 5*time.Second, func() bool { return e.entry(hash, unread).Offset > 0 }) {
+		t.Fatalf("unread workflow agent file = %+v, want read by the sweep on the way in", e.entry(hash, unread))
+	}
+	if got := e.entry(hash, readToEnd); !reflect.DeepEqual(got, before) {
+		t.Errorf("workflow agent file read to its end = %+v, want left as %+v", got, before)
+	}
+	if n := len(e.sandbox.Records()); n != 1 {
+		t.Errorf("records = %d, want the unread workflow agent file's one segment", n)
 	}
 }

@@ -11,7 +11,9 @@
 // pid, told, and before_rewrite. A session that moved to a directory
 // consent does not cover is written as retired "relocated", the form
 // an earlier build wrote: an earlier build then never reads on past
-// the line that took the session out. The path
+// the line that took the session out. An agent file of a workflow run
+// is written as retired "nested-agent-file", so that a build which
+// does not know that place never reads it. The path
 // is the entry's identity. Inode, size, and offset describe the file as it
 // was last observed locally: they steer reading and never leave it.
 // An optional "gaps" object records what the one-time search for the
@@ -452,10 +454,20 @@ func parse(data []byte) (registry, error) {
 	if reg.Version != version {
 		return registry{}, fmt.Errorf("follow: unsupported registry version %d", reg.Version)
 	}
-	// relocated is how outside is written; see File.Outside.
+	// relocated is how outside is written; see File.Outside. The
+	// retirement of an agent file in a run directory is for builds
+	// that do not know the place; see nestedAgentFile. It hides the
+	// entry from this build too when this build does not know the place
+	// either: a later build may write the same value for a place it
+	// added.
 	for i := range reg.Files {
-		if reg.Files[i].Retired == relocated {
-			reg.Files[i].Retired, reg.Files[i].Outside = "", true
+		switch f := &reg.Files[i]; f.Retired {
+		case relocated:
+			f.Retired, f.Outside = "", true
+		case nestedAgentFile:
+			if f.KeptFromEarlierBuilds() {
+				f.Retired = ""
+			}
 		}
 	}
 	return reg, nil
@@ -470,8 +482,11 @@ func encode(reg registry) ([]byte, error) {
 		if reg.Files[i].MessageIDs == nil {
 			reg.Files[i].MessageIDs = []string{}
 		}
-		if reg.Files[i].Outside {
-			reg.Files[i].Retired = relocated
+		switch f := &reg.Files[i]; {
+		case f.Outside:
+			f.Retired = relocated
+		case f.Retired == "" && f.KeptFromEarlierBuilds():
+			f.Retired = nestedAgentFile
 		}
 	}
 	return json.Marshal(reg)

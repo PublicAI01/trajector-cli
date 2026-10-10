@@ -50,9 +50,12 @@ type File struct {
 	// field holds no retired entry, and a build that does not know the
 	// field reads a retired entry as one still to read.
 	//
-	// This build retires no entry for good. The retirement
-	// "relocated" is read as Outside, and a retirement this build does
-	// not know stays as it is.
+	// This build retires no entry for good. Two retirements are written
+	// for entries it still reads, and both are read back as no
+	// retirement: "relocated" is read as Outside, and "nested-agent-file"
+	// marks an entry for an agent file of a workflow run (see
+	// KeptFromEarlierBuilds). A retirement this build does not know
+	// stays as it is.
 	Retired Retirement `json:"retired,omitempty"`
 	// Outside records that the session moved to a directory consent
 	// does not cover and has not come back. The reader moves the
@@ -163,7 +166,7 @@ func Group(files []File, path string) []File {
 // places agentFileOf accepts, yield the same name. A path that is
 // neither belongs to no session but its own.
 func SessionOf(path string) string {
-	if sessionDir, _, ok := agentFileOf(path); ok {
+	if sessionDir, _, at := agentFileOf(path); at != notAgentFile {
 		return sessionDir
 	}
 	if name, ok := strings.CutSuffix(path, linesExt); ok {
@@ -187,12 +190,42 @@ func Split(files []File, now time.Time, alive func(pid int) bool) (hot, cold []F
 
 // Retirement is why an entry's cursor can never advance again. Its
 // values are written to the registry, so they are part of the layout.
+//
+// A build lists no entry that carries a retirement, counts none as
+// hot, and reads none, whatever the value, and writes back a value it
+// does not know as it found it. That is what lets a value hide an
+// entry from builds that would read it wrongly: such a value is
+// written to the registry for as long as the entry exists, and a
+// build reads the entry as one not retired only when it knows the
+// place the entry's path names, never from the value alone.
 type Retirement string
 
 // relocated is the retirement earlier builds wrote for a session that
 // moved to a directory consent does not cover, and the on-disk form of
 // Outside in this one.
 const relocated Retirement = "relocated"
+
+// nestedAgentFile is the retirement written for every entry whose path
+// is an agent file in a workflow run directory. A build that does not
+// know that place takes such a file for the main file of a session
+// named after the agent; the retirement keeps that build from reading
+// it at all. It is never removed, and this build reads the entry as
+// one not retired when the path is at a place it knows: the same
+// value written for a place a later build adds hides the entry from
+// this build as well. While the entry is Outside it is written as
+// relocated instead; a build that reads relocated as Outside then
+// lists it.
+const nestedAgentFile Retirement = "nested-agent-file"
+
+// KeptFromEarlierBuilds reports whether f is hidden on disk from the
+// builds that do not know where it is kept: an agent file of a
+// workflow run. Only a build that knows the place reads it, so what
+// was written to it while such a build was the one reading is still
+// unread when this build takes over, whatever its heat says.
+func (f File) KeptFromEarlierBuilds() bool {
+	_, _, at := agentFileOf(f.Path)
+	return at == inWorkflowRun
+}
 
 // MainSession reports whether f is a session's own file rather than
 // an agent file kept under the session's directory. Counting sessions

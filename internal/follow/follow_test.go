@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
@@ -237,6 +238,148 @@ func TestRegistry_ReadsAnEntryAnEarlierBuildRetiredForLeavingAsOutside(t *testin
 	if len(files) != 1 || !sameFile(files[0], left) || !files[0].Outside || files[0].Retired != "" {
 		t.Errorf("Files() = %+v, want the entry listed outside, with the cursor the earlier build left", files)
 	}
+}
+
+// retirementsOnDisk reads the retirement each entry of the registry
+// file carries, by path, as a build that does not decode the layout
+// through this package would see it.
+func retirementsOnDisk(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, project+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reg struct {
+		Files []struct {
+			Path    string `json:"path"`
+			Retired string `json:"retired"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(data, &reg); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, f := range reg.Files {
+		got[f.Path] = f.Retired
+	}
+	return got
+}
+
+func TestRegistry_AnAgentFileOfAWorkflowRunIsHiddenOnDiskAndReadHere(t *testing.T) {
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	main := abs(t, "sid.jsonl")
+	flat := abs(t, filepath.Join("sid", "subagents", "agent-a.jsonl"))
+	inRun := abs(t, filepath.Join("sid", "subagents", "workflows", "wf_1", "agent-b.jsonl"))
+	inRunMeta := abs(t, filepath.Join("sid", "subagents", "workflows", "wf_1", "agent-b.meta.json"))
+	if err := r.RegisterAll(project, []string{main, flat, inRun, inRunMeta}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{main: "", flat: "", inRun: "nested-agent-file", inRunMeta: "nested-agent-file"}
+	if got := retirementsOnDisk(t, dir); !reflect.DeepEqual(got, want) {
+		t.Errorf("retirements on disk = %v, want %v", got, want)
+	}
+	files, err := r.Files(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 4 {
+		t.Fatalf("Files() = %+v, want every entry listed", files)
+	}
+	now := time.Now()
+	if err := r.Warm(project, main, 0, now); err != nil {
+		t.Fatal(err)
+	}
+	if files, err = r.Files(project); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if f.Retired != "" || !f.Hot(now, func(int) bool { return false }) {
+			t.Errorf("%s = %+v, want read here as an entry not retired, hot with its session", filepath.Base(f.Path), f)
+		}
+		if got, want := f.KeptFromEarlierBuilds(), f.Path == inRun || f.Path == inRunMeta; got != want {
+			t.Errorf("%s: KeptFromEarlierBuilds() = %v, want %v", filepath.Base(f.Path), got, want)
+		}
+	}
+
+	read := follow.File{Path: inRun, Inode: 3, Size: 40, Offset: 40, NextSegment: 1, MessageIDs: []string{"msg_b"}}
+	if err := r.Update(project, follow.File{Path: inRun}, read); err != nil {
+		t.Fatal(err)
+	}
+	if got := retirementsOnDisk(t, dir)[inRun]; got != "nested-agent-file" {
+		t.Errorf("retirement on disk after a read = %q, want it kept", got)
+	}
+}
+
+func TestRegistry_AnAgentFileOfAWorkflowRunOutsideIsWrittenAsRelocated(t *testing.T) {
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	inRun := abs(t, filepath.Join("sid", "subagents", "workflows", "wf_1", "agent-b.jsonl"))
+	mustRegister(t, r, project, inRun)
+	outside := follow.File{Path: inRun, Offset: 10, Outside: true}
+	if err := r.Update(project, follow.File{Path: inRun}, outside); err != nil {
+		t.Fatal(err)
+	}
+	if got := retirementsOnDisk(t, dir)[inRun]; got != "relocated" {
+		t.Fatalf("retirement on disk while outside = %q, want relocated", got)
+	}
+	back := follow.File{Path: inRun, Offset: 20}
+	if err := r.Update(project, outside, back); err != nil {
+		t.Fatal(err)
+	}
+	if got := retirementsOnDisk(t, dir)[inRun]; got != "nested-agent-file" {
+		t.Errorf("retirement on disk after coming back = %q, want nested-agent-file", got)
+	}
+}
+
+// keepsARetirementThroughEveryWrite registers marked beside another
+// file, writes why onto marked as the build that knows the value would,
+// and checks after each kind of write this build makes that marked is
+// still carried with why on disk and is not listed.
+func keepsARetirementThroughEveryWrite(t *testing.T, marked string, why follow.Retirement) {
+	t.Helper()
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	other := abs(t, "other.jsonl")
+	mustRegister(t, r, project, other, marked)
+	retireInFile(t, dir, marked, why)
+
+	writes := []struct {
+		name  string
+		write func() error
+	}{
+		{"Warm of another entry", func() error { return r.Warm(project, other, 0, time.Now()) }},
+		{"Cool of the entry", func() error { return r.Cool(project, marked) }},
+		{"SetGaps", func() error { return r.SetGaps(project, follow.Gaps{Truncated: true}) }},
+		{"RegisterAll of a new path", func() error {
+			return r.RegisterAll(project, []string{marked, abs(t, "new.jsonl")}, "")
+		}},
+	}
+	for _, w := range writes {
+		if err := w.write(); err != nil {
+			t.Fatalf("%s: %v", w.name, err)
+		}
+		if got := retirementsOnDisk(t, dir)[marked]; got != string(why) {
+			t.Errorf("after %s: retirement on disk = %q, want %q as it was found", w.name, got, why)
+		}
+		files, err := r.Files(project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.ContainsFunc(files, func(f follow.File) bool { return f.Path == marked }) {
+			t.Errorf("after %s: Files() lists %s, want it left out", w.name, filepath.Base(marked))
+		}
+	}
+}
+
+func TestRegistry_ARetirementThisBuildDoesNotKnowIsWrittenBackAsFound(t *testing.T) {
+	keepsARetirementThroughEveryWrite(t, abs(t, "b.jsonl"), "future")
+}
+
+func TestRegistry_AMarkedEntryAtAPlaceThisBuildDoesNotKnowStaysHidden(t *testing.T) {
+	unknownPlace := abs(t, filepath.Join("sid", "subagents", "workflows", "run-1", "agent-x.jsonl"))
+	keepsARetirementThroughEveryWrite(t, unknownPlace, "nested-agent-file")
 }
 
 func TestRegistry_RegisterAllWritesNothingWhenEveryPathIsRegistered(t *testing.T) {
