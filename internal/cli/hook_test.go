@@ -154,6 +154,40 @@ func TestHook_RegistersTheSessionFileItIsToldAbout(t *testing.T) {
 	}
 }
 
+func TestHook_ProgressOnASubagentStopRegistersTheWorkflowAgentFilesWrittenSoFar(t *testing.T) {
+	h := newHookEnv(t)
+	h.StartProxy()
+	h.enabled()
+	main := h.sessionFile("-work-sample/0f1e2d3c.jsonl")
+	run := "-work-sample/0f1e2d3c/subagents/workflows/wf_9a8b7c6d-5e4/"
+	firstPhase := h.sessionFile(run + "agent-a1.jsonl")
+	firstPhaseMeta := h.sessionFile(run + "agent-a1.meta.json")
+	secondPhase := h.sessionFile(run + "agent-b1.jsonl")
+	h.sessionFile(run + "journal.jsonl")
+	h.sessionFile("-work-sample/0f1e2d3c/workflows/wf_9a8b7c6d-5e4.json")
+	input, err := json.Marshal(map[string]any{
+		"session_id":            "0f1e2d3c",
+		"transcript_path":       main,
+		"cwd":                   h.Project(),
+		"hook_event_name":       "SubagentStop",
+		"agent_id":              "b1",
+		"agent_type":            "workflow-subagent",
+		"agent_transcript_path": secondPhase,
+		"stop_hook_active":      false,
+		"background_tasks":      []map[string]string{{"id": "w1", "type": "workflow", "status": "running"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertSilentSuccess(t, h.InProjectInput(string(input), "hook", "progress"))
+
+	want := []string{main, firstPhase, firstPhaseMeta, secondPhase}
+	if got := h.registered(); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("registry = %q, want %q", got, want)
+	}
+}
+
 func TestHook_CloudSessionPlaceholderIsNotRegistered(t *testing.T) {
 	h := newHookEnv(t)
 	h.enabled()
@@ -350,6 +384,33 @@ func TestHook_TellsAStoppedDeviceOncePerSession(t *testing.T) {
 		if again.Exit != 0 || again.Stderr != "" {
 			t.Errorf("%s after the session was told: exit = %d, stderr = %q; want one notice per session", hook, again.Exit, again.Stderr)
 		}
+	}
+}
+
+func TestHook_ASubagentStopLeavesTheSessionsOneNoticeForItsOwnTurn(t *testing.T) {
+	h := newHookEnv(t)
+	h.enabled()
+	main := h.sessionFile("-work-sample/0f1e2d3c.jsonl")
+	assertSilentSuccess(t, h.InProjectInput(h.input(main), "hook", "session-end"))
+	h.Sandbox().Pause(proxytest.PauseSignedOut)
+	stop := func(event string) string {
+		data, err := json.Marshal(map[string]any{
+			"session_id":      "0f1e2d3c",
+			"transcript_path": main,
+			"cwd":             h.Project(),
+			"hook_event_name": event,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	assertSilentSuccess(t, h.InProjectInput(stop("SubagentStop"), "hook", "progress"))
+
+	got := h.InProjectInput(stop("Stop"), "hook", "progress")
+	if got.Exit != 1 || !strings.Contains(got.Stderr, "nothing of this session is being recorded") {
+		t.Errorf("the session's own stop after a subagent's: exit = %d, stderr = %q; want the one notice", got.Exit, got.Stderr)
 	}
 }
 

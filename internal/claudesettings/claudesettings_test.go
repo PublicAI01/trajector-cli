@@ -70,6 +70,61 @@ func TestInstalledProjectHooksReadsWhichHooksOfThisReleaseAFileCarries(t *testin
 	}
 }
 
+func writeInjectionWithoutSubagentStop(t *testing.T, path string) {
+	t.Helper()
+	command := func(sub string) string { return fmt.Sprintf("%q", testHooks[sub]) }
+	older := `{
+  "env": {"ANTHROPIC_BASE_URL": "` + testBaseURL + `"},
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": ` + command(HookEnsureProxy) + `}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": ` + command(HookEnsureProxy) + `}]}],
+    "SessionEnd": [{"hooks": [{"type": "command", "command": ` + command(HookSessionEnd) + `}]}],
+    "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": ` + command(HookGitSnapshot) + `}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": ` + command(HookProgress) + `}]}],
+    "PostToolBatch": [{"hooks": [{"type": "command", "command": ` + command(HookProgress) + `}]}]
+  }
+}
+`
+	writeFile(t, path, []byte(older))
+}
+
+func TestInstalledProjectHooksCountsAHookUnderAnyOfItsEventsAsInstalled(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	writeInjectionWithoutSubagentStop(t, path)
+
+	if got := InstalledProjectHooks(path); !got.Complete() || !slices.Equal(got, ProjectHookSubcommands()) {
+		t.Errorf("hooks of an injection whose progress hook stands without %s = %v, want every hook and complete", EventSubagentStop, got)
+	}
+}
+
+func TestInjectProjectOverAnInjectionWithoutSubagentStopAddsTheProgressHookThereOnly(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	writeInjectionWithoutSubagentStop(t, path)
+	before := readJSON(t, path)["hooks"].(map[string]any)
+
+	if err := InjectProject(path, testBaseURL, testHooks); err != nil {
+		t.Fatal(err)
+	}
+
+	after := readJSON(t, path)["hooks"].(map[string]any)
+	for _, event := range []string{EventSessionStart, EventUserPromptSubmit, EventSessionEnd, EventPostToolUse} {
+		if !reflect.DeepEqual(after[event], before[event]) {
+			t.Errorf("%s = %v, want it as it was: %v", event, after[event], before[event])
+		}
+	}
+	if got, want := hookCommandsByEvent(t, path), map[string][]string{
+		EventSessionStart:     {testHooks[HookEnsureProxy]},
+		EventUserPromptSubmit: {testHooks[HookEnsureProxy]},
+		EventSessionEnd:       {testHooks[HookSessionEnd]},
+		EventPostToolUse:      {testHooks[HookGitSnapshot]},
+		EventStop:             {testHooks[HookProgress]},
+		EventSubagentStop:     {testHooks[HookProgress]},
+		EventPostToolBatch:    {testHooks[HookProgress]},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hooks = %v, want %v", got, want)
+	}
+}
+
 func TestInjectProjectCreatesFileWithEnvAndEverySessionHook(t *testing.T) {
 	root := t.TempDir()
 	path := ProjectLocalPath(root)
@@ -88,6 +143,7 @@ func TestInjectProjectCreatesFileWithEnvAndEverySessionHook(t *testing.T) {
 		EventSessionEnd:       {testHooks[HookSessionEnd]},
 		EventPostToolUse:      {testHooks[HookGitSnapshot]},
 		EventStop:             {testHooks[HookProgress]},
+		EventSubagentStop:     {testHooks[HookProgress]},
 		EventPostToolBatch:    {testHooks[HookProgress]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
@@ -965,6 +1021,7 @@ func TestInjectProjectWithoutBaseURLInstallsMarkedHooksAndNoEnv(t *testing.T) {
 		EventSessionEnd:       {testHooks[HookSessionEnd]},
 		EventPostToolUse:      {testHooks[HookGitSnapshot]},
 		EventStop:             {testHooks[HookProgress]},
+		EventSubagentStop:     {testHooks[HookProgress]},
 		EventPostToolBatch:    {testHooks[HookProgress]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
@@ -1065,6 +1122,7 @@ func TestInjectProjectWithBaseURLReplacesHooksSpelledWithoutOne(t *testing.T) {
 		EventSessionEnd:       {testHooks[HookSessionEnd]},
 		EventPostToolUse:      {testHooks[HookGitSnapshot]},
 		EventStop:             {testHooks[HookProgress]},
+		EventSubagentStop:     {testHooks[HookProgress]},
 		EventPostToolBatch:    {testHooks[HookProgress]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
@@ -1094,6 +1152,7 @@ func TestInjectProjectReplacesAHookSpelledForAnOlderExecutablePath(t *testing.T)
 		EventSessionEnd:       {testHooks[HookSessionEnd]},
 		EventPostToolUse:      {testHooks[HookGitSnapshot]},
 		EventStop:             {testHooks[HookProgress]},
+		EventSubagentStop:     {testHooks[HookProgress]},
 		EventPostToolBatch:    {testHooks[HookProgress]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)
@@ -1143,6 +1202,7 @@ func TestInjectProjectCompletesAnInjectionMadeBeforeALaterHookExisted(t *testing
 		EventSessionEnd:       {testHooks[HookSessionEnd]},
 		EventPostToolUse:      {testHooks[HookGitSnapshot]},
 		EventStop:             {testHooks[HookProgress]},
+		EventSubagentStop:     {testHooks[HookProgress]},
 		EventPostToolBatch:    {testHooks[HookProgress]},
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("hooks = %v, want %v", got, want)

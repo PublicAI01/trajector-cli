@@ -33,6 +33,7 @@ const (
 	EventSessionEnd       = "SessionEnd"
 	EventPostToolUse      = "PostToolUse"
 	EventStop             = "Stop"
+	EventSubagentStop     = "SubagentStop"
 	EventPostToolBatch    = "PostToolBatch"
 )
 
@@ -99,14 +100,16 @@ func (h projectHook) marker() string { return hookPrefix + h.subcommand }
 //
 // Only the shell tool's uses can have made a commit, so the hook that
 // follows a tool use follows that tool alone. The progress hook runs
-// at the moments a session's file has just gained a turn's worth of
-// lines — the model stopping, a batch of tools finishing — so the
-// file is read while the session runs, not only at its edges.
+// at the moments a session's files have just gained a turn's worth of
+// lines — the model stopping, a subagent stopping, a batch of tools
+// finishing — so the files are read while the session runs, not only
+// at its edges. A subagent's stop names the session's main file, like
+// the other events do.
 var projectHooks = []projectHook{
 	{subcommand: HookEnsureProxy, events: []string{EventSessionStart, EventUserPromptSubmit}, carriesShape: true},
 	{subcommand: HookSessionEnd, events: []string{EventSessionEnd}},
 	{subcommand: HookGitSnapshot, events: []string{EventPostToolUse}, matcher: BashMatcher},
-	{subcommand: HookProgress, events: []string{EventStop, EventPostToolBatch}},
+	{subcommand: HookProgress, events: []string{EventStop, EventSubagentStop, EventPostToolBatch}},
 }
 
 // projectMarkers are the markers of every hook in the list.
@@ -148,12 +151,14 @@ type InstalledHooks []string
 func (h InstalledHooks) Has(subcommand string) bool { return slices.Contains(h, subcommand) }
 
 // Complete reports that every hook this release installs stands in the
-// file. Anything less is an injection a repair completes.
+// file. Anything less is an injection a repair completes. Complete
+// answers which hooks stand, not under which events.
 func (h InstalledHooks) Complete() bool { return len(h) == len(projectHooks) }
 
 // InstalledProjectHooks reads the settings file at path once and
-// reports which hooks of a project injection it carries. An unreadable
-// file carries none.
+// reports which hooks of a project injection it carries. A hook is
+// carried when its marker stands under any event. An unreadable file
+// carries none.
 func InstalledProjectHooks(path string) InstalledHooks {
 	root, err := readSettings(path)
 	if err != nil {

@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"path/filepath"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 )
 
@@ -43,13 +44,18 @@ func (m *Machine) SessionStarting(cwd string, hook HookInput, io IO) (tell bool,
 	return m.tellSession(cwd, hook), nil
 }
 
-// SessionProgressed is the moment a session's file has just gained a
-// turn's worth of lines: the model stopped, or a batch of tools
-// finished. It rides on every turn, so it does one thing: it tells
-// the resident process to read that file now. No failure of it is
-// reported.
+// SessionProgressed is the moment a session's files have just gained a
+// turn's worth of lines: the model or a subagent stopped, or a batch of
+// tools finished. It rides on every turn, so it does one thing: it
+// tells the resident process to read the session's files now. No
+// failure of it is reported. A subagent's stop is never told: the
+// session hears the notice once, and that once belongs to a turn of
+// the session's own, not to the end of a subagent's.
 func (m *Machine) SessionProgressed(cwd string, hook HookInput) (tell bool) {
 	m.followSession(cwd, hook, false)
+	if hook.HookEvent == claudesettings.EventSubagentStop {
+		return false
+	}
 	return m.tellSession(cwd, hook)
 }
 
