@@ -300,10 +300,8 @@ func collectAgents(sessionDir string, res *Result) error {
 // and records with it what the walk could not cover, so the registry
 // can answer for the walk afterwards.
 func Register(r *follow.Registry, projectIDHash string, res Result) error {
-	for _, f := range res.Files {
-		if err := r.Register(projectIDHash, f); err != nil {
-			return err
-		}
+	if err := r.RegisterAll(projectIDHash, res.Files, ""); err != nil {
+		return err
 	}
 	return r.SetGaps(projectIDHash, res.Gaps)
 }

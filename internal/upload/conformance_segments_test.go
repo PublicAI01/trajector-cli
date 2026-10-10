@@ -40,7 +40,7 @@ func TestSegmentFixturesMatchHowThisClientCutsAFile(t *testing.T) {
 			f := newFixture(t)
 			const projectIDHash = "hash-p1"
 			registry := follow.Open(filepath.Join(t.TempDir(), "follow"))
-			if err := registry.Register(projectIDHash, path); err != nil {
+			if err := registry.RegisterAll(projectIDHash, []string{path}, ""); err != nil {
 				t.Fatal(err)
 			}
 			var made []envelope.Segment

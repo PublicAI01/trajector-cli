@@ -1,6 +1,10 @@
 package claudesettings
 
-import "os"
+import (
+	"os"
+
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
+)
 
 // SettingState classifies an optional setting's effective value across
 // the settings chain.
@@ -81,7 +85,7 @@ func RestoreTopLevelBool(path, key string, wrote, priorValue, priorFound bool) e
 	}
 	return edit(path, func(root map[string]any) error {
 		if current, ok := root[key].(bool); !ok || current != wrote {
-			return errUnchanged
+			return fsatomic.ErrUnchanged
 		}
 		if !priorFound {
 			delete(root, key)

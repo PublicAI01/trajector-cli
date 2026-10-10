@@ -28,7 +28,7 @@ func (s *Sandbox) registry() *follow.Registry { return follow.Open(s.layout.Foll
 // subpath is a session that ran at the project root.
 func (s *Sandbox) RegisterSessionFile(projectIDHash, path, subpath string) {
 	s.t.Helper()
-	if err := s.registry().RegisterUnder(projectIDHash, path, subpath); err != nil {
+	if err := s.registry().RegisterAll(projectIDHash, []string{path}, subpath); err != nil {
 		s.t.Fatal(err)
 	}
 }

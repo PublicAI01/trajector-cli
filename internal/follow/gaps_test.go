@@ -68,7 +68,7 @@ func TestRegistry_UpdateKeepsWhenAFileWasRead(t *testing.T) {
 	dir := t.TempDir()
 	r := follow.Open(dir)
 	path := abs(t, "s.jsonl")
-	if err := r.Register(project, path); err != nil {
+	if err := r.RegisterAll(project, []string{path}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Update(project, follow.File{Path: path}, follow.File{Path: path, Offset: 3, ReadAt: "2026-09-10T08:30:00Z"}); err != nil {
@@ -94,7 +94,7 @@ func TestRegistry_UpdateKeepsWhenAFileWasRead(t *testing.T) {
 	}
 
 	other := abs(t, "never-read.jsonl")
-	if err := r.Register(project, other); err != nil {
+	if err := r.RegisterAll(project, []string{other}, ""); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ = os.ReadFile(filepath.Join(dir, project+".json"))

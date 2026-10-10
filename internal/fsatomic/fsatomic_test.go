@@ -237,6 +237,51 @@ func TestUpdateLeavesTheFileAloneWhenFnFails(t *testing.T) {
 	}
 }
 
+func TestUpdateWritesNothingWhenFnAnswersUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	if err := os.WriteFile(path, []byte("kept"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	earlier := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(path, earlier, earlier); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = fsatomic.Update(path, 0o600, func([]byte) ([]byte, error) {
+		return []byte("replaced"), fmt.Errorf("nothing to add: %w", fsatomic.ErrUnchanged)
+	})
+
+	if err != nil {
+		t.Fatalf("Update = %v, want nil", err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) || !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("file replaced or touched: mtime %v, want %v and the same file", after.ModTime(), before.ModTime())
+	}
+	if got, _ := os.ReadFile(path); string(got) != "kept" {
+		t.Errorf("file = %q, want untouched", got)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "state.json" {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Errorf("directory holds %v, want only state.json", names)
+	}
+}
+
 func TestUpdateEjectsALockWhoseHolderDied(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	lock := path + ".lock"

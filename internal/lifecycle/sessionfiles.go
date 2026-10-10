@@ -115,10 +115,8 @@ func (m *Machine) registerSessionFile(cwd string, hook HookInput) (registered bo
 		return false, nil
 	}
 	subpath := projectSubpath(st.Root, hook.Cwd)
-	for _, p := range append([]string{path}, follow.Siblings(path)...) {
-		if err := m.registry.RegisterUnder(st.Hash, p, subpath); err != nil {
-			return false, err
-		}
+	if err := m.registry.RegisterAll(st.Hash, append([]string{path}, follow.Siblings(path)...), subpath); err != nil {
+		return false, err
 	}
 	return true, nil
 }

@@ -608,11 +608,6 @@ func parseSettings(path string, data []byte) (map[string]any, error) {
 	return root, nil
 }
 
-// errUnchanged, returned by a mutate callback, aborts an edit without
-// writing: the file the user formatted stays byte-for-byte as it is
-// instead of being re-marshalled.
-var errUnchanged = errors.New("claudesettings: no change")
-
 // errSymlinked reports a settings file that is a symbolic link, which
 // this package refuses to edit.
 var errSymlinked = errors.New("settings file is a symbolic link")
@@ -635,7 +630,9 @@ func RefuseSymlink(path string) error {
 // edit is a read-modify-write of a file whose other writers are the
 // user and concurrent trajector processes; a plain last-write-wins
 // replacement would discard whatever a concurrent writer merged in, so
-// the whole cycle runs under fsatomic.Update's cross-process lock.
+// the whole cycle runs under fsatomic.Update's cross-process lock. A
+// mutate that returns fsatomic.ErrUnchanged leaves the file the user
+// formatted byte-for-byte as it is instead of re-marshalled.
 func edit(path string, mutate func(map[string]any) error) error {
 	return editFile(path, false, mutate)
 }
@@ -678,7 +675,7 @@ func editFile(path string, secret bool, mutate func(map[string]any) error) error
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	err := fsatomic.Update(path, mode, func(old []byte) ([]byte, error) {
+	return fsatomic.Update(path, mode, func(old []byte) ([]byte, error) {
 		root, err := parseSettings(path, old)
 		if err != nil {
 			return nil, err
@@ -692,8 +689,4 @@ func editFile(path string, secret bool, mutate func(map[string]any) error) error
 		}
 		return append(data, '\n'), nil
 	})
-	if errors.Is(err, errUnchanged) {
-		return nil
-	}
-	return err
 }

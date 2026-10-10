@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -176,9 +177,11 @@ const (
 // file, so concurrent updaters — including ones in other processes —
 // are serialized and none loses another's change. fn receives the
 // current content, nil when the file does not exist yet, and returns
-// the full replacement. The path's directory must already exist. Aged
-// leftovers of writers that died mid-flight are swept here, under the
-// lock, where no live writer's transient can be mistaken for one.
+// the full replacement. When fn returns ErrUnchanged, or an error
+// wrapping it, Update writes nothing and returns nil, so the file stays
+// byte-for-byte as it is. The path's directory must already exist.
+// Aged leftovers of writers that died mid-flight are swept here, under
+// the lock, where no live writer's transient can be mistaken for one.
 func Update(path string, perm fs.FileMode, fn func(old []byte) ([]byte, error)) error {
 	unlock, err := lock(path+lockSuffix, lockStale, lockTimeout)
 	if err != nil {
@@ -194,11 +197,18 @@ func Update(path string, perm fs.FileMode, fn func(old []byte) ([]byte, error)) 
 		return err
 	}
 	data, err := fn(old)
+	if errors.Is(err, ErrUnchanged) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	return WriteFile(path, data, perm)
 }
+
+// ErrUnchanged is what an Update callback returns to keep the file as
+// it is.
+var ErrUnchanged = errors.New("fsatomic: unchanged")
 
 // sweepOrphans removes what a writer that died mid-flight left next to
 // path: temp files never renamed into place and ejection tickets never

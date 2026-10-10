@@ -80,23 +80,20 @@ type registry struct {
 	Signals *drift.Signals `json:"signals,omitempty"`
 }
 
-// Register adds path to projectIDHash's registry with a zero cursor and
-// no session position. Register is RegisterUnder with an empty subpath.
-func (r *Registry) Register(projectIDHash, path string) error {
-	return r.RegisterUnder(projectIDHash, path, "")
-}
-
-// RegisterUnder adds path to projectIDHash's registry with a zero
-// cursor, recording where the session ran relative to the project root.
-// Registering a path that is already registered changes nothing, its
-// subpath included: the first registration of a session's file is the
-// one that knows where it ran. A retired entry is registered already,
-// so registering its path again does not read the file over. The path
-// must be absolute: it is the entry's identity across processes with
-// different working directories.
-func (r *Registry) RegisterUnder(projectIDHash, path, subpath string) error {
-	if !filepath.IsAbs(path) {
-		return fmt.Errorf("follow: path %q is not absolute", path)
+// RegisterAll adds each of paths to projectIDHash's registry with a
+// zero cursor, recording where the session ran relative to the project
+// root, in one write. Registering a path that is already registered
+// changes nothing, its subpath included: the first registration of a
+// session's file is the one that knows where it ran. A retired entry
+// is registered already, so registering its path again does not read
+// the file over. When every path is registered already, nothing is
+// written. Each path must be absolute: it is the entry's identity
+// across processes with different working directories.
+func (r *Registry) RegisterAll(projectIDHash string, paths []string, subpath string) error {
+	for _, path := range paths {
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("follow: path %q is not absolute", path)
+		}
 	}
 	if err := checkProjectIDHash(projectIDHash); err != nil {
 		return err
@@ -109,8 +106,15 @@ func (r *Registry) RegisterUnder(projectIDHash, path, subpath string) error {
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := find(reg.Files, path); !ok {
-			reg.Files = append(reg.Files, File{Path: path, Subpath: subpath})
+		added := false
+		for _, path := range paths {
+			if _, ok := find(reg.Files, path); !ok {
+				reg.Files = append(reg.Files, File{Path: path, Subpath: subpath})
+				added = true
+			}
+		}
+		if !added {
+			return nil, fsatomic.ErrUnchanged
 		}
 		return encode(reg)
 	})

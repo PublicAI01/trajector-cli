@@ -50,7 +50,7 @@ func newAdvancing(t *testing.T) *advancing {
 
 func (a *advancing) register(path, subpath string) {
 	a.t.Helper()
-	if err := a.registry.RegisterUnder(project, path, subpath); err != nil {
+	if err := a.registry.RegisterAll(project, []string{path}, subpath); err != nil {
 		a.t.Fatal(err)
 	}
 }

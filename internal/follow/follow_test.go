@@ -3,6 +3,7 @@ package follow_test
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -35,8 +36,8 @@ func sameFile(a, b follow.File) bool {
 func mustRegister(t *testing.T, r *follow.Registry, projectIDHash string, paths ...string) {
 	t.Helper()
 	for _, p := range paths {
-		if err := r.Register(projectIDHash, p); err != nil {
-			t.Fatalf("Register(%q, %q): %v", projectIDHash, p, err)
+		if err := r.RegisterAll(projectIDHash, []string{p}, ""); err != nil {
+			t.Fatalf("RegisterAll(%q, %q): %v", projectIDHash, p, err)
 		}
 	}
 }
@@ -85,8 +86,8 @@ func TestRegistry_RegisterKeepsExistingCursors(t *testing.T) {
 func TestRegistry_RegisterRejectsRelativePath(t *testing.T) {
 	r := follow.Open(t.TempDir())
 	for _, path := range []string{"", "a.jsonl", "./a.jsonl", "../a.jsonl"} {
-		if err := r.Register(project, path); err == nil {
-			t.Errorf("Register(%q) = nil, want refused", path)
+		if err := r.RegisterAll(project, []string{path}, ""); err == nil {
+			t.Errorf("RegisterAll(%q) = nil, want refused", path)
 		}
 	}
 	projects, err := r.Projects()
@@ -99,8 +100,8 @@ func TestRegistry_RejectsProjectHashesThatCouldEscapeTheDirectory(t *testing.T) 
 	r := follow.Open(t.TempDir())
 	path := abs(t, "a.jsonl")
 	for _, hash := range []string{"", ".", "..", ".hidden", "a/b", `a\b`} {
-		if err := r.Register(hash, path); err == nil {
-			t.Errorf("Register(%q) = nil, want refused", hash)
+		if err := r.RegisterAll(hash, []string{path}, ""); err == nil {
+			t.Errorf("RegisterAll(%q) = nil, want refused", hash)
 		}
 		if err := r.Update(hash, follow.File{Path: path}, follow.File{Path: path}); err == nil {
 			t.Errorf("Update(%q) = nil, want refused", hash)
@@ -235,6 +236,52 @@ func TestRegistry_ReadsAnEntryAnEarlierBuildRetiredForLeavingAsOutside(t *testin
 	}
 	if len(files) != 1 || !sameFile(files[0], left) || !files[0].Outside || files[0].Retired != "" {
 		t.Errorf("Files() = %+v, want the entry listed outside, with the cursor the earlier build left", files)
+	}
+}
+
+func TestRegistry_RegisterAllWritesNothingWhenEveryPathIsRegistered(t *testing.T) {
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	paths := []string{abs(t, "a.jsonl"), abs(t, "b.jsonl")}
+	if err := r.RegisterAll(project, paths, "sub"); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, project+".json")
+	before, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.RegisterAll(project, paths, "other"); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error("the registry file was replaced, want nothing written for paths already registered")
+	}
+	files, err := r.Files(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0].Subpath != "sub" || files[1].Subpath != "sub" {
+		t.Errorf("Files() = %+v, want both entries with the subpath of their first registration", files)
+	}
+}
+
+func TestRegistry_RegisterAllOfNoPathCreatesNoRegistry(t *testing.T) {
+	dir := t.TempDir()
+	r := follow.Open(dir)
+
+	if err := r.RegisterAll(project, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, project+".json")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("registry file: stat error = %v, want it not created", err)
 	}
 }
 
@@ -484,8 +531,8 @@ func TestRegistry_UnknownVersionIsAnError(t *testing.T) {
 			if _, err := registered(r, project, path); err == nil {
 				t.Error("Registered() = nil error, want refused")
 			}
-			if err := r.Register(project, path); err == nil {
-				t.Error("Register() = nil, want refused")
+			if err := r.RegisterAll(project, []string{path}, ""); err == nil {
+				t.Error("RegisterAll() = nil, want refused")
 			}
 			if err := r.Update(project, follow.File{Path: path}, follow.File{Path: path}); err == nil {
 				t.Error("Update() = nil, want refused")
@@ -517,7 +564,7 @@ func TestRegistry_ConcurrentRegistersDoNotLoseEntries(t *testing.T) {
 			go func(r *follow.Registry, paths []string) {
 				defer wg.Done()
 				for _, p := range paths {
-					if err := r.Register(project, p); err != nil {
+					if err := r.RegisterAll(project, []string{p}, ""); err != nil {
 						errs <- err
 					}
 				}
@@ -527,7 +574,7 @@ func TestRegistry_ConcurrentRegistersDoNotLoseEntries(t *testing.T) {
 	wg.Wait()
 	close(errs)
 	for err := range errs {
-		t.Errorf("Register: %v", err)
+		t.Errorf("RegisterAll: %v", err)
 	}
 
 	files, err := registries[0].Files(project)
