@@ -4,6 +4,14 @@ All notable changes to trajector are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Release binaries are now built with Go 1.26.9. Earlier releases were
+  built with Go 1.26.0 and do not have the standard-library fixes of
+  Go 1.26.1 to 1.26.9.
+
 ## [0.3.5] - 2026-09-29
 
 ### Added
@@ -795,6 +803,7 @@ Hardened ahead of the tag:
 - State files are replaced and read atomically on every platform,
   Windows rename collisions included.
 
+[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.5...HEAD
 [0.3.5]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.2...v0.3.3
