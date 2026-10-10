@@ -8,9 +8,28 @@ All notable changes to trajector are documented here. The format follows
 
 ### Changed
 
+- The progress hook also runs when a subagent stops, so a subagent's
+  conversation is read as soon as it ends rather than when the main
+  session's turn ends. `enable` installs it; a project enabled with an
+  earlier version gets it the next time you run `trajector enable` in
+  it, and until then its subagents are read when the turn ends.
 - Release binaries are now built with Go 1.26.9. Earlier releases were
   built with Go 1.26.0 and do not have the standard-library fixes of
   Go 1.26.1 to 1.26.9.
+
+### Fixed
+
+- The conversations of subagents that the Workflow tool starts are now
+  read and uploaded, like those of other subagents. Claude Code keeps
+  them under `subagents/workflows/<run>/` in the session's directory,
+  below the other subagents, and earlier versions did not look there.
+  Only the agents' conversation files and their metadata are read; the
+  run's journal, its snapshot and its script are not. `enable` also collects
+  them from the sessions a project already has. While a proxy of an
+  earlier version is still running after the upgrade, these files wait
+  for this version: the earlier one leaves them alone, and this one
+  reads them once its proxy starts, also for a session that ended in
+  the meantime.
 
 ## [0.3.5] - 2026-09-29
 

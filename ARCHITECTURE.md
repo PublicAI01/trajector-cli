@@ -58,10 +58,10 @@ There is no daemon. Session hooks injected by enable run
 `trajector hook ensure-proxy` at session start and prompt submit,
 `trajector hook session-end` at session end,
 `trajector hook git-snapshot` after a shell tool use, and
-`trajector hook progress` when the model stops or a batch of tools
-finishes; any CLI touchpoint does the same as the first. If a healthy
-proxy is listening, that is a no-op; only a proxy announcing a strictly
-older release is asked to drain in-flight requests and hand the port
+`trajector hook progress` when the model or a subagent stops or a
+batch of tools finishes; any CLI touchpoint does the same as the
+first. If a healthy proxy is listening, that is a no-op; only a proxy
+announcing a strictly older release is asked to drain in-flight requests and hand the port
 over — an equal or newer proxy is reused, and so is one whose version
 cannot be ordered against this build's (a dev build, for instance), so
 coexisting builds never drain each other. Nothing listening starts a
@@ -79,18 +79,26 @@ nothing is written to the repository. Which commit was last observed is
 local state like a reading cursor and is never uploaded.
 
 Each session hook also registers the session's own files and has them
-read: it tells the resident proxy, over its loopback admin endpoint,
-which file just gained lines, and the proxy reads that one file and
-appends what it gained since last time to the spool. With no proxy up,
+read. They are its main file and the files of its subagents, which
+Claude Code keeps under `subagents/` in the session's directory, and
+under `subagents/workflows/<run>/` for the agents of a workflow run.
+The hook names the session's main file to the resident proxy, over its
+loopback admin endpoint, and the proxy reads the files of that
+session, its main file and its agent files, and appends what each
+gained since last time to the spool. With no proxy up,
 the hook starts a one-shot process that does the same for the project
 and brings the proxy up on its way out. Claude Code is the listener;
 nothing here watches a file — the proxy only looks, every five minutes,
 at the files of sessions that are running (a live process, or a hook
 within the last day), for a hook that was disabled, a proxy that started
 late, or a session killed before its last hook. A cold file is never
-looked at until a hook names it again. Each read starts from where the
-last left off, so a run killed before it advances a cursor simply reads
-the same bytes again, and the spool absorbs the repeat by record id. A
+looked at until a hook names it again, with one exception: a proxy
+that starts reads the agent files of workflow runs that still hold
+unread lines. The registry marks those files so that an earlier
+version never reads them, and a session may end while such a version
+is the one running. Each read starts from where the last left off, so
+a run killed before it advances a cursor simply reads the same bytes
+again, and the spool absorbs the repeat by record id. A
 file whose session moves to a directory consent does not cover stays
 registered: what the session writes while it is outside is passed over
 and never stored, in its main file and in its agent files alike, and a
