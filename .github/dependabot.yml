@@ -25,6 +25,21 @@ updates:
       govulncheck:
         patterns: ["*"]
 
+  # The export-surface checker. Its golang.org/x/tools is both the
+  # deadcode it runs and the package loader it is built on, so it is the
+  # one dependency allowed; the others move only as far as it requires.
+  - package-ecosystem: gomod
+    directory: /tools/exportsurface
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    allow:
+      - dependency-name: golang.org/x/tools
+    groups:
+      exportsurface:
+        patterns: ["*"]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

@@ -137,6 +137,8 @@ jobs:
       # also stops a release.
       - name: govulncheck
         run: ./scripts/check_static.sh govulncheck
+      - name: export surface
+        run: ./scripts/check_static.sh exports
       - name: shellcheck
         run: ./scripts/check_static.sh shellcheck
 

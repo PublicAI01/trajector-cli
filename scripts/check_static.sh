@@ -13,6 +13,9 @@
 #   check_static.sh govulncheck  no known vulnerability is reachable from
 #                                this code; the version is pinned in
 #                                tools/govulncheck/go.mod
+#   check_static.sh exports      no function that cmd/ cannot reach, and
+#                                no export that no other package uses;
+#                                tools/exportsurface pins the version
 #   check_static.sh shellcheck   install.sh and scripts/*.sh, each in the
 #                                dialect its shebang names
 #   check_static.sh zizmor       GitHub Actions security audit; online
@@ -24,7 +27,7 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 
 usage() {
-	sed -n '7,21p' "$0" >&2
+	sed -n '7,24p' "$0" >&2
 	exit 2
 }
 
@@ -122,6 +125,16 @@ shellcheck() {
 	docker run --rm -v "$root:/repo:ro" -w /repo "$(image shellcheck)" install.sh scripts/*.sh
 }
 
+# exports builds the checker and the deadcode binary it runs, both
+# from tools/exportsurface/go.mod, into a directory removed on exit.
+exports() {
+	use_toolchain
+	bin=$(mktemp -d)
+	trap 'rm -rf "$bin"' EXIT
+	go -C tools/exportsurface build -o "$bin/" golang.org/x/tools/cmd/deadcode .
+	"$bin/exportsurface" -deadcode "$bin/deadcode"
+}
+
 zizmor() {
 	if [ -n "${GH_TOKEN:-}" ]; then
 		echo "zizmor: online"
@@ -145,6 +158,7 @@ golangci) golangci "${2:-}" ;;
 gofix) use_toolchain && go fix -diff ./... ;;
 tidy) use_toolchain && go mod tidy -diff ;;
 govulncheck) use_toolchain && go tool -modfile=tools/govulncheck/go.mod govulncheck ./... ;;
+exports) exports ;;
 shellcheck) shellcheck ;;
 zizmor) zizmor ;;
 actionlint) actionlint ;;

@@ -59,6 +59,14 @@ CI enforces, and you can run locally:
   reachable from this code. The govulncheck version is pinned in
   `tools/govulncheck/go.mod`; a scheduled run repeats the scan every
   day.
+- `./scripts/check_static.sh exports` — every function is reachable
+  from `cmd/`, and every export of an `internal/` package is used by
+  another package (a test counts; `internal/harness/` is exempt). It
+  runs for the default platform, `windows` and `darwin`, and reports
+  only what holds on each platform that compiles the file. A
+  declaration that is kept on purpose carries
+  `//exportsurface:keep <reason>` in its doc comment. The tool and its
+  deadcode version are pinned in `tools/exportsurface/`.
 - `./scripts/check_static.sh shellcheck` — `install.sh` and
   `scripts/*.sh`. CI also parses each script with `sh -n` or `bash -n`.
 - `./scripts/check_static.sh zizmor` — GitHub Actions security audit.
