@@ -246,9 +246,6 @@ func For(layout userdirs.Layout, version, execPath, addr string, start Starter) 
 	return &Proxy{layout: layout, version: version, execPath: execPath, addr: addr, start: start.OrDetached()}
 }
 
-// Addr is where the proxy listens.
-func (p *Proxy) Addr() string { return p.addr }
-
 // BaseURL is the base URL injected into a project enabled with token.
 func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/" + token }
 
@@ -502,15 +499,15 @@ func (p *Proxy) Stop(ctx context.Context) error {
 	return nil
 }
 
-// ErrNoProxy reports a progress report with no proxy to deliver it to:
+// errNoProxy reports a progress report with no proxy to deliver it to:
 // nothing of ours holds the port right now. The caller falls back to
 // reading the file itself.
-var ErrNoProxy = errors.New("no proxy is serving")
+var errNoProxy = errors.New("no proxy is serving")
 
 // Progress tells a running proxy that a session's file gained lines,
 // so it reads the file now. The report carries the admin token, so it
 // goes only to a holder that proved it knows that token; nothing
-// listening is ErrNoProxy, and an unproven holder is its verdict's
+// listening is errNoProxy, and an unproven holder is its verdict's
 // reason. Progress pays no startup grace: a session hook is on the
 // session's critical path, and a sibling still publishing its token
 // is met again at the next hook.
@@ -518,7 +515,7 @@ func (p *Proxy) Progress(ctx context.Context, ev apiproxy.Progress) error {
 	token, holder, why := p.verify(ctx)
 	switch holder {
 	case HolderNone:
-		return ErrNoProxy
+		return errNoProxy
 	case HolderForeign:
 		return why
 	case HolderOurs:

@@ -117,6 +117,8 @@ func logTail(data []byte, limit int) []byte {
 // written yet holds no entries. A line that is not an entry is an
 // error: this package writes the file, so anything else in it is not
 // this log.
+//
+//exportsurface:keep test support: tests read the log back with the reader that sits beside the writer
 func ReadLog(path string) ([]LogEntry, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {

@@ -137,6 +137,8 @@ func (h Host) managedSettingsFiles() []string {
 // through the same variables a real machine is read with, so a test
 // process never reads or writes the developer's own Claude Code files.
 // set is the test's own setenv.
+//
+//exportsurface:keep test support: the harness points Claude Code at a test tree through the variables this file reads
 func Isolate(set func(key, value string), home string) {
 	set(ConfigDirEnv, filepath.Join(home, "claude"))
 	set(envManagedSettings, filepath.Join(home, "managed"))

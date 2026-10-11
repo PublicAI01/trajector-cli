@@ -12,6 +12,13 @@ func narrowPII(t *testing.T, categories ...piiCategory) {
 	t.Cleanup(func() { configurePII(defaultPIICategories...) })
 }
 
+func configurePII(categories ...piiCategory) {
+	patterns := piiPatternsFor(categories)
+	piiPatternsMu.Lock()
+	piiPatterns = patterns
+	piiPatternsMu.Unlock()
+}
+
 func maskedContent(t *testing.T, s string) string {
 	t.Helper()
 	doc, err := json.Marshal(map[string]string{"content": s})

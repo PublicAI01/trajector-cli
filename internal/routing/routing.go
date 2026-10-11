@@ -111,6 +111,8 @@ const (
 // order a surface that answers for all of them should read. It is what
 // makes "the legal values" countable: a new reason is one constant, one
 // entry here, and every surface that enumerates picks it up.
+//
+//exportsurface:keep test support: tests check every surface against every pause reason this build knows
 func AllPauseReasons() []PauseReason {
 	return []PauseReason{
 		PauseSignedOut, PauseConsentReconfirm, PauseConsentUnreadable, PauseRedactionDrift,

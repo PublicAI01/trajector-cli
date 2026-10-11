@@ -21,8 +21,8 @@ import (
 // ErrDeclined reports that the user answered no to the data agreement.
 var ErrDeclined = errors.New("data agreement declined")
 
-// ErrNotPaired reports an operation that needs a paired device.
-var ErrNotPaired = errors.New("this device is not paired")
+// errNotPaired reports an operation that needs a paired device.
+var errNotPaired = errors.New("this device is not paired")
 
 // ErrUpstreamMasked reports an enable that cannot see where this
 // project's traffic goes, because trajector's own injection stands in
@@ -116,7 +116,7 @@ func (m *Machine) Disable(ctx context.Context, projectDir string, purge bool, st
 	}
 	token, paired := m.deviceToken()
 	if !paired {
-		return fmt.Errorf("%w: --purge needs one to authenticate the deletion request; run `trajector login` and retry `trajector disable --purge`", ErrNotPaired)
+		return fmt.Errorf("%w: --purge needs one to authenticate the deletion request; run `trajector login` and retry `trajector disable --purge`", errNotPaired)
 	}
 	// The service deletes the images and documents this project's data
 	// carried, so nothing uploaded later may refer to them. This goes

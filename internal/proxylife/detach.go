@@ -26,11 +26,11 @@ func openLogAppend(logPath string) (*os.File, error) {
 	return os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 }
 
-// StartDetached starts path with args in its own session or process
+// startDetached starts path with args in its own session or process
 // group so it survives the caller's exit. Stdout and stderr are appended
 // to logPath (the null device when empty); stdin is the null device. The
 // child is released, not awaited.
-func StartDetached(ctx context.Context, path string, args []string, logPath string) (pid int, err error) {
+func startDetached(ctx context.Context, path string, args []string, logPath string) (pid int, err error) {
 	logFile, err := openLogAppend(logPath)
 	if err != nil {
 		return 0, err
@@ -53,8 +53,8 @@ func StartDetached(ctx context.Context, path string, args []string, logPath stri
 
 // Starter starts a process this binary is asked to leave running —
 // the proxy, and the one-shot reader a session hook hands its work to
-// — given the same arguments StartDetached takes, and reports its pid.
-// StartDetached is the one production uses. A starter that
+// — given the same arguments startDetached takes, and reports its pid.
+// startDetached is the one production uses. A starter that
 // deliberately starts no process reports the pid noProcess, and the
 // caller then has nothing to wait for.
 type Starter func(ctx context.Context, path string, args []string, logPath string) (pid int, err error)
@@ -64,7 +64,7 @@ type Starter func(ctx context.Context, path string, args []string, logPath strin
 // starter means detach" is stated in one place.
 func (s Starter) OrDetached() Starter {
 	if s == nil {
-		return StartDetached
+		return startDetached
 	}
 	return s
 }
@@ -109,6 +109,8 @@ func RecordStartsIn(logPath string) Starter {
 // LoggedStarts reads back, in order, every start a recording starter
 // appended to logPath. A log that was never written holds none. The
 // line is this package's own, so no caller has to spell its shape.
+//
+//exportsurface:keep test support: tests read back what RecordStartsIn writes, in the line format spelled here
 func LoggedStarts(logPath string) ([]LoggedStart, error) {
 	data, err := fsatomic.ReadFile(logPath)
 	if errors.Is(err, fs.ErrNotExist) {

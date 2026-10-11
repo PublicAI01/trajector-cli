@@ -274,7 +274,7 @@ func TestWalk_AmbiguousNameFailsClosed(t *testing.T) {
 	if !slices.Equal(res.Files, []string{control}) {
 		t.Errorf("Files = %v, want only the unambiguous directory's session", res.Files)
 	}
-	want := []Ambiguity{
+	want := []follow.Ambiguity{
 		{Dir: nested, Name: name, Matches: []string{joined, nested}},
 		{Dir: joined, Name: name, Matches: []string{joined, nested}},
 	}
@@ -529,7 +529,7 @@ func TestRegister_RecordsWhatTheWalkCouldNotCover(t *testing.T) {
 	r := follow.Open(t.TempDir())
 	res := Result{Gaps: follow.Gaps{
 		Truncated:  true,
-		Ambiguous:  []Ambiguity{{Dir: "/p/a-b", Name: "-p-a-b", Matches: []string{"/p/a-b", "/p/a_b"}}},
+		Ambiguous:  []follow.Ambiguity{{Dir: "/p/a-b", Name: "-p-a-b", Matches: []string{"/p/a-b", "/p/a_b"}}},
 		Unreadable: []string{"/p/locked"},
 	}}
 

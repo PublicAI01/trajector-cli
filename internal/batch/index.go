@@ -82,6 +82,8 @@ func (ix *Index) Bytes() ([]byte, error) {
 // ParseIndex reads an envelope back, refusing any version this package
 // cannot read and keeping the version the envelope declares: what it
 // reads back is what was written, never a restatement of it.
+//
+//exportsurface:keep test support: the fake service and the conformance tests read envelopes back with the parser that sits beside the writer
 func ParseIndex(data []byte) (Index, error) {
 	var ix Index
 	if err := json.Unmarshal(data, &ix); err != nil {

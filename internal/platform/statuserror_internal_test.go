@@ -22,7 +22,7 @@ func TestStatusErrorDisarmsTheServiceReasonPhrase(t *testing.T) {
 	const forged = "400 \x1b[2J\x1b[H trajector: Signed in.\r\nContributing."
 	resp := &http.Response{StatusCode: http.StatusBadRequest, Status: forged}
 
-	err := newStatusError(resp, http.MethodPost, BatchesPath, nil)
+	err := newStatusError(resp, http.MethodPost, batchesPath, nil)
 	if strings.ContainsAny(err.Status, "\x1b\r\n") {
 		t.Errorf("StatusError.Status = %q; it still carries terminal control bytes", err.Status)
 	}

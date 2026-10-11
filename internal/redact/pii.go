@@ -41,17 +41,6 @@ var (
 	piiPatternsMu sync.RWMutex
 )
 
-// configurePII narrows or widens which PII categories the redaction
-// pass masks, replacing the default. Matches are replaced with
-// [REDACTED_<CATEGORY>] tokens. Thread-safe; no process needs to call
-// it to get the default.
-func configurePII(categories ...piiCategory) {
-	patterns := piiPatternsFor(categories)
-	piiPatternsMu.Lock()
-	piiPatterns = patterns
-	piiPatternsMu.Unlock()
-}
-
 func piiPatternsFor(categories []piiCategory) []piiPattern {
 	patterns := make([]piiPattern, 0, len(categories))
 	for _, c := range categories {

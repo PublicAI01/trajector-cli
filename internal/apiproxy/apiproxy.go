@@ -241,7 +241,7 @@ type Config struct {
 	// requests. Zero selects a default.
 	DrainTimeout time.Duration
 	// MaxRecordBytes bounds how much of one exchange the recorder holds
-	// in memory. Zero selects DefaultMaxRecordBytes.
+	// in memory. Zero selects defaultMaxRecordBytes.
 	MaxRecordBytes int64
 	Logf           func(format string, args ...any)
 	// Internal serves the composition root's own endpoints under the
@@ -267,14 +267,14 @@ type Config struct {
 	// Anything able to read the publication — the same user's CLI —
 	// may drive drain, flush, and healthz; a browser or another local
 	// user cannot.
-	AdminTokens AdminTokenLayout
+	AdminTokens adminTokenLayout
 }
 
-// AdminTokenLayout locates admin-token publications on disk: where one
+// adminTokenLayout locates admin-token publications on disk: where one
 // serving instance publishes, and which leftover publications the
 // instance holding the port may clear. userdirs.Layout is the
 // production implementation.
-type AdminTokenLayout interface {
+type adminTokenLayout interface {
 	AdminTokenFile(addr, instance string) string
 	StaleAdminTokenFiles(addr, instance string) []string
 }
@@ -338,7 +338,7 @@ func New(cfg Config) (*Server, error) {
 		cfg.DrainTimeout = defaultDrainTimeout
 	}
 	if cfg.MaxRecordBytes == 0 {
-		cfg.MaxRecordBytes = DefaultMaxRecordBytes
+		cfg.MaxRecordBytes = defaultMaxRecordBytes
 	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}

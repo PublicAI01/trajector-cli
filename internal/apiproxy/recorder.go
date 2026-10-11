@@ -13,10 +13,10 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
-// DefaultMaxRecordBytes bounds how much of one exchange the recorder
+// defaultMaxRecordBytes bounds how much of one exchange the recorder
 // holds in memory. Zero selects it. Past the limit the capture is
 // abandoned and the exchange streams on untouched.
-const DefaultMaxRecordBytes = 32 << 20
+const defaultMaxRecordBytes = 32 << 20
 
 // recordQueueDepth bounds how many finished exchanges may wait to be
 // written. A full queue drops the capture rather than making a request

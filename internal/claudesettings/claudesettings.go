@@ -37,11 +37,11 @@ const (
 	EventPostToolBatch    = "PostToolBatch"
 )
 
-// BashMatcher selects the tool whose uses the PostToolUse injection
+// bashMatcher selects the tool whose uses the PostToolUse injection
 // runs after. A matcher belongs to the group a hook sits in, not to the
 // hook, which is why it travels beside the event rather than inside the
 // command.
-const BashMatcher = "Bash"
+const bashMatcher = "Bash"
 
 // Hook subcommands of the trajector command line. The word is what a
 // settings file carries, what the command line dispatches on, and what
@@ -108,7 +108,7 @@ func (h projectHook) marker() string { return hookPrefix + h.subcommand }
 var projectHooks = []projectHook{
 	{subcommand: HookEnsureProxy, events: []string{EventSessionStart, EventUserPromptSubmit}, carriesShape: true},
 	{subcommand: HookSessionEnd, events: []string{EventSessionEnd}},
-	{subcommand: HookGitSnapshot, events: []string{EventPostToolUse}, matcher: BashMatcher},
+	{subcommand: HookGitSnapshot, events: []string{EventPostToolUse}, matcher: bashMatcher},
 	{subcommand: HookProgress, events: []string{EventStop, EventSubagentStop, EventPostToolBatch}},
 }
 

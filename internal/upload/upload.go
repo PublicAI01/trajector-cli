@@ -914,7 +914,7 @@ func (u *Uploader) settleFailure(token string, l lease, packed spool.Entries, er
 		u.refuseAccess()
 		return RetrySameID, fmt.Errorf("upload: batch %s: %w", id, err)
 	case errors.As(err, &limited):
-		// RetryAfter arrives already capped at platform.MaxRetryAfter. A
+		// RetryAfter arrives already capped by the platform package. A
 		// rate limit that names no pause still demanded one: without a
 		// default, automatic flushes would keep their full cadence
 		// against a service that just asked them to slow down.

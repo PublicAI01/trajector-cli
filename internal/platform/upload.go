@@ -17,8 +17,8 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
 
-// BatchesPath is the batch upload endpoint.
-const BatchesPath = "/v1/batches"
+// batchesPath is the batch upload endpoint.
+const batchesPath = "/v1/batches"
 
 // One upload attempt is bounded by a time budget, not a fixed window:
 // the handshake can enlarge batches, and a fixed window would make an
@@ -234,15 +234,15 @@ func (e *AccessRefusedError) Unwrap() error {
 	return e.status
 }
 
-// MaxRetryAfter caps how long a Retry-After can silence automatic
+// maxRetryAfter caps how long a Retry-After can silence automatic
 // flushes, so a service misconfiguration cannot mute every client
 // indefinitely. The cap is applied once, where the 429 is classified,
 // so the pause the uploader takes and the one the error message reports
 // can never drift apart.
-const MaxRetryAfter = time.Hour
+const maxRetryAfter = time.Hour
 
 // RateLimitedError reports a 429. RetryAfter is the pause the client
-// will actually take — the service's request capped at MaxRetryAfter —
+// will actually take — the service's request capped at maxRetryAfter —
 // and zero when the service named none. It refines the underlying
 // StatusError; unwrapping reaches a Temporary that answers true.
 type RateLimitedError struct {
@@ -319,7 +319,7 @@ func (c *Client) UploadBatch(ctx context.Context, deviceToken, batchID string, e
 		budget = UploadBudget(bodyBytes, 0)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+BatchesPath, &body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+batchesPath, &body)
 	if err != nil {
 		return BatchAck{}, err
 	}
@@ -380,7 +380,7 @@ func uploadFailure(err error, bodyBytes int64, budget time.Duration) error {
 // caller as the bare StatusError, which is the answer this client has
 // no particular reading of.
 func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, budget time.Duration) error {
-	status := newStatusError(resp, http.MethodPost, BatchesPath, body)
+	status := newStatusError(resp, http.MethodPost, batchesPath, body)
 	switch {
 	case resp.StatusCode == http.StatusUpgradeRequired:
 		var deny struct {
@@ -413,7 +413,7 @@ func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, bu
 			status:       status,
 		}
 	case resp.StatusCode == http.StatusTooManyRequests:
-		pause := min(retryAfter(resp.Header.Get("Retry-After")), MaxRetryAfter)
+		pause := min(retryAfter(resp.Header.Get("Retry-After")), maxRetryAfter)
 		return &RateLimitedError{RetryAfter: pause, status: status}
 	case resp.StatusCode == http.StatusRequestTimeout:
 		// The service saying the upload took too long is the same

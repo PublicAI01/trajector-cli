@@ -64,12 +64,6 @@ func UnderSessionFiles(configDir, path string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// Ambiguity is a directory whose encoded name is shared with at least
-// one other real directory. Its sessions cannot be attributed to one
-// working directory, so none of them are collected. It is the
-// registry's own type: a walk's outcome is recorded there.
-type Ambiguity = follow.Ambiguity
-
 // Result is what one walk found.
 type Result struct {
 	// Files are the absolute paths of every session file found: the
@@ -102,6 +96,8 @@ type Result struct {
 
 // Encode maps a project directory to the name Claude Code stores its
 // session files under.
+//
+//exportsurface:keep test support: tests place session files under the name Claude Code stores them under
 func Encode(path string) string {
 	name, _ := encode(path)
 	return name
@@ -202,7 +198,7 @@ func walk(root, configDir string, limit int) (Result, error) {
 		if !hashed {
 			matches := trie(name)
 			if len(matches) != 1 || matches[0] != dir {
-				res.Gaps.Ambiguous = append(res.Gaps.Ambiguous, Ambiguity{Dir: dir, Name: name, Matches: matches})
+				res.Gaps.Ambiguous = append(res.Gaps.Ambiguous, follow.Ambiguity{Dir: dir, Name: name, Matches: matches})
 				return nil
 			}
 		}

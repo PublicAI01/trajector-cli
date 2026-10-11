@@ -185,6 +185,8 @@ func addrFileName(addr string) string { return strings.ReplaceAll(addr, ":", "_"
 // at paths inside home, through setenv. It lives beside the resolvers
 // so a new platform variable cannot be added without the harness pin
 // list growing in the same place.
+//
+//exportsurface:keep test support: the harness pins every variable a Layout resolution reads, listed beside the resolvers
 func Isolate(setenv func(key, value string), home string) {
 	setenv("HOME", home)
 	setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))

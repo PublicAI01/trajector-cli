@@ -193,6 +193,8 @@ type PendingBatch struct {
 // process that did not make the upload. A file that cannot be read as
 // a pending batch reports none: only the uploader owns the recovery
 // for one, and a reader must not act as though a batch stands.
+//
+//exportsurface:keep test support: the harness reads the pending batch with the reader that sits beside the writer
 func LoadPendingBatch(dir string) (PendingBatch, bool) {
 	p, ok, err := loadPending(dir)
 	if err != nil || !ok {
