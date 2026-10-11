@@ -43,18 +43,29 @@ CI enforces, and you can run locally:
 - `gofmt -l .` — clean formatting.
 - `go vet ./...`
 - `./scripts/check_vocabulary.sh` — see below.
-- `./scripts/check_coverage.sh` — repo ≥ 80%, core packages ≥ 85%. The
-  thresholds are ratchets: they may be raised, never lowered.
+- `./scripts/check_coverage.sh` — line coverage for the repo and for
+  each core package. The thresholds are in the script; they may be
+  raised, never lowered.
+- `./scripts/check_static.sh gofix` — `go fix` has nothing left to
+  rewrite. When the toolchain in `go.mod` moves, run `go fix ./...`
+  in the same change.
+- `./scripts/check_static.sh tidy` — `go.mod` and `go.sum` are tidy.
+- `./scripts/check_static.sh govulncheck` — no known vulnerability is
+  reachable from this code. The govulncheck version is pinned in
+  `tools/govulncheck/go.mod`; a scheduled run repeats the scan every
+  day.
 - `./scripts/check_static.sh zizmor` — GitHub Actions security audit.
   CI runs it online (with a token); without `GH_TOKEN` it runs offline
   and skips the audits that query GitHub.
 - `./scripts/check_static.sh actionlint` — workflow syntax and the shell
   in `run:` steps.
 
-`check_static.sh` needs Docker: each tool runs from the image pinned in
-`tools/<tool>/Dockerfile`. Every action in `.github/workflows/` is
-pinned to a full commit SHA with its version in a comment; Dependabot
-updates both.
+The Go checks in `check_static.sh` run under the toolchain that the
+`toolchain` line of `go.mod` names, the one CI and releases build with;
+Go downloads it when it is not installed. zizmor and actionlint need
+Docker: each runs from the image pinned in `tools/<tool>/Dockerfile`.
+Every action in `.github/workflows/` is pinned to a full commit SHA
+with its version in a comment; Dependabot updates both.
 
 ## Vocabulary and comments
 

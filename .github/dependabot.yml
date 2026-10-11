@@ -10,6 +10,21 @@ updates:
       gomod:
         patterns: ["*"]
 
+  # The govulncheck version. Go marks a tool module indirect, so the
+  # tool is allowed by name; its own dependencies move only as far as
+  # the new version requires.
+  - package-ecosystem: gomod
+    directory: /tools/govulncheck
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    allow:
+      - dependency-name: golang.org/x/vuln
+    groups:
+      govulncheck:
+        patterns: ["*"]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
