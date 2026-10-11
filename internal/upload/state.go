@@ -351,16 +351,16 @@ func mergeHandshake(stored, update platform.Handshake, from handshakeSource) pla
 	return stored
 }
 
-// errUnreadablePending is the positive classification of pending bytes
+// unreadablePendingError is the positive classification of pending bytes
 // that are not a pending record: they parse as no JSON, or they name no
 // batch id, so they can never again pin the id they exist to pin. It is
 // distinct from a read failure — a file that cannot be read at all may
 // still hold a valid record, so only this classification may trigger
 // recovery. It carries the judged bytes so the recovery sets aside
 // exactly what was judged, not whatever the file holds by then.
-type errUnreadablePending struct{ raw []byte }
+type unreadablePendingError struct{ raw []byte }
 
-func (*errUnreadablePending) Error() string {
+func (*unreadablePendingError) Error() string {
 	return "the pending batch record is unreadable"
 }
 
@@ -377,7 +377,7 @@ func loadPending(dir string) (pending, bool, error) {
 		// An unreadable pending record cannot be resent, but silently
 		// dropping it would reopen the double-ingest window it exists to
 		// close: the caller owns the recovery and its warning.
-		return pending{}, false, &errUnreadablePending{raw: data}
+		return pending{}, false, &unreadablePendingError{raw: data}
 	}
 	for _, id := range append(p.RecordIDs, p.RequestIDs...) {
 		p.Records = append(p.Records, pendingEntry{ID: id})

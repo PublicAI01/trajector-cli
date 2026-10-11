@@ -556,7 +556,7 @@ func (u *Uploader) flush(mode flushMode, deadline time.Time) (Result, error) {
 // the service recognizes the id and does not ingest it again.
 func (u *Uploader) resendPending(token string, res *Result, deadline time.Time) error {
 	l, ok, err := resumeLease(u.deps.Dir)
-	var unreadable *errUnreadablePending
+	var unreadable *unreadablePendingError
 	if errors.As(err, &unreadable) {
 		return u.discardUnreadablePending(unreadable.raw)
 	}
@@ -943,7 +943,7 @@ func (u *Uploader) settleFailure(token string, l lease, packed spool.Entries, er
 			return Quarantine, fmt.Errorf("upload: releasing rejected batch %s: %w", id, qerr)
 		}
 		u.noteRejection(rej)
-		return Quarantine, &errRejected{rej: rej, dir: filepath.Join(u.deps.RejectedDir, id)}
+		return Quarantine, &rejectedError{rej: rej, dir: filepath.Join(u.deps.RejectedDir, id)}
 	}
 	return RetrySameID, fmt.Errorf("upload: batch %s: %w", id, err)
 }

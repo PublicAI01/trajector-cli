@@ -372,7 +372,7 @@ func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, in
 			continue
 		}
 		if err := respool(sp, data); err != nil {
-			var unreadable *errUnreadableRecord
+			var unreadable *unreadableRecordError
 			if errors.As(err, &unreadable) {
 				stuck = append(stuck, fmt.Errorf("record %s is not a readable record and stays quarantined: %w", name, err))
 				continue
@@ -390,16 +390,16 @@ func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, in
 	return rej, moved, os.RemoveAll(dir)
 }
 
-// errUnreadableRecord is the positive classification of quarantined
+// unreadableRecordError is the positive classification of quarantined
 // bytes that parse as no record kind this client stores. It is distinct
 // from a spool write that failed: the record may be fine and the spool
 // full, and such a record must not be reported as one that can never
 // return.
-type errUnreadableRecord struct{ err error }
+type unreadableRecordError struct{ err error }
 
-func (e *errUnreadableRecord) Error() string { return e.err.Error() }
+func (e *unreadableRecordError) Error() string { return e.err.Error() }
 
-func (e *errUnreadableRecord) Unwrap() error { return e.err }
+func (e *unreadableRecordError) Unwrap() error { return e.err }
 
 // respool writes one quarantined record back into the slot its bytes
 // declare. Only the declaration is trusted: a record whose bytes claim
@@ -408,12 +408,12 @@ func (e *errUnreadableRecord) Unwrap() error { return e.err }
 func respool(sp *spool.Spool, data []byte) error {
 	header, err := envelope.ReadHeader(data)
 	if err != nil {
-		return &errUnreadableRecord{err: err}
+		return &unreadableRecordError{err: err}
 	}
 	if header.Kind == envelope.KindRawcall {
 		env, err := envelope.Parse(data)
 		if err != nil {
-			return &errUnreadableRecord{err: err}
+			return &unreadableRecordError{err: err}
 		}
 		return sp.Write(env)
 	}
@@ -455,14 +455,14 @@ func Discard(rejectedDir, batchID string) (Rejection, int, error) {
 	return rej, records, nil
 }
 
-// errRejected is what a flush returns after quarantining a batch: the
+// rejectedError is what a flush returns after quarantining a batch: the
 // flush stops, but the queue behind the batch is no longer blocked.
-type errRejected struct {
+type rejectedError struct {
 	rej Rejection
 	dir string
 }
 
-func (e *errRejected) Error() string {
+func (e *rejectedError) Error() string {
 	return fmt.Sprintf("the service rejected batch %s; %d record(s) moved to %s and will not be retried automatically (%s)",
 		e.rej.BatchID, e.rej.Records, e.dir, e.rej.Details)
 }

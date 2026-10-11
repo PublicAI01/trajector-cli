@@ -77,11 +77,11 @@ func PortIsHeld(err error) bool {
 	return errors.Is(err, ErrPortOccupied) || errors.Is(err, ErrPortSilent)
 }
 
-// PortHeld is one reading of a port this build may not take. It
+// PortHeldError is one reading of a port this build may not take. It
 // carries the address, so a surface can name the command that finds
 // the holder without reading it out of a sentence, and it wraps the
 // sentinel that says how the holder failed to prove itself.
-type PortHeld struct {
+type PortHeldError struct {
 	// Addr is the address the holder was probed at.
 	Addr string
 	// Why is ErrPortSilent or ErrPortOccupied.
@@ -91,20 +91,20 @@ type PortHeld struct {
 	Observed string
 }
 
-func (p *PortHeld) Error() string {
+func (p *PortHeldError) Error() string {
 	if p.Observed == "" {
 		return fmt.Sprintf("%v: %s", p.Why, p.Addr)
 	}
 	return fmt.Sprintf("%v: %s (%s)", p.Why, p.Addr, p.Observed)
 }
 
-func (p *PortHeld) Unwrap() error { return p.Why }
+func (p *PortHeldError) Unwrap() error { return p.Why }
 
 // HeldPort reports the address a port-holder error is about, and
 // whether err is one. A surface asks here rather than parsing the
 // sentence it prints.
 func HeldPort(err error) (string, bool) {
-	var held *PortHeld
+	var held *PortHeldError
 	if errors.As(err, &held) {
 		return held.Addr, true
 	}
@@ -382,12 +382,12 @@ func (p *Proxy) verify() (string, Holder, error) {
 	req.Header.Set(apiproxy.ChallengeHeader, challenge)
 	resp, err := adminClient(adminTimeout).Do(req)
 	if err != nil {
-		return "", HolderForeign, &PortHeld{Addr: p.addr, Why: ErrPortSilent, Observed: transportCause(err).Error()}
+		return "", HolderForeign, &PortHeldError{Addr: p.addr, Why: ErrPortSilent, Observed: transportCause(err).Error()}
 	}
 	resp.Body.Close()
 	proof := resp.Header.Get(apiproxy.ProofHeader)
 	if proof == "" {
-		return "", HolderForeign, &PortHeld{Addr: p.addr, Why: ErrPortOccupied}
+		return "", HolderForeign, &PortHeldError{Addr: p.addr, Why: ErrPortOccupied}
 	}
 
 	// The published tokens are read after the answer arrives: a proxy

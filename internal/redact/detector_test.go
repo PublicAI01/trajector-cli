@@ -12,9 +12,9 @@ import (
 func stubDetector(t *testing.T, err error) {
 	t.Helper()
 	reset := func() {
-		betterleaksDetectorMu.Lock()
-		defer betterleaksDetectorMu.Unlock()
-		betterleaksDetector, betterleaksDetectorErr, betterleaksDetectorSet = nil, nil, false
+		betterleaks.mu.Lock()
+		defer betterleaks.mu.Unlock()
+		betterleaks.detector, betterleaks.err, betterleaks.built = nil, nil, false
 	}
 	prev := newDetector
 	newDetector = func() (*detect.Detector, error) { return nil, err }

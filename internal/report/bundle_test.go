@@ -105,7 +105,7 @@ func TestTheBundleNamesNoHolderForAProxyItCouldNotVerify(t *testing.T) {
 
 func TestTheBundleNamesTheHolderOfAPortHeldAgainstThisBuild(t *testing.T) {
 	d := device()
-	d.Proxy = foreign(&proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent})
+	d.Proxy = foreign(&proxylife.PortHeldError{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent})
 	d.ProxyHolder = report.HolderProcess{PID: 4321, Name: "example-helper"}
 
 	wants(t, "diagnosis.json", string(report.DiagnosisJSON(d)),
@@ -189,7 +189,7 @@ var bundleContext = map[string]func(*report.Diagnosis){
 		d.Proxy.Holder = proxylife.HolderOurs
 	},
 	"ProxyHolder": func(d *report.Diagnosis) {
-		d.Proxy.Reason = &proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortOccupied}
+		d.Proxy.Reason = &proxylife.PortHeldError{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortOccupied}
 	},
 	"Project.UpstreamMoved.From": func(d *report.Diagnosis) {
 		d.Project.UpstreamMoved.At = "2026-08-01T09:00:00Z"

@@ -170,10 +170,15 @@ func AlreadyRedacted(data []byte) RedactedBytes {
 }
 
 var (
-	betterleaksDetector    *detect.Detector
-	betterleaksDetectorErr error
-	betterleaksDetectorSet bool
-	betterleaksDetectorMu  sync.Mutex
+	// betterleaks holds what loadDetector built: the detector and the
+	// error that building it returned. built reports whether the build
+	// ran.
+	betterleaks struct {
+		mu       sync.Mutex
+		built    bool
+		detector *detect.Detector
+		err      error
+	}
 	// newDetector builds the pattern layer. It is a variable so a test can
 	// make construction fail: the refusal in JSONLBytes is the guarantee,
 	// and a guarantee no test can reach is not one.
@@ -205,13 +210,13 @@ func newDefaultDetector() (*detect.Detector, error) {
 // would leave every later upload looking masked while it is not.
 // 2026-08-25.
 func loadDetector() (*detect.Detector, error) {
-	betterleaksDetectorMu.Lock()
-	defer betterleaksDetectorMu.Unlock()
-	if !betterleaksDetectorSet {
-		betterleaksDetector, betterleaksDetectorErr = newDetector()
-		betterleaksDetectorSet = true
+	betterleaks.mu.Lock()
+	defer betterleaks.mu.Unlock()
+	if !betterleaks.built {
+		betterleaks.detector, betterleaks.err = newDetector()
+		betterleaks.built = true
 	}
-	return betterleaksDetector, betterleaksDetectorErr
+	return betterleaks.detector, betterleaks.err
 }
 
 func getDetector() *detect.Detector {

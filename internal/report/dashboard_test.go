@@ -115,12 +115,12 @@ func TestStatusReportsAPortHeldByAnotherProcess(t *testing.T) {
 	}{
 		{
 			name: "the holder answered without proof",
-			why:  &proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortOccupied},
+			why:  &proxylife.PortHeldError{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortOccupied},
 			want: "not the trajector proxy",
 		},
 		{
 			name: "the holder answered nothing",
-			why:  &proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent, Observed: "context deadline exceeded"},
+			why:  &proxylife.PortHeldError{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent, Observed: "context deadline exceeded"},
 			want: "did not answer a probe",
 		},
 	} {
@@ -146,7 +146,7 @@ func TestStatusReportsAPortHeldByAnotherProcess(t *testing.T) {
 
 func TestStatusNamesTheHolderItCouldReadAndNothingMore(t *testing.T) {
 	d := device()
-	d.Proxy = foreign(&proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent})
+	d.Proxy = foreign(&proxylife.PortHeldError{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent})
 	d.ProxyHolder = report.HolderProcess{PID: 4321, Name: "example-helper"}
 	out := dashboard(d)
 
@@ -155,7 +155,7 @@ func TestStatusNamesTheHolderItCouldReadAndNothingMore(t *testing.T) {
 
 func TestStatusSaysNothingAboutAHolderItCouldNotRead(t *testing.T) {
 	d := device()
-	d.Proxy = foreign(&proxylife.PortHeld{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent})
+	d.Proxy = foreign(&proxylife.PortHeldError{Addr: "127.0.0.1:41100", Why: proxylife.ErrPortSilent})
 	out := dashboard(d)
 
 	rejects(t, "status", out, "At the port as this device reads it")
