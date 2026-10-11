@@ -72,15 +72,7 @@ func isPlainFieldName(key string) bool {
 }
 
 func (p keyPath) equal(q []string) bool {
-	if len(p) != len(q) {
-		return false
-	}
-	for i := range p {
-		if p[i] != q[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(p, q)
 }
 
 // valueGuard is a condition on another string value in the same line:

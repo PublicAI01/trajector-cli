@@ -88,7 +88,7 @@ func (s *Server) newForwarder() http.Handler {
 		// exists for the opposite of: both directions are supposed to
 		// stream at once. Only HTTP/2 refuses, where full duplex is
 		// already the rule, so the error is discarded.
-		http.NewResponseController(w).EnableFullDuplex()
+		_ = http.NewResponseController(w).EnableFullDuplex()
 		d.rec.observeRequest(r)
 		ctx := context.WithValue(r.Context(), decisionKey{}, d)
 		proxy.ServeHTTP(w, r.WithContext(ctx))

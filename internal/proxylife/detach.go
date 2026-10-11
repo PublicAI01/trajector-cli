@@ -44,7 +44,7 @@ func StartDetached(path string, args []string, logPath string) (pid int, err err
 		return 0, err
 	}
 	pid = cmd.Process.Pid
-	cmd.Process.Release()
+	_ = cmd.Process.Release()
 	return pid, nil
 }
 

@@ -166,7 +166,7 @@ func (o Observer) run(ctx context.Context, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", o.Dir}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", o.Dir}, args...)...) //nolint:gosec // G204: args[0] is checked against readOnlySubcommands above
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {

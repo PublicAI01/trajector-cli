@@ -584,7 +584,7 @@ func (s *Server) serveTokenInternal(w http.ResponseWriter, r *http.Request, toke
 		origin = envelope.Origin(upstream, s.cfg.Dialect.OfficialUpstream)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(Selfcheck{
+	_ = json.NewEncoder(w).Encode(Selfcheck{
 		Service:        ServiceName,
 		Version:        s.cfg.Version,
 		TokenKnown:     verdict.Resolves(),
@@ -610,7 +610,7 @@ func (s *Server) Health() Health {
 
 func (s *Server) serveHealthz(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.Health())
+	_ = json.NewEncoder(w).Encode(s.Health())
 }
 
 // stats counts recording outcomes over one proxy's lifetime. Counters

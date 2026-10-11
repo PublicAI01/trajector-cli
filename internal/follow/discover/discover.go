@@ -113,11 +113,7 @@ func encode(path string) (string, bool) {
 	units := utf16.Encode([]rune(norm.NFC.String(path)))
 	name := make([]byte, len(units))
 	for i, u := range units {
-		if isAlnum(u) {
-			name[i] = byte(u)
-		} else {
-			name[i] = '-'
-		}
+		name[i] = encodedUnit(u)
 	}
 	if len(name) <= nameLimit {
 		return string(name), false
@@ -125,8 +121,13 @@ func encode(path string) (string, bool) {
 	return string(name[:nameLimit]) + "-" + strconv.FormatInt(abs(javaHash(units)), 36), true
 }
 
-func isAlnum(u uint16) bool {
-	return (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z') || (u >= '0' && u <= '9')
+// encodedUnit is the byte Claude Code writes for one UTF-16 unit of a
+// project path: an ASCII letter or digit as itself, anything else as '-'.
+func encodedUnit(u uint16) byte {
+	if (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z') || (u >= '0' && u <= '9') {
+		return byte(u)
+	}
+	return '-'
 }
 
 // javaHash is the String.hashCode of a UTF-16 string: h = 31*h + unit,

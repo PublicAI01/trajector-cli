@@ -61,7 +61,7 @@ func WriteFile(path string, data []byte, perm fs.FileMode) error {
 	for {
 		err := renameReplace(tmp, path)
 		if err == nil {
-			syncDir(filepath.Dir(path))
+			_ = syncDir(filepath.Dir(path))
 			return nil
 		}
 		if !replaceCollision(err) || time.Now().After(deadline) {

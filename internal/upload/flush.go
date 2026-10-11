@@ -60,6 +60,6 @@ func (u *Uploader) Handler(serviceName string) http.Handler {
 			reply.Error = err.Error()
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(reply)
+		_ = json.NewEncoder(w).Encode(reply)
 	})
 }

@@ -679,7 +679,7 @@ func editFile(path string, secret bool, mutate func(map[string]any) error) error
 		// themselves stays that way.
 		mode &^= 0o077
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // G301: the settings directory also holds the user's own files; only the file that carries a token is narrowed
 		return err
 	}
 	return fsatomic.Update(path, mode, func(old []byte) ([]byte, error) {

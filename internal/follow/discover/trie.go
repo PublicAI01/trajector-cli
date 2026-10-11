@@ -61,11 +61,7 @@ func trie(name string) []string {
 
 func classMatch(seg []uint16, chunk string) bool {
 	for i, u := range seg {
-		if isAlnum(u) {
-			if byte(u) != chunk[i] {
-				return false
-			}
-		} else if chunk[i] != '-' {
+		if encodedUnit(u) != chunk[i] {
 			return false
 		}
 	}

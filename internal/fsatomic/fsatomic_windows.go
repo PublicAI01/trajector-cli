@@ -88,7 +88,7 @@ func renamePosix(oldpath, newpath string) error {
 	if err != nil {
 		return wrap(err)
 	}
-	defer syscall.CloseHandle(h)
+	defer func() { _ = syscall.CloseHandle(h) }()
 
 	dst, err := syscall.UTF16FromString(newpath)
 	if err != nil {
@@ -102,7 +102,7 @@ func renamePosix(oldpath, newpath string) error {
 	nameOff := lenOff + 4
 	buf := make([]byte, nameOff+2*len(dst))
 	binary.LittleEndian.PutUint32(buf[0:], fileRenameFlagReplaceIfExists|fileRenameFlagPosixSemantics)
-	binary.LittleEndian.PutUint32(buf[lenOff:], uint32(2*(len(dst)-1)))
+	binary.LittleEndian.PutUint32(buf[lenOff:], uint32(2*(len(dst)-1))) //nolint:gosec // G115: overflowing uint32 takes over 2^31 UTF-16 units, and Windows refuses a path past 32,767
 	for i, c := range dst {
 		binary.LittleEndian.PutUint16(buf[nameOff+2*i:], c)
 	}

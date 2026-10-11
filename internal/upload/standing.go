@@ -50,7 +50,7 @@ const (
 	// will not accept it. It is not SignedOut, which is this machine
 	// holding no token at all: a user reading that would go looking for a
 	// local state that is not what went wrong. Captured data is kept.
-	CredentialRefused Reason = "credential_refused"
+	CredentialRefused Reason = "credential_refused" //nolint:gosec // G101: a reason name, not a credential
 	// AccessRefused: the service — or something answering in front of it,
 	// a proxy or a gateway — refused this client access to the upload
 	// endpoint. It is not CredentialRefused because the pairing may be
