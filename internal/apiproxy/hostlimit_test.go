@@ -12,7 +12,7 @@ import (
 
 func TestForeignHostHeaderIsRejectedOnEveryPath(t *testing.T) {
 	e := proxytest.New(t)
-	e.WriteTable(activeTable("tok1", e.Upstream.URL()))
+	e.WriteTable(activeTable(e.Upstream.URL()))
 
 	for _, path := range []string{"/t/tok1/v1/messages", apiproxy.HealthzPath, apiproxy.DrainPath} {
 		req, err := http.NewRequest(http.MethodPost, e.BaseURL()+path, strings.NewReader("{}"))

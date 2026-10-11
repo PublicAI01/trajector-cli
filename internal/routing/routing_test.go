@@ -19,16 +19,16 @@ func writeTable(t *testing.T, path, content string) {
 	}
 }
 
-// lookupOnceChanged looks token up until the verdict satisfies want, and
-// returns the last answer after a second either way. A table keeps a
-// read for its cache TTL, and on a platform whose clock ticks coarsely
-// two lookups made one after the other can fall inside one tick, so the
-// first lookup after the file changes may still answer from the read
-// before it.
-func lookupOnceChanged(table *routing.Table, token string, want func(routing.Verdict) bool) (routing.Route, routing.Verdict) {
+// lookupOnceChanged looks up the token "tok" until the verdict
+// satisfies want, and returns the last answer after a second either
+// way. A table keeps a read for its cache TTL, and on a platform whose
+// clock ticks coarsely two lookups made one after the other can fall
+// inside one tick, so the first lookup after the file changes may still
+// answer from the read before it.
+func lookupOnceChanged(table *routing.Table, want func(routing.Verdict) bool) (routing.Route, routing.Verdict) {
 	deadline := time.Now().Add(time.Second)
 	for {
-		route, verdict := table.Lookup(token)
+		route, verdict := table.Lookup("tok")
 		if want(verdict) || time.Now().After(deadline) {
 			return route, verdict
 		}
@@ -161,7 +161,7 @@ func TestATableThatBreaksKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T)
 	}
 
 	writeTable(t, path, `{"projects": {`)
-	route, verdict := lookupOnceChanged(table, "tok", func(v routing.Verdict) bool { return !v.Records() })
+	route, verdict := lookupOnceChanged(table, func(v routing.Verdict) bool { return !v.Records() })
 	if verdict.Decision != routing.ForwardOnlyUnreadable || verdict.Records() || !verdict.Forwards() {
 		t.Errorf("verdict = %+v, want forwarding without recording", verdict)
 	}
@@ -208,7 +208,7 @@ func TestATableMissingSinceItWasOpenedPlacesNoToken(t *testing.T) {
 	}
 
 	writeTable(t, path, `{"projects":{"tok":{"project_id_hash":"h","upstream":"https://relay.example.com"}}}`)
-	if _, verdict := lookupOnceChanged(table, "tok", routing.Verdict.Records); !verdict.Records() {
+	if _, verdict := lookupOnceChanged(table, routing.Verdict.Records); !verdict.Records() {
 		t.Errorf("verdict = %+v, want the grant recorded once the table appears", verdict)
 	}
 }
@@ -225,7 +225,7 @@ func TestATableMovedAsideKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T)
 	if err := os.Rename(path, aside); err != nil {
 		t.Fatal(err)
 	}
-	route, verdict := lookupOnceChanged(table, "tok", func(v routing.Verdict) bool { return !v.Records() })
+	route, verdict := lookupOnceChanged(table, func(v routing.Verdict) bool { return !v.Records() })
 	if verdict.Decision != routing.ForwardOnlyUnreadable || verdict.Records() || !verdict.Forwards() {
 		t.Errorf("verdict = %+v, want forwarding without recording", verdict)
 	}
@@ -242,7 +242,7 @@ func TestATableMovedAsideKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T)
 	if err := os.Rename(aside, path); err != nil {
 		t.Fatal(err)
 	}
-	if _, verdict := lookupOnceChanged(table, "tok", routing.Verdict.Records); !verdict.Records() {
+	if _, verdict := lookupOnceChanged(table, routing.Verdict.Records); !verdict.Records() {
 		t.Errorf("verdict = %+v, want recording back once the table is back", verdict)
 	}
 }

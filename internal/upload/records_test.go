@@ -32,9 +32,9 @@ func recordCapture(at time.Time, projectIDHash string) envelope.Capture {
 	}
 }
 
-func (f *fixture) storeSegment(t *testing.T, sessionID, file string, index int, at time.Time, lines string) envelope.Segment {
+func (f *fixture) storeSegment(t *testing.T, sessionID string, index int, at time.Time, lines string) envelope.Segment {
 	t.Helper()
-	return f.storeSegmentFor(t, sessionID, "hash-p1", file, index, at, lines)
+	return f.storeSegmentFor(t, sessionID, "hash-p1", "", index, at, lines)
 }
 
 func (f *fixture) storeSegmentFor(t *testing.T, sessionID, projectIDHash, file string, index int, at time.Time, lines string) envelope.Segment {
@@ -46,9 +46,9 @@ func (f *fixture) storeSegmentFor(t *testing.T, sessionID, projectIDHash, file s
 	return seg
 }
 
-func (f *fixture) storeSnapshot(t *testing.T, sessionID, file string, at time.Time, content string) envelope.MetaSnapshot {
+func (f *fixture) storeXMetaSnapshot(t *testing.T, at time.Time, content string) envelope.MetaSnapshot {
 	t.Helper()
-	snap, err := envelope.NewMetaSnapshot(sessionID, file, recordCapture(at, "hash-p1"), []byte(content))
+	snap, err := envelope.NewMetaSnapshot(sessionX, "subagents/agent-a.meta.json", recordCapture(at, "hash-p1"), []byte(content))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,8 +143,8 @@ func TestFlush_MixesBothRecordKindsInOneBatch(t *testing.T) {
 	f := newFixture(t)
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", f.now)
-	seg := f.storeSegment(t, sessionX, "", 0, f.now, `{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
-	snap := f.storeSnapshot(t, sessionX, "subagents/agent-a.meta.json", f.now, `{"agentId":"a"}`)
+	seg := f.storeSegment(t, sessionX, 0, f.now, `{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
+	snap := f.storeXMetaSnapshot(t, f.now, `{"agentId":"a"}`)
 
 	res, err := f.uploader.Flush(true)
 	if err != nil {
@@ -162,7 +162,7 @@ func TestFlush_MixesBothRecordKindsInOneBatch(t *testing.T) {
 	if got := indexedRecordIDs(ix); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("index = %v, want %v", got, want)
 	}
-	routed, err := fakeplatform.RecordIDsBySource(mustPart(t, reqs[0], "batch"))
+	routed, err := fakeplatform.RecordIDsBySource(batchPart(t, reqs[0]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,20 +181,20 @@ func TestFlush_MixesBothRecordKindsInOneBatch(t *testing.T) {
 	}
 }
 
-func mustPart(t *testing.T, r fakeplatform.Request, name string) []byte {
+func batchPart(t *testing.T, r fakeplatform.Request) []byte {
 	t.Helper()
 	parts, err := fakeplatform.Parts(r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return parts[name]
+	return parts["batch"]
 }
 
 func TestFlush_SegmentSignatureBytesReachTheService(t *testing.T) {
 	f := newFixture(t)
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	line := `{"type":"assistant","cwd":"/home/dev/proj","message":{"id":"msg_1","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"` + fakeSignature + `"},{"type":"text","text":"hi"}]}}` + "\n"
-	seg := f.storeSegment(t, sessionX, "", 0, f.now, line)
+	seg := f.storeSegment(t, sessionX, 0, f.now, line)
 	var stored envelope.Segment
 	if err := f.spool.EachRecord(func(r spool.Record) error {
 		var err error
@@ -234,8 +234,8 @@ func TestFlush_AckDeletesBothKinds(t *testing.T) {
 	f := newFixture(t)
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", f.now)
-	f.storeSegment(t, sessionX, "", 0, f.now, "{}\n")
-	f.storeSnapshot(t, sessionX, "subagents/agent-a.meta.json", f.now, `{"agentId":"a"}`)
+	f.storeSegment(t, sessionX, 0, f.now, "{}\n")
+	f.storeXMetaSnapshot(t, f.now, `{"agentId":"a"}`)
 
 	if _, err := f.uploader.Flush(true); err != nil {
 		t.Fatal(err)
@@ -272,8 +272,8 @@ func TestFlush_FailureKeepsBothKinds(t *testing.T) {
 			f := newFixture(t)
 			f.server.Stub("POST", "/v1/batches", tc.response)
 			f.storeRawcall(t, "req-1", f.now)
-			seg := f.storeSegment(t, sessionX, "", 0, f.now, "{}\n")
-			snap := f.storeSnapshot(t, sessionX, "subagents/agent-a.meta.json", f.now, `{"agentId":"a"}`)
+			seg := f.storeSegment(t, sessionX, 0, f.now, "{}\n")
+			snap := f.storeXMetaSnapshot(t, f.now, `{"agentId":"a"}`)
 
 			res, err := f.uploader.Flush(true)
 			if err == nil {
@@ -299,8 +299,8 @@ func TestFlush_RejectedMixedBatchIsQuarantinedWholeAndRequeuesToBothSlots(t *tes
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", rejectStub(400, "poison"))
 	f.storeRawcall(t, "req-1", f.now)
-	seg := f.storeSegment(t, sessionX, "", 0, f.now, "{}\n")
-	snap := f.storeSnapshot(t, sessionX, "subagents/agent-a.meta.json", f.now, `{"agentId":"a"}`)
+	seg := f.storeSegment(t, sessionX, 0, f.now, "{}\n")
+	snap := f.storeXMetaSnapshot(t, f.now, `{"agentId":"a"}`)
 
 	res, _ := f.uploader.Flush(true)
 	if res.Outcome != upload.Rejected {
@@ -340,10 +340,10 @@ func TestFlush_OrdersAdjacentBySourceThenSession(t *testing.T) {
 	f.storeRawcallOf(t, "req-b1", "sess-b", f.now)
 	f.storeRawcallOf(t, "req-a1", "sess-a", f.now.Add(time.Second))
 	f.storeRawcallOf(t, "req-b2", "sess-b", f.now.Add(2*time.Second))
-	y0 := f.storeSegment(t, sessionY, "", 0, f.now, "{}\n")
-	x0 := f.storeSegment(t, sessionX, "", 0, f.now.Add(time.Second), "{}\n")
-	y1 := f.storeSegment(t, sessionY, "", 1, f.now.Add(time.Second), "{}\n")
-	xMeta := f.storeSnapshot(t, sessionX, "subagents/agent-a.meta.json", f.now, `{"agentId":"a"}`)
+	y0 := f.storeSegment(t, sessionY, 0, f.now, "{}\n")
+	x0 := f.storeSegment(t, sessionX, 0, f.now.Add(time.Second), "{}\n")
+	y1 := f.storeSegment(t, sessionY, 1, f.now.Add(time.Second), "{}\n")
+	xMeta := f.storeXMetaSnapshot(t, f.now, `{"agentId":"a"}`)
 
 	if _, err := f.uploader.Flush(true); err != nil {
 		t.Fatal(err)
@@ -365,7 +365,7 @@ func TestFlush_IncompleteSegmentIsSetAside(t *testing.T) {
 	}{
 		{"a segment whose last line is cut", func(t *testing.T, f *fixture) string {
 			t.Helper()
-			return f.storeSegment(t, sessionX, "", 1, f.now, `{"type":"user"}`).RecordID
+			return f.storeSegment(t, sessionX, 1, f.now, `{"type":"user"}`).RecordID
 		}},
 		{"bytes that are not a record", func(t *testing.T, f *fixture) string {
 			t.Helper()
@@ -377,7 +377,7 @@ func TestFlush_IncompleteSegmentIsSetAside(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
-			good := f.storeSegment(t, sessionX, "", 0, f.now, "{}\n")
+			good := f.storeSegment(t, sessionX, 0, f.now, "{}\n")
 			bad := tc.plant(t, f)
 
 			res, err := f.uploader.Flush(true)
@@ -413,7 +413,7 @@ func TestFlush_IncompleteSegmentIsSetAside(t *testing.T) {
 func TestFlush_SnapshotIDFollowsRedactedContent(t *testing.T) {
 	f := newFixture(t)
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
-	snap := f.storeSnapshot(t, sessionX, "subagents/agent-a.meta.json", f.now, `{"agentId":"a","note":"`+fakeSecret+`"}`)
+	snap := f.storeXMetaSnapshot(t, f.now, `{"agentId":"a","note":"`+fakeSecret+`"}`)
 
 	res, err := f.uploader.Flush(true)
 	if err != nil || res.Records != 1 {
@@ -462,10 +462,10 @@ func TestFlush_NeverSendsRecordsOfAProjectThatWithdrewConsent(t *testing.T) {
 		t.Fatalf("result = %+v, want only the granted project's segment acknowledged", res)
 	}
 	for _, r := range f.server.Requests() {
-		if strings.Contains(string(mustPart(t, r, "batch")), gone.RecordID) {
+		if strings.Contains(string(batchPart(t, r)), gone.RecordID) {
 			t.Fatalf("a batch carried a record whose project had withdrawn consent")
 		}
-		if !strings.Contains(string(mustPart(t, r, "batch")), kept.RecordID) {
+		if !strings.Contains(string(batchPart(t, r)), kept.RecordID) {
 			t.Fatalf("the granted project's segment was not sent")
 		}
 	}
@@ -479,7 +479,7 @@ func TestFlush_PendingBatchResendsBothKindsUnderTheSameID(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", rejectStub(503, "down"))
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", f.now)
-	seg := f.storeSegment(t, sessionX, "", 0, f.now, "{}\n")
+	seg := f.storeSegment(t, sessionX, 0, f.now, "{}\n")
 
 	if _, err := f.uploader.Flush(true); err == nil {
 		t.Fatal("first flush against a failing service did not error")
@@ -506,7 +506,7 @@ func TestFlush_AResumedBatchResendsOnlyTheSlotItNamed(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", rejectStub(503, "down"))
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
-	seg := f.storeSegment(t, sessionX, "", 0, f.now, "{}\n")
+	seg := f.storeSegment(t, sessionX, 0, f.now, "{}\n")
 
 	if _, err := f.uploader.Flush(true); err == nil {
 		t.Fatal("first flush against a failing service did not error")
@@ -541,7 +541,7 @@ func TestFlush_AResumedBatchResendsOnlyTheSlotItNamed(t *testing.T) {
 
 func recordIDsBySource(t *testing.T, r fakeplatform.Request) map[string][]string {
 	t.Helper()
-	groups, err := fakeplatform.RecordIDsBySource(mustPart(t, r, "batch"))
+	groups, err := fakeplatform.RecordIDsBySource(batchPart(t, r))
 	if err != nil {
 		t.Fatalf("reading the uploaded index: %v", err)
 	}
@@ -570,7 +570,7 @@ func TestFlush_APendingFileFromAnEarlierBuildKeepsItsID(t *testing.T) {
 func TestFlush_AgedRecordsInTheSecondSlotTriggerAnUnforcedFlush(t *testing.T) {
 	f := newFixture(t)
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
-	f.storeSegment(t, sessionX, "", 0, f.now.Add(-25*time.Hour), "{}\n")
+	f.storeSegment(t, sessionX, 0, f.now.Add(-25*time.Hour), "{}\n")
 
 	res, err := f.uploader.Flush(false)
 	if err != nil {
@@ -673,12 +673,12 @@ func TestFlush_UnmaskableRecordTriggersTheCallback(t *testing.T) {
 	}{
 		{"a segment whose last line is cut cannot be masked", func(t *testing.T, f *fixture) {
 			t.Helper()
-			f.storeSegment(t, sessionX, "", 1, f.now, `{"type":"user"}`)
+			f.storeSegment(t, sessionX, 1, f.now, `{"type":"user"}`)
 		}, 1},
 		{"two such segments in one flush report once", func(t *testing.T, f *fixture) {
 			t.Helper()
-			f.storeSegment(t, sessionX, "", 1, f.now, `{"type":"user"}`)
-			f.storeSegment(t, sessionY, "", 0, f.now, `{"type":"user"}`)
+			f.storeSegment(t, sessionX, 1, f.now, `{"type":"user"}`)
+			f.storeSegment(t, sessionY, 0, f.now, `{"type":"user"}`)
 		}, 1},
 		{"bytes that are not a record are unreadable, not unmaskable", func(t *testing.T, f *fixture) {
 			t.Helper()
@@ -689,7 +689,7 @@ func TestFlush_UnmaskableRecordTriggersTheCallback(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
-			f.storeSegment(t, sessionX, "", 0, f.now, "{}\n")
+			f.storeSegment(t, sessionX, 0, f.now, "{}\n")
 			tc.plant(t, f)
 
 			res, err := f.uploader.Flush(true)

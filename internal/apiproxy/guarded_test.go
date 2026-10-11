@@ -134,7 +134,7 @@ func TestOversizedExchangeIsDroppedWithoutTouchingForwarding(t *testing.T) {
 	const limit = 64 << 10
 	e := proxytest.New(t, proxytest.WithMaxRecordBytes(limit))
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	huge := `{"id":"msg_huge","filler":"` + strings.Repeat("x", 4<<20) + `"}`
 	upstream.Enqueue(fakeupstream.Response{
@@ -170,7 +170,7 @@ func TestPanicInsideTheGuardedRegionDoesNotBreakForwarding(t *testing.T) {
 		proxytest.WithLogf(func(string, ...any) { panic("injected logging fault") }),
 	)
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	body := `{"id":"msg_1","filler":"` + strings.Repeat("x", 4*limit) + `"}`
 	upstream.Enqueue(fakeupstream.Response{
@@ -210,7 +210,7 @@ func TestPanicInsideTheGuardedRegionDoesNotBreakForwarding(t *testing.T) {
 func TestUnusableRouteUpstreamRefusesRatherThanRedirect(t *testing.T) {
 	e := proxytest.New(t)
 	defaultUp := e.Upstream
-	e.WriteTable(activeTable("tok1", "not a url at all"))
+	e.WriteTable(activeTable("not a url at all"))
 
 	// Queued so that a redirect would succeed rather than fail for want
 	// of a canned answer: this must fail on the redirect happening, not
@@ -237,7 +237,7 @@ func TestUnusableRouteUpstreamRefusesRatherThanRedirect(t *testing.T) {
 func TestFinishedExchangeDoesNotWaitOnTheSpool(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	const n = 20
 	for i := range n {
@@ -317,7 +317,7 @@ func TestATableThatBreaksKeepsForwardingWhereItLastSaidAndRecordsNothing(t *test
 			e := proxytest.New(t)
 			defaultUp := e.Upstream
 			relay := fakeupstream.New(t)
-			e.WriteTable(activeTable("tok1", relay.URL()))
+			e.WriteTable(activeTable(relay.URL()))
 			relay.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_read"}`)})
 			e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
 			e.WaitRawcalls(1)

@@ -349,7 +349,7 @@ func TestFixturesRoundTripThroughTheUploader(t *testing.T) {
 				t.Errorf("envelope = %s/%s/%d with a %d byte stream, fixture says %s/%s/%d", got.SchemaVersion, got.Compression, got.RecordsSize, len(stream), want.SchemaVersion, want.Compression, want.RecordsSize)
 			}
 			if len(got.Records) != len(want.Records) {
-				t.Fatalf("index has %d items, fixture has %d:\n%s", len(got.Records), len(want.Records), mustPart(t, reqs[0], "batch"))
+				t.Fatalf("index has %d items, fixture has %d:\n%s", len(got.Records), len(want.Records), batchPart(t, reqs[0]))
 			}
 			for i, w := range want.Records {
 				g := got.Records[i]

@@ -60,7 +60,7 @@ func TestServeHostsCaptureAndTheFlushEndpoint(t *testing.T) {
 		t.Errorf("second Serve = %v, want quiet deferral to the healthy proxy", err)
 	}
 
-	e.adminPost(apiproxy.DrainPath)
+	e.drain()
 	e.waitExit(served, 10*time.Second)
 }
 
@@ -154,7 +154,7 @@ func TestServeFinishesItsExitFlushBeforeReleasingThePort(t *testing.T) {
 	served := e.serve(io.Discard, io.Discard)
 	e.waitHealthy()
 
-	e.adminPost(apiproxy.DrainPath)
+	e.drain()
 	e.waitExit(served, 10*time.Second)
 
 	select {
@@ -219,7 +219,7 @@ func TestASlowExitFlushReleasesThePortAndLeavesItsRecordsToTheSuccessor(t *testi
 		t.Errorf("successor flush = %+v, want the record the predecessor abandoned uploaded", reply)
 	}
 
-	e.adminPost(apiproxy.DrainPath)
+	e.drain()
 	e.waitExit(successor, 20*time.Second)
 
 	batchIDs := map[string]bool{}
@@ -278,7 +278,7 @@ func TestProxyTakeoverNeverUploadsARecordUnderTwoBatchIDs(t *testing.T) {
 	predecessor := e.serve(io.Discard, io.Discard)
 	e.waitHealthy()
 
-	e.adminPost(apiproxy.DrainPath)
+	e.drain()
 	select {
 	case <-uploadStarted:
 	case <-time.After(10 * time.Second):
@@ -319,7 +319,7 @@ func TestProxyTakeoverNeverUploadsARecordUnderTwoBatchIDs(t *testing.T) {
 		t.Errorf("flush after the takeover settled = %+v, want everything already uploaded", reply)
 	}
 
-	e.adminPost(apiproxy.DrainPath)
+	e.drain()
 	e.waitExit(successor, 20*time.Second)
 
 	batchesByRecord := map[string]map[string]bool{}

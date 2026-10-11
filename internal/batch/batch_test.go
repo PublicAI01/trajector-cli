@@ -95,9 +95,9 @@ func storedSegment(t *testing.T, sessionID, file string, index int, at time.Time
 	return spool.Entry{Kind: envelope.KindSegment, ID: seg.RecordID, Timestamp: at, Raw: data}
 }
 
-func storedSnapshot(t *testing.T, sessionID, file string, at time.Time, content string) spool.Entry {
+func storedAgentXMeta(t *testing.T, sessionID string, at time.Time, content string) spool.Entry {
 	t.Helper()
-	snap, err := envelope.NewMetaSnapshot(sessionID, file, transcriptCapture(at), []byte(content))
+	snap, err := envelope.NewMetaSnapshot(sessionID, "subagents/agent-x.meta.json", transcriptCapture(at), []byte(content))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestBuildEnvelopeCarriesIdentityIndexAndRunMetadata(t *testing.T) {
 
 func TestBuild_WritesTheCurrentSchemaVersion(t *testing.T) {
 	segment := storedSegment(t, "sess-1", "", 0, buildTime, `{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
-	snapshot := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime, `{"agentId":"x"}`)
+	snapshot := storedAgentXMeta(t, "sess-1", buildTime, `{"agentId":"x"}`)
 	in := spool.Entries{simpleRawcall(t, "req-1", "session-a", buildTime), segment, snapshot}
 	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {
@@ -335,7 +335,7 @@ func TestBuild_OrdersRawcallsFirstThenRecordsBySessionFileAndIndex(t *testing.T)
 		t.Fatalf("segment ids %s/%s/%s sort in index order, so this case proves nothing; pick another session id", seg0.ID, seg1.ID, seg2.ID)
 	}
 	sub := storedSegment(t, "sess-b", "subagents/agent-x.jsonl", 0, buildTime, "{}\n")
-	meta := storedSnapshot(t, "sess-b", "subagents/agent-x.meta.json", later, `{"agentId":"x"}`)
+	meta := storedAgentXMeta(t, "sess-b", later, `{"agentId":"x"}`)
 	other := storedSegment(t, "sess-a", "", 0, later, "{}\n")
 	rc := simpleRawcall(t, "req-z", "session-z", later)
 
@@ -356,7 +356,7 @@ func TestBuild_OrdersRawcallsFirstThenRecordsBySessionFileAndIndex(t *testing.T)
 func TestBuild_MasksSegmentsAndSnapshotsBeforePacking(t *testing.T) {
 	segment := storedSegment(t, "sess-1", "", 0, buildTime,
 		`{"type":"user","cwd":"/home/dev/proj","message":{"role":"user","content":"key `+fakeSecret+`"}}`+"\n")
-	snapshot := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime, `{"agentId":"x","note":"`+fakeSecret+`"}`)
+	snapshot := storedAgentXMeta(t, "sess-1", buildTime, `{"agentId":"x","note":"`+fakeSecret+`"}`)
 	in := spool.Entries{segment, snapshot}
 	b, refused, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {

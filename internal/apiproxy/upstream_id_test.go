@@ -25,7 +25,7 @@ func TestRecorder_KeepsUpstreamRequestID(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := proxytest.New(t)
-			e.WriteTable(activeTable("tok1", e.Upstream.URL()))
+			e.WriteTable(activeTable(e.Upstream.URL()))
 			header := http.Header{"Content-Type": {"application/json"}}
 			if tc.header != "" {
 				header.Set("Request-Id", tc.header)

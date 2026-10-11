@@ -45,9 +45,9 @@ func snapshot(t *testing.T, sessionID, projectHash, content string, at time.Time
 	return snap
 }
 
-func gitSnapshot(sessionID, projectHash, head string, at time.Time) envelope.GitSnapshot {
+func gitSnapshotForHashA(sessionID, head string, at time.Time) envelope.GitSnapshot {
 	return envelope.NewGitSnapshot(sessionID, "SessionStart", envelope.TriggerSessionStart,
-		captureAt(at, projectHash), "main", head, envelope.CommitOrNone(""), envelope.CommitOrNone(""), nil)
+		captureAt(at, "hash-a"), "main", head, envelope.CommitOrNone(""), envelope.CommitOrNone(""), nil)
 }
 
 // userIDFor spells metadata.user_id the way a request body carries it:
@@ -358,12 +358,12 @@ func TestSpool_WriteRecordRefusesWhatItCannotStore(t *testing.T) {
 			return s.WriteMetaSnapshot(snap)
 		}},
 		{"observation declaring another kind", func() error {
-			snap := gitSnapshot(sessionA, "hash-a", headA, noon)
+			snap := gitSnapshotForHashA(sessionA, headA, noon)
 			snap.RecordKind = "segment"
 			return s.WriteGitSnapshot(snap)
 		}},
 		{"observation without a session id", func() error {
-			snap := gitSnapshot("", "hash-a", headA, noon)
+			snap := gitSnapshotForHashA("", headA, noon)
 			return s.WriteGitSnapshot(snap)
 		}},
 	}
@@ -484,7 +484,7 @@ func TestSpool_SummarySeparatesSlots(t *testing.T) {
 	if err := s.WriteMetaSnapshot(snapshot(t, sessionA, "hash-a", `{"agentId":"0000"}`, day2)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteGitSnapshot(gitSnapshot(sessionA, "hash-a", headA, day2)); err != nil {
+	if err := s.WriteGitSnapshot(gitSnapshotForHashA(sessionA, headA, day2)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1009,7 +1009,7 @@ func TestSpool_StoresObservationsBesideTheOtherRecordsOfTheirSlot(t *testing.T) 
 	if err := s.WriteSegment(segment(sessionA, "hash-a", 0, noon)); err != nil {
 		t.Fatal(err)
 	}
-	snap := gitSnapshot(sessionA, "hash-a", headA, noon)
+	snap := gitSnapshotForHashA(sessionA, headA, noon)
 	if err := s.WriteGitSnapshot(snap); err != nil {
 		t.Fatal(err)
 	}
@@ -1034,7 +1034,7 @@ func TestSpool_WriteGitSnapshotIsIdempotentPerRecordID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap := gitSnapshot(sessionA, "hash-a", headA, noon)
+	snap := gitSnapshotForHashA(sessionA, headA, noon)
 	for range 3 {
 		if err := s.WriteGitSnapshot(snap); err != nil {
 			t.Fatal(err)
@@ -1043,7 +1043,7 @@ func TestSpool_WriteGitSnapshotIsIdempotentPerRecordID(t *testing.T) {
 	if got := collectRecords(t, s); len(got) != 1 {
 		t.Errorf("the same observation stored three times left %d records", len(got))
 	}
-	if err := s.WriteGitSnapshot(gitSnapshot(sessionA, "hash-a", headB, noon)); err != nil {
+	if err := s.WriteGitSnapshot(gitSnapshotForHashA(sessionA, headB, noon)); err != nil {
 		t.Fatal(err)
 	}
 	if got := collectRecords(t, s); len(got) != 2 {
@@ -1056,10 +1056,10 @@ func TestSpool_DeletingASessionTakesItsObservationsToo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteGitSnapshot(gitSnapshot(sessionA, "hash-a", headA, noon)); err != nil {
+	if err := s.WriteGitSnapshot(gitSnapshotForHashA(sessionA, headA, noon)); err != nil {
 		t.Fatal(err)
 	}
-	kept := gitSnapshot(sessionB, "hash-a", headB, noon)
+	kept := gitSnapshotForHashA(sessionB, headB, noon)
 	if err := s.WriteGitSnapshot(kept); err != nil {
 		t.Fatal(err)
 	}
@@ -1101,7 +1101,7 @@ func TestARecordDayIndexWrittenBeforeItNamedTheSourceStillNamesTheKind(t *testin
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
-	snap := gitSnapshot(sessionA, "hash-a", "d0cf90f327430f11f8a68493a58f402fa11d7c9e", at)
+	snap := gitSnapshotForHashA(sessionA, "d0cf90f327430f11f8a68493a58f402fa11d7c9e", at)
 	if err := s.WriteGitSnapshot(snap); err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
@@ -52,7 +51,7 @@ func TestServeReadsTheImageSwitchForEveryBatch(t *testing.T) {
 			t.Fatalf("step %d, config %q: the upload carried the image as %s, want %s", i, step.config, got, step.want)
 		}
 	}
-	e.adminPost(apiproxy.DrainPath)
+	e.drain()
 	e.waitExit(served, 10*time.Second)
 	if !strings.Contains(logs.String(), "images and documents go up as placeholders until it reads") {
 		t.Errorf("an unreadable user config file was not reported:\n%s", logs.String())
@@ -85,7 +84,7 @@ func TestServeSendsPlaceholdersWhileTheUserConfigFileCannotBeRead(t *testing.T) 
 	if got := e.lastUploadForm(payload); got != "placeholder" {
 		t.Fatalf("the image went up as %s while the file that turns its upload on or off could not be read", got)
 	}
-	e.adminPost(apiproxy.DrainPath)
+	e.drain()
 	e.waitExit(served, 10*time.Second)
 	if !strings.Contains(logs.String(), "images and documents go up as placeholders until it reads") {
 		t.Errorf("an unreadable user config file was not reported with what it does:\n%s", logs.String())

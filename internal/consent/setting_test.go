@@ -8,9 +8,11 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 )
 
-func grantProject(t *testing.T, s *consent.Store, hash string) {
+const projectHash = "hash-p"
+
+func grantProject(t *testing.T, s *consent.Store) {
 	t.Helper()
-	if err := s.SetProjectState(hash, "/project/p", consent.StateGranted, "2026-08-31T10:00:00Z"); err != nil {
+	if err := s.SetProjectState(projectHash, "/project/p", consent.StateGranted, "2026-08-31T10:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -43,12 +45,12 @@ func TestSettingDecisionRoundTripsEachAnswerShape(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := open(t)
-			grantProject(t, s, "hash-p")
-			if err := s.SetSettingDecision("hash-p", "showThinkingSummaries", tc.decision); err != nil {
+			grantProject(t, s)
+			if err := s.SetSettingDecision(projectHash, "showThinkingSummaries", tc.decision); err != nil {
 				t.Fatal(err)
 			}
 			reopened := consent.Open(s.Path())
-			decisions, err := reopened.SettingDecisions("hash-p")
+			decisions, err := reopened.SettingDecisions(projectHash)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,27 +71,27 @@ func TestSettingDecisionRejectsMalformedShapes(t *testing.T) {
 		decision  consent.SettingDecision
 	}{
 		{
-			"accepted without a prior state", "hash-p", "showThinkingSummaries",
+			"accepted without a prior state", projectHash, "showThinkingSummaries",
 			consent.SettingDecision{Answer: consent.AnswerAccepted, DecidedAt: "2026-08-31T10:00:00Z"},
 		},
 		{
-			"accepted with an unknown prior state", "hash-p", "showThinkingSummaries",
+			"accepted with an unknown prior state", projectHash, "showThinkingSummaries",
 			consent.SettingDecision{Answer: consent.AnswerAccepted, Prior: "maybe", DecidedAt: "2026-08-31T10:00:00Z"},
 		},
 		{
-			"declined carrying a prior state", "hash-p", "showThinkingSummaries",
+			"declined carrying a prior state", projectHash, "showThinkingSummaries",
 			consent.SettingDecision{Answer: consent.AnswerDeclined, Prior: consent.PriorAbsent, DecidedAt: "2026-08-31T10:00:00Z"},
 		},
 		{
-			"unknown answer", "hash-p", "showThinkingSummaries",
+			"unknown answer", projectHash, "showThinkingSummaries",
 			consent.SettingDecision{Answer: "shrugged", DecidedAt: "2026-08-31T10:00:00Z"},
 		},
 		{
-			"empty answer", "hash-p", "showThinkingSummaries",
+			"empty answer", projectHash, "showThinkingSummaries",
 			consent.SettingDecision{DecidedAt: "2026-08-31T10:00:00Z"},
 		},
 		{
-			"empty setting key", "hash-p", "",
+			"empty setting key", projectHash, "",
 			consent.SettingDecision{Answer: consent.AnswerDeclined, DecidedAt: "2026-08-31T10:00:00Z"},
 		},
 		{
@@ -100,11 +102,11 @@ func TestSettingDecisionRejectsMalformedShapes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := open(t)
-			grantProject(t, s, "hash-p")
+			grantProject(t, s)
 			if err := s.SetSettingDecision(tc.hash, tc.key, tc.decision); err == nil {
 				t.Error("malformed decision was recorded")
 			}
-			decisions, err := s.SettingDecisions("hash-p")
+			decisions, err := s.SettingDecisions(projectHash)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -171,21 +173,21 @@ func TestStoreWrittenBeforeSettingDecisionsStillWorks(t *testing.T) {
 
 func TestClearSettingDecisionLeavesTheRestOfTheProjectAlone(t *testing.T) {
 	s := open(t)
-	grantProject(t, s, "hash-p")
+	grantProject(t, s)
 	written := consent.SettingDecision{Answer: consent.AnswerAccepted, Prior: consent.PriorFalse, DecidedAt: "2026-08-31T10:01:00Z"}
 	declined := consent.SettingDecision{Answer: consent.AnswerDeclined, DecidedAt: "2026-08-31T10:02:00Z"}
-	if err := s.SetSettingDecision("hash-p", "showThinkingSummaries", written); err != nil {
+	if err := s.SetSettingDecision(projectHash, "showThinkingSummaries", written); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSettingDecision("hash-p", "anotherOptionalKey", declined); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := s.ClearSettingDecision("hash-p", "showThinkingSummaries"); err != nil {
+	if err := s.SetSettingDecision(projectHash, "anotherOptionalKey", declined); err != nil {
 		t.Fatal(err)
 	}
 
-	decisions, err := s.SettingDecisions("hash-p")
+	if err := s.ClearSettingDecision(projectHash, "showThinkingSummaries"); err != nil {
+		t.Fatal(err)
+	}
+
+	decisions, err := s.SettingDecisions(projectHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +197,7 @@ func TestClearSettingDecisionLeavesTheRestOfTheProjectAlone(t *testing.T) {
 	if got := decisions["anotherOptionalKey"]; got != declined {
 		t.Errorf("the other decision changed: %+v", got)
 	}
-	if state, ok, err := s.ProjectState("hash-p"); err != nil || !ok || state != consent.StateGranted {
+	if state, ok, err := s.ProjectState(projectHash); err != nil || !ok || state != consent.StateGranted {
 		t.Errorf("project state after clear = %q, %v, %v", state, ok, err)
 	}
 }
@@ -205,26 +207,26 @@ func TestClearSettingDecisionIsANoOpWhenNothingIsRecorded(t *testing.T) {
 	if err := s.ClearSettingDecision("hash-unknown", "showThinkingSummaries"); err != nil {
 		t.Errorf("clearing on an unknown project failed: %v", err)
 	}
-	grantProject(t, s, "hash-p")
-	if err := s.ClearSettingDecision("hash-p", "showThinkingSummaries"); err != nil {
+	grantProject(t, s)
+	if err := s.ClearSettingDecision(projectHash, "showThinkingSummaries"); err != nil {
 		t.Errorf("clearing an unrecorded setting failed: %v", err)
 	}
-	if state, ok, err := s.ProjectState("hash-p"); err != nil || !ok || state != consent.StateGranted {
+	if state, ok, err := s.ProjectState(projectHash); err != nil || !ok || state != consent.StateGranted {
 		t.Errorf("project state after no-op clear = %q, %v, %v", state, ok, err)
 	}
 }
 
 func TestProjectStateChangeKeepsSettingDecisions(t *testing.T) {
 	s := open(t)
-	grantProject(t, s, "hash-p")
+	grantProject(t, s)
 	declined := consent.SettingDecision{Answer: consent.AnswerDeclined, DecidedAt: "2026-08-31T10:01:00Z"}
-	if err := s.SetSettingDecision("hash-p", "showThinkingSummaries", declined); err != nil {
+	if err := s.SetSettingDecision(projectHash, "showThinkingSummaries", declined); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetProjectState("hash-p", "/project/p", consent.StateDenied, "2026-08-31T11:00:00Z"); err != nil {
+	if err := s.SetProjectState(projectHash, "/project/p", consent.StateDenied, "2026-08-31T11:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	decisions, err := s.SettingDecisions("hash-p")
+	decisions, err := s.SettingDecisions(projectHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,12 +237,12 @@ func TestProjectStateChangeKeepsSettingDecisions(t *testing.T) {
 
 func TestRestoreProjectRollsBackSettingDecisionsRecordedMeanwhile(t *testing.T) {
 	s := open(t)
-	grantProject(t, s, "hash-p")
-	snap, err := s.SnapshotProject("hash-p")
+	grantProject(t, s)
+	snap, err := s.SnapshotProject(projectHash)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSettingDecision("hash-p", "showThinkingSummaries", consent.SettingDecision{
+	if err := s.SetSettingDecision(projectHash, "showThinkingSummaries", consent.SettingDecision{
 		Answer:    consent.AnswerAccepted,
 		Prior:     consent.PriorAbsent,
 		DecidedAt: "2026-08-31T10:01:00Z",
@@ -250,14 +252,14 @@ func TestRestoreProjectRollsBackSettingDecisionsRecordedMeanwhile(t *testing.T) 
 	if err := s.RestoreProject(snap); err != nil {
 		t.Fatal(err)
 	}
-	decisions, err := s.SettingDecisions("hash-p")
+	decisions, err := s.SettingDecisions(projectHash)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(decisions) != 0 {
 		t.Errorf("decisions survived the rollback: %+v", decisions)
 	}
-	if state, ok, err := s.ProjectState("hash-p"); err != nil || !ok || state != consent.StateGranted {
+	if state, ok, err := s.ProjectState(projectHash); err != nil || !ok || state != consent.StateGranted {
 		t.Errorf("project state after rollback = %q, %v, %v", state, ok, err)
 	}
 }

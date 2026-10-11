@@ -34,7 +34,7 @@ func basicAuth(userinfo string) string {
 func TestUpstreamUserinfoReachesTheRelayAsBasicAuth(t *testing.T) {
 	const userinfo = "relay-user:s3cr3t-relay-pw"
 	e := proxytest.New(t)
-	e.WriteTable(activeTable("tok1", relayUpstream(e.Upstream.URL(), userinfo)))
+	e.WriteTable(activeTable(relayUpstream(e.Upstream.URL(), userinfo)))
 
 	post := func(t *testing.T, header http.Header) {
 		t.Helper()

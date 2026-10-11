@@ -22,18 +22,18 @@ import (
 
 const sessionLine = `{"type":"assistant","message":{"id":"m1"}}` + "\n"
 
-// enabledProject grants one project and returns its root and hash.
-func (e *env) enabledProject() (root, hash string) {
+// enabledProject grants one project and returns its hash.
+func (e *env) enabledProject() string {
 	e.t.Helper()
-	root = e.t.TempDir()
-	hash = proxytest.ProjectIDHash(root)
+	root := e.t.TempDir()
+	hash := proxytest.ProjectIDHash(root)
 	e.sandbox.GrantProject(proxytest.Grant{
 		Token:         "tok-proj",
 		ProjectIDHash: hash,
 		RootPath:      root,
 		Upstream:      "https://api.anthropic.com",
 	})
-	return root, hash
+	return hash
 }
 
 // sessionFile writes one session file with content and registers it
@@ -112,7 +112,7 @@ func (e *env) progress(ev apiproxy.Progress) int {
 
 func (e *env) stopServed(served <-chan error) {
 	e.t.Helper()
-	e.adminPost(apiproxy.DrainPath)
+	e.drain()
 	e.waitExit(served, 10*time.Second)
 }
 
@@ -132,7 +132,7 @@ func eventually(t *testing.T, within time.Duration, check func() bool) bool {
 func TestProgressReportReadsTheOneFileItNames(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
-	_, hash := e.enabledProject()
+	hash := e.enabledProject()
 	named := e.sessionFile(hash, "named.jsonl", sessionLine)
 	other := e.sessionFile(hash, "other.jsonl", sessionLine)
 	e.warm(hash, named)
@@ -169,7 +169,7 @@ func TestProgressReportReadsTheOneFileItNames(t *testing.T) {
 func TestProgressReportLeavesTheHeatTheHookWrote(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
-	_, hash := e.enabledProject()
+	hash := e.enabledProject()
 	path := e.sessionFile(hash, "s.jsonl", sessionLine)
 	e.warm(hash, path)
 	before := e.entry(hash, path)
@@ -189,7 +189,7 @@ func TestProgressReportLeavesTheHeatTheHookWrote(t *testing.T) {
 
 func TestProgressReportRefusesAFileThatIsNotRegistered(t *testing.T) {
 	e := newEnv(t)
-	_, hash := e.enabledProject()
+	hash := e.enabledProject()
 	served := e.serve(io.Discard, io.Discard)
 	e.waitHealthy()
 	defer e.stopServed(served)
@@ -206,7 +206,7 @@ func TestProgressReportOfASessionEndReadsFlushesAndCools(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
-	_, hash := e.enabledProject()
+	hash := e.enabledProject()
 	path := e.sessionFile(hash, "s.jsonl", sessionLine)
 	e.warm(hash, path)
 
@@ -237,7 +237,7 @@ func TestSweepReadsHotFilesAndNeverColdOnes(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.assembly.SweepInterval = 50 * time.Millisecond
-	_, hash := e.enabledProject()
+	hash := e.enabledProject()
 	hot := e.sessionFile(hash, "hot.jsonl", "")
 	cold := e.sessionFile(hash, "cold.jsonl", "")
 	if err := e.registry().Warm(hash, hot, 0, time.Now()); err != nil {
@@ -274,7 +274,7 @@ func TestSweepReadsHotFilesAndNeverColdOnes(t *testing.T) {
 func TestARunningSessionProcessStretchesTheIdleExit(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
-	_, hash := e.enabledProject()
+	hash := e.enabledProject()
 	path := e.sessionFile(hash, "s.jsonl", "")
 	e.warm(hash, path)
 
@@ -303,7 +303,7 @@ func TestARunningSessionProcessStretchesTheIdleExit(t *testing.T) {
 func TestProgressReportReadsTheAgentFilesBesideTheNamedOne(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
-	_, hash := e.enabledProject()
+	hash := e.enabledProject()
 	named := e.sessionFile(hash, "sess.jsonl", sessionLine)
 	// A subagent's lines live beside the main file, under the session's
 	// own directory; a hook registers them but never names them.
@@ -341,7 +341,7 @@ func TestProgressReportReadsTheAgentFilesBesideTheNamedOne(t *testing.T) {
 func TestProgressReportAnswersBeforeTheFlushRuns(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
-	_, hash := e.enabledProject()
+	hash := e.enabledProject()
 	path := e.sessionFile(hash, "s.jsonl", sessionLine)
 	e.warm(hash, path)
 	reached := make(chan struct{}, 1)
@@ -387,7 +387,7 @@ func TestSweepSendsTheRecordsItReadsAtOnce(t *testing.T) {
 	e := newEnv(t)
 	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	e.assembly.SweepInterval = 50 * time.Millisecond
-	_, hash := e.enabledProject()
+	hash := e.enabledProject()
 	hot := e.sessionFile(hash, "hot.jsonl", "")
 	if err := e.registry().Warm(hash, hot, 0, time.Now()); err != nil {
 		t.Fatal(err)
@@ -411,7 +411,7 @@ func TestSweepSendsTheRecordsItReadsAtOnce(t *testing.T) {
 func TestStartSweepReadsAColdWorkflowAgentFileLeftUnreadAndNoOtherColdFile(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
-	_, hash := e.enabledProject()
+	hash := e.enabledProject()
 	main := e.sessionFile(hash, "sess.jsonl", sessionLine)
 	place := func(rel string) string {
 		path := filepath.Join(filepath.Dir(main), "sess", "subagents", filepath.FromSlash(rel))
@@ -451,7 +451,7 @@ func TestStartSweepReadsAColdWorkflowAgentFileLeftUnreadAndNoOtherColdFile(t *te
 func TestStartSweepLeavesAColdWorkflowAgentFileReadToItsEnd(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
-	_, hash := e.enabledProject()
+	hash := e.enabledProject()
 	main := e.sessionFile(hash, "sess.jsonl", sessionLine)
 	place := func(run string) string {
 		path := filepath.Join(filepath.Dir(main), "sess", "subagents", "workflows", run, "agent-x.jsonl")

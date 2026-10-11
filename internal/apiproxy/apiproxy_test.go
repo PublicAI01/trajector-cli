@@ -29,11 +29,13 @@ func readEnvelope(t *testing.T, r spool.Rawcall) envelope.Envelope {
 	return env
 }
 
-func activeTable(token, upstream string) string {
+// activeTable is a routing table that grants token tok1 to one project
+// whose traffic goes to upstream.
+func activeTable(upstream string) string {
 	rec, _ := json.Marshal(map[string]any{
 		"projects": map[string]any{
-			token: map[string]string{
-				"project_id_hash": "hash-" + token,
+			"tok1": map[string]string{
+				"project_id_hash": "hash-tok1",
 				"root_path":       "/home/dev/project",
 				"upstream":        upstream,
 				"granted_at":      "2026-08-01T00:00:00Z",
@@ -46,7 +48,7 @@ func activeTable(token, upstream string) string {
 func TestAuthorizedCallForwardedVerbatimAndRecorded(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	respBody := `{"id":"msg_r1","type":"message","model":"claude-fable-5","usage":{"output_tokens":3}}`
 	upstream.Enqueue(fakeupstream.Response{
@@ -131,7 +133,7 @@ func TestAuthorizedCallForwardedVerbatimAndRecorded(t *testing.T) {
 func TestStreamedResponseReassembledIntoEnvelope(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	stream := "event: message_start\n" +
 		`data: {"type":"message_start","message":{"id":"msg_017","type":"message","role":"assistant","model":"claude-fable-5","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\n" +
@@ -186,7 +188,7 @@ func TestStreamedResponseReassembledIntoEnvelope(t *testing.T) {
 func TestGarbledStreamStoredRawWithMarker(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	stream := "event: mystery_event\ndata: {\"type\":\"mystery_event\"}\n\n"
 	upstream.Enqueue(fakeupstream.Response{
@@ -223,7 +225,7 @@ func TestGarbledStreamStoredRawWithMarker(t *testing.T) {
 func TestInterruptedStreamStoredPartialAndGarbled(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	first := "event: message_start\n" +
 		`data: {"type":"message_start","message":{"id":"msg_cut","type":"message","role":"assistant","model":"claude-fable-5","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n"
@@ -270,7 +272,7 @@ func TestUnknownTokenForwardsToDefaultUpstreamUnrecorded(t *testing.T) {
 	e := proxytest.New(t)
 	defaultUp := e.Upstream
 	project := fakeupstream.New(t)
-	e.WriteTable(activeTable("tok1", project.URL()))
+	e.WriteTable(activeTable(project.URL()))
 
 	defaultUp.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_unknown"}`)})
 	resp := e.Post("/t/revoked-or-bogus/v1/messages", `{"m":1}`, nil)
@@ -321,7 +323,7 @@ func TestBarePathForwardsToDefaultUpstreamUnrecorded(t *testing.T) {
 	e := proxytest.New(t)
 	defaultUp := e.Upstream
 	project := fakeupstream.New(t)
-	e.WriteTable(activeTable("tok1", project.URL()))
+	e.WriteTable(activeTable(project.URL()))
 
 	defaultUp.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_bare"}`)})
 	resp := e.Post("/v1/messages", `{"m":1}`, nil)
@@ -344,7 +346,7 @@ func TestBarePathForwardsToDefaultUpstreamUnrecorded(t *testing.T) {
 func TestSubPathAndNon2xxAreForwardedNotStored(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"input_tokens":12}`)})
 	if resp := e.Post("/t/tok1/v1/messages/count_tokens", `{"m":1}`, nil); resp.StatusCode != 200 {
@@ -371,7 +373,7 @@ func TestSubPathAndNon2xxAreForwardedNotStored(t *testing.T) {
 func TestRecordingFailureDoesNotBreakForwarding(t *testing.T) {
 	e := proxytest.New(t, proxytest.WithFullSpool())
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	respBody := `{"id":"msg_lost","usage":{"output_tokens":1}}`
 	upstream.Enqueue(fakeupstream.Response{Body: []byte(respBody)})
@@ -395,7 +397,7 @@ func TestRecordingFailureDoesNotBreakForwarding(t *testing.T) {
 func TestThirdPartyUpstreamChainedAndTagged(t *testing.T) {
 	e := proxytest.New(t)
 	relay := fakeupstream.New(t)
-	e.WriteTable(activeTable("tok1", relay.URL()+"/relay/base"))
+	e.WriteTable(activeTable(relay.URL() + "/relay/base"))
 
 	relay.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_relay"}`)})
 	resp := e.Post("/t/tok1/v1/messages?beta=true", `{"m":1}`, nil)
@@ -416,7 +418,7 @@ func TestThirdPartyUpstreamChainedAndTagged(t *testing.T) {
 
 func TestOriginOracleIndependentOfDefaultUpstream(t *testing.T) {
 	e := proxytest.New(t, proxytest.WithOfficialUpstream("https://api.example.com"))
-	e.WriteTable(activeTable("tok1", e.Upstream.URL()))
+	e.WriteTable(activeTable(e.Upstream.URL()))
 
 	e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_o1"}`)})
 	resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
@@ -437,7 +439,7 @@ func TestOriginOracleIndependentOfDefaultUpstream(t *testing.T) {
 func TestCompressedResponseRecordedDecoded(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	plain := `{"id":"msg_zip","usage":{"output_tokens":2}}`
 	var zipped bytes.Buffer
@@ -476,7 +478,7 @@ func TestHotReloadedTableEnablesTokenWithoutRestart(t *testing.T) {
 		t.Fatalf("pre-enable status = %d", resp.StatusCode)
 	}
 
-	e.WriteTable(activeTable("tok1", project.URL()))
+	e.WriteTable(activeTable(project.URL()))
 	deadline := time.Now().Add(5 * time.Second)
 	for len(e.Rawcalls()) == 0 {
 		if time.Now().After(deadline) {
@@ -491,7 +493,7 @@ func TestHotReloadedTableEnablesTokenWithoutRestart(t *testing.T) {
 
 func TestUpstreamFailureReturns502(t *testing.T) {
 	e := proxytest.New(t)
-	e.WriteTable(activeTable("tok1", "http://127.0.0.1:9"))
+	e.WriteTable(activeTable("http://127.0.0.1:9"))
 
 	resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
 	if resp.StatusCode != http.StatusBadGateway {
@@ -502,7 +504,7 @@ func TestUpstreamFailureReturns502(t *testing.T) {
 func TestHealthzReportsIdentityAndCounters(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	health := e.Healthz()
 	if health.Service != "trajector-proxy" || health.Version != "1.2.3" {

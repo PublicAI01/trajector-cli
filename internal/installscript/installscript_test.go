@@ -31,12 +31,12 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 )
 
-// hostArchive is the asset the script picks on the machine running the
-// test. Which platform is exercised is the host's, not an argument:
-// the script reads uname, and the point of these tests is that it
-// reads it correctly.
-func hostArchive(version string) string {
-	return fakereleases.ArchiveName(version, runtime.GOOS, runtime.GOARCH)
+// hostArchive is the asset of release 0.2.0 that the script picks on the
+// machine running the test. Which platform is exercised is the host's,
+// not an argument: the script reads uname, and the point of these tests
+// is that it reads it correctly.
+func hostArchive() string {
+	return fakereleases.ArchiveName("0.2.0", runtime.GOOS, runtime.GOARCH)
 }
 
 // launch runs install.sh the way a user's shell does, pointed at a
@@ -155,7 +155,7 @@ func TestTheScriptInstallsTheNewestReleaseAndSaysSo(t *testing.T) {
 	// Only this platform's archive and the checksum file are worth
 	// fetching; a script that pulled the other five would still pass
 	// every other assertion here.
-	want := []string{hostArchive("0.2.0"), fakereleases.ChecksumsAsset}
+	want := []string{hostArchive(), fakereleases.ChecksumsAsset}
 	if got := releases.Downloads(); !equal(got, want) {
 		t.Errorf("downloaded %v, want %v", got, want)
 	}
@@ -357,7 +357,7 @@ func TestAnArchiveThatFailsVerificationInstallsNothing(t *testing.T) {
 	if code == 0 {
 		t.Fatal("install.sh exited 0 after a checksum mismatch")
 	}
-	if !strings.Contains(out, "checksum mismatch for "+hostArchive("0.2.0")) {
+	if !strings.Contains(out, "checksum mismatch for "+hostArchive()) {
 		t.Errorf("install.sh did not say the checksum did not match:\n%s", out)
 	}
 	// Not even a staged file: the destination directory is as it was.
@@ -407,14 +407,14 @@ func TestAReleaseWithNoChecksumFileInstallsNothing(t *testing.T) {
 
 func TestAReleaseMissingThisPlatformsArchiveInstallsNothing(t *testing.T) {
 	releases := fakereleases.New(t)
-	releases.PublishWithout(t, "0.2.0", []byte("two"), hostArchive("0.2.0"))
+	releases.PublishWithout(t, "0.2.0", []byte("two"), hostArchive())
 	dir := t.TempDir()
 
 	out, code := launch(t, releases, map[string]string{"TRAJECTOR_INSTALL_DIR": dir})
 	if code == 0 {
 		t.Fatal("install.sh exited 0 for a release it could not download")
 	}
-	if !strings.Contains(out, "has no asset "+hostArchive("0.2.0")) {
+	if !strings.Contains(out, "has no asset "+hostArchive()) {
 		t.Errorf("install.sh did not name the missing asset:\n%s", out)
 	}
 	if left := contents(t, dir); len(left) != 0 {

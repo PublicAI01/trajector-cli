@@ -34,11 +34,11 @@ func (m *Machine) offerOptionalSettings(streams IO, st report.ProjectStatus) {
 		fmt.Fprintf(streams.Out, "\nOptional setting for this project\n\n")
 		switch status.State {
 		case claudesettings.OnByUser:
-			printWrapped(streams.Out, statementIndent, fmt.Sprintf(
+			printWrapped(streams.Out, fmt.Sprintf(
 				"%s is already true in your %s. Nothing to change. %s",
 				s.Key, status.Source, s.AlreadyOn))
 		case claudesettings.OnByUs:
-			printWrapped(streams.Out, statementIndent, fmt.Sprintf(
+			printWrapped(streams.Out, fmt.Sprintf(
 				"%s is on for this project; trajector set it when you enabled. `trajector disable` puts it back.", s.Key))
 			fmt.Fprintln(streams.Out)
 			keep, err := askYesNo(streams, "Keep it on? [Y/n] ", true)
@@ -51,9 +51,9 @@ func (m *Machine) offerOptionalSettings(streams IO, st report.ProjectStatus) {
 				reportRestoredSettings(streams, "  ", undone, failures)
 			}
 		case claudesettings.OffByUser:
-			printWrapped(streams.Out, statementIndent, fmt.Sprintf("You have %s set to false in your %s.", s.Key, status.Source))
+			printWrapped(streams.Out, fmt.Sprintf("You have %s set to false in your %s.", s.Key, status.Source))
 			fmt.Fprintln(streams.Out)
-			printWrapped(streams.Out, statementIndent, fmt.Sprintf(
+			printWrapped(streams.Out, fmt.Sprintf(
 				"Confirming would set it to %v for this project only, overriding that. "+
 					"You can leave it as false and nothing else changes — recording, "+
 					"rewards, and every other part of trajector work the same.", s.Target))
@@ -67,11 +67,11 @@ func (m *Machine) offerOptionalSettings(streams IO, st report.ProjectStatus) {
 			}
 			m.applySettingAnswer(streams, st, s, yes)
 		default: // Unset
-			printWrapped(streams.Out, statementIndent, s.Intro)
+			printWrapped(streams.Out, s.Intro)
 			fmt.Fprintln(streams.Out)
 			printDisclosures(streams.Out, s.Disclosures)
 			fmt.Fprintln(streams.Out)
-			printWrapped(streams.Out, statementIndent, s.Fact)
+			printWrapped(streams.Out, s.Fact)
 			fmt.Fprintln(streams.Out)
 			yes, err := askYesNo(streams, "Turn it on? [Y/n] ", true)
 			if err != nil {
@@ -250,10 +250,11 @@ const (
 	disclosureGap = 3
 )
 
-// printWrapped prints text as one greedily wrapped, indented paragraph.
-func printWrapped(w io.Writer, indent int, text string) {
-	pad := strings.Repeat(" ", indent)
-	for _, line := range wrapText(text, settingScreenWidth-indent) {
+// printWrapped prints text as one greedily wrapped paragraph, indented
+// by statementIndent.
+func printWrapped(w io.Writer, text string) {
+	pad := strings.Repeat(" ", statementIndent)
+	for _, line := range wrapText(text, settingScreenWidth-statementIndent) {
 		fmt.Fprintf(w, "%s%s\n", pad, line)
 	}
 }

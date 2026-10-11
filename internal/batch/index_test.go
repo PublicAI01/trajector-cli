@@ -24,7 +24,7 @@ func transcriptCapture(at time.Time) envelope.Capture {
 func TestTheEnvelopeSerializesEveryContractFieldInOrder(t *testing.T) {
 	rc := simpleRawcall(t, "req-1", "session-a", buildTime)
 	seg := storedSegment(t, "sess-1", "", 0, buildTime, "{}\n")
-	snap := storedSnapshot(t, "sess-1", "subagents/agent-x.meta.json", buildTime.Add(time.Minute), `{"agentId":"x"}`)
+	snap := storedAgentXMeta(t, "sess-1", buildTime.Add(time.Minute), `{"agentId":"x"}`)
 
 	b, refused, err := batch.Build("batch-42", buildTime, "1.2.3", spool.Entries{rc, seg, snap}, batch.Run{RecordedToday: 3}, mediablock.Policy{})
 	if err != nil || len(refused) != 0 {

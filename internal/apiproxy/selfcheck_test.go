@@ -11,7 +11,7 @@ import (
 func TestSelfcheckConfirmsRecordingRouteWithoutUpstreamCall(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	reply := e.Selfcheck("tok1")
 	want := proxytest.Selfcheck{
@@ -60,7 +60,7 @@ func TestSelfcheckRevokedTokenReportsNoRecording(t *testing.T) {
 
 func TestSelfcheckMarksThirdPartyUpstream(t *testing.T) {
 	e := proxytest.New(t)
-	e.WriteTable(activeTable("tok1", "https://relay.example.com"))
+	e.WriteTable(activeTable("https://relay.example.com"))
 
 	if reply := e.Selfcheck("tok1"); reply.UpstreamOrigin != "third_party" {
 		t.Errorf("upstream_origin = %q, want third_party", reply.UpstreamOrigin)
@@ -70,7 +70,7 @@ func TestSelfcheckMarksThirdPartyUpstream(t *testing.T) {
 func TestTokenPrefixedInternalPathsAreNeverForwarded(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
-	e.WriteTable(activeTable("tok1", upstream.URL()))
+	e.WriteTable(activeTable(upstream.URL()))
 
 	req, err := http.NewRequest(http.MethodGet, e.TokenURL("tok1")+"/trajector/anything", nil)
 	if err != nil {

@@ -94,11 +94,11 @@ func (e *env) waitHealthy() {
 	proxytest.WaitServing(e.t, e.client, e.assembly.Addr, e.assembly.Layout)
 }
 
-// adminPost posts to the served proxy's reserved endpoint with the
-// admin token it published.
-func (e *env) adminPost(path string) {
+// drain asks the served proxy to drain, with the admin token it
+// published.
+func (e *env) drain() {
 	e.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, "http://"+e.assembly.Addr+path, nil)
+	req, err := http.NewRequest(http.MethodPost, "http://"+e.assembly.Addr+apiproxy.DrainPath, nil)
 	if err != nil {
 		e.t.Fatal(err)
 	}
