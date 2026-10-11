@@ -72,15 +72,6 @@ func (a *advancing) entry(path string) follow.File {
 	return follow.File{}
 }
 
-func (a *advancing) listed() []follow.File {
-	a.t.Helper()
-	files, err := a.registry.Files(project)
-	if err != nil {
-		a.t.Fatal(err)
-	}
-	return files
-}
-
 // stored is every entry the registry file holds, listed or not.
 func (a *advancing) stored() []map[string]json.RawMessage {
 	a.t.Helper()

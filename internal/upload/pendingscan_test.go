@@ -3,6 +3,7 @@
 package upload_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,24 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
+
+// writePending pins a batch id to the records it holds, in the shape
+// the uploader writes today: every record by its spool id and the kind
+// it declares. The pending file is this package's documented on-disk
+// contract, so a test may state the lease it wants rather than stage a
+// failed upload to get one.
+func writePending(t *testing.T, dir, batchID string, records ...spool.Entry) {
+	t.Helper()
+	held := make([]map[string]string, 0, len(records))
+	for _, e := range records {
+		held = append(held, map[string]string{"id": e.ID, "source": e.Kind.Source, "record_kind": e.Kind.RecordKind})
+	}
+	data, err := json.Marshal(map[string]any{"batch_id": batchID, "records": held})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePendingBytes(t, dir, data)
+}
 
 // TestResendPendingReadsOnlyItsOwnBatchsRecords pins the scan
 // resendPending performs.
