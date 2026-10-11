@@ -875,6 +875,18 @@ func TestEnsureGitIgnoredSkipsOutsideRepo(t *testing.T) {
 	}
 }
 
+func TestEnsureGitIgnoredSkipsWithoutGitOnPath(t *testing.T) {
+	root := initRepo(t)
+	t.Setenv("PATH", t.TempDir())
+	action, err := EnsureGitIgnored(root, ".claude/settings.local.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != IgnoreSkipped {
+		t.Errorf("action = %q, want skipped", action)
+	}
+}
+
 // Injection spells the base URL from whatever address the proxy is
 // serving, and the proxy may serve any loopback address. Recognizing
 // only 127.0.0.1 left an injection on any other one unrecognized, so

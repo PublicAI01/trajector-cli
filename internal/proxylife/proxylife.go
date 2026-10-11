@@ -365,11 +365,9 @@ func (p *Proxy) Observe() Verdict {
 // HolderForeign with the reason the proof failed; the reason never
 // carries a token.
 func (p *Proxy) verify() (string, Holder, error) {
-	conn, err := net.DialTimeout("tcp", p.addr, probeTimeout)
-	if err != nil {
+	if !listening(p.addr, probeTimeout) {
 		return "", HolderNone, nil
 	}
-	conn.Close()
 
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -648,14 +646,23 @@ func (p *Proxy) noteReuse(holder string) {
 		time.Now().UTC().Format(time.RFC3339), p.version, holder, p.addr, ReuseReason)
 }
 
+// listening reports whether something accepts connections at addr. A
+// dial that fails for any reason is the answer no.
+func listening(addr string, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 func (p *Proxy) waitPortFree(within time.Duration) error {
 	deadline := time.Now().Add(within)
 	for {
-		conn, err := net.DialTimeout("tcp", p.addr, 100*time.Millisecond)
-		if err != nil {
+		if !listening(p.addr, 100*time.Millisecond) {
 			return nil
 		}
-		conn.Close()
 		if time.Now().After(deadline) {
 			return fmt.Errorf("previous proxy at %s did not release the port within %s", p.addr, within)
 		}

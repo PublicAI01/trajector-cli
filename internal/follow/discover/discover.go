@@ -195,7 +195,7 @@ func walk(root, configDir string, limit int) (Result, error) {
 
 		name, hashed := encode(dir)
 		hit := filepath.Join(projects, name)
-		if info, err := os.Stat(hit); err != nil || !info.IsDir() {
+		if !isDir(hit) {
 			return nil
 		}
 		if !hashed {
@@ -209,6 +209,13 @@ func walk(root, configDir string, limit int) (Result, error) {
 	})
 	res.Oldest = oldestOf(res.mods)
 	return res, err
+}
+
+// isDir reports whether path is a directory. A path that cannot be
+// read is not one.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // oldestOf is the earliest of the times a walk observed, and the zero

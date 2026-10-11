@@ -525,11 +525,11 @@ func (s *Spool) DeleteSession(sessionID string) (rawcalls, records int, err erro
 			if err != nil || !present {
 				return false, err
 			}
-			env, err := envelope.Parse(data)
-			if err != nil {
-				return false, nil
+			// An envelope that does not parse names no session, so it
+			// is kept.
+			if env, err := envelope.Parse(data); err == nil {
+				key = env.SessionKey()
 			}
-			key = env.SessionKey()
 		}
 		id, ok := SessionIDFromUserID(key)
 		return ok && id == sessionID, nil

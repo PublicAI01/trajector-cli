@@ -474,14 +474,20 @@ func AgentFiles(sessionDir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !hasWorkflows {
-		return found, nil
+	if hasWorkflows {
+		found = append(found, workflowAgentFiles(filepath.Join(dir, workflowsDir))...)
 	}
-	runsDir := filepath.Join(dir, workflowsDir)
+	return found, nil
+}
+
+// workflowAgentFiles lists the agent files in each run directory under
+// runsDir. A directory that cannot be listed adds nothing.
+func workflowAgentFiles(runsDir string) []string {
 	runs, err := os.ReadDir(runsDir)
 	if err != nil {
-		return found, nil
+		return nil
 	}
+	var found []string
 	for _, run := range runs {
 		if !run.IsDir() || !runDirName.MatchString(run.Name()) {
 			continue
@@ -490,7 +496,7 @@ func AgentFiles(sessionDir string) ([]string, error) {
 			found = append(found, inRun...)
 		}
 	}
-	return found, nil
+	return found
 }
 
 // listAgentFiles lists the regular agent files directly in dir, and

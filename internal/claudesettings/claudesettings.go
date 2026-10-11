@@ -620,11 +620,18 @@ var errSymlinked = errors.New("settings file is a symbolic link")
 // package already makes for a symlinked .gitignore, for the same
 // reason — a link is a path someone else chose. 2026-09-10.
 func RefuseSymlink(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+	if !isSymlink(path) {
 		return nil
 	}
 	return fmt.Errorf("%w: %s (nothing was written; point it at a real file or remove the link)", errSymlinked, path)
+}
+
+// isSymlink reports whether path is a symbolic link. A path that
+// cannot be inspected is not one: the write that follows meets the same
+// error and reports it.
+func isSymlink(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode()&os.ModeSymlink != 0
 }
 
 // edit is a read-modify-write of a file whose other writers are the

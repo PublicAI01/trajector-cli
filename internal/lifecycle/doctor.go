@@ -124,15 +124,7 @@ func (m *Machine) resumeAfterCleanRescan() (bool, error) {
 	reader := m.reader(sp)
 	now := m.deps.Now()
 	for _, g := range grants {
-		if g.Revoked {
-			continue
-		}
-		files, err := m.registry.Files(g.ProjectIDHash)
-		if err != nil {
-			return false, nil
-		}
-		hot, _ := follow.Split(files, now, follow.ProcessAlive)
-		if reader.Stops(sessionread.ProjectOf(g), hot) {
+		if !g.Revoked && m.stillStops(reader, g, now) {
 			return false, nil
 		}
 	}
@@ -140,6 +132,18 @@ func (m *Machine) resumeAfterCleanRescan() (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// stillStops reports whether a hot file of g's project still stops
+// reading. A registry that cannot be read cannot show that the reason
+// is gone, so it answers yes and the pause stays.
+func (m *Machine) stillStops(reader sessionread.Reader, g routing.Grant, now time.Time) bool {
+	files, err := m.registry.Files(g.ProjectIDHash)
+	if err != nil {
+		return true
+	}
+	hot, _ := follow.Split(files, now, follow.ProcessAlive)
+	return reader.Stops(sessionread.ProjectOf(g), hot)
 }
 
 // releaseHeldSegments offers the segments kept on this machine to the
@@ -345,7 +349,7 @@ func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) e
 		// Enabled is unknown, not false: reconciling against it would
 		// take a standing injection for a stale one and remove it. The
 		// device finding already states the table.
-		return nil
+		return nil //nolint:nilerr // the device finding reports the table; it is not this step's failure
 
 	case !st.Enabled && !st.Injected:
 		f.OK("this project is not enabled; nothing to reconcile")

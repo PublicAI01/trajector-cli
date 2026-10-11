@@ -54,17 +54,15 @@ func TestLocalCorpus(t *testing.T) {
 	// precedes its first move, as the reader does: that is the part
 	// written before the session came into the directory.
 	opts := follow.ReadOptions{Authorized: func(string) bool { return true }}
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl") {
-			return nil
-		}
-		files++
+	// A file that cannot be read is counted, not fatal: the run reports
+	// on the rest of the corpus.
+	scanFile := func(path string) {
 		f := follow.File{Path: path}
 		for {
 			res, err := follow.Read(f, envelope.Capture{}, opts)
 			if err != nil {
 				unreadable++
-				return nil
+				return
 			}
 			for _, seg := range res.Segments {
 				segments++
@@ -76,10 +74,19 @@ func TestLocalCorpus(t *testing.T) {
 				total = total.Add(rep)
 			}
 			if !res.More {
-				return nil
+				return
 			}
 			f = res.File
 		}
+	}
+	// An entry the walk cannot read is skipped like any other entry
+	// that is not a session file.
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr == nil && !d.IsDir() && strings.HasSuffix(d.Name(), ".jsonl") {
+			files++
+			scanFile(path)
+		}
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)

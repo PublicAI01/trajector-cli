@@ -206,23 +206,30 @@ func (m *Machine) observeProject(dir string) (report.ProjectStatus, error) {
 
 	st.WindowsSideClaude = claudesettings.WindowsSideClaude(root, "")
 
-	// A record that cannot be read is reported, not returned as a
-	// failure of the whole reading: the pause it causes is exactly what
-	// status and doctor exist to show, and they can only show it if
-	// they still get a status.
-	if st.AgreementVersion, _, err = m.consent.AcceptedVersion(); err != nil {
+	m.readConsent(&st)
+	return st, nil
+}
+
+// readConsent fills in what the consent record says about st's
+// project. A record that cannot be read is reported in st, not
+// returned as a failure of the whole reading: the pause it causes is
+// exactly what status and doctor exist to show, and they can only show
+// it if they still get a status.
+func (m *Machine) readConsent(st *report.ProjectStatus) {
+	version, _, err := m.consent.AcceptedVersion()
+	st.AgreementVersion = version
+	if err != nil {
 		st.ConsentPath, st.ConsentErr = m.consent.Path(), err
-		return st, nil
+		return
 	}
 	state, ok, err := m.consent.ProjectState(st.Hash)
 	if err != nil {
 		st.ConsentPath, st.ConsentErr = m.consent.Path(), err
-		return st, nil
+		return
 	}
 	if ok {
 		st.ConsentState = state
 	}
-	return st, nil
 }
 
 // injectionAgrees holds the injection read from the settings file

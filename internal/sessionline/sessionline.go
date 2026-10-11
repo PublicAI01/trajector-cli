@@ -162,11 +162,9 @@ type wholeNumber struct {
 }
 
 func (n *wholeNumber) UnmarshalJSON(b []byte) error {
-	value, err := strconv.Atoi(string(b))
-	if err != nil {
-		return nil
+	if value, err := strconv.Atoi(string(b)); err == nil {
+		n.value, n.found = value, true
 	}
-	n.value, n.found = value, true
 	return nil
 }
 
