@@ -6,6 +6,14 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- When `enable` fails and undoes its changes, it no longer reports "all
+  changes rolled back" if it could not look at the project's
+  `.gitignore`, for example because of its permissions. It now reports
+  "rollback incomplete" with the reason, because the line it added can
+  still be in the file.
+
 ### Security
 
 - The proxy closes a connection that does not send the headers of a

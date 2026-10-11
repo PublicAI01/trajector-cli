@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -981,6 +982,28 @@ func TestEnsureGitIgnoredKeepsTheExistingFileMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %v, want the user's own 0600 kept", info.Mode().Perm())
+	}
+}
+
+func TestRemoveGitIgnoredReportsAGitignoreItCannotInspect(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Chmod only toggles the read-only bit on windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root inspects every directory")
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".claude/settings.local.json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(root, 0o700) })
+
+	err := RemoveGitIgnored(root, []string{".claude/settings.local.json"})
+	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("RemoveGitIgnored = %v, want an error that does not say the file is gone", err)
 	}
 }
 

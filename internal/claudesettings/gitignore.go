@@ -2,6 +2,7 @@ package claudesettings
 
 import (
 	"bytes"
+	"errors"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -130,9 +131,15 @@ func RemoveGitIgnored(projectRoot string, rules []string) error {
 	}
 	path := filepath.Join(projectRoot, ignoreFileName)
 	info, err := os.Lstat(path)
-	if err != nil || info.Mode()&os.ModeSymlink != 0 {
-		// Already gone, or a link this package never writes through:
-		// either way there is nothing of ours in it to take out.
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		// A link this package never writes through holds nothing of
+		// ours to take out.
 		return nil
 	}
 	return fsatomic.Update(path, info.Mode().Perm(), func(existing []byte) ([]byte, error) {
