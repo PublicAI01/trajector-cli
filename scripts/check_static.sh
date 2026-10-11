@@ -9,6 +9,8 @@
 #   check_static.sh govulncheck  no known vulnerability is reachable from
 #                                this code; the version is pinned in
 #                                tools/govulncheck/go.mod
+#   check_static.sh shellcheck   install.sh and scripts/*.sh, each in the
+#                                dialect its shebang names
 #   check_static.sh zizmor       GitHub Actions security audit; online
 #                                when GH_TOKEN is set, offline otherwise
 #   check_static.sh actionlint   workflow syntax, expressions, and the
@@ -18,7 +20,7 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 
 usage() {
-	sed -n '7,15p' "$0" >&2
+	sed -n '7,17p' "$0" >&2
 	exit 2
 }
 
@@ -44,6 +46,11 @@ image() {
 	echo "$ref"
 }
 
+shellcheck() {
+	cd "$root"
+	docker run --rm -v "$root:/repo:ro" -w /repo "$(image shellcheck)" install.sh scripts/*.sh
+}
+
 zizmor() {
 	if [ -n "${GH_TOKEN:-}" ]; then
 		echo "zizmor: online"
@@ -63,6 +70,7 @@ case $1 in
 gofix) use_toolchain && go fix -diff ./... ;;
 tidy) use_toolchain && go mod tidy -diff ;;
 govulncheck) use_toolchain && go tool -modfile=tools/govulncheck/go.mod govulncheck ./... ;;
+shellcheck) shellcheck ;;
 zizmor) zizmor ;;
 actionlint) actionlint ;;
 *) usage ;;

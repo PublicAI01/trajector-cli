@@ -127,6 +127,8 @@ jobs:
       # also stops a release.
       - name: govulncheck
         run: ./scripts/check_static.sh govulncheck
+      - name: shellcheck
+        run: ./scripts/check_static.sh shellcheck
 
   # Docker runs the pinned tool images, and only the Ubuntu runner has it.
   workflow-lint:

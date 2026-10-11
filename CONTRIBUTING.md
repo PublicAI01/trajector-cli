@@ -54,6 +54,8 @@ CI enforces, and you can run locally:
   reachable from this code. The govulncheck version is pinned in
   `tools/govulncheck/go.mod`; a scheduled run repeats the scan every
   day.
+- `./scripts/check_static.sh shellcheck` — `install.sh` and
+  `scripts/*.sh`. CI also parses each script with `sh -n` or `bash -n`.
 - `./scripts/check_static.sh zizmor` — GitHub Actions security audit.
   CI runs it online (with a token); without `GH_TOKEN` it runs offline
   and skips the audits that query GitHub.
@@ -62,8 +64,8 @@ CI enforces, and you can run locally:
 
 The Go checks in `check_static.sh` run under the toolchain that the
 `toolchain` line of `go.mod` names, the one CI and releases build with;
-Go downloads it when it is not installed. zizmor and actionlint need
-Docker: each runs from the image pinned in `tools/<tool>/Dockerfile`.
+Go downloads it when it is not installed. shellcheck, zizmor and
+actionlint need Docker: each runs from the image pinned in `tools/<tool>/Dockerfile`.
 Every action in `.github/workflows/` is pinned to a full commit SHA
 with its version in a comment; Dependabot updates both.
 

@@ -40,6 +40,7 @@ updates:
   - package-ecosystem: docker
     directories:
       - /tools/actionlint
+      - /tools/shellcheck
       - /tools/zizmor
     schedule:
       interval: weekly
