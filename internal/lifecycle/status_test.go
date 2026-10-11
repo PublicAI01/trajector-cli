@@ -78,6 +78,7 @@ func TestStatusCarriesTheOptionalSettingAnswerEnableRecorded(t *testing.T) {
 		{
 			name: "on as the user's own choice",
 			seed: func(t *testing.T, e *env) {
+				t.Helper()
 				writeUserSettings(t, e, `{"showThinkingSummaries": true}`)
 			},
 			stdin:  "yes\n",

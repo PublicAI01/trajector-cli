@@ -112,16 +112,25 @@ func TestPositionReportsNothingToObserve(t *testing.T) {
 		setup func(t *testing.T) string
 	}{
 		{
-			name:  "a directory that is not inside a repository",
-			setup: func(t *testing.T) string { return t.TempDir() },
+			name: "a directory that is not inside a repository",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				return t.TempDir()
+			},
 		},
 		{
-			name:  "a repository with no commit yet",
-			setup: func(t *testing.T) string { return newRepo(t).dir },
+			name: "a repository with no commit yet",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				return newRepo(t).dir
+			},
 		},
 		{
-			name:  "a directory that does not exist",
-			setup: func(t *testing.T) string { return filepath.Join(t.TempDir(), "gone") },
+			name: "a directory that does not exist",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				return filepath.Join(t.TempDir(), "gone")
+			},
 		},
 	}
 	for _, tt := range tests {

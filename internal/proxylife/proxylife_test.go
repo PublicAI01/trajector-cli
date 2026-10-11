@@ -512,6 +512,7 @@ func TestObserveTellsThePortHolderShapesApart(t *testing.T) {
 		{
 			name: "the holder answers nothing",
 			proxy: func(t *testing.T) *proxylife.Proxy {
+				t.Helper()
 				return proxylife.For(proxytest.SandboxLayout(t, t.TempDir()), "dev", "unused", silentHolder(t), nil)
 			},
 			want: proxylife.ErrPortSilent,
@@ -519,6 +520,7 @@ func TestObserveTellsThePortHolderShapesApart(t *testing.T) {
 		{
 			name: "the holder answers without proof",
 			proxy: func(t *testing.T) *proxylife.Proxy {
+				t.Helper()
 				p, _ := healthzCopyHolder(t)
 				return p
 			},

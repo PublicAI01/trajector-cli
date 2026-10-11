@@ -248,6 +248,7 @@ func TestRecordsSaysYesOnlyWhileTheTableClearsTheToken(t *testing.T) {
 		{
 			name: "standing grant",
 			setUp: func(t *testing.T, _ string, store *routing.Store) {
+				t.Helper()
 				grant(t, store, "tok-1", "/home/dev/project")
 			},
 			want: true,
@@ -255,15 +256,17 @@ func TestRecordsSaysYesOnlyWhileTheTableClearsTheToken(t *testing.T) {
 		{
 			name: "device-wide pause",
 			setUp: func(t *testing.T, _ string, store *routing.Store) {
+				t.Helper()
 				grant(t, store, "tok-1", "/home/dev/project")
 				if err := store.Pause("signed_out"); err != nil {
-					t.Fatal(err)
+					t.Fatalf("pause: %v", err)
 				}
 			},
 		},
 		{
 			name: "table that cannot be read",
 			setUp: func(t *testing.T, path string, store *routing.Store) {
+				t.Helper()
 				grant(t, store, "tok-1", "/home/dev/project")
 				writeTable(t, path, `{"projects": {`)
 			},
@@ -496,10 +499,14 @@ func TestATableThatExistsButCannotBeReadIsNamedByEveryReader(t *testing.T) {
 		name  string
 		spoil func(t *testing.T, path string)
 	}{
-		{name: "does not parse", spoil: func(t *testing.T, path string) { writeTable(t, path, `{"projects":{"tok`) }},
+		{name: "does not parse", spoil: func(t *testing.T, path string) {
+			t.Helper()
+			writeTable(t, path, `{"projects":{"tok`)
+		}},
 		{name: "cannot be read", spoil: func(t *testing.T, path string) {
+			t.Helper()
 			if err := os.Mkdir(path, 0o700); err != nil {
-				t.Fatal(err)
+				t.Fatalf("mkdir: %v", err)
 			}
 		}},
 	}

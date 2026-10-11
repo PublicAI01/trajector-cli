@@ -92,6 +92,7 @@ func TestEnableEmptyInputTakesTheStatedDefault(t *testing.T) {
 		{
 			name: "a setting the user turned off suggests no",
 			seed: func(t *testing.T, e *env) {
+				t.Helper()
 				writeUserSettings(t, e, `{"showThinkingSummaries": false}`)
 			},
 			wantPrompt: "Turn it on for this project? [y/N]",
@@ -164,10 +165,12 @@ func TestEnableLeavesAUsersOwnTrueAlone(t *testing.T) {
 		{
 			name: "in the user settings",
 			seed: func(t *testing.T, e *env) {
+				t.Helper()
 				writeUserSettings(t, e, `{"showThinkingSummaries": true}`)
 			},
 			wantSaid: "showThinkingSummaries is already true in your " + string(proxytest.SourceUser) + ".",
 			stillOn: func(t *testing.T, e *env) bool {
+				t.Helper()
 				value, found := e.claude().UserSettings().TopLevelBool(optionalKey)
 				return found && value
 			},
@@ -175,10 +178,12 @@ func TestEnableLeavesAUsersOwnTrueAlone(t *testing.T) {
 		{
 			name: "in the project-local settings",
 			seed: func(t *testing.T, e *env) {
+				t.Helper()
 				writeProjectLocalSettings(t, e, `{"showThinkingSummaries": true}`)
 			},
 			wantSaid: "showThinkingSummaries is already true in your " + string(proxytest.SourceProjectLocal) + ".",
 			stillOn: func(t *testing.T, e *env) bool {
+				t.Helper()
 				value, found := settingValue(t, e.projectSettings())
 				return found && value
 			},
@@ -369,6 +374,7 @@ func TestEnableEveryOptionalQuestionMeansOnOnYes(t *testing.T) {
 		{
 			name: "a setting the user turned off",
 			seed: func(t *testing.T, e *env) {
+				t.Helper()
 				writeUserSettings(t, e, `{"showThinkingSummaries": false}`)
 			},
 			stdin:      "yes\ny\n",
@@ -377,6 +383,7 @@ func TestEnableEveryOptionalQuestionMeansOnOnYes(t *testing.T) {
 		{
 			name: "a setting trajector turned on",
 			seed: func(t *testing.T, e *env) {
+				t.Helper()
 				e.stdin = "yes\ny\n"
 				if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 					t.Fatalf("first enable: %v", err)
@@ -421,6 +428,7 @@ func TestDisableRestoresTheSettingToItsPriorState(t *testing.T) {
 		{
 			name: "an explicit false comes back",
 			seed: func(t *testing.T, e *env) {
+				t.Helper()
 				writeProjectLocalSettings(t, e, `{"showThinkingSummaries": false}`)
 			},
 			wantAfter: func(value, found bool) bool { return found && !value },

@@ -452,6 +452,7 @@ func TestFlush_ForgetsWhatWasSentWhenTheServiceStopsStatingItsEpoch(t *testing.T
 // file back as it was. A permission bit would not do: on Windows it
 // toggles read-only and nothing else.
 func (f *fixture) takesNoWrites(t *testing.T) {
+	t.Helper()
 	path := filepath.Join(f.dir, "handshake.json")
 	data, err := os.ReadFile(path)
 	if err != nil {

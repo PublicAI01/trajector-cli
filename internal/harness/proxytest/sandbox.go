@@ -24,6 +24,7 @@ type Sandbox struct {
 
 // Open wraps the trajector files under layout.
 func Open(t *testing.T, layout userdirs.Layout) *Sandbox {
+	t.Helper()
 	return &Sandbox{t: t, layout: layout}
 }
 

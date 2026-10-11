@@ -266,6 +266,7 @@ func TestRead_OneMessageAcrossSeveralLinesIsKeptWhole(t *testing.T) {
 		{
 			name: "all blocks within one read",
 			run: func(t *testing.T, path string) follow.ReadResult {
+				t.Helper()
 				writeFile(t, path, block0+block1+block2)
 				return read(t, follow.File{Path: path})
 			},
@@ -275,6 +276,7 @@ func TestRead_OneMessageAcrossSeveralLinesIsKeptWhole(t *testing.T) {
 		{
 			name: "later block arrives after the id was consumed",
 			run: func(t *testing.T, path string) follow.ReadResult {
+				t.Helper()
 				writeFile(t, path, block0+block1)
 				first := read(t, follow.File{Path: path})
 				appendFile(t, path, block2)
@@ -286,6 +288,7 @@ func TestRead_OneMessageAcrossSeveralLinesIsKeptWhole(t *testing.T) {
 		{
 			name: "new message met during a rewrite pass",
 			run: func(t *testing.T, path string) follow.ReadResult {
+				t.Helper()
 				writeFile(t, path, assistantLine("msg_old", 0, "o"))
 				first := read(t, follow.File{Path: path})
 				replaceFile(t, path, block0+block1)
@@ -565,6 +568,7 @@ func TestRead_RelocatedIntoConsentStartsAfterThatLine(t *testing.T) {
 		{
 			name: "first read of a file that moved in before registration",
 			start: func(t *testing.T, path string) follow.File {
+				t.Helper()
 				writeFile(t, path, outside+in+after)
 				return follow.File{Path: path}
 			},
@@ -576,6 +580,7 @@ func TestRead_RelocatedIntoConsentStartsAfterThatLine(t *testing.T) {
 			// consumed by the first read.
 			name: "rewrite pass over the same content",
 			start: func(t *testing.T, path string) follow.File {
+				t.Helper()
 				writeFile(t, path, outside+in+after)
 				first := read(t, follow.File{Path: path})
 				replaceFile(t, path, outside+in+after)
@@ -836,9 +841,11 @@ func TestSiblings(t *testing.T) {
 	}{
 		{name: "no session directory", setup: func(*testing.T, string) {}, want: []string{}},
 		{name: "session directory without agents", setup: func(t *testing.T, dir string) {
+			t.Helper()
 			writeFile(t, filepath.Join(dir, sessionID, "tool-results", "toolu_1.txt"), "x")
 		}, want: []string{}},
 		{name: "agent files in their fixed place", setup: func(t *testing.T, dir string) {
+			t.Helper()
 			sub := filepath.Join(dir, sessionID, "subagents")
 			writeFile(t, filepath.Join(sub, "agent-b.jsonl"), "")
 			writeFile(t, filepath.Join(sub, "agent-a.meta.json"), "")
@@ -854,6 +861,7 @@ func TestSiblings(t *testing.T) {
 			filepath.Join("subagents", "agent-b.jsonl"),
 		}},
 		{name: "agent files of workflow runs one level under workflows", setup: func(t *testing.T, dir string) {
+			t.Helper()
 			sub := filepath.Join(dir, sessionID, "subagents")
 			runs := filepath.Join(sub, "workflows")
 			writeFile(t, filepath.Join(sub, "agent-a.jsonl"), "")
@@ -876,6 +884,7 @@ func TestSiblings(t *testing.T) {
 			filepath.Join("subagents", "workflows", "wf_2", "agent-c.jsonl"),
 		}},
 		{name: "a run directory that is a link", setup: func(t *testing.T, dir string) {
+			t.Helper()
 			outside := filepath.Join(dir, "outside")
 			writeFile(t, filepath.Join(outside, "agent-x.jsonl"), "")
 			runs := filepath.Join(dir, sessionID, "subagents", "workflows")

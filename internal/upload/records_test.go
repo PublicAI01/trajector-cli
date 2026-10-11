@@ -364,9 +364,11 @@ func TestFlush_IncompleteSegmentIsSetAside(t *testing.T) {
 		plant func(t *testing.T, f *fixture) string
 	}{
 		{"a segment whose last line is cut", func(t *testing.T, f *fixture) string {
+			t.Helper()
 			return f.storeSegment(t, sessionX, "", 1, f.now, `{"type":"user"}`).RecordID
 		}},
 		{"bytes that are not a record", func(t *testing.T, f *fixture) string {
+			t.Helper()
 			f.storeUnreadableRecord(t, "rec-torn", []byte(`{"schema_version":"2","source":"transcript","record_kind":"segment","record_id":"rec-torn"`))
 			return "rec-torn"
 		}},
@@ -670,13 +672,16 @@ func TestFlush_UnmaskableRecordTriggersTheCallback(t *testing.T) {
 		want  int
 	}{
 		{"a segment whose last line is cut cannot be masked", func(t *testing.T, f *fixture) {
+			t.Helper()
 			f.storeSegment(t, sessionX, "", 1, f.now, `{"type":"user"}`)
 		}, 1},
 		{"two such segments in one flush report once", func(t *testing.T, f *fixture) {
+			t.Helper()
 			f.storeSegment(t, sessionX, "", 1, f.now, `{"type":"user"}`)
 			f.storeSegment(t, sessionY, "", 0, f.now, `{"type":"user"}`)
 		}, 1},
 		{"bytes that are not a record are unreadable, not unmaskable", func(t *testing.T, f *fixture) {
+			t.Helper()
 			f.storeUnreadableRecord(t, "rec-torn", []byte(`{"schema_version":"2","source":"transcript","record_kind":"segment","record_id":"rec-torn"`))
 		}, 0},
 	}

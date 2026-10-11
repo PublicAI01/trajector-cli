@@ -262,16 +262,18 @@ func TestSpool_WriteSegmentIsIdempotentPerRecordID(t *testing.T) {
 		write func(t *testing.T, s *spool.Spool, at time.Time) string
 	}{
 		{"segment", func(t *testing.T, s *spool.Spool, at time.Time) string {
+			t.Helper()
 			seg := segment(sessionA, "hash-a", 0, at)
 			if err := s.WriteSegment(seg); err != nil {
-				t.Fatal(err)
+				t.Fatalf("write segment: %v", err)
 			}
 			return seg.RecordID
 		}},
 		{"snapshot", func(t *testing.T, s *spool.Spool, at time.Time) string {
+			t.Helper()
 			snap := snapshot(t, sessionA, "hash-a", `{"agentId":"0000"}`, at)
 			if err := s.WriteMetaSnapshot(snap); err != nil {
-				t.Fatal(err)
+				t.Fatalf("write snapshot: %v", err)
 			}
 			return snap.RecordID
 		}},

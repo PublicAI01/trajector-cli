@@ -17,12 +17,16 @@ type Settings struct {
 }
 
 // settingsAt wraps the settings file at path.
-func settingsAt(t *testing.T, path string) *Settings { return &Settings{t: t, path: path} }
+func settingsAt(t *testing.T, path string) *Settings {
+	t.Helper()
+	return &Settings{t: t, path: path}
+}
 
 // ProjectSettings wraps the settings file a project is enabled in.
 // projectRoot is the project directory in the form every derivation of
 // a project identity uses.
 func ProjectSettings(t *testing.T, projectRoot string) *Settings {
+	t.Helper()
 	return settingsAt(t, claudesettings.ProjectLocalPath(projectRoot))
 }
 
@@ -168,6 +172,7 @@ type Claude struct {
 // ClaudeConfig reads the configuration of a device whose home is home
 // and whose environment getenv answers.
 func ClaudeConfig(t *testing.T, home string, getenv func(string) string) *Claude {
+	t.Helper()
 	return &Claude{t: t, host: claudesettings.HostFor(runtime.GOOS, home, getenv), getenv: getenv}
 }
 

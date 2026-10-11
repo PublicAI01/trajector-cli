@@ -123,6 +123,7 @@ func TestRegistry_FilesOfUnknownProjectIsEmpty(t *testing.T) {
 	}{
 		{name: "directory never created", setup: func(*testing.T, *follow.Registry) {}},
 		{name: "other project registered", setup: func(t *testing.T, r *follow.Registry) {
+			t.Helper()
 			mustRegister(t, r, "other", abs(t, "a.jsonl"))
 		}},
 	}
@@ -510,9 +511,11 @@ func TestRegistry_UpdateUnregisteredFails(t *testing.T) {
 	}{
 		{name: "directory never created", setup: func(*testing.T, *follow.Registry) {}},
 		{name: "project has no registry", setup: func(t *testing.T, r *follow.Registry) {
+			t.Helper()
 			mustRegister(t, r, "other", abs(t, "a.jsonl"))
 		}},
 		{name: "path not in the registry", setup: func(t *testing.T, r *follow.Registry) {
+			t.Helper()
 			mustRegister(t, r, project, abs(t, "b.jsonl"))
 		}},
 	}
@@ -577,6 +580,7 @@ func TestRegistry_Projects(t *testing.T) {
 		{
 			name: "sorted by hash",
 			setup: func(t *testing.T, _ string, r *follow.Registry) {
+				t.Helper()
 				mustRegister(t, r, "bbb", abs(t, "a.jsonl"))
 				mustRegister(t, r, "aaa", abs(t, "a.jsonl"))
 				mustRegister(t, r, "ccc", abs(t, "a.jsonl"))
@@ -586,14 +590,15 @@ func TestRegistry_Projects(t *testing.T) {
 		{
 			name: "only registry files count",
 			setup: func(t *testing.T, dir string, r *follow.Registry) {
+				t.Helper()
 				mustRegister(t, r, "aaa", abs(t, "a.jsonl"))
 				for _, name := range []string{"aaa.json.lock", "aaa.json.tmp-123", "notes.txt"} {
 					if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
-						t.Fatal(err)
+						t.Fatalf("write %s: %v", name, err)
 					}
 				}
 				if err := os.Mkdir(filepath.Join(dir, "sub.json"), 0o700); err != nil {
-					t.Fatal(err)
+					t.Fatalf("mkdir sub.json: %v", err)
 				}
 			},
 			want: []string{"aaa"},
