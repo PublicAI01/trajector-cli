@@ -1,6 +1,9 @@
 package consent
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // SettingAnswer is the user's recorded answer to an optional Claude
 // Code setting offered during enable.
@@ -37,10 +40,10 @@ type SettingDecision struct {
 // setting answer without one has no enable to belong to.
 func (s *Store) SetSettingDecision(projectIDHash, settingKey string, d SettingDecision) error {
 	if projectIDHash == "" {
-		return fmt.Errorf("consent: project hash is required")
+		return errors.New("consent: project hash is required")
 	}
 	if settingKey == "" {
-		return fmt.Errorf("consent: setting key is required")
+		return errors.New("consent: setting key is required")
 	}
 	switch d.Answer {
 	case AnswerAccepted:
@@ -51,7 +54,7 @@ func (s *Store) SetSettingDecision(projectIDHash, settingKey string, d SettingDe
 		}
 	case AnswerDeclined:
 		if d.Prior != "" {
-			return fmt.Errorf("consent: declined setting decision cannot carry a prior state")
+			return errors.New("consent: declined setting decision cannot carry a prior state")
 		}
 	default:
 		return fmt.Errorf("consent: unknown setting answer %q", d.Answer)
@@ -73,7 +76,7 @@ func (s *Store) SetSettingDecision(projectIDHash, settingKey string, d SettingDe
 		return err
 	}
 	if missing {
-		return fmt.Errorf("consent: no project record to attach a setting decision to")
+		return errors.New("consent: no project record to attach a setting decision to")
 	}
 	return nil
 }
@@ -95,10 +98,10 @@ func (s *Store) SettingDecisions(projectIDHash string) (map[string]SettingDecisi
 // must never clear. Unknown projects and settings are a no-op.
 func (s *Store) ClearSettingDecision(projectIDHash, settingKey string) error {
 	if projectIDHash == "" {
-		return fmt.Errorf("consent: project hash is required")
+		return errors.New("consent: project hash is required")
 	}
 	if settingKey == "" {
-		return fmt.Errorf("consent: setting key is required")
+		return errors.New("consent: setting key is required")
 	}
 	return s.update(func(f *storeFile) {
 		rec, ok := f.Projects[projectIDHash]

@@ -14,6 +14,7 @@ package batch
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -94,10 +95,10 @@ func (r Refusal) ID() string { return r.Entry.ID }
 // policy sends the content as it is.
 func Build(id string, createdAt time.Time, clientVersion string, in spool.Entries, run Run, blocks mediablock.Policy) (Batch, []Refusal, error) {
 	if id == "" {
-		return Batch{}, nil, fmt.Errorf("batch: a batch needs an id")
+		return Batch{}, nil, errors.New("batch: a batch needs an id")
 	}
 	if len(in) == 0 {
-		return Batch{}, nil, fmt.Errorf("batch: a batch needs at least one record")
+		return Batch{}, nil, errors.New("batch: a batch needs at least one record")
 	}
 
 	var (

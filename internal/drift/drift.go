@@ -58,6 +58,7 @@ package drift
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -151,7 +152,7 @@ type scanner struct {
 func (s *scanner) line(r *Signals, raw []byte) error {
 	line, ok := sessionline.Parse(raw)
 	if !ok {
-		return fmt.Errorf("not a session line")
+		return errors.New("not a session line")
 	}
 	for _, name := range redact.AbsolutePathFields(line, s.location) {
 		s.paths[name] = true

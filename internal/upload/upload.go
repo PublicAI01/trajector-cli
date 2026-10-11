@@ -246,7 +246,7 @@ type Uploader struct {
 // New validates the wiring and builds an uploader.
 func New(deps Deps) (*Uploader, error) {
 	if deps.Spool == nil || deps.Service == nil || deps.DeviceToken == nil || deps.Dir == "" || deps.RejectedDir == "" {
-		return nil, fmt.Errorf("upload: spool, service, device token source, state dir, and rejected dir are required")
+		return nil, errors.New("upload: spool, service, device token source, state dir, and rejected dir are required")
 	}
 	if deps.Run == nil {
 		deps.Run = func() batch.Run { return batch.Run{} }

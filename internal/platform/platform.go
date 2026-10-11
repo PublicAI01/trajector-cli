@@ -192,7 +192,7 @@ func (c *Client) StartPairing(clientVersion string) (Pairing, error) {
 		return Pairing{}, err
 	}
 	if p.PairingID == "" || p.VerificationURL == "" {
-		return Pairing{}, fmt.Errorf("platform: pairing response is missing pairing_id or verification_url")
+		return Pairing{}, errors.New("platform: pairing response is missing pairing_id or verification_url")
 	}
 	return p, nil
 }
@@ -210,7 +210,7 @@ func (c *Client) PollPairing(pairingID string) (PairingResult, error) {
 		return PairingResult{}, err
 	}
 	if r.Status == PairingPaired && r.DeviceToken == "" {
-		return PairingResult{}, fmt.Errorf("platform: paired response carried no device token")
+		return PairingResult{}, errors.New("platform: paired response carried no device token")
 	}
 	return r, nil
 }

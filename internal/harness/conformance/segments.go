@@ -3,6 +3,7 @@ package conformance
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -67,7 +68,7 @@ type WantSegment struct {
 // than in a comparison further on.
 func (s Source) Generate() ([]string, error) {
 	if s.PadUnit == "" {
-		return nil, fmt.Errorf("source: empty pad unit")
+		return nil, errors.New("source: empty pad unit")
 	}
 	lines := make([]string, len(s.Lines))
 	digest := sha256.New()

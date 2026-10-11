@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 )
@@ -162,7 +163,7 @@ func canonicalJSON(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	if dec.More() {
-		return nil, fmt.Errorf("trailing data after JSON document")
+		return nil, errors.New("trailing data after JSON document")
 	}
 	var out bytes.Buffer
 	enc := json.NewEncoder(&out)

@@ -2,6 +2,7 @@ package gitsnapshot
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,7 +62,7 @@ func (h *Heads) Last(projectIDHash string) (string, bool) {
 // is not one could be read there as an option.
 func (h *Heads) See(projectIDHash, head string) error {
 	if projectIDHash == "" {
-		return fmt.Errorf("gitsnapshot: a remembered commit needs a project")
+		return errors.New("gitsnapshot: a remembered commit needs a project")
 	}
 	if !ValidCommitID(head) {
 		return fmt.Errorf("gitsnapshot: %q is not a commit identifier", head)

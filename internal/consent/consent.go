@@ -77,7 +77,7 @@ func (s *Store) AcceptedVersion() (version, acceptedAt string, err error) {
 // AcceptAgreement records explicit acceptance of an agreement version.
 func (s *Store) AcceptAgreement(version, at string) error {
 	if version == "" {
-		return fmt.Errorf("consent: agreement version is required")
+		return errors.New("consent: agreement version is required")
 	}
 	return s.update(func(f *storeFile) {
 		f.Agreement = agreementRecord{Version: version, AcceptedAt: at}
@@ -122,7 +122,7 @@ type ProjectSnapshot struct {
 // decision to put back.
 func (s *Store) SnapshotProject(projectIDHash string) (ProjectSnapshot, error) {
 	if projectIDHash == "" {
-		return ProjectSnapshot{}, fmt.Errorf("consent: project hash is required")
+		return ProjectSnapshot{}, errors.New("consent: project hash is required")
 	}
 	f, err := s.read()
 	if err != nil && !errors.Is(err, ErrUnreadable) {
@@ -144,7 +144,7 @@ func (s *Store) SnapshotProject(projectIDHash string) (ProjectSnapshot, error) {
 // when the store cannot be written.
 func (s *Store) RestoreProject(snap ProjectSnapshot) error {
 	if snap.hash == "" {
-		return fmt.Errorf("consent: restoring an empty snapshot")
+		return errors.New("consent: restoring an empty snapshot")
 	}
 	if current, err := s.read(); err == nil {
 		rec, ok := current.Projects[snap.hash]
@@ -169,7 +169,7 @@ func (s *Store) RestoreProject(snap ProjectSnapshot) error {
 // is the guarantee: the hint can never teach this file a project path.
 func (s *Store) MarkPrompted(projectIDHash string) (first bool, err error) {
 	if projectIDHash == "" {
-		return false, fmt.Errorf("consent: project hash is required")
+		return false, errors.New("consent: project hash is required")
 	}
 	err = s.update(func(f *storeFile) {
 		if slices.Contains(f.Prompted, projectIDHash) {

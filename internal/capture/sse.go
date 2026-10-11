@@ -3,6 +3,7 @@ package capture
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -45,11 +46,11 @@ func Assemble(raw []byte) (json.RawMessage, error) {
 		switch ev.name {
 		case "message_start":
 			if message != nil {
-				return nil, fmt.Errorf("capture: duplicate message_start")
+				return nil, errors.New("capture: duplicate message_start")
 			}
 			m, ok := data["message"].(map[string]any)
 			if !ok {
-				return nil, fmt.Errorf("capture: message_start without message object")
+				return nil, errors.New("capture: message_start without message object")
 			}
 			message = m
 			if existing, ok := m["content"].([]any); ok {
@@ -63,7 +64,7 @@ func Assemble(raw []byte) (json.RawMessage, error) {
 			}
 			block, ok := data["content_block"].(map[string]any)
 			if !ok {
-				return nil, fmt.Errorf("capture: content_block_start without content_block object")
+				return nil, errors.New("capture: content_block_start without content_block object")
 			}
 			if idx != len(content) {
 				return nil, fmt.Errorf("capture: content_block_start index %d, expected %d", idx, len(content))
@@ -138,13 +139,13 @@ func Assemble(raw []byte) (json.RawMessage, error) {
 	}
 
 	if message == nil {
-		return nil, fmt.Errorf("capture: stream has no message_start")
+		return nil, errors.New("capture: stream has no message_start")
 	}
 	if !sawStop {
-		return nil, fmt.Errorf("capture: stream ended without message_stop")
+		return nil, errors.New("capture: stream ended without message_stop")
 	}
 	if len(pendingInput) != 0 {
-		return nil, fmt.Errorf("capture: tool input fragments left unclosed")
+		return nil, errors.New("capture: tool input fragments left unclosed")
 	}
 	message["content"] = content
 	return json.Marshal(message)
@@ -153,7 +154,7 @@ func Assemble(raw []byte) (json.RawMessage, error) {
 func applyDelta(block, data map[string]any, pendingInput map[int]*strings.Builder, idx int) error {
 	delta, ok := data["delta"].(map[string]any)
 	if !ok {
-		return fmt.Errorf("capture: content_block_delta without delta object")
+		return errors.New("capture: content_block_delta without delta object")
 	}
 	kind, _ := delta["type"].(string)
 	switch kind {
@@ -166,7 +167,7 @@ func applyDelta(block, data map[string]any, pendingInput map[int]*strings.Builde
 	case "input_json_delta":
 		fragment, ok := delta["partial_json"].(string)
 		if !ok {
-			return fmt.Errorf("capture: input_json_delta without partial_json string")
+			return errors.New("capture: input_json_delta without partial_json string")
 		}
 		if pendingInput[idx] == nil {
 			pendingInput[idx] = &strings.Builder{}
@@ -176,7 +177,7 @@ func applyDelta(block, data map[string]any, pendingInput map[int]*strings.Builde
 	case "citations_delta":
 		citation, ok := delta["citation"]
 		if !ok {
-			return fmt.Errorf("capture: citations_delta without citation")
+			return errors.New("capture: citations_delta without citation")
 		}
 		existing, _ := block["citations"].([]any)
 		block["citations"] = append(existing, citation)
@@ -210,7 +211,7 @@ func blockAt(content []any, idx int) (map[string]any, error) {
 func eventIndex(data map[string]any) (int, error) {
 	n, ok := data["index"].(json.Number)
 	if !ok {
-		return 0, fmt.Errorf("capture: event without numeric index")
+		return 0, errors.New("capture: event without numeric index")
 	}
 	idx, err := n.Int64()
 	if err != nil {
@@ -226,7 +227,7 @@ func decodeObject(data []byte) (map[string]any, error) {
 	}
 	m, ok := v.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("data is not an object")
+		return nil, errors.New("data is not an object")
 	}
 	return m, nil
 }
@@ -241,7 +242,7 @@ func decodeValue(data []byte) (any, error) {
 		return nil, err
 	}
 	if dec.More() {
-		return nil, fmt.Errorf("trailing data after JSON value")
+		return nil, errors.New("trailing data after JSON value")
 	}
 	return v, nil
 }
@@ -304,7 +305,7 @@ func parseEvents(raw []byte) ([]event, error) {
 		}
 	}
 	if fieldsSeen {
-		return nil, fmt.Errorf("capture: stream ended mid-event")
+		return nil, errors.New("capture: stream ended mid-event")
 	}
 	return events, nil
 }

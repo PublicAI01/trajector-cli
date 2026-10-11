@@ -12,6 +12,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -306,10 +307,10 @@ type Server struct {
 // New validates the configuration and builds a server.
 func New(cfg Config) (*Server, error) {
 	if cfg.Table == nil || cfg.Spool == nil {
-		return nil, fmt.Errorf("apiproxy: routing table and spool are required")
+		return nil, errors.New("apiproxy: routing table and spool are required")
 	}
 	if cfg.Dialect.Provider == "" || cfg.Dialect.ShouldRecord == nil {
-		return nil, fmt.Errorf("apiproxy: a capture dialect is required")
+		return nil, errors.New("apiproxy: a capture dialect is required")
 	}
 	if !httpURL(cfg.DefaultUpstream) {
 		return nil, fmt.Errorf("apiproxy: default upstream %q is not an http(s) URL", cfg.DefaultUpstream)
@@ -318,7 +319,7 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("apiproxy: official upstream %q is not an http(s) URL", cfg.Dialect.OfficialUpstream)
 	}
 	if cfg.AdminTokens == nil {
-		return nil, fmt.Errorf("apiproxy: an admin token layout is required")
+		return nil, errors.New("apiproxy: an admin token layout is required")
 	}
 	if cfg.IdleTimeout == 0 {
 		cfg.IdleTimeout = defaultIdleTimeout

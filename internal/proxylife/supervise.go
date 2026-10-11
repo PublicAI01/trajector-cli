@@ -2,6 +2,7 @@ package proxylife
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -43,7 +44,7 @@ type superviseConfig struct {
 // child's idle exit is the supervisor's exit.
 func superviseChild(ctx context.Context, cfg superviseConfig) error {
 	if len(cfg.Command) == 0 {
-		return fmt.Errorf("proxylife: empty command")
+		return errors.New("proxylife: empty command")
 	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}

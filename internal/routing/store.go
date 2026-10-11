@@ -2,6 +2,7 @@ package routing
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -198,7 +199,7 @@ func (s *Store) SnapshotGrants(rootPath string) (GrantSnapshot, error) {
 // when the table cannot be written.
 func (s *Store) RestoreGrants(snap GrantSnapshot) error {
 	if snap.rootPath == "" {
-		return fmt.Errorf("routing: restoring an empty snapshot")
+		return errors.New("routing: restoring an empty snapshot")
 	}
 	if current, err := readTableFile(s.path); err == nil {
 		entries := map[string]projectRecord{}
@@ -226,7 +227,7 @@ func (s *Store) RestoreGrants(snap GrantSnapshot) error {
 // Resume lifts it.
 func (s *Store) Pause(reason PauseReason) error {
 	if reason == "" {
-		return fmt.Errorf("routing: pause requires a reason")
+		return errors.New("routing: pause requires a reason")
 	}
 	return s.update(func(f *tableFile) { f.PausedReason, f.PausedByVersion = reason, "" })
 }
@@ -238,7 +239,7 @@ func (s *Store) Pause(reason PauseReason) error {
 // way whichever path noticed.
 func (s *Store) PauseByBuild(reason PauseReason, version string) error {
 	if reason == "" {
-		return fmt.Errorf("routing: pause requires a reason")
+		return errors.New("routing: pause requires a reason")
 	}
 	return s.update(func(f *tableFile) { f.PausedReason, f.PausedByVersion = reason, version })
 }
