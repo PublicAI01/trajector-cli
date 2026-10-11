@@ -151,6 +151,7 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 		return false, false
 	case NotStored:
 		return true, false
+	case Stored:
 	}
 	if res.Reaction == Vanished {
 		_ = rd.Registry.Remove(rd.ProjectIDHash, f.Path)

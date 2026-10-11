@@ -126,6 +126,7 @@ func (m *Machine) desiredUpstream(root string) upstreamResolution {
 		return upstreamResolution{upstream: external, source: source, external: true}
 	case claudesettings.BaseURLMasked:
 		return upstreamResolution{upstream: capture.Anthropic.OfficialUpstream, masked: true}
+	case claudesettings.BaseURLNone:
 	}
 	return upstreamResolution{upstream: capture.Anthropic.OfficialUpstream}
 }

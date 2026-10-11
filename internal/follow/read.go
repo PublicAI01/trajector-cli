@@ -341,6 +341,7 @@ func sessionWasOutside(main File, opts ReadOptions) (bool, error) {
 		return false, nil
 	case Rewrite:
 		start = 0
+	case Continue:
 	}
 	src, err := os.Open(main.Path)
 	if os.IsNotExist(err) {

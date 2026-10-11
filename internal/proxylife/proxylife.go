@@ -484,6 +484,7 @@ func (p *Proxy) Stop() error {
 		return nil
 	case HolderForeign:
 		return why
+	case HolderOurs:
 	}
 	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, nil)
 	if err != nil {
@@ -520,6 +521,7 @@ func (p *Proxy) Progress(ev apiproxy.Progress) error {
 		return ErrNoProxy
 	case HolderForeign:
 		return why
+	case HolderOurs:
 	}
 	body, err := json.Marshal(ev)
 	if err != nil {
@@ -718,6 +720,7 @@ func (p *Proxy) Flush(force bool) (upload.FlushReply, error) {
 		return upload.FlushReply{}, fmt.Errorf("no proxy is listening at %s", p.addr)
 	case HolderForeign:
 		return upload.FlushReply{}, why
+	case HolderOurs:
 	}
 	flushURL := "http://" + p.addr + upload.FlushPath
 	if force {

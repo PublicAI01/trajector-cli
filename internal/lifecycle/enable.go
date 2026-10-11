@@ -310,6 +310,7 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 			ledger.record(func() error { return claudesettings.RemoveGitIgnored(st.Root, []string{rule}) })
 		case claudesettings.IgnoreSymlinked:
 			symlinked = true
+		case claudesettings.IgnoreCovered, claudesettings.IgnoreSkipped:
 		}
 	}
 	if len(appended) > 0 {

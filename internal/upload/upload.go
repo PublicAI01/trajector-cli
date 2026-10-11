@@ -341,6 +341,7 @@ func (u *Uploader) reportDisposition(res *Result) {
 		if !u.reportCredentialGate(res) {
 			u.reportBackoff(res)
 		}
+	case Ack:
 	}
 }
 
