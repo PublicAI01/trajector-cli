@@ -188,6 +188,16 @@ func (s Selfcheck) IsOurs() bool { return s.Service == ServiceName }
 // a credential: port ownership is proven by the admin-token challenge.
 const ServiceName = "trajector-proxy"
 
+// readHeaderTimeout bounds how long a connection may take to send the
+// headers of a request; the server closes a connection that takes
+// longer. Every account on the machine can reach the loopback port, so
+// a connection that never finishes its headers must not stay open. The
+// clock starts when a connection opens, or at the first byte of the
+// next request on a kept-alive one, and stops once the headers are
+// read. Request bodies, streamed responses and idle kept-alive
+// connections are not limited by it.
+const readHeaderTimeout = 30 * time.Second
+
 // Defaults for the lazy lifecycle.
 const (
 	defaultIdleTimeout  = 30 * time.Minute
@@ -439,7 +449,10 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	// hand the next instance a connection to an address that has since
 	// been recycled and is no longer being served.
 	defer s.transport.CloseIdleConnections()
-	httpSrv := &http.Server{Handler: hostLimited(s.handler, l.Addr().String())}
+	httpSrv := &http.Server{
+		Handler:           hostLimited(s.handler, l.Addr().String()),
+		ReadHeaderTimeout: readHeaderTimeout,
+	}
 
 	shutdownDone := make(chan struct{})
 	go func() {
