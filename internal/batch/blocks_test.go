@@ -170,7 +170,7 @@ func TestBuild_ARefusedRecordLendsItsPayloadToNoOtherRecord(t *testing.T) {
 
 func TestBuild_ThePayloadsAnAcknowledgedBatchCarriedAreReferredTo(t *testing.T) {
 	x, y := constructedPNG(t, 40), constructedPNG(t, 80)
-	sent := func(scope, d string) bool { return d == digest(x) }
+	sent := func(_, d string) bool { return d == digest(x) }
 	in := spool.Entries{callWithImage(t, "req-1", "sess-1", x, buildTime), callWithImage(t, "req-2", "sess-1", y, buildTime.Add(time.Second))}
 	b, _, err := batch.Build("batch-1", buildTime, "test", in, batch.Run{}, mediablock.Policy{Sent: sent})
 	if err != nil {

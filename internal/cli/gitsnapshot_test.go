@@ -235,7 +235,7 @@ func TestGitSnapshot_ObservesNothing(t *testing.T) {
 	}{
 		{
 			name:  "a repository with no commit yet",
-			setup: func(g *gitEnv) {},
+			setup: func(*gitEnv) {},
 			event: "SessionStart",
 		},
 		{

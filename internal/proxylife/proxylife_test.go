@@ -824,7 +824,7 @@ func wedgedHolder(t *testing.T) (string, *int32) {
 	}
 	var exchanges int32
 	wedged := make(chan struct{})
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := &http.Server{Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		atomic.AddInt32(&exchanges, 1)
 		<-wedged
 	})}
@@ -945,7 +945,7 @@ func provenHolder(t *testing.T, layout userdirs.Layout, handle http.HandlerFunc)
 
 func TestObserveNamesTheProxyOnAnUnreadableHealthAnswer(t *testing.T) {
 	layout := proxytest.SandboxLayout(t, t.TempDir())
-	addr := provenHolder(t, layout, func(w http.ResponseWriter, r *http.Request) {
+	addr := provenHolder(t, layout, func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, "not json")
 	})
 
@@ -962,7 +962,7 @@ func TestObserveNamesTheProxyOnAnUnreadableHealthAnswer(t *testing.T) {
 func TestFlushNamesTheProxyOnAnUnreadableFlushReply(t *testing.T) {
 	layout := proxytest.SandboxLayout(t, t.TempDir())
 	live := proxytest.New(t, proxytest.WithLayout(layout),
-		proxytest.WithInternal(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxytest.WithInternal(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			fmt.Fprint(w, "not json")
 		})))
 	live.AdminToken()
@@ -1057,7 +1057,7 @@ func TestStopDrainsAHolderThatProvesItself(t *testing.T) {
 // flushStub answers the flush endpoint with a fixed record count, so a
 // test can tell which proxy's mounted endpoint a flush reached.
 func flushStub(records int) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(upload.FlushReply{Records: records})
 	})

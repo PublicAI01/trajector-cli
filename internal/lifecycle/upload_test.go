@@ -102,7 +102,7 @@ func TestUploadReportsAnUnverifiableProxyAsAuthentication(t *testing.T) {
 
 func TestUploadNamesTheProxyOnAnUnreadableFlushReply(t *testing.T) {
 	e := newEnv(t)
-	e.startProxy(proxytest.WithInternal(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	e.startProxy(proxytest.WithInternal(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, "not json")
 	})))
 

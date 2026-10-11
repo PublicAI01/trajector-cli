@@ -254,7 +254,7 @@ func resolveEnv() (runtimeEnv, error) {
 }
 
 // machine assembles the lifecycle machine for this invocation.
-func (a *app) machine() (*lifecycle.Machine, error) {
+func (*app) machine() (*lifecycle.Machine, error) {
 	return machineAt("")
 }
 
@@ -264,7 +264,7 @@ func (a *app) machine() (*lifecycle.Machine, error) {
 // failed read, because showing why the file cannot be read is part of
 // its job, and neither command sends anything to a place the file
 // names; every other command refuses.
-func (a *app) surfaceMachine() (*lifecycle.Machine, error) {
+func (*app) surfaceMachine() (*lifecycle.Machine, error) {
 	return openMachine("", true)
 }
 
@@ -339,7 +339,7 @@ func (a *app) prelude() (*lifecycle.Machine, string, error) {
 }
 
 // preludeWith is prelude on a machine that open assembles.
-func (a *app) preludeWith(open func() (*lifecycle.Machine, error)) (*lifecycle.Machine, string, error) {
+func (*app) preludeWith(open func() (*lifecycle.Machine, error)) (*lifecycle.Machine, string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, "", err

@@ -179,7 +179,7 @@ type DataAuthorizationRequiredError struct {
 	status  *StatusError
 }
 
-func (e *DataAuthorizationRequiredError) Error() string {
+func (*DataAuthorizationRequiredError) Error() string {
 	return "the service requires this account's data authorization to be completed"
 }
 
@@ -203,7 +203,7 @@ func (e *DataAuthorizationRequiredError) Unwrap() error {
 // predicate would move half of that decision to the caller.
 type CredentialRefusedError struct{ status *StatusError }
 
-func (e *CredentialRefusedError) Error() string {
+func (*CredentialRefusedError) Error() string {
 	return "the service refused this device's credential"
 }
 
@@ -223,7 +223,7 @@ func (e *CredentialRefusedError) Unwrap() error {
 // reason CredentialRefusedError carries none.
 type AccessRefusedError struct{ status *StatusError }
 
-func (e *AccessRefusedError) Error() string {
+func (*AccessRefusedError) Error() string {
 	return "the service refused this client access to the upload endpoint"
 }
 

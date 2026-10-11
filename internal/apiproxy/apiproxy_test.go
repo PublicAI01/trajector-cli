@@ -581,7 +581,7 @@ func TestMountedCallDoesNotHoldTheProxyOpen(t *testing.T) {
 	var once sync.Once
 	e := proxytest.New(t,
 		proxytest.WithIdleTimeout(100*time.Millisecond),
-		proxytest.WithInternal(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxytest.WithInternal(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			once.Do(func() { close(entered) })
 			<-release
 		})),

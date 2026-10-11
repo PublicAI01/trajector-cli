@@ -11,10 +11,9 @@ import (
 // command output.
 
 func TestIsWSLAnswersOnEveryPlatform(t *testing.T) {
-	// The value is platform-truth (false on macOS and plain Linux, true
-	// only under WSL); the invariant is that probing never panics and
-	// never errors out of the doctor run.
-	_ = isWSL()
+	// The value depends on the platform (true only under WSL); the
+	// invariant is that probing never panics.
+	t.Logf("isWSL = %v", isWSL())
 }
 
 func TestMaskTokenNeverRevealsShortTokens(t *testing.T) {

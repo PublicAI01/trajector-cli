@@ -96,7 +96,7 @@ func (m *Machine) ObserveGitSnapshot(cwd string, hook HookInput) {
 // answers when the session states none. Either way the directory must
 // lie inside the enabled project: consent is addressed by project, and
 // a repository outside one was never granted.
-func (m *Machine) observedDir(st report.ProjectStatus, hook HookInput) (dir, subpath string, ok bool) {
+func (*Machine) observedDir(st report.ProjectStatus, hook HookInput) (dir, subpath string, ok bool) {
 	if hook.Cwd == "" {
 		return st.Root, "", true
 	}

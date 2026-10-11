@@ -62,7 +62,7 @@ func (s *Server) newForwarder() http.Handler {
 		// Stream responses through unbuffered so the client observes
 		// upstream bytes as they arrive.
 		FlushInterval: -1,
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			s.cfg.Logf("upstream exchange failed: %v", err)
 			w.WriteHeader(http.StatusBadGateway)
 		},
@@ -241,7 +241,7 @@ func splitBetaHeader(values []string) []string {
 	return betas
 }
 
-func (s *Server) rewrite(pr *httputil.ProxyRequest) {
+func (*Server) rewrite(pr *httputil.ProxyRequest) {
 	d, _ := pr.In.Context().Value(decisionKey{}).(*decision)
 	target := *d.upstream
 	target.Path = strings.TrimSuffix(d.upstream.Path, "/") + d.restPath
@@ -279,7 +279,7 @@ func (s *Server) rewrite(pr *httputil.ProxyRequest) {
 // in place of a response the client is entitled to, so nothing on the
 // recording path may report failure through it; the recorder reports
 // its own failures to itself.
-func (s *Server) modifyResponse(resp *http.Response) error {
+func (*Server) modifyResponse(resp *http.Response) error {
 	d, _ := resp.Request.Context().Value(decisionKey{}).(*decision)
 	if d != nil {
 		d.rec.observeResponse(resp)

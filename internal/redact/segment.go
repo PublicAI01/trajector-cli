@@ -332,7 +332,7 @@ func AbsolutePathFields(line sessionline.Line, loc SessionLocation) []string {
 	guards := newGuardTracker(listed)
 	var candidates []pathValue
 	var anchored []anchoredValue
-	walkStringValues(s, func(path []string, start, end int, value string) {
+	walkStringValues(s, func(path []string, _, _ int, value string) {
 		guards.observe(listed, path, value)
 		for i, a := range anchoredPaths {
 			if a.path.equal(path) {

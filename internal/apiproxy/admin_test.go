@@ -95,7 +95,7 @@ func TestReservedEndpointsAnswer401WithoutTheAdminToken(t *testing.T) {
 
 func TestBrowserDriveByCannotDrainOrFlush(t *testing.T) {
 	flushed := 0
-	e := proxytest.New(t, proxytest.WithInternal(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	e := proxytest.New(t, proxytest.WithInternal(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		flushed++
 	})))
 

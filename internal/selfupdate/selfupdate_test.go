@@ -397,7 +397,7 @@ func TestUpgradeSaysSoWhenTheIndexIsNotThere(t *testing.T) {
 
 func TestUpgradeSaysSoWhenTheIndexIsNotAReleaseList(t *testing.T) {
 	m := install(t, "the 0.1.0 binary")
-	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("<html>this is a login page, not a release index</html>"))
 	}))
 	defer elsewhere.Close()

@@ -595,7 +595,7 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 		},
 		{
 			name: "user settings beat shell",
-			setup: func(t *testing.T, project string, host Host) {
+			setup: func(t *testing.T, _ string, host Host) {
 				t.Helper()
 				writeSettings(t, host.UserSettingsPath(), envBaseURL, "https://user.example.com")
 			},
@@ -618,7 +618,7 @@ func TestEffectiveEnvPrecedence(t *testing.T) {
 		},
 		{
 			name: "project local beats everything",
-			setup: func(t *testing.T, project string, host Host) {
+			setup: func(t *testing.T, project string, _ Host) {
 				t.Helper()
 				writeSettings(t, filepath.Join(project, ".claude", "settings.json"), envBaseURL, "https://project.example.com")
 				writeSettings(t, ProjectLocalPath(project), envBaseURL, "https://local.example.com")

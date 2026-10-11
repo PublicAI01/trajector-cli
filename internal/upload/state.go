@@ -360,7 +360,7 @@ func mergeHandshake(stored, update platform.Handshake, from handshakeSource) pla
 // exactly what was judged, not whatever the file holds by then.
 type errUnreadablePending struct{ raw []byte }
 
-func (e *errUnreadablePending) Error() string {
+func (*errUnreadablePending) Error() string {
 	return "the pending batch record is unreadable"
 }
 
