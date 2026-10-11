@@ -40,7 +40,12 @@ shape, tests first where practical.
 
 CI enforces, and you can run locally:
 
-- `gofmt -l .` — clean formatting.
+- `./scripts/check_static.sh golangci [GOOS]` — golangci-lint with
+  the linters and formatters (gofumpt, gci) in `.golangci.yml`. CI runs
+  it for the default platform, `windows` and `darwin`. A `//nolint`
+  names the linter and gives the reason. To fix a formatting finding,
+  run `golangci-lint fmt` of the same version (2.14.0, the version in
+  `scripts/check_static.sh`).
 - `go vet ./...`
 - `./scripts/check_vocabulary.sh` — see below.
 - `./scripts/check_coverage.sh` — line coverage for the repo and for
@@ -64,10 +69,14 @@ CI enforces, and you can run locally:
 
 The Go checks in `check_static.sh` run under the toolchain that the
 `toolchain` line of `go.mod` names, the one CI and releases build with;
-Go downloads it when it is not installed. shellcheck, zizmor and
-actionlint need Docker: each runs from the image pinned in `tools/<tool>/Dockerfile`.
-Every action in `.github/workflows/` is pinned to a full commit SHA
-with its version in a comment; Dependabot updates both.
+Go downloads it when it is not installed. golangci-lint is downloaded
+from its release page on first use, checked against the checksum in
+the script, and kept in the user cache; CI downloads and checks it
+again on every run. shellcheck, zizmor and
+actionlint need Docker: each runs from the image pinned in
+`tools/<tool>/Dockerfile`. Every action in `.github/workflows/` is
+pinned to a full commit SHA with its version in a comment; Dependabot
+updates both.
 
 ## Vocabulary and comments
 

@@ -54,14 +54,6 @@ jobs:
               sh -n "$script"
             fi
           done
-      - name: gofmt
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "gofmt needed on:" >&2
-            echo "$unformatted" >&2
-            exit 1
-          fi
       - name: go vet
         run: go vet ./...
       - name: vocabulary boundary check
@@ -119,6 +111,24 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # The golangci-lint analysis cache only: the binary is downloaded and
+      # checked again on every run, so a restored cache never runs an
+      # unchecked binary. The run id makes every run save a fresh cache;
+      # the prefixes restore the newest one. The analysis cache is keyed
+      # by content, so a cache from another config is safe to reuse.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/golangci-lint
+          key: golangci-${{ runner.os }}-${{ hashFiles('scripts/check_static.sh', '.golangci.yml', 'go.sum') }}-${{ github.run_id }}
+          restore-keys: |
+            golangci-${{ runner.os }}-${{ hashFiles('scripts/check_static.sh', '.golangci.yml', 'go.sum') }}-
+            golangci-${{ runner.os }}-
+      - name: golangci-lint
+        run: ./scripts/check_static.sh golangci
+      - name: golangci-lint (windows)
+        run: ./scripts/check_static.sh golangci windows
+      - name: golangci-lint (darwin)
+        run: ./scripts/check_static.sh golangci darwin
       - name: go fix
         run: ./scripts/check_static.sh gofix
       - name: go mod tidy
