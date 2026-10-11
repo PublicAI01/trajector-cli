@@ -29,8 +29,9 @@ fi
 # instrumented for its own test binary alone, so the combined profile
 # carries the same per-package numbers that one run per package would
 # produce, without the serial rebuilds.
-core_paths=$(for pkg in $CORE_PACKAGES; do printf './%s ' "$pkg"; done)
-go test -covermode=atomic -coverprofile=coverage.pkg.out $core_paths >/dev/null
+set --
+for pkg in $CORE_PACKAGES; do set -- "$@" "./$pkg"; done
+go test -covermode=atomic -coverprofile=coverage.pkg.out "$@" >/dev/null
 
 module=$(go list -m)
 for pkg in $CORE_PACKAGES; do

@@ -35,17 +35,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# start_listener <name> -> sets <name>_addr, appends its pid; requests
+# start_listener <name> -> sets listener_addr, appends its pid; requests
 # land in $workdir/<name>.log
 start_listener() {
   local name="$1" out="$workdir/$1.out"
   : > "$workdir/$name.log"
   (cd "$repo_root" && exec go run ./scripts/probelistener -log "$workdir/$name.log") > "$out" &
   pids+=($!)
-  local i
-  for i in $(seq 1 100); do
+  for _ in $(seq 1 100); do
     if grep -q LISTENING "$out" 2>/dev/null; then
-      eval "${name}_addr=\"$(awk '/LISTENING/{print $2; exit}' "$out")\""
+      listener_addr="$(awk '/LISTENING/{print $2; exit}' "$out")"
       return
     fi
     sleep 0.2
@@ -55,7 +54,9 @@ start_listener() {
 }
 
 start_listener settings   # the port the settings env block points at
+settings_addr="$listener_addr"
 start_listener shell      # the port the shell environment points at
+shell_addr="$listener_addr"
 
 project="$workdir/project"
 mkdir -p "$project/.claude"
