@@ -582,9 +582,9 @@ func (c *Count) Plus(other Count) {
 }
 
 // Total counts the records of every kind.
-func (c Count) Total() int {
+func (c *Count) Total() int {
 	total := 0
-	for _, n := range c {
+	for _, n := range *c {
 		total += n
 	}
 	return total

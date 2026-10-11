@@ -69,7 +69,7 @@ func (ix *Index) add(item IndexItem, recordSize int64) {
 }
 
 // Bytes serializes the envelope.
-func (ix Index) Bytes() ([]byte, error) {
+func (ix *Index) Bytes() ([]byte, error) {
 	var out bytes.Buffer
 	enc := json.NewEncoder(&out)
 	enc.SetEscapeHTML(false)

@@ -252,7 +252,7 @@ func LoadStandings(dir, version string, now time.Time) []Standing {
 // unknown reason is carried through rather than dropped: a newer build
 // may name a pause this one cannot explain, and the wait itself is
 // still the fact that matters.
-func (h storedHandshake) backoff(now time.Time) (Standing, bool) {
+func (h *storedHandshake) backoff(now time.Time) (Standing, bool) {
 	if h.BackoffReason == Flowing || !now.Before(h.NotBefore) {
 		return Standing{}, false
 	}
