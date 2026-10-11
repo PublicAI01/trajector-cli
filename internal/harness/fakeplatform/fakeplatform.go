@@ -9,6 +9,7 @@ package fakeplatform
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -258,7 +259,7 @@ func Parts(r Request) (map[string][]byte, error) {
 	parts := map[string][]byte{}
 	for {
 		p, err := mr.NextPart()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return parts, nil
 		}
 		if err != nil {

@@ -3,6 +3,7 @@ package follow
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -547,12 +548,12 @@ func (s *lineScanner) next() (line []byte, n int, err error) {
 		} else {
 			line = nil
 		}
-		switch readErr {
-		case nil:
+		switch {
+		case readErr == nil:
 			return line, n, nil
-		case bufio.ErrBufferFull:
+		case errors.Is(readErr, bufio.ErrBufferFull):
 			continue
-		case io.EOF:
+		case errors.Is(readErr, io.EOF):
 			return nil, 0, nil
 		default:
 			return nil, 0, readErr

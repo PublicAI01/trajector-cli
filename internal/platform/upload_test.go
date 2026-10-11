@@ -458,7 +458,7 @@ func readParts(t *testing.T, req fakeplatform.Request) map[string][]byte {
 	parts := map[string][]byte{}
 	for {
 		p, err := mr.NextPart()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
