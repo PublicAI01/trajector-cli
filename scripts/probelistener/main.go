@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 )
 
 func main() {
@@ -29,7 +30,7 @@ func main() {
 	// The shell script scrapes this line for the address.
 	fmt.Printf("LISTENING %s\n", l.Addr())
 
-	err = http.Serve(l, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f, err := os.OpenFile(*logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err == nil {
 			fmt.Fprintf(f, "%s %s\n", r.Method, r.URL.Path)
@@ -40,6 +41,6 @@ func main() {
 		// stays one log line.
 		w.WriteHeader(http.StatusBadRequest)
 		fmt.Fprint(w, `{"type":"error","error":{"type":"invalid_request_error","message":"injection probe endpoint; no request is ever forwarded"}}`)
-	}))
-	log.Fatal(err)
+	})}
+	log.Fatal(srv.Serve(l))
 }
