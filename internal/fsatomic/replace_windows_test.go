@@ -25,26 +25,22 @@ func TestReadAndWriteFileTolerateEachOthersReplace(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for time.Now().Before(deadline) {
 			if err := WriteFile(path, []byte(`{"n":1}`), 0o600); err != nil {
 				t.Errorf("write: %v", err)
 			}
 		}
-	}()
+	})
 
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for time.Now().Before(deadline) {
 				if _, err := ReadFile(path); err != nil && !os.IsNotExist(err) {
 					t.Errorf("read: %v", err)
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

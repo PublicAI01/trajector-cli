@@ -543,9 +543,7 @@ func TestConcurrentGrantsAllSurvive(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, n)
 	for i := range errs {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			suffix := fmt.Sprintf("%02d", i)
 			errs[i] = routing.OpenStore(path).Grant(routing.Grant{
 				Token:         "tok-" + suffix,
@@ -554,7 +552,7 @@ func TestConcurrentGrantsAllSurvive(t *testing.T) {
 				Upstream:      "https://api.anthropic.com",
 				GrantedAt:     "2026-08-01T00:00:00Z",
 			})
-		}(i)
+		})
 	}
 	wg.Wait()
 	for i, err := range errs {
@@ -624,9 +622,7 @@ func TestConcurrentEnableRollbacksLoseNoSurvivingGrant(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, n)
 	for i := range errs {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			suffix := fmt.Sprintf("%02d", i)
 			store := routing.OpenStore(path)
 			root := "/project/" + suffix
@@ -649,7 +645,7 @@ func TestConcurrentEnableRollbacksLoseNoSurvivingGrant(t *testing.T) {
 			if i%2 == 1 {
 				errs[i] = store.RestoreGrants(snap)
 			}
-		}(i)
+		})
 	}
 	wg.Wait()
 	for i, err := range errs {

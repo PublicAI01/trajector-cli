@@ -708,15 +708,13 @@ func TestRegistry_ConcurrentRegistersDoNotLoseEntries(t *testing.T) {
 				paths = append(paths, abs(t, filepath.Join("r"+string(rune('0'+ri)), "g"+string(rune('0'+g)), "f"+string(rune('0'+i))+".jsonl")))
 			}
 			want = append(want, paths...)
-			wg.Add(1)
-			go func(r *follow.Registry, paths []string) {
-				defer wg.Done()
+			wg.Go(func() {
 				for _, p := range paths {
 					if err := r.RegisterAll(project, []string{p}, ""); err != nil {
 						errs <- err
 					}
 				}
-			}(r, paths)
+			})
 		}
 	}
 	wg.Wait()

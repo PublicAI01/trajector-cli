@@ -533,11 +533,9 @@ func TestConcurrentEditsLoseNoInjection(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, n)
 	for i := range errs {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			errs[i] = InjectUserHook(path, fmt.Sprintf("/usr/local/bin/trajector-%d hook discovery", i))
-		}(i)
+		})
 	}
 	wg.Wait()
 	for i, err := range errs {

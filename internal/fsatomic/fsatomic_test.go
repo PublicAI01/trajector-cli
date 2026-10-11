@@ -199,9 +199,7 @@ func runCountingUpdates(path string, n int) error {
 	var wg sync.WaitGroup
 	errs := make([]error, n)
 	for i := range errs {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			errs[i] = fsatomic.Update(path, 0o600, func(old []byte) ([]byte, error) {
 				count := 0
 				if len(old) > 0 {
@@ -212,7 +210,7 @@ func runCountingUpdates(path string, n int) error {
 				}
 				return []byte(strconv.Itoa(count + 1)), nil
 			})
-		}(i)
+		})
 	}
 	wg.Wait()
 	return errors.Join(errs...)
