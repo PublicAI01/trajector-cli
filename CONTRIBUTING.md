@@ -45,6 +45,16 @@ CI enforces, and you can run locally:
 - `./scripts/check_vocabulary.sh` — see below.
 - `./scripts/check_coverage.sh` — repo ≥ 80%, core packages ≥ 85%. The
   thresholds are ratchets: they may be raised, never lowered.
+- `./scripts/check_static.sh zizmor` — GitHub Actions security audit.
+  CI runs it online (with a token); without `GH_TOKEN` it runs offline
+  and skips the audits that query GitHub.
+- `./scripts/check_static.sh actionlint` — workflow syntax and the shell
+  in `run:` steps.
+
+`check_static.sh` needs Docker: each tool runs from the image pinned in
+`tools/<tool>/Dockerfile`. Every action in `.github/workflows/` is
+pinned to a full commit SHA with its version in a comment; Dependabot
+updates both.
 
 ## Vocabulary and comments
 

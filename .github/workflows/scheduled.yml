@@ -1,0 +1,25 @@
+name: Scheduled checks
+
+# The online zizmor audits depend on GitHub state that changes without a
+# commit here: a new advisory for a pinned action, a tag moved away from
+# a pinned commit. A failed run mails whoever last changed the schedule.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check_static.sh zizmor

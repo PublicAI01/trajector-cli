@@ -108,15 +108,31 @@ jobs:
       - name: test
         run: go test ./...
 
+  # Docker runs the pinned tool images, and only the Ubuntu runner has it.
+  workflow-lint:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check_static.sh zizmor
+      - name: actionlint
+        run: ./scripts/check_static.sh actionlint
+
   # The one check the main branch ruleset requires. Every other job must
-  # be listed in `needs`; a job left out does not gate main. `always()` keeps this job from being
-  # skipped when a dependency fails or is cancelled: GitHub counts a
-  # skipped required check as passed. A dependency that is skipped is a
+  # be listed in `needs`; a job left out does not gate main. `always()`
+  # keeps this job from being skipped when a dependency fails or is
+  # cancelled: GitHub counts a skipped required check as passed. A dependency that is skipped is a
   # failure too; a job that is skipped on purpose must be named here as
   # allowed to skip.
   all-checks:
     if: always()
-    needs: [checks, release-config, build-and-test]
+    needs: [checks, release-config, build-and-test, workflow-lint]
     runs-on: ubuntu-26.04
     steps:
       - name: every job passed
