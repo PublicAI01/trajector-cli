@@ -18,7 +18,7 @@ import (
 // and under --force. A pause the service asked for (upgrade required,
 // deferral) is a working state, not a command failure; a rejected
 // batch waits quarantined for the user, so it stays one.
-func (m *Machine) Upload(force bool, io IO) error {
+func (m *Machine) Upload(force bool, streams IO) error {
 	if err := m.proxy.Ensure(); err != nil {
 		return err
 	}
@@ -27,24 +27,24 @@ func (m *Machine) Upload(force bool, io IO) error {
 		return err
 	}
 	if reply.Batches > 0 {
-		fmt.Fprintf(io.Out, "Uploaded %d batch(es), %d record(s).\n", reply.Batches, reply.Records)
+		fmt.Fprintf(streams.Out, "Uploaded %d batch(es), %d record(s).\n", reply.Batches, reply.Records)
 	}
 	if n := setAsideUnreadable(reply.SetAside); n > 0 {
-		fmt.Fprintf(io.Out, "Set aside %d unreadable record(s); they were never sent. Run `trajector doctor` to inspect them.\n", n)
+		fmt.Fprintf(streams.Out, "Set aside %d unreadable record(s); they were never sent. Run `trajector doctor` to inspect them.\n", n)
 	}
 	switch reply.Outcome {
 	case upload.Uploaded:
 		// the acknowledged-count line above is the whole report
 	case upload.Empty:
-		fmt.Fprintln(io.Out, "Nothing to upload.")
+		fmt.Fprintln(streams.Out, "Nothing to upload.")
 	case upload.BelowThreshold:
-		fmt.Fprintln(io.Out, "Below the upload thresholds; use --force to upload anyway.")
+		fmt.Fprintln(streams.Out, "Below the upload thresholds; use --force to upload anyway.")
 	case upload.Paused:
-		explainStanding(io, reply.Standing, reply.Standing.Remedy())
+		explainStanding(streams, reply.Standing, reply.Standing.Remedy())
 	case upload.UpgradeRequired:
 		// The kept-data line stands alone: a user reading a pause needs
 		// to know nothing was lost before they read what to do about it.
-		explainStanding(io, reply.Standing,
+		explainStanding(streams, reply.Standing,
 			offer(reply.Standing.Remedy(), retry(force, " Or retry with --force.")),
 			"Captured data is kept.")
 	case upload.AuthorizationRequired:
@@ -52,20 +52,20 @@ func (m *Machine) Upload(force bool, io IO) error {
 		// install, because it is the recovery: the user fixes this in a
 		// browser, nothing on this machine changes, and without --force
 		// they would wait out a flush cycle for uploads that could go now.
-		explainStanding(io, reply.Standing,
+		explainStanding(streams, reply.Standing,
 			offer(reply.Standing.Remedy(), retry(force, " Then retry with --force.")),
 			"Captured data is kept.")
 	case upload.Deferred:
 		// The remedy is itself the --force offer, so a run that already
 		// used it is told the pause and nothing else.
-		explainStanding(io, reply.Standing, retry(force, reply.Standing.Remedy()))
+		explainStanding(streams, reply.Standing, retry(force, reply.Standing.Remedy()))
 	case upload.Rejected:
 		return errors.New(reply.Error)
 	default:
 		if reply.Error != "" {
 			return errors.New(reply.Error)
 		}
-		fmt.Fprintf(io.Out, "Flush finished: %s\n", reply.Outcome)
+		fmt.Fprintf(streams.Out, "Flush finished: %s\n", reply.Outcome)
 	}
 	return nil
 }
@@ -75,16 +75,16 @@ func (m *Machine) Upload(force bool, io IO) error {
 // command adds about the data it still holds, and last the remedy. The
 // first three sentences come from the standing itself, so the three
 // surfaces that report a pause cannot word one differently.
-func explainStanding(io IO, s upload.Standing, remedy string, reassurance ...string) {
-	fmt.Fprintln(io.Out, s.Explain())
+func explainStanding(streams IO, s upload.Standing, remedy string, reassurance ...string) {
+	fmt.Fprintln(streams.Out, s.Explain())
 	if s.Message != "" {
-		fmt.Fprintln(io.Out, report.ServiceWords(s.Message))
+		fmt.Fprintln(streams.Out, report.ServiceWords(s.Message))
 	}
 	for _, line := range reassurance {
-		fmt.Fprintln(io.Out, line)
+		fmt.Fprintln(streams.Out, line)
 	}
 	if remedy != "" {
-		fmt.Fprintln(io.Out, remedy)
+		fmt.Fprintln(streams.Out, remedy)
 	}
 }
 

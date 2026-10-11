@@ -92,9 +92,9 @@ type IO struct {
 // read that yields nothing at all — a script, a pipeline, a closed
 // stdin — which is the one condition under which no question of any
 // kind can be answered.
-func askYesNo(io IO, prompt string, def bool) (bool, error) {
-	fmt.Fprint(io.Out, prompt)
-	line, err := bufio.NewReader(io.In).ReadString('\n')
+func askYesNo(streams IO, prompt string, def bool) (bool, error) {
+	fmt.Fprint(streams.Out, prompt)
+	line, err := bufio.NewReader(streams.In).ReadString('\n')
 	if err != nil && line == "" {
 		return false, err
 	}

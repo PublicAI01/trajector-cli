@@ -283,8 +283,8 @@ func TestUpgradeLooksThroughTheLinkOnThePathForTheOwningManager(t *testing.T) {
 	if err := os.MkdirAll(cellar, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	real := filepath.Join(cellar, "trajector")
-	if err := os.WriteFile(real, []byte("binary"), 0o755); err != nil {
+	target := filepath.Join(cellar, "trajector")
+	if err := os.WriteFile(target, []byte("binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	binDir := filepath.Join(dir, "bin")
@@ -292,7 +292,7 @@ func TestUpgradeLooksThroughTheLinkOnThePathForTheOwningManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(binDir, "trajector")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("this machine does not allow symbolic links: %v", err)
 	}
 	releases := fakereleases.New(t)

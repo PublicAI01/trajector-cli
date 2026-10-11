@@ -88,15 +88,15 @@ type EnableChoices struct {
 // records: with the proxy, or the session hooks and no base URL, where
 // the files its sessions leave are read and its traffic is not routed
 // through the proxy.
-func (m *Machine) Enable(projectDir string, choices EnableChoices, io IO) error {
-	m.warnNonDefaultEndpoint(io.Out)
+func (m *Machine) Enable(projectDir string, choices EnableChoices, streams IO) error {
+	m.warnNonDefaultEndpoint(streams.Out)
 	if !m.Paired() {
-		fmt.Fprintln(io.Out, "This device is not paired yet; starting pairing first.")
-		if err := m.pair(io); err != nil {
+		fmt.Fprintln(streams.Out, "This device is not paired yet; starting pairing first.")
+		if err := m.pair(streams); err != nil {
 			return err
 		}
 	}
-	return m.enableProject(projectDir, choices, io)
+	return m.enableProject(projectDir, choices, streams)
 }
 
 // Disable stops contributing from a project. With purge it also asks
@@ -105,8 +105,8 @@ func (m *Machine) Enable(projectDir string, choices EnableChoices, io IO) error 
 // request is sent even when no grant stands right now (wasEnabled
 // false): data may have been uploaded under an earlier enable, and the
 // service scopes deletion by project hash, not by the current grant.
-func (m *Machine) Disable(projectDir string, purge bool, io IO) error {
-	w, err := m.disableProject(projectDir, io)
+func (m *Machine) Disable(projectDir string, purge bool, streams IO) error {
+	w, err := m.disableProject(projectDir, streams)
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (m *Machine) Disable(projectDir string, purge bool, io IO) error {
 		}
 		return fmt.Errorf("the project is disabled locally, but the deletion request failed: %w; retry with `trajector disable --purge`", err)
 	}
-	fmt.Fprintln(io.Out, "Requested deletion of this project's uploaded, undelivered data.")
+	fmt.Fprintln(streams.Out, "Requested deletion of this project's uploaded, undelivered data.")
 	return nil
 }
 
@@ -166,9 +166,9 @@ func leftoverIgnoreRules(root string) []string {
 // injection would point an enabled project at a dead port. Whether
 // local data goes too is the user's call: a caller that has not already
 // decided (deleteData false) is asked here, before anything changes.
-func (m *Machine) Uninstall(deleteData bool, io IO) error {
+func (m *Machine) Uninstall(deleteData bool, streams IO) error {
 	if !deleteData {
-		deleteData, _ = askYesNo(io, "Delete local data (captured records, configuration, device token)? [y/N]: ", false)
+		deleteData, _ = askYesNo(streams, "Delete local data (captured records, configuration, device token)? [y/N]: ", false)
 	}
 	grants, err := m.routes.All()
 	if err != nil {
@@ -196,51 +196,51 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 		path := claudesettings.ProjectLocalPath(root)
 		restored, unrestored, err := m.removeInjection(root)
 		if err != nil {
-			fmt.Fprintf(io.Err, "trajector: warning: could not clean %s: %v\n", path, err)
+			fmt.Fprintf(streams.Err, "trajector: warning: could not clean %s: %v\n", path, err)
 		} else {
 			removed++
 			if restored != "" {
-				fmt.Fprintf(io.Out, "Restored your own base URL in %s: %s\n", path, restored)
+				fmt.Fprintf(streams.Out, "Restored your own base URL in %s: %s\n", path, restored)
 			}
 			if unrestored != "" {
-				fmt.Fprintf(io.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(path, unrestored))
+				fmt.Fprintf(streams.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(path, unrestored))
 			}
 		}
 		undone, failures := m.restoreRecordedSettings(root, hashes[root], claudesettings.OptionalSettings)
-		reportRestoredSettings(io, "", undone, failures)
+		reportRestoredSettings(streams, "", undone, failures)
 	}
-	fmt.Fprintf(io.Out, "Removed injection from %d project(s).\n", removed)
+	fmt.Fprintf(streams.Out, "Removed injection from %d project(s).\n", removed)
 	for _, root := range projects {
 		if leftover := leftoverIgnoreRules(root); len(leftover) > 0 {
-			fmt.Fprintf(io.Out, "Left %s in %s; remove those lines yourself if you no longer want them.\n",
+			fmt.Fprintf(streams.Out, "Left %s in %s; remove those lines yourself if you no longer want them.\n",
 				strings.Join(leftover, ", "), filepath.Join(root, ".gitignore"))
 		}
 	}
 
 	if err := claudesettings.RemoveUserHook(m.claude().UserSettingsPath()); err != nil {
-		fmt.Fprintf(io.Err, "trajector: warning: could not remove the discovery hint: %v\n", err)
+		fmt.Fprintf(streams.Err, "trajector: warning: could not remove the discovery hint: %v\n", err)
 	}
 	// Gone, not merely asked to go: everything deleted below is
 	// something an exiting proxy still writes, and its writes create the
 	// directories they need. See StopGone.
 	if err := m.proxy.StopGone(); err != nil {
-		fmt.Fprintf(io.Err, "trajector: warning: the proxy was not stopped: %v\n", err)
+		fmt.Fprintf(streams.Err, "trajector: warning: the proxy was not stopped: %v\n", err)
 	}
 
 	if deleteData {
 		if err := m.tokens.ClearDeviceToken(); err != nil {
-			fmt.Fprintf(io.Err, "trajector: warning: could not remove the device token: %v\n", err)
+			fmt.Fprintf(streams.Err, "trajector: warning: could not remove the device token: %v\n", err)
 		}
 		for _, dir := range m.deps.Layout.Roots() {
 			if err := os.RemoveAll(dir); err != nil {
-				fmt.Fprintf(io.Err, "trajector: warning: could not remove %s: %v\n", dir, err)
+				fmt.Fprintf(streams.Err, "trajector: warning: could not remove %s: %v\n", dir, err)
 			}
 		}
-		fmt.Fprintln(io.Out, "Local data deleted.")
+		fmt.Fprintln(streams.Out, "Local data deleted.")
 	} else {
-		fmt.Fprintln(io.Out, "Local data kept.")
+		fmt.Fprintln(streams.Out, "Local data kept.")
 	}
-	fmt.Fprintf(io.Out, "Done. To finish, delete the binary itself: %s\n", m.deps.ExecPath)
+	fmt.Fprintf(streams.Out, "Done. To finish, delete the binary itself: %s\n", m.deps.ExecPath)
 	return nil
 }
 
@@ -248,9 +248,9 @@ func (m *Machine) Uninstall(deleteData bool, io IO) error {
 // device's consent state honest on the way: a stale agreement pauses
 // recording, and a project's own base-URL configuration is re-read in
 // case the user moved it.
-func (m *Machine) EnsureProxy(projectDir string, io IO) error {
-	m.pauseIfAgreementStale(io)
-	m.refreshUpstreamDrift(projectDir, io)
+func (m *Machine) EnsureProxy(projectDir string, streams IO) error {
+	m.pauseIfAgreementStale(streams)
+	m.refreshUpstreamDrift(projectDir, streams)
 
 	if err := m.proxy.Ensure(); err != nil {
 		// Every port-holder verdict is passed through with its own
@@ -267,7 +267,7 @@ func (m *Machine) EnsureProxy(projectDir string, io IO) error {
 // pauseIfAgreementStale suspends recording device-wide when the accepted
 // agreement is no longer current. Consent must always match the terms in
 // force; forwarding is untouched.
-func (m *Machine) pauseIfAgreementStale(io IO) {
+func (m *Machine) pauseIfAgreementStale(streams IO) {
 	accepted, _, err := m.consent.AcceptedVersion()
 	if err != nil {
 		// "Cannot tell whether consent matches the terms in force" is not
@@ -282,7 +282,7 @@ func (m *Machine) pauseIfAgreementStale(io IO) {
 		// different facts, and telling the user the first when the
 		// second happened names a change that never occurred.
 		if perr := m.routes.Pause(routing.PauseConsentUnreadable); perr == nil {
-			fmt.Fprintf(io.Err, "trajector: %s\n", routing.PauseConsentUnreadable.ExplainAt(m.consent.Path(), err))
+			fmt.Fprintf(streams.Err, "trajector: %s\n", routing.PauseConsentUnreadable.ExplainAt(m.consent.Path(), err))
 		}
 		return
 	}
@@ -292,7 +292,7 @@ func (m *Machine) pauseIfAgreementStale(io IO) {
 	// The remedy sentence is the pause reason's own: routing owns the
 	// stored value, so it owns what the user is told to do about it.
 	if err := m.routes.Pause(routing.PauseConsentReconfirm); err == nil {
-		fmt.Fprintln(io.Err, "trajector: "+routing.PauseConsentReconfirm.Explain())
+		fmt.Fprintln(streams.Err, "trajector: "+routing.PauseConsentReconfirm.Explain())
 	}
 }
 
@@ -302,7 +302,7 @@ func (m *Machine) pauseIfAgreementStale(io IO) {
 // has next to no voice, so a change is never only spoken: the move is
 // recorded on the grant where status shows it afterwards, and the
 // stderr line here is a best-effort courtesy.
-func (m *Machine) refreshUpstreamDrift(projectDir string, io IO) {
+func (m *Machine) refreshUpstreamDrift(projectDir string, streams IO) {
 	st, err := m.Project(projectDir)
 	if err != nil || !st.Enabled {
 		return
@@ -310,9 +310,9 @@ func (m *Machine) refreshUpstreamDrift(projectDir string, io IO) {
 	want, moved, refused, _ := m.reconcileUpstream(st)
 	switch {
 	case moved:
-		fmt.Fprintf(io.Err, "trajector: this project's upstream moved to %s (its base-URL configuration changed; `trajector status` has the details)\n", want.upstream)
+		fmt.Fprintf(streams.Err, "trajector: this project's upstream moved to %s (its base-URL configuration changed; `trajector status` has the details)\n", want.upstream)
 	case refused:
-		fmt.Fprintf(io.Err, "trajector: refusing to move this project's upstream to %s: %s\n", want.upstream, nonLoopbackUpstreamRemedy)
+		fmt.Fprintf(streams.Err, "trajector: refusing to move this project's upstream to %s: %s\n", want.upstream, nonLoopbackUpstreamRemedy)
 	}
 }
 
@@ -320,7 +320,7 @@ func (m *Machine) refreshUpstreamDrift(projectDir string, io IO) {
 // not enabled. It is strictly local: no network, nothing reported, and
 // only a project hash — never the path — is recorded as the
 // already-hinted marker.
-func (m *Machine) Discovery(projectDir string, io IO) {
+func (m *Machine) Discovery(projectDir string, streams IO) {
 	st, err := m.Project(projectDir)
 	if err != nil || st.Enabled {
 		return
@@ -329,5 +329,5 @@ func (m *Machine) Discovery(projectDir string, io IO) {
 	if err != nil || !first {
 		return
 	}
-	fmt.Fprintln(io.Out, "trajector: this project is not contributing coding data. Run `trajector enable` to opt in. (This note appears once per project.)")
+	fmt.Fprintln(streams.Out, "trajector: this project is not contributing coding data. Run `trajector enable` to opt in. (This note appears once per project.)")
 }

@@ -93,18 +93,18 @@ func trimLog(path string) error {
 	})
 }
 
-// logTail is the newest part of the log that fits in max bytes, whole
+// logTail is the newest part of the log that fits in limit bytes, whole
 // entries only: half an entry is not an entry, and ReadLog refuses a
 // line this package did not write. The newest entry is kept even when
-// it alone is above max, because what a rewrite drops is age.
-func logTail(data []byte, max int) []byte {
+// it alone is above limit, because what a rewrite drops is age.
+func logTail(data []byte, limit int) []byte {
 	lines := bytes.SplitAfter(data, []byte("\n"))
 	start, size := len(lines), 0
 	for i := len(lines) - 1; i >= 0; i-- {
 		if len(bytes.TrimSpace(lines[i])) == 0 {
 			continue
 		}
-		if size+len(lines[i]) > max && start < len(lines) {
+		if size+len(lines[i]) > limit && start < len(lines) {
 			break
 		}
 		size += len(lines[i])

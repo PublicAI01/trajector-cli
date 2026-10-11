@@ -9,8 +9,8 @@ import (
 
 // RequeueRejected moves quarantined batches back into the spool so the
 // next flush uploads them again.
-func (m *Machine) RequeueRejected(batchID string, all bool, io IO) error {
-	ids, err := m.quarantinedBatches(batchID, all, "requeue", io)
+func (m *Machine) RequeueRejected(batchID string, all bool, streams IO) error {
+	ids, err := m.quarantinedBatches(batchID, all, "requeue", streams)
 	if err != nil || len(ids) == 0 {
 		return err
 	}
@@ -28,15 +28,15 @@ func (m *Machine) RequeueRejected(batchID string, all bool, io IO) error {
 		requeued += moved
 		if err != nil {
 			if moved > 0 {
-				fmt.Fprintf(io.Out, "Requeued %d record(s) from batch %s before it failed.\n", moved, id)
+				fmt.Fprintf(streams.Out, "Requeued %d record(s) from batch %s before it failed.\n", moved, id)
 			}
 			failed = append(failed, err)
 			continue
 		}
-		fmt.Fprintf(io.Out, "Requeued %d record(s) from batch %s%s.\n", moved, id, rejectionSuffix(rej))
+		fmt.Fprintf(streams.Out, "Requeued %d record(s) from batch %s%s.\n", moved, id, rejectionSuffix(rej))
 	}
 	if requeued > 0 {
-		fmt.Fprintln(io.Out, "They will upload with the next flush; run `trajector upload --force` to try now.")
+		fmt.Fprintln(streams.Out, "They will upload with the next flush; run `trajector upload --force` to try now.")
 	}
 	return errors.Join(failed...)
 }
@@ -46,7 +46,7 @@ func (m *Machine) RequeueRejected(batchID string, all bool, io IO) error {
 // when there is nothing held, having already said so under the verb of
 // the command that asked, so no two commands can describe an empty
 // quarantine differently.
-func (m *Machine) quarantinedBatches(batchID string, all bool, verb string, io IO) ([]string, error) {
+func (m *Machine) quarantinedBatches(batchID string, all bool, verb string, streams IO) ([]string, error) {
 	if !all {
 		return []string{batchID}, nil
 	}
@@ -55,7 +55,7 @@ func (m *Machine) quarantinedBatches(batchID string, all bool, verb string, io I
 		return nil, err
 	}
 	if len(rejected) == 0 {
-		fmt.Fprintf(io.Out, "No rejected batches; nothing to %s.\n", verb)
+		fmt.Fprintf(streams.Out, "No rejected batches; nothing to %s.\n", verb)
 		return nil, nil
 	}
 	ids := make([]string, 0, len(rejected))

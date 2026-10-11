@@ -9,12 +9,12 @@ import (
 // it to the renderer: status repairs nothing, always leaves the fixing
 // to doctor, never starts a proxy just to look at one, and pays only
 // for what the registry already holds.
-func (m *Machine) Status(dir string, io IO) (problems int, err error) {
+func (m *Machine) Status(dir string, streams IO) (problems int, err error) {
 	d, err := m.diagnose(dir, fromRegistry)
 	if err != nil {
 		return 0, err
 	}
-	return report.Dashboard(io.Out, io.OutStyle, d), nil
+	return report.Dashboard(streams.Out, streams.OutStyle, d), nil
 }
 
 // verdict is the one line that says whether anything of this device is

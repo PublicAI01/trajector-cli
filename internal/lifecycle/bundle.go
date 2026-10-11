@@ -40,7 +40,7 @@ var doctorBundleIgnoreRules = []string{
 // never enter it. It is read-only: a bug report preserves the state
 // being diagnosed, so nothing is repaired on the way — that is
 // doctor's job.
-func (m *Machine) DoctorBundle(projectDir string, io IO) (string, error) {
+func (m *Machine) DoctorBundle(projectDir string, streams IO) (string, error) {
 	// The bundle takes the second reading too: the question doctor
 	// reports — sessions written without a hook — is one whoever reads
 	// the archive must be able to answer from it.
@@ -92,9 +92,9 @@ func (m *Machine) DoctorBundle(projectDir string, io IO) (string, error) {
 	if err != nil {
 		path = name
 	}
-	fmt.Fprintf(io.Out, "Wrote %s\n", path)
-	fmt.Fprintln(io.Out, "It contains diagnostics only: no captured data, no credentials, no clear-text")
-	fmt.Fprintln(io.Out, "tokens. Review its contents, then attach it to your report.")
+	fmt.Fprintf(streams.Out, "Wrote %s\n", path)
+	fmt.Fprintln(streams.Out, "It contains diagnostics only: no captured data, no credentials, no clear-text")
+	fmt.Fprintln(streams.Out, "tokens. Review its contents, then attach it to your report.")
 	return path, nil
 }
 

@@ -46,7 +46,7 @@ const forgetIntro = "Forgetting session %s: deleting its records that have not b
 // left to the acknowledgement it waits for. A batch the service stored
 // whose acknowledgement has not arrived yet is uploaded data, and is
 // deleted where uploaded data is.
-func (m *Machine) Forget(sessionID string, io IO) error {
+func (m *Machine) Forget(sessionID string, streams IO) error {
 	if sessionID == "" {
 		return errors.New("no session id to forget")
 	}
@@ -54,7 +54,7 @@ func (m *Machine) Forget(sessionID string, io IO) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(io.Out, forgetIntro, sessionID)
+	fmt.Fprintf(streams.Out, forgetIntro, sessionID)
 	rawcalls, records, err := sp.DeleteSession(sessionID)
 	if err != nil {
 		return fmt.Errorf("deleting session %s: %w", sessionID, err)
@@ -66,6 +66,6 @@ func (m *Machine) Forget(sessionID string, io IO) error {
 	// One count, because the user asked one question: how much of this
 	// session is gone. Which store held a record is how this machine
 	// keeps records, not something the user chose.
-	fmt.Fprintf(io.Out, "Deleted %d record(s) of session %s.\n", rawcalls+records+quarantined, sessionID)
+	fmt.Fprintf(streams.Out, "Deleted %d record(s) of session %s.\n", rawcalls+records+quarantined, sessionID)
 	return nil
 }

@@ -92,21 +92,21 @@ func projectHooks(execPath string) claudesettings.HookCommands {
 // the one answer enable ever waits for is given with the facts in
 // view. Re-running enable on an enabled project walks the same steps:
 // that is how an injection made by an older build is completed.
-func (m *Machine) enableProject(projectDir string, choices EnableChoices, io IO) error {
+func (m *Machine) enableProject(projectDir string, choices EnableChoices, streams IO) error {
 	shape := choices.Shape
 	// Every prompt in one enable must read through one buffered reader: a
 	// second bufio over the same stream would find the bytes the first
 	// one buffered ahead already gone. bufio.NewReader hands this same
 	// reader back when the prompts wrap it again.
-	io.In = bufio.NewReader(io.In)
+	streams.In = bufio.NewReader(streams.In)
 	st, err := m.Project(projectDir)
 	if err != nil {
 		return err
 	}
-	if err := m.confirmAgreement(io); err != nil {
+	if err := m.confirmAgreement(streams); err != nil {
 		return err
 	}
-	if proceed, err := m.confirmHooksWillRun(io, st.Root, shape); err != nil || !proceed {
+	if proceed, err := m.confirmHooksWillRun(streams, st.Root, shape); err != nil || !proceed {
 		return err
 	}
 
@@ -139,7 +139,7 @@ func (m *Machine) enableProject(projectDir string, choices EnableChoices, io IO)
 		// do for a masked upstream. Repair must not re-key the upstream
 		// any more than it re-keys the token. 2026-08-14.
 		upstream = st.Upstream
-		fmt.Fprintf(io.Out, "Keeping the base URL this project was enabled with: %s\n", upstream)
+		fmt.Fprintf(streams.Out, "Keeping the base URL this project was enabled with: %s\n", upstream)
 	case want.masked && !keep:
 		// Masked and nothing of this project's own to fall back on: our
 		// injection stands in the shell where the user's own base URL
@@ -155,10 +155,10 @@ func (m *Machine) enableProject(projectDir string, choices EnableChoices, io IO)
 		// one path that did not. 2026-08-16.
 		return ErrUpstreamMasked
 	case want.external:
-		fmt.Fprintf(io.Out, "Detected an existing base URL (%s): %s\n", want.source, want.upstream)
-		fmt.Fprintln(io.Out, "Your traffic will keep flowing through it unchanged. Records from this")
-		fmt.Fprintln(io.Out, "project are marked as third-party origin; reward terms are the same")
-		fmt.Fprintln(io.Out, "regardless of origin.")
+		fmt.Fprintf(streams.Out, "Detected an existing base URL (%s): %s\n", want.source, want.upstream)
+		fmt.Fprintln(streams.Out, "Your traffic will keep flowing through it unchanged. Records from this")
+		fmt.Fprintln(streams.Out, "project are marked as third-party origin; reward terms are the same")
+		fmt.Fprintln(streams.Out, "regardless of origin.")
 	}
 
 	// Nothing may enter the routing table that the data path cannot
@@ -185,14 +185,14 @@ func (m *Machine) enableProject(projectDir string, choices EnableChoices, io IO)
 	// not act on is not a fact about this install.
 	var earlier discover.Result
 	if choices.SkipEarlier {
-		fmt.Fprintln(io.Out, report.EarlierSessionsSkipped)
+		fmt.Fprintln(streams.Out, report.EarlierSessionsSkipped)
 	} else {
 		earlier, err = discover.Walk(st.Root, m.claude().ConfigDir)
 		if err != nil {
 			return fmt.Errorf("looking for this project's session files: %w", err)
 		}
 		for _, line := range report.EarlierSessionLines(earlier) {
-			fmt.Fprintln(io.Out, line)
+			fmt.Fprintln(streams.Out, line)
 		}
 	}
 
@@ -212,7 +212,7 @@ func (m *Machine) enableProject(projectDir string, choices EnableChoices, io IO)
 	}
 
 	var ledger enableLedger
-	if err := m.installAndVerify(io, st, upstream, choices, earlier, prior, &ledger); err != nil {
+	if err := m.installAndVerify(streams, st, upstream, choices, earlier, prior, &ledger); err != nil {
 		if undoErr := ledger.undo(); undoErr != nil {
 			return fmt.Errorf("%w (rollback incomplete: %v)", err, undoErr)
 		}
@@ -243,7 +243,7 @@ func (m *Machine) readBeforeChanging(st report.ProjectStatus) (priorState, error
 	return prior, err
 }
 
-func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream string, choices EnableChoices, earlier discover.Result, prior priorState, ledger *enableLedger) error {
+func (m *Machine) installAndVerify(streams IO, st report.ProjectStatus, upstream string, choices EnableChoices, earlier discover.Result, prior priorState, ledger *enableLedger) error {
 	shape := choices.Shape
 	token, err := projectToken(st)
 	if err != nil {
@@ -279,22 +279,22 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 			return fmt.Errorf("registering this project's session files: %w", err)
 		}
 	}
-	m.offerOptionalSettings(io, st)
+	m.offerOptionalSettings(streams, st)
 	ledger.record(prior.settings.restore)
 	restored, unrestored, err := m.injectProject(st, token, shape)
 	if err != nil {
 		return fmt.Errorf("injecting %s: %w", settingsPath, err)
 	}
 	if restored != "" {
-		fmt.Fprintf(io.Out, "Restored your own base URL in %s: %s\n", settingsPath, restored)
+		fmt.Fprintf(streams.Out, "Restored your own base URL in %s: %s\n", settingsPath, restored)
 	}
 	if unrestored != "" {
-		fmt.Fprintf(io.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(settingsPath, unrestored))
+		fmt.Fprintf(streams.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(settingsPath, unrestored))
 	}
 	if shape == routing.WithoutProxy {
-		fmt.Fprintf(io.Out, "Injected %s (session hooks, no base URL)\n", settingsPath)
+		fmt.Fprintf(streams.Out, "Injected %s (session hooks, no base URL)\n", settingsPath)
 	} else {
-		fmt.Fprintf(io.Out, "Injected %s (base URL and session hooks)\n", settingsPath)
+		fmt.Fprintf(streams.Out, "Injected %s (base URL and session hooks)\n", settingsPath)
 	}
 
 	var appended []string
@@ -314,19 +314,19 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 		}
 	}
 	if len(appended) > 0 {
-		fmt.Fprintf(io.Out, "Added %s to .gitignore\n", strings.Join(appended, ", "))
+		fmt.Fprintf(streams.Out, "Added %s to .gitignore\n", strings.Join(appended, ", "))
 	}
 	if symlinked {
-		fmt.Fprintf(io.Err, "WARNING: .gitignore is a symbolic link and was left alone; add %s to your git ignores so the injected settings and diagnostic bundles are never committed.\n", strings.Join(projectIgnoreRules, ", "))
+		fmt.Fprintf(streams.Err, "WARNING: .gitignore is a symbolic link and was left alone; add %s to your git ignores so the injected settings and diagnostic bundles are never committed.\n", strings.Join(projectIgnoreRules, ", "))
 	}
 
 	if err := m.selfCheck(token, shape); err != nil {
 		return err
 	}
 	if shape == routing.WithoutProxy {
-		fmt.Fprintln(io.Out, "Self-check passed: the resident process is up.")
+		fmt.Fprintln(streams.Out, "Self-check passed: the resident process is up.")
 	} else {
-		fmt.Fprintln(io.Out, "Self-check passed: routing and recording verified end to end.")
+		fmt.Fprintln(streams.Out, "Self-check passed: routing and recording verified end to end.")
 	}
 	// The files just registered are read from here, not from the next
 	// session hook: a hook names the session it belongs to, and the
@@ -341,15 +341,15 @@ func (m *Machine) installAndVerify(io IO, st report.ProjectStatus, upstream stri
 	// follows may fail for the same reason this run did.
 	if len(toRead) > 0 {
 		if err := m.readEarlierSessions(st, toRead); err != nil {
-			fmt.Fprintf(io.Err, "WARNING: %d earlier session record(s) are registered but nothing could be asked to read them now (%v). Run `trajector doctor` to ask again. The next session of this project reads them too, where a reader can be started for it.\n", len(toRead), err)
+			fmt.Fprintf(streams.Err, "WARNING: %d earlier session record(s) are registered but nothing could be asked to read them now (%v). Run `trajector doctor` to ask again. The next session of this project reads them too, where a reader can be started for it.\n", len(toRead), err)
 		} else {
-			fmt.Fprintf(io.Out, "Reading %d earlier session record(s) in the background.\n", len(toRead))
+			fmt.Fprintf(streams.Out, "Reading %d earlier session record(s) in the background.\n", len(toRead))
 		}
 	}
-	fmt.Fprintln(io.Out, report.ShapeNotice(shape))
-	fmt.Fprintln(io.Out, report.UnwitnessedReward)
-	fmt.Fprintln(io.Out, contributesNow)
-	fmt.Fprintln(io.Out, m.verdict(st.Root))
+	fmt.Fprintln(streams.Out, report.ShapeNotice(shape))
+	fmt.Fprintln(streams.Out, report.UnwitnessedReward)
+	fmt.Fprintln(streams.Out, contributesNow)
+	fmt.Fprintln(streams.Out, m.verdict(st.Root))
 	return nil
 }
 
@@ -389,25 +389,25 @@ func (m *Machine) hookPolicy(root string) claudesettings.HookPolicy {
 // what is said. Where the hooks are the only source an enable would
 // install something that records nothing, so the one question enable
 // adds is asked here, and a no leaves every file as it was.
-func (m *Machine) confirmHooksWillRun(io IO, root string, shape routing.Shape) (bool, error) {
+func (m *Machine) confirmHooksWillRun(streams IO, root string, shape routing.Shape) (bool, error) {
 	outlook := report.ExplainHooks(m.hookPolicy(root), shape)
 	if outlook.Runs {
 		return true, nil
 	}
 	if !outlook.RecordsNothing {
 		for _, line := range outlook.Lines() {
-			fmt.Fprintln(io.Out, line)
+			fmt.Fprintln(streams.Out, line)
 		}
 		return true, nil
 	}
-	fmt.Fprintln(io.Out, outlook.Judgement)
-	fmt.Fprintln(io.Out, noProxyRecordsNothing)
-	yes, err := askYesNo(io, "Enable anyway? [y/N] ", false)
+	fmt.Fprintln(streams.Out, outlook.Judgement)
+	fmt.Fprintln(streams.Out, noProxyRecordsNothing)
+	yes, err := askYesNo(streams, "Enable anyway? [y/N] ", false)
 	if err != nil {
 		return false, fmt.Errorf("reading the answer: %w", err)
 	}
 	if !yes {
-		fmt.Fprintln(io.Out, "Nothing was changed.")
+		fmt.Fprintln(streams.Out, "Nothing was changed.")
 	}
 	return yes, nil
 }
@@ -514,7 +514,7 @@ func (m *Machine) unreadSessions(st report.ProjectStatus) ([]string, error) {
 // confirmAgreement shows the agreement and records the explicit
 // answer. An acceptance recorded for an older agreement version is
 // stale: the terms changed, so the user must confirm again.
-func (m *Machine) confirmAgreement(io IO) error {
+func (m *Machine) confirmAgreement(streams IO) error {
 	// Bytes that are not a consent record establish no acceptance, so
 	// the agreement is shown in full and accepted again: this command
 	// is what the unreadable-record pause tells the user to run, and it
@@ -533,13 +533,13 @@ func (m *Machine) confirmAgreement(io IO) error {
 		return nil
 	}
 	if version != "" {
-		fmt.Fprintln(io.Out, "The data agreement changed since you last accepted it.")
+		fmt.Fprintln(streams.Out, "The data agreement changed since you last accepted it.")
 	}
-	fmt.Fprintln(io.Out, consent.AgreementText)
-	fmt.Fprintln(io.Out)
-	fmt.Fprintln(io.Out, deviceWideTerms)
-	fmt.Fprintln(io.Out)
-	yes, err := askYesNo(io, "Do you accept the data agreement? [yes/no]: ", false)
+	fmt.Fprintln(streams.Out, consent.AgreementText)
+	fmt.Fprintln(streams.Out)
+	fmt.Fprintln(streams.Out, deviceWideTerms)
+	fmt.Fprintln(streams.Out)
+	yes, err := askYesNo(streams, "Do you accept the data agreement? [yes/no]: ", false)
 	if err != nil {
 		return fmt.Errorf("reading agreement answer: %w", err)
 	}

@@ -28,7 +28,7 @@ type withdrawal struct {
 // rerunning completes the remainder. The session files themselves are
 // Claude Code's and the user's: withdrawing drops what this tool keeps
 // about them and touches none of them.
-func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
+func (m *Machine) disableProject(projectDir string, streams IO) (withdrawal, error) {
 	st, err := m.Project(projectDir)
 	if err != nil {
 		return withdrawal{}, err
@@ -49,7 +49,7 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 		// same way spooled rawcalls can — an earlier disable that failed to
 		// restore kept the record — so the rerun reaches for it here too.
 		undone, failures := m.restoreRecordedSettings(st.Root, st.Hash, claudesettings.OptionalSettings)
-		reportRestoredSettings(io, "", undone, failures)
+		reportRestoredSettings(streams, "", undone, failures)
 		if err := m.unregisterSessionFiles(st.Hash); err != nil {
 			return w, err
 		}
@@ -57,11 +57,11 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 			return w, fmt.Errorf("deleting local unuploaded data: %w", err)
 		}
 		if w.spooled+w.rejected == 0 && len(undone)+len(failures) == 0 {
-			fmt.Fprintln(io.Out, "This project is not enabled; nothing to do.")
+			fmt.Fprintln(streams.Out, "This project is not enabled; nothing to do.")
 			return w, nil
 		}
-		reportPurge(io, w)
-		fmt.Fprintln(io.Out, "This project no longer contributes data.")
+		reportPurge(streams, w)
+		fmt.Fprintln(streams.Out, "This project no longer contributes data.")
 		return w, nil
 	}
 
@@ -70,21 +70,21 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 	if err != nil {
 		return w, err
 	}
-	fmt.Fprintf(io.Out, "Removed injection from %s\n", settingsPath)
+	fmt.Fprintf(streams.Out, "Removed injection from %s\n", settingsPath)
 	if restored != "" {
-		fmt.Fprintf(io.Out, "Restored your own base URL in %s: %s\n", settingsPath, restored)
+		fmt.Fprintf(streams.Out, "Restored your own base URL in %s: %s\n", settingsPath, restored)
 	}
 	if unrestored != "" {
-		fmt.Fprintf(io.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(settingsPath, unrestored))
+		fmt.Fprintf(streams.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(settingsPath, unrestored))
 	}
 	undoneSettings, settingFailures := m.restoreRecordedSettings(st.Root, st.Hash, claudesettings.OptionalSettings)
-	reportRestoredSettings(io, "", undoneSettings, settingFailures)
+	reportRestoredSettings(streams, "", undoneSettings, settingFailures)
 
 	now := m.now()
 	if err := m.routes.Revoke(st.Root, now); err != nil {
 		return w, fmt.Errorf("revoking the project token: %w", err)
 	}
-	fmt.Fprintln(io.Out, "Project token revoked; recording for this project is off.")
+	fmt.Fprintln(streams.Out, "Project token revoked; recording for this project is off.")
 	if err := m.unregisterSessionFiles(st.Hash); err != nil {
 		return w, err
 	}
@@ -96,8 +96,8 @@ func (m *Machine) disableProject(projectDir string, io IO) (withdrawal, error) {
 	if err := m.purgeProjectRecords(st.Hash, &w); err != nil {
 		return w, fmt.Errorf("deleting local unuploaded data: %w", err)
 	}
-	reportPurge(io, w)
-	fmt.Fprintln(io.Out, "This project no longer contributes data.")
+	reportPurge(streams, w)
+	fmt.Fprintln(streams.Out, "This project no longer contributes data.")
 	return w, nil
 }
 
@@ -277,9 +277,9 @@ func (m *Machine) purgeProjectRecords(projectIDHash string, w *withdrawal) error
 	return errors.Join(errs...)
 }
 
-func reportPurge(io IO, w withdrawal) {
+func reportPurge(streams IO, w withdrawal) {
 	if deleted := w.spooled + w.rejected; deleted > 0 {
-		fmt.Fprintf(io.Out, "Deleted %d unuploaded record(s) for this project (%d from the spool, %d from rejected batches).\n",
+		fmt.Fprintf(streams.Out, "Deleted %d unuploaded record(s) for this project (%d from the spool, %d from rejected batches).\n",
 			deleted, w.spooled, w.rejected)
 	}
 }

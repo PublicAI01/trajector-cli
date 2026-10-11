@@ -20,7 +20,7 @@ import (
 // ask must never break enable. Every question points the same way: yes
 // means the setting is on. An answer that keeps the file as it is never
 // touches it; only an explicit answer in the other direction writes.
-func (m *Machine) offerOptionalSettings(io IO, st report.ProjectStatus) {
+func (m *Machine) offerOptionalSettings(streams IO, st report.ProjectStatus) {
 	// A decision store that cannot be read leaves writtenByUs unknowable;
 	// every true then classifies as the user's own, which disable will
 	// never delete. Failing toward not touching the user's value.
@@ -31,54 +31,54 @@ func (m *Machine) offerOptionalSettings(io IO, st report.ProjectStatus) {
 	for _, s := range claudesettings.OptionalSettings {
 		d, recorded := decisions[s.Key]
 		status := claudesettings.ClassifySetting(st.Root, m.claude(), s.Key, recorded && wroteSetting(d))
-		fmt.Fprintf(io.Out, "\nOptional setting for this project\n\n")
+		fmt.Fprintf(streams.Out, "\nOptional setting for this project\n\n")
 		switch status.State {
 		case claudesettings.OnByUser:
-			printWrapped(io.Out, statementIndent, fmt.Sprintf(
+			printWrapped(streams.Out, statementIndent, fmt.Sprintf(
 				"%s is already true in your %s. Nothing to change. %s",
 				s.Key, status.Source, s.AlreadyOn))
 		case claudesettings.OnByUs:
-			printWrapped(io.Out, statementIndent, fmt.Sprintf(
+			printWrapped(streams.Out, statementIndent, fmt.Sprintf(
 				"%s is on for this project; trajector set it when you enabled. `trajector disable` puts it back.", s.Key))
-			fmt.Fprintln(io.Out)
-			keep, err := askYesNo(io, "Keep it on? [Y/n] ", true)
+			fmt.Fprintln(streams.Out)
+			keep, err := askYesNo(streams, "Keep it on? [Y/n] ", true)
 			if err != nil {
-				printNeedsInteractive(io)
+				printNeedsInteractive(streams)
 				return
 			}
 			if !keep {
 				undone, failures := m.restoreRecordedSettings(st.Root, st.Hash, []claudesettings.OptionalSetting{s})
-				reportRestoredSettings(io, "  ", undone, failures)
+				reportRestoredSettings(streams, "  ", undone, failures)
 			}
 		case claudesettings.OffByUser:
-			printWrapped(io.Out, statementIndent, fmt.Sprintf("You have %s set to false in your %s.", s.Key, status.Source))
-			fmt.Fprintln(io.Out)
-			printWrapped(io.Out, statementIndent, fmt.Sprintf(
+			printWrapped(streams.Out, statementIndent, fmt.Sprintf("You have %s set to false in your %s.", s.Key, status.Source))
+			fmt.Fprintln(streams.Out)
+			printWrapped(streams.Out, statementIndent, fmt.Sprintf(
 				"Confirming would set it to %v for this project only, overriding that. "+
 					"You can leave it as false and nothing else changes — recording, "+
 					"rewards, and every other part of trajector work the same.", s.Target))
-			fmt.Fprintln(io.Out)
-			printDisclosures(io.Out, s.Disclosures)
-			fmt.Fprintln(io.Out)
-			yes, err := askYesNo(io, "Turn it on for this project? [y/N] ", false)
+			fmt.Fprintln(streams.Out)
+			printDisclosures(streams.Out, s.Disclosures)
+			fmt.Fprintln(streams.Out)
+			yes, err := askYesNo(streams, "Turn it on for this project? [y/N] ", false)
 			if err != nil {
-				printNeedsInteractive(io)
+				printNeedsInteractive(streams)
 				return
 			}
-			m.applySettingAnswer(io, st, s, yes)
+			m.applySettingAnswer(streams, st, s, yes)
 		default: // Unset
-			printWrapped(io.Out, statementIndent, s.Intro)
-			fmt.Fprintln(io.Out)
-			printDisclosures(io.Out, s.Disclosures)
-			fmt.Fprintln(io.Out)
-			printWrapped(io.Out, statementIndent, s.Fact)
-			fmt.Fprintln(io.Out)
-			yes, err := askYesNo(io, "Turn it on? [Y/n] ", true)
+			printWrapped(streams.Out, statementIndent, s.Intro)
+			fmt.Fprintln(streams.Out)
+			printDisclosures(streams.Out, s.Disclosures)
+			fmt.Fprintln(streams.Out)
+			printWrapped(streams.Out, statementIndent, s.Fact)
+			fmt.Fprintln(streams.Out)
+			yes, err := askYesNo(streams, "Turn it on? [Y/n] ", true)
 			if err != nil {
-				printNeedsInteractive(io)
+				printNeedsInteractive(streams)
 				return
 			}
-			m.applySettingAnswer(io, st, s, yes)
+			m.applySettingAnswer(streams, st, s, yes)
 		}
 	}
 }
@@ -111,13 +111,13 @@ func (m *Machine) optionalSettingStatuses(st report.ProjectStatus) []report.Opti
 // without its write restores nothing, because RestoreTopLevelBool acts
 // only when the current value is the one trajector wrote. The failure
 // that can land between the two is the harmless one in this order.
-func (m *Machine) applySettingAnswer(io IO, st report.ProjectStatus, s claudesettings.OptionalSetting, accepted bool) {
+func (m *Machine) applySettingAnswer(streams IO, st report.ProjectStatus, s claudesettings.OptionalSetting, accepted bool) {
 	if !accepted {
 		if err := m.consent.SetSettingDecision(st.Hash, s.Key, consent.SettingDecision{
 			Answer:    consent.AnswerDeclined,
 			DecidedAt: m.now(),
 		}); err != nil {
-			fmt.Fprintf(io.Err, "trajector: WARNING: could not record your answer for %s: %v\n", s.Key, err)
+			fmt.Fprintf(streams.Err, "trajector: WARNING: could not record your answer for %s: %v\n", s.Key, err)
 		}
 		return
 	}
@@ -133,7 +133,7 @@ func (m *Machine) applySettingAnswer(io IO, st report.ProjectStatus, s claudeset
 		Prior:     prior,
 		DecidedAt: m.now(),
 	}); err != nil {
-		fmt.Fprintf(io.Err, "trajector: WARNING: could not turn on %s; nothing was changed: %v\n", s.Key, err)
+		fmt.Fprintf(streams.Err, "trajector: WARNING: could not turn on %s; nothing was changed: %v\n", s.Key, err)
 		return
 	}
 	if prior == consent.PriorTrue {
@@ -145,7 +145,7 @@ func (m *Machine) applySettingAnswer(io IO, st report.ProjectStatus, s claudeset
 		// The record just made claims a write that did not happen; taking
 		// it back keeps a rerun asking instead of standing on a stale claim.
 		_ = m.consent.ClearSettingDecision(st.Hash, s.Key)
-		fmt.Fprintf(io.Err, "trajector: WARNING: could not turn on %s; nothing was changed: %v\n", s.Key, err)
+		fmt.Fprintf(streams.Err, "trajector: WARNING: could not turn on %s; nothing was changed: %v\n", s.Key, err)
 	}
 }
 
@@ -222,12 +222,12 @@ func settingRestoredLine(key string) string {
 // reportRestoredSettings prints setting restores and their failures the
 // same way on every surface; the indent is the only thing the surfaces
 // disagree on.
-func reportRestoredSettings(io IO, indent string, undone []string, failures []error) {
+func reportRestoredSettings(streams IO, indent string, undone []string, failures []error) {
 	for _, key := range undone {
-		fmt.Fprintf(io.Out, "%s%s\n", indent, settingRestoredLine(key))
+		fmt.Fprintf(streams.Out, "%s%s\n", indent, settingRestoredLine(key))
 	}
 	for _, err := range failures {
-		fmt.Fprintf(io.Err, "trajector: WARNING: %v\n", err)
+		fmt.Fprintf(streams.Err, "trajector: WARNING: %v\n", err)
 	}
 }
 
@@ -236,9 +236,9 @@ func reportRestoredSettings(io IO, indent string, undone []string, failures []er
 // either: the read yields no answer at all, which is what a script, a
 // pipeline, or a closed stdin look like — and none of the disclosure
 // conditions can be met when nobody is reading.
-func printNeedsInteractive(io IO) {
-	fmt.Fprintln(io.Out, "Optional settings were not changed: they need an interactive session.")
-	fmt.Fprintln(io.Out, "Run `trajector enable` from a terminal to review them.")
+func printNeedsInteractive(streams IO) {
+	fmt.Fprintln(streams.Out, "Optional settings were not changed: they need an interactive session.")
+	fmt.Fprintln(streams.Out, "Run `trajector enable` from a terminal to review them.")
 }
 
 // Rendering re-wraps the finalized disclosure wording; it never rewrites

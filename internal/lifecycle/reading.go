@@ -99,12 +99,12 @@ func (m *Machine) readEarlierSessions(st report.ProjectStatus, sessions []string
 // alone. What each record states about this client is the shape the
 // grant records, never a reading of the settings file, so a
 // hand-edited file cannot make two runs disagree about one project.
-func (m *Machine) ReadSessionFiles(projectDir string, io IO) {
+func (m *Machine) ReadSessionFiles(projectDir string, streams IO) {
 	st, err := m.Project(projectDir)
 	if err != nil || !st.Enabled || !st.Injected {
 		return
 	}
-	defer func() { _ = m.EnsureProxy(projectDir, io) }()
+	defer func() { _ = m.EnsureProxy(projectDir, streams) }()
 
 	sp, err := m.spool()
 	if err != nil {

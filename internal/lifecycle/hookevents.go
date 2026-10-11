@@ -35,8 +35,8 @@ import (
 // not be brought up hears that instead, and stays untold about the
 // device: one hook writes one line, and the failure the user can act on
 // now is the one worth that line.
-func (m *Machine) SessionStarting(cwd string, hook HookInput, io IO) (tell bool, err error) {
-	err = m.EnsureProxy(cwd, io)
+func (m *Machine) SessionStarting(cwd string, hook HookInput, streams IO) (tell bool, err error) {
+	err = m.EnsureProxy(cwd, streams)
 	m.followAndObserve(cwd, hook, false)
 	if err != nil {
 		return false, err

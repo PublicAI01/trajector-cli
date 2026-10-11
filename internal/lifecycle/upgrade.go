@@ -22,7 +22,7 @@ var managerHandback = map[selfupdate.Manager]struct{ name, command string }{
 // upgrade, never what it upgrades to. Every exit that does not replace
 // the binary leaves it exactly as it was — an upgrade that cannot
 // happen must never cost the user a working trajector.
-func (m *Machine) Upgrade(io IO) error {
+func (m *Machine) Upgrade(streams IO) error {
 	out, err := selfupdate.Upgrade(m.deps.ExecPath, m.deps.Version, m.deps.Releases)
 	if err != nil {
 		return err
@@ -30,19 +30,19 @@ func (m *Machine) Upgrade(io IO) error {
 	switch out.Kind {
 	case selfupdate.Managed:
 		hand := managerHandback[out.Manager]
-		fmt.Fprintf(io.Out, "This trajector was installed with %s, which owns the binary.\n", hand.name)
-		fmt.Fprintf(io.Out, "Run `%s` instead.\n", hand.command)
+		fmt.Fprintf(streams.Out, "This trajector was installed with %s, which owns the binary.\n", hand.name)
+		fmt.Fprintf(streams.Out, "Run `%s` instead.\n", hand.command)
 	case selfupdate.NotARelease:
-		fmt.Fprintf(io.Out, "This build reports version %s, which is not a published release.\n", out.From)
-		fmt.Fprintln(io.Out, "Nothing was changed.")
+		fmt.Fprintf(streams.Out, "This build reports version %s, which is not a published release.\n", out.From)
+		fmt.Fprintln(streams.Out, "Nothing was changed.")
 	case selfupdate.AlreadyNewest:
-		fmt.Fprintf(io.Out, "trajector %s is already the newest release.\n", out.From)
+		fmt.Fprintf(streams.Out, "trajector %s is already the newest release.\n", out.From)
 	case selfupdate.Upgraded:
-		fmt.Fprintf(io.Out, "Upgraded trajector %s -> %s.\n", out.From, out.To)
+		fmt.Fprintf(streams.Out, "Upgraded trajector %s -> %s.\n", out.From, out.To)
 		// The proxy this build started keeps serving until something
 		// replaces it; the takeover rule then prefers the newer release.
-		fmt.Fprintln(io.Out, "A proxy from the previous build may still be running; the next session replaces it.")
-		m.sayPauseStands(io)
+		fmt.Fprintln(streams.Out, "A proxy from the previous build may still be running; the next session replaces it.")
+		m.sayPauseStands(streams)
 	default:
 		// Every outcome owes the user a sentence. An outcome no case
 		// above answers is a gap in this switch, and saying nothing at
@@ -59,12 +59,12 @@ func (m *Machine) Upgrade(io IO) error {
 // build cannot read leaves the line out: the upgrade is already done,
 // and a failure to add a hint to it must not report the upgrade as
 // failed.
-func (m *Machine) sayPauseStands(io IO) {
+func (m *Machine) sayPauseStands(streams IO) {
 	paused, err := m.routes.PausedReason()
 	if err != nil {
 		return
 	}
 	if next := paused.ExplainAfterUpgrade(); next != "" {
-		fmt.Fprintln(io.Out, next)
+		fmt.Fprintln(streams.Out, next)
 	}
 }

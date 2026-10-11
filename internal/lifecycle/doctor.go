@@ -22,8 +22,8 @@ import (
 // it. It returns how many problems remain unresolved. Repairs only ever
 // touch state trajector itself wrote, and every repair is idempotent:
 // running doctor twice is always safe.
-func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
-	fmt.Fprintf(io.Out, "trajector %s doctor\n\n", m.deps.Version)
+func (m *Machine) Doctor(dir string, streams IO) (problems int, err error) {
+	fmt.Fprintf(streams.Out, "trajector %s doctor\n\n", m.deps.Version)
 
 	// An upgrade that could not delete the binary it replaced — on
 	// Windows the previous one is still the running image — leaves a
@@ -92,12 +92,12 @@ func (m *Machine) Doctor(dir string, io IO) (problems int, err error) {
 	report.DoctorEnvironment(f)
 	m.doctorSelfcheck(f, d)
 
-	f.Render(io.Out, io.OutStyle)
-	fmt.Fprintln(io.Out)
+	f.Render(streams.Out, streams.OutStyle)
+	fmt.Fprintln(streams.Out)
 	if f.Problems() == 0 {
-		fmt.Fprintln(io.Out, "Everything checks out.")
+		fmt.Fprintln(streams.Out, "Everything checks out.")
 	} else {
-		fmt.Fprintf(io.Out, "%d problem(s) need attention.\n", f.Problems())
+		fmt.Fprintf(streams.Out, "%d problem(s) need attention.\n", f.Problems())
 	}
 	return f.Problems(), nil
 }

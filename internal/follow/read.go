@@ -69,14 +69,14 @@ type ReadOptions struct {
 	Root string
 	// Authorized reports whether consent covers the directory a session
 	// moved to. Nil means exactly Root and nothing else.
-	Authorized func(path string) bool
+	Authorized func(dir string) bool
 }
 
-func (o ReadOptions) authorized() func(path string) bool {
+func (o ReadOptions) authorized() func(dir string) bool {
 	if o.Authorized != nil {
 		return o.Authorized
 	}
-	return func(path string) bool { return path == o.Root }
+	return func(dir string) bool { return dir == o.Root }
 }
 
 // ReadResult is what one observation of a registered file produced.
@@ -406,11 +406,11 @@ func readMeta(res ReadResult, st Stat, capture envelope.Capture, sessionOutside 
 // identify names the session a file belongs to and the file's place in
 // the session's directory: "" for the main file, and the path under the
 // session directory for an agent file.
-func identify(path string) (sessionID, file string) {
-	if sessionDir, file, at := agentFileOf(path); at != notAgentFile {
+func identify(sessionFile string) (sessionID, file string) {
+	if sessionDir, file, at := agentFileOf(sessionFile); at != notAgentFile {
 		return filepath.Base(sessionDir), file
 	}
-	return strings.TrimSuffix(filepath.Base(path), linesExt), ""
+	return strings.TrimSuffix(filepath.Base(sessionFile), linesExt), ""
 }
 
 // place is which of the places agentFileOf accepts holds a file.

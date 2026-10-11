@@ -26,16 +26,16 @@ func (m *Machine) pairingWindow() time.Duration {
 // Login pairs this device, or completes the signed-in state when it is
 // already paired. Either way it ends in the same place: token stored,
 // recording resumed, discovery hint installed.
-func (m *Machine) Login(io IO) error {
+func (m *Machine) Login(streams IO) error {
 	if m.Paired() {
-		fmt.Fprintln(io.Out, "This device is already paired.")
-		return m.finishLogin(io)
+		fmt.Fprintln(streams.Out, "This device is already paired.")
+		return m.finishLogin(streams)
 	}
-	return m.pair(io)
+	return m.pair(streams)
 }
 
 // pair runs the browser pairing flow and signs the device in.
-func (m *Machine) pair(io IO) error {
+func (m *Machine) pair(streams IO) error {
 	// A new pairing can be under another account, where none of the
 	// images and documents this device sent before are held. The record
 	// goes before the service is asked for anything: once the service
@@ -47,11 +47,11 @@ func (m *Machine) pair(io IO) error {
 	if err != nil {
 		return fmt.Errorf("starting pairing: %w", err)
 	}
-	fmt.Fprintf(io.Out, "To pair this device, open:\n\n  %s\n\n", pairing.VerificationURL)
+	fmt.Fprintf(streams.Out, "To pair this device, open:\n\n  %s\n\n", pairing.VerificationURL)
 	if pairing.UserCode != "" {
-		fmt.Fprintf(io.Out, "and confirm that the page shows code %s.\n", pairing.UserCode)
+		fmt.Fprintf(streams.Out, "and confirm that the page shows code %s.\n", pairing.UserCode)
 	}
-	fmt.Fprintln(io.Out, "Waiting for approval...")
+	fmt.Fprintln(streams.Out, "Waiting for approval...")
 
 	// Measured on the wall clock, never against deps.Now: that clock is
 	// pinned to a fixed instant by the test harness and by TRAJECTOR_NOW,
@@ -81,8 +81,8 @@ func (m *Machine) pair(io IO) error {
 			if err := m.tokens.SetDeviceToken(result.DeviceToken); err != nil {
 				return fmt.Errorf("storing the device token: %w", err)
 			}
-			fmt.Fprintln(io.Out, "Device paired.")
-			return m.finishLogin(io)
+			fmt.Fprintln(streams.Out, "Device paired.")
+			return m.finishLogin(streams)
 		case result.Status == platform.PairingExpired:
 			return errors.New("the pairing link expired; run `trajector login` again")
 		default:
@@ -100,7 +100,7 @@ func (m *Machine) pair(io IO) error {
 
 // finishLogin applies the signed-in side effects that must hold whether
 // this was a fresh pairing or a re-login.
-func (m *Machine) finishLogin(io IO) error {
+func (m *Machine) finishLogin(streams IO) error {
 	if err := m.routes.Resume(routing.PauseSignedOut); err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func (m *Machine) finishLogin(io IO) error {
 	// device has just been given, so the refusal goes with the pairing
 	// it was answered about rather than waiting for a flush to find out.
 	if err := upload.ClearCredentialRefusal(m.deps.Layout.UploadDir()); err != nil {
-		fmt.Fprintf(io.Err, "trajector: warning: could not clear the recorded upload refusal: %v\n", err)
+		fmt.Fprintf(streams.Err, "trajector: warning: could not clear the recorded upload refusal: %v\n", err)
 	}
 	userSettings := m.claude().UserSettingsPath()
 	if !claudesettings.HasHook(userSettings, claudesettings.DiscoveryMarker) {
@@ -116,17 +116,17 @@ func (m *Machine) finishLogin(io IO) error {
 			return fmt.Errorf("installing the discovery hint: %w", err)
 		}
 	}
-	fmt.Fprintln(io.Out, "Recording is active for enabled projects. Run `trajector enable` inside a project to add it.")
+	fmt.Fprintln(streams.Out, "Recording is active for enabled projects. Run `trajector enable` inside a project to add it.")
 	return nil
 }
 
 // Logout signs the device out: the token is revoked with the service
 // and removed locally, and recording pauses everywhere. Forwarding for
 // enabled projects is untouched, and their grants survive.
-func (m *Machine) Logout(io IO) error {
+func (m *Machine) Logout(streams IO) error {
 	token, paired := m.deviceToken()
 	if !paired {
-		fmt.Fprintln(io.Out, "This device is not paired; nothing to do.")
+		fmt.Fprintln(streams.Out, "This device is not paired; nothing to do.")
 		return nil
 	}
 	// Recording pauses before anything else, and in particular before the
@@ -154,19 +154,19 @@ func (m *Machine) Logout(io IO) error {
 		// everything else is a warning with the right next step.
 		var status *platform.StatusError
 		if errors.As(err, &status) && status.Temporary() {
-			fmt.Fprintf(io.Err, "trajector: warning: the service could not revoke the token right now (%v); it was removed locally — retry `trajector logout` later or revoke it from your account page\n", err)
+			fmt.Fprintf(streams.Err, "trajector: warning: the service could not revoke the token right now (%v); it was removed locally — retry `trajector logout` later or revoke it from your account page\n", err)
 		} else {
-			fmt.Fprintf(io.Err, "trajector: warning: could not revoke the token with the service (%v); it was removed locally, revoke it from your account page as well\n", err)
+			fmt.Fprintf(streams.Err, "trajector: warning: could not revoke the token with the service (%v); it was removed locally, revoke it from your account page as well\n", err)
 		}
 	}
 	if err := m.tokens.ClearDeviceToken(); err != nil {
 		return fmt.Errorf("removing the device token: %w", err)
 	}
-	fmt.Fprintln(io.Out, "Signed out. Forwarding for enabled projects is unaffected, and kept data")
-	fmt.Fprintln(io.Out, "uploads once you are back.")
+	fmt.Fprintln(streams.Out, "Signed out. Forwarding for enabled projects is unaffected, and kept data")
+	fmt.Fprintln(streams.Out, "uploads once you are back.")
 	// The pause this command just set is stated in the words every other
 	// surface uses for it, so the user reads the same stop and the same
 	// way out here as in status.
-	fmt.Fprintln(io.Out, report.PausedEverywhere(routing.PauseSignedOut.Explain()))
+	fmt.Fprintln(streams.Out, report.PausedEverywhere(routing.PauseSignedOut.Explain()))
 	return nil
 }

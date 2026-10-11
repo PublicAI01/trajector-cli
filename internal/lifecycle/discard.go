@@ -13,15 +13,15 @@ import (
 // no other way out of the quarantine. The deletion cannot be undone, so
 // a caller that has not already decided (confirmed false) is asked
 // here, before anything is removed.
-func (m *Machine) DiscardRejected(batchID string, all, confirmed bool, io IO) error {
-	ids, err := m.quarantinedBatches(batchID, all, "discard", io)
+func (m *Machine) DiscardRejected(batchID string, all, confirmed bool, streams IO) error {
+	ids, err := m.quarantinedBatches(batchID, all, "discard", streams)
 	if err != nil || len(ids) == 0 {
 		return err
 	}
 	if !confirmed {
-		yes, _ := askYesNo(io, discardPrompt(ids), false)
+		yes, _ := askYesNo(streams, discardPrompt(ids), false)
 		if !yes {
-			fmt.Fprintln(io.Out, "Nothing was discarded.")
+			fmt.Fprintln(streams.Out, "Nothing was discarded.")
 			return nil
 		}
 	}
@@ -38,10 +38,10 @@ func (m *Machine) DiscardRejected(batchID string, all, confirmed bool, io IO) er
 			failed = append(failed, err)
 			continue
 		}
-		fmt.Fprintf(io.Out, "Discarded %d record(s) from batch %s%s.\n", deleted, id, rejectionSuffix(rej))
+		fmt.Fprintf(streams.Out, "Discarded %d record(s) from batch %s%s.\n", deleted, id, rejectionSuffix(rej))
 	}
 	if discarded > 0 {
-		fmt.Fprintf(io.Out, "Deleted %d quarantined record(s) from this machine; they cannot be recovered.\n", discarded)
+		fmt.Fprintf(streams.Out, "Deleted %d quarantined record(s) from this machine; they cannot be recovered.\n", discarded)
 	}
 	return errors.Join(failed...)
 }
