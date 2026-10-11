@@ -5,6 +5,13 @@ version: 2
 
 project_name: trajector
 
+# The builds run in parallel, and the release builds have no module
+# cache: fetch every module once first, so one dropped proxy stream
+# cannot fail a build halfway.
+before:
+  hooks:
+    - go mod download
+
 builds:
   - main: ./cmd/trajector
     binary: trajector
