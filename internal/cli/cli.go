@@ -32,15 +32,15 @@ import (
 // uploads on it, so a build that cannot say which release it is gets
 // treated as one that cannot be placed.
 //
-// The fallback below narrows who ends up in that position. `go install
-// <module>@<version>` records the version it resolved, and a build from
-// a git checkout records the tag or pseudo-version the toolchain derived
-// from it; a build made either way is as identifiable as a released one,
-// and reporting "dev" for it would gate a user who is demonstrably on a
-// real release. What is left unstamped after that is a build with no
-// version control information at all, and for that one "dev" is the
-// honest answer: nothing here knows which release it is, and the service
-// must not assume.
+// The fallback in buildVersion narrows who ends up in that position.
+// `go install <module>@<version>` records the version it resolved, and
+// a build from a git checkout records the tag or pseudo-version the
+// toolchain derived from it; a build made either way is as identifiable
+// as a released one, and reporting "dev" for it would gate a user who
+// is demonstrably on a real release. What is left unstamped after that
+// is a build with no version control information at all, and for that
+// one "dev" is the honest answer: nothing here knows which release it
+// is, and the service must not assume.
 var version = unstampedVersion
 
 // unstampedVersion is what version holds when the linker did not stamp
@@ -49,15 +49,20 @@ var version = unstampedVersion
 // here would run afterwards and overwrite the stamp.
 const unstampedVersion = "dev"
 
-func init() {
+// buildVersion is the version this build reports: the stamped one, or
+// else the one the toolchain recorded, or else unstampedVersion. It is
+// computed on read so that version itself keeps the constant
+// initializer -X needs.
+func buildVersion() string {
 	if version != unstampedVersion {
-		return
+		return version
 	}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		if v := info.Main.Version; v != "" && v != "(devel)" {
-			version = v
+			return v
 		}
 	}
+	return version
 }
 
 // ProxyAddrEnv overrides the proxy address, for tests and unusual
@@ -140,7 +145,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if code, answered := a.preparse("usage: trajector version", args[1:], nil); answered {
 			return code
 		}
-		fmt.Fprintf(stdout, "trajector %s\n", version)
+		fmt.Fprintf(stdout, "trajector %s\n", buildVersion())
 		return 0
 	case "login":
 		return a.loginCmd(args[1:])
@@ -297,7 +302,7 @@ func openMachine(addr string, showsConfigErr bool) (*lifecycle.Machine, error) {
 	deps := lifecycle.Deps{
 		Layout:      env.layout,
 		PlatformURL: env.platformURL,
-		Version:     version,
+		Version:     buildVersion(),
 		ExecPath:    env.execPath,
 		Releases:    env.releasesURL,
 		ProxyAddr:   env.proxyAddr,
