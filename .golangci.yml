@@ -1,0 +1,173 @@
+version: "2"
+
+run:
+  build-tags:
+    - localcorpus
+  # A second run started while one is running waits for it instead of
+  # failing.
+  allow-serial-runners: true
+
+linters:
+  default: none
+  enable:
+    # bug classes
+    - asasalint
+    - bidichk
+    - bodyclose
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - depguard
+    - dogsled
+    - durationcheck
+    - errcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - fatcontext
+    - gochecknoinits
+    - gocheckcompilerdirectives
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - makezero
+    - nakedret
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - nolintlint
+    - reassign
+    - recvcheck
+    - staticcheck
+    - unconvert
+    - unused
+    - usetesting
+    # style: a published Go style source, or wide use in Go projects
+    # (goprintffuncname and unparam are enabled for wide use, not for a
+    # style guide)
+    - asciicheck
+    - misspell
+    - goprintffuncname
+    - perfsprint
+    - revive
+    - thelper
+    - unparam
+    - whitespace
+  settings:
+    depguard:
+      rules:
+        test-support:
+          files: ["$all", "!$test", "!**/internal/harness/**"]
+          deny:
+            - pkg: github.com/PublicAI01/trajector-cli/internal/harness
+              desc: test-support packages are for tests only
+        deprecated:
+          deny:
+            - pkg: io/ioutil
+              desc: deprecated; use io and os
+    errorlint:
+      errorf: false
+    exhaustive:
+      default-signifies-exhaustive: true
+    gocritic:
+      enabled-checks: # in addition to the default set
+        - badLock
+        - badSyncOnceFunc
+        - deferInLoop
+        - exposedSyncMutex
+        - nilValReturn
+        - returnAfterHttpError
+        - sloppyReassign
+        - syncMapLoadAndDelete
+        - uncheckedInlineErr
+        - unnecessaryDefer
+    gosec:
+      excludes:
+        - G104 # unhandled errors: errcheck reports these
+        - G304 # file paths from variables: reading user files by path is this program's job
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # memory layout, not correctness
+        - shadow # reports the idiomatic err redeclaration
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    perfsprint:
+      integer-format: false
+      string-format: false
+      bool-format: false
+      hex-format: false
+      concat-loop: false
+      errorf: true
+    revive:
+      rules:
+        - name: atomic
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: datarace
+        - name: deep-exit
+        - name: defer
+        - name: dot-imports
+        - name: early-return
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+          # Naming (stutter) only. Doc comments are not required here.
+          arguments:
+            - disableChecksOnConstants
+            - disableChecksOnFunctions
+            - disableChecksOnMethods
+            - disableChecksOnTypes
+            - disableChecksOnVariables
+        - name: forbidden-call-in-wg-go
+        - name: import-shadowing
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unconditional-recursion
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: unused-receiver
+        - name: use-any
+        - name: use-waitgroup-go
+        - name: var-declaration
+        - name: var-naming
+        - name: waitgroup-by-value
+    staticcheck:
+      checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022", "-QF1001", "-QF1008"]
+    thelper:
+      tb:
+        name: false
+  exclusions:
+    presets:
+      - common-false-positives
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters: [errcheck, gosec]
+      - path: internal/harness/
+        linters: [errcheck, gosec]
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+  settings:
+    gci:
+      sections: [standard, default, localmodule]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false
