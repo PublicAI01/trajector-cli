@@ -295,7 +295,7 @@ func ListRejected(rejectedDir string) ([]RejectedBatch, error) {
 		// belongs as not-exist. Only a path with nothing behind it at all
 		// is an empty quarantine; anything present but unreadable must
 		// surface as an error, never as no quarantine.
-		if _, statErr := os.Lstat(rejectedDir); statErr != nil {
+		if _, statErr := os.Lstat(rejectedDir); errors.Is(statErr, fs.ErrNotExist) {
 			return nil, nil
 		}
 	}
