@@ -356,8 +356,6 @@ func New(cfg Config) (*Server, error) {
 		drainCh:    make(chan struct{}),
 	}
 	s.lastForwarded = s.start
-	s.recordsDone.Add(1)
-	go s.runRecordQueue()
 	forward := s.newForwarder()
 	s.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, internalPrefix) {
@@ -444,6 +442,9 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 		return err
 	}
 	defer s.removeAdminToken()
+	// Captures do not stop when ctx is canceled: they end with the
+	// server, when closeRecordQueue below closes the queue.
+	s.recordsDone.Go(func() { s.runRecordQueue(context.WithoutCancel(ctx)) })
 	// The pool goes when this instance does. A process outlives its
 	// Server only under test, where a pool that survives its owner can
 	// hand the next instance a connection to an address that has since
@@ -460,24 +461,16 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 		tick := min(max(s.cfg.IdleTimeout/8, 5*time.Millisecond), 5*time.Second)
 		ticker := time.NewTicker(tick)
 		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-			case <-s.drainCh:
-			case <-ticker.C:
-				if !s.idle() {
-					continue
-				}
-			}
-			if s.cfg.BeforeShutdown != nil {
-				s.cfg.BeforeShutdown()
-			}
-			drainCtx, cancel := context.WithTimeout(context.Background(), s.cfg.DrainTimeout)
-			defer cancel()
-			if err := httpSrv.Shutdown(drainCtx); err != nil {
-				httpSrv.Close()
-			}
-			return
+		s.awaitStop(ctx, ticker.C)
+		if s.cfg.BeforeShutdown != nil {
+			s.cfg.BeforeShutdown()
+		}
+		// The drain must outlive the cancellation that may have started
+		// it, or Shutdown would give up at once and cut every exchange.
+		drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.DrainTimeout)
+		defer cancel()
+		if err := httpSrv.Shutdown(drainCtx); err != nil {
+			httpSrv.Close()
 		}
 	}()
 
@@ -512,6 +505,23 @@ func hostLimited(next http.Handler, bound string) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// awaitStop returns when ctx is canceled, a drain is requested, or a
+// tick finds the server idle.
+func (s *Server) awaitStop(ctx context.Context, tick <-chan time.Time) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.drainCh:
+			return
+		case <-tick:
+			if s.idle() {
+				return
+			}
+		}
+	}
 }
 
 func (s *Server) idle() bool {

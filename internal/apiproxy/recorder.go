@@ -325,10 +325,9 @@ func (s *Server) enqueue(job func(context.Context)) bool {
 	}
 }
 
-func (s *Server) runRecordQueue() {
-	defer s.recordsDone.Done()
+func (s *Server) runRecordQueue(base context.Context) {
 	for job := range s.records {
-		ctx, cancel := context.WithTimeout(context.Background(), finalizeTimeout)
+		ctx, cancel := context.WithTimeout(base, finalizeTimeout)
 		job(ctx)
 		cancel()
 	}

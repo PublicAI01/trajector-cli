@@ -234,7 +234,7 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		return err
 	}
 
-	l, err := net.Listen("tcp", a.Addr)
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", a.Addr)
 	if err != nil {
 		// Losing the bind says nothing about who won it: a sibling that
 		// won a moment ago may not have published its admin token yet, so

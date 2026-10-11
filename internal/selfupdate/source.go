@@ -318,14 +318,18 @@ func extractZip(archive []byte, want string) ([]byte, error) {
 		if f.FileInfo().IsDir() || path.Base(f.Name) != want {
 			continue
 		}
-		rc, err := f.Open()
-		if err != nil {
-			return nil, fmt.Errorf("selfupdate: reading %s: %w", f.Name, err)
-		}
-		defer rc.Close()
-		return readBounded(rc, f.Name)
+		return readZipEntry(f)
 	}
 	return nil, fmt.Errorf("selfupdate: the release archive holds no %s", want)
+}
+
+func readZipEntry(f *zip.File) ([]byte, error) {
+	rc, err := f.Open()
+	if err != nil {
+		return nil, fmt.Errorf("selfupdate: reading %s: %w", f.Name, err)
+	}
+	defer rc.Close()
+	return readBounded(rc, f.Name)
 }
 
 // readBounded reads one archive entry under the same size bound the
