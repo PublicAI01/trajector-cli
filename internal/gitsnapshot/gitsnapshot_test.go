@@ -34,7 +34,7 @@ func newRepo(t *testing.T) *repo {
 
 func (r *repo) git(args ...string) string {
 	r.t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", r.dir}, args...)...)
+	cmd := exec.CommandContext(r.t.Context(), "git", append([]string{"-C", r.dir}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,11 +19,11 @@ import (
 // and under --force. A pause the service asked for (upgrade required,
 // deferral) is a working state, not a command failure; a rejected
 // batch waits quarantined for the user, so it stays one.
-func (m *Machine) Upload(force bool, streams IO) error {
-	if err := m.proxy.Ensure(); err != nil {
+func (m *Machine) Upload(ctx context.Context, force bool, streams IO) error {
+	if err := m.proxy.Ensure(ctx); err != nil {
 		return err
 	}
-	reply, err := m.proxy.Flush(force)
+	reply, err := m.proxy.Flush(ctx, force)
 	if err != nil {
 		return err
 	}

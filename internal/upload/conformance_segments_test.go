@@ -70,7 +70,7 @@ func TestSegmentFixturesMatchHowThisClientCutsAFile(t *testing.T) {
 			}
 
 			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
-			res, err := f.uploader.Flush(true)
+			res, err := f.uploader.Flush(t.Context(), true)
 			if err != nil || res.Outcome != upload.Uploaded {
 				t.Fatalf("flush = %+v, %v, want every segment uploaded", res, err)
 			}

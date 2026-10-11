@@ -332,7 +332,7 @@ func TestFixturesRoundTripThroughTheUploader(t *testing.T) {
 				wantBodies[i] = f.storeFixtureRecord(t, line)
 			}
 
-			res, err := f.uploader.Flush(true)
+			res, err := f.uploader.Flush(t.Context(), true)
 			if err != nil {
 				t.Fatal(err)
 			}

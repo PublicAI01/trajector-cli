@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
@@ -32,8 +33,8 @@ func (m *Machine) reader(sp *spool.Spool) sessionread.Reader {
 // the hook's streams, which keeps the hook's own output empty. It
 // goes through the same starter the proxy does, so one suite-wide
 // choice covers both processes a hook can leave behind.
-func (m *Machine) spawnReader(projectDir string) error {
-	_, err := m.deps.Spawn(m.deps.ExecPath, []string{"hook", claudesettings.HookRead, projectDir}, "")
+func (m *Machine) spawnReader(ctx context.Context, projectDir string) error {
+	_, err := m.deps.Spawn(ctx, m.deps.ExecPath, []string{"hook", claudesettings.HookRead, projectDir}, "")
 	return err
 }
 
@@ -62,10 +63,10 @@ func (m *Machine) spawnReader(projectDir string) error {
 // the reading starts from where the entry stands. The files are
 // registered either way, so the caller states this rather than fails
 // on it.
-func (m *Machine) readEarlierSessions(st report.ProjectStatus, sessions []string) error {
+func (m *Machine) readEarlierSessions(ctx context.Context, st report.ProjectStatus, sessions []string) error {
 	for _, path := range sessions {
-		if err := m.proxy.Progress(apiproxy.Progress{ProjectIDHash: st.Hash, Path: path, End: true}); err != nil {
-			if spawnErr := m.spawnReader(st.Root); spawnErr != nil {
+		if err := m.proxy.Progress(ctx, apiproxy.Progress{ProjectIDHash: st.Hash, Path: path, End: true}); err != nil {
+			if spawnErr := m.spawnReader(ctx, st.Root); spawnErr != nil {
 				return fmt.Errorf("the resident process did not take the report (%v) and no reader could be started: %w", err, spawnErr)
 			}
 			return nil
@@ -99,12 +100,12 @@ func (m *Machine) readEarlierSessions(st report.ProjectStatus, sessions []string
 // alone. What each record states about this client is the shape the
 // grant records, never a reading of the settings file, so a
 // hand-edited file cannot make two runs disagree about one project.
-func (m *Machine) ReadSessionFiles(projectDir string, streams IO) {
+func (m *Machine) ReadSessionFiles(ctx context.Context, projectDir string, streams IO) {
 	st, err := m.Project(projectDir)
 	if err != nil || !st.Enabled || !st.Injected {
 		return
 	}
-	defer func() { _ = m.EnsureProxy(projectDir, streams) }()
+	defer func() { _ = m.EnsureProxy(ctx, projectDir, streams) }()
 
 	sp, err := m.spool()
 	if err != nil {

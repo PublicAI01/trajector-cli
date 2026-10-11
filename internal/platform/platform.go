@@ -6,6 +6,7 @@ package platform
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -183,9 +184,9 @@ func (p Pairing) PollInterval() time.Duration {
 }
 
 // StartPairing begins a device pairing.
-func (c *Client) StartPairing(clientVersion string) (Pairing, error) {
+func (c *Client) StartPairing(ctx context.Context, clientVersion string) (Pairing, error) {
 	var p Pairing
-	err := c.call(http.MethodPost, "/v1/pairings", "", map[string]string{
+	err := c.call(ctx, http.MethodPost, "/v1/pairings", "", map[string]string{
 		"client_version": clientVersion,
 	}, &p)
 	if err != nil {
@@ -204,9 +205,9 @@ type PairingResult struct {
 }
 
 // PollPairing checks whether the user approved the pairing.
-func (c *Client) PollPairing(pairingID string) (PairingResult, error) {
+func (c *Client) PollPairing(ctx context.Context, pairingID string) (PairingResult, error) {
 	var r PairingResult
-	if err := c.call(http.MethodGet, "/v1/pairings/"+pairingID, "", nil, &r); err != nil {
+	if err := c.call(ctx, http.MethodGet, "/v1/pairings/"+pairingID, "", nil, &r); err != nil {
 		return PairingResult{}, err
 	}
 	if r.Status == PairingPaired && r.DeviceToken == "" {
@@ -223,8 +224,8 @@ var ErrAlreadyRevoked = errors.New("platform: the device token is already revoke
 // RevokeDevice revokes the device token server-side. A service that no
 // longer recognizes the token answers ErrAlreadyRevoked; what an HTTP
 // status means for a revocation is decided here, not by callers.
-func (c *Client) RevokeDevice(deviceToken string) error {
-	err := c.call(http.MethodPost, "/v1/device/revoke", deviceToken, struct{}{}, nil)
+func (c *Client) RevokeDevice(ctx context.Context, deviceToken string) error {
+	err := c.call(ctx, http.MethodPost, "/v1/device/revoke", deviceToken, struct{}{}, nil)
 	var status *StatusError
 	if errors.As(err, &status) && status.StatusCode == http.StatusUnauthorized {
 		return ErrAlreadyRevoked
@@ -234,13 +235,13 @@ func (c *Client) RevokeDevice(deviceToken string) error {
 
 // RequestDeletion asks the service to delete this project's uploaded
 // but not yet delivered data.
-func (c *Client) RequestDeletion(deviceToken, projectIDHash string) error {
-	return c.call(http.MethodPost, "/v1/data-deletions", deviceToken, map[string]string{
+func (c *Client) RequestDeletion(ctx context.Context, deviceToken, projectIDHash string) error {
+	return c.call(ctx, http.MethodPost, "/v1/data-deletions", deviceToken, map[string]string{
 		"project_id_hash": projectIDHash,
 	}, nil)
 }
 
-func (c *Client) call(method, path, bearer string, reqBody, respBody any) error {
+func (c *Client) call(ctx context.Context, method, path, bearer string, reqBody, respBody any) error {
 	if c.initErr != nil {
 		return c.initErr
 	}
@@ -252,7 +253,7 @@ func (c *Client) call(method, path, bearer string, reqBody, respBody any) error 
 		}
 		body = bytes.NewReader(data)
 	}
-	req, err := http.NewRequest(method, c.baseURL+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return err
 	}

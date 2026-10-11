@@ -15,7 +15,7 @@ func TestEnableRefusesToGuessARelayOnceTheRoutingTableIsMovedAside(t *testing.T)
 	e.sandbox.MoveRoutingTableAside()
 
 	e.stdout.Reset()
-	err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
+	err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io())
 	if !errors.Is(err, lifecycle.ErrInjectionWithoutGrant) {
 		t.Fatalf("enable with the table moved aside returned %v; want a refusal", err)
 	}
@@ -60,7 +60,7 @@ func TestEnableGrantsTheRelayWrittenBackAfterTheRoutingTableIsMovedAside(t *test
 	e.sandbox.MoveRoutingTableAside()
 	e.projectSettings().Put(`{"env":{"ANTHROPIC_BASE_URL":"` + relayInSettingsLocal + `"}}`)
 
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable after the relay was written back: %v\nstdout: %s", err, e.stdout)
 	}
 	if got := e.status().Upstream; got != relayInSettingsLocal {

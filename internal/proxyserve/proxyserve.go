@@ -118,6 +118,10 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		fmt.Fprintf(stderr, format+"\n", args...)
 	}
 	layout := a.Layout
+	// The stop signal ends serving, not uploading: a batch in flight
+	// finishes within its own budget, and the exit flush runs after the
+	// signal.
+	uploads := context.WithoutCancel(ctx)
 	sp, err := OpenSpool(layout)
 	if err != nil {
 		return fmt.Errorf("opening spool: %w", err)
@@ -225,7 +229,7 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		// its release, or the two would drain the same spool records
 		// under different batch ids.
 		BeforeShutdown: func() {
-			if ferr := uploader.Close(exitFlushBudget); ferr != nil {
+			if ferr := uploader.Close(uploads, exitFlushBudget); ferr != nil {
 				logf("final flush: %v", ferr)
 			}
 		},
@@ -242,8 +246,9 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		// when nothing is listening at all, the port was never contested —
 		// the bind failed for its own reason (permissions, a broken
 		// network stack) and that error is the report, not an occupancy
-		// verdict.
-		switch v := a.proxy().Settled(); v.Holder {
+		// verdict. A stop signal inside the grace must not end the probes
+		// early: a cancelled probe reads as nothing listening.
+		switch v := a.proxy().Settled(context.WithoutCancel(ctx)); v.Holder {
 		case proxylife.HolderOurs:
 			fmt.Fprintf(stdout, "proxy already running at %s (version %s)\n", a.Addr, v.Health.Version)
 			return nil
@@ -255,8 +260,8 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 	}
 
 	served := make(chan struct{})
-	go periodicFlush(ctx, served, uploader, tail.nudge, logf)
-	go periodicSweep(ctx, served, tail, cmp.Or(a.SweepInterval, sweepInterval))
+	go periodicFlush(ctx, uploads, served, uploader, tail.nudge, logf)
+	go periodicSweep(ctx, uploads, served, tail, cmp.Or(a.SweepInterval, sweepInterval))
 	err = server.Serve(ctx, l)
 	close(served)
 	return err
@@ -296,7 +301,7 @@ func (n *flushNudge) takeAtOnce() bool { return n.atOnce.Swap(false) }
 // proxy serves, and on the nudges the reading of session files leaves
 // for it. Failures are logged and retried on the next tick; the spool
 // keeps everything until a batch is acknowledged.
-func periodicFlush(ctx context.Context, served chan struct{}, uploader *upload.Uploader, nudge *flushNudge, logf func(string, ...any)) {
+func periodicFlush(ctx, uploads context.Context, served chan struct{}, uploader *upload.Uploader, nudge *flushNudge, logf func(string, ...any)) {
 	ticker := time.NewTicker(flushInterval)
 	defer ticker.Stop()
 	for {
@@ -317,9 +322,9 @@ func periodicFlush(ctx context.Context, served chan struct{}, uploader *upload.U
 		}
 		var err error
 		if atOnce {
-			_, err = uploader.FlushRecords()
+			_, err = uploader.FlushRecords(uploads)
 		} else {
-			_, err = uploader.Flush(false)
+			_, err = uploader.Flush(uploads, false)
 		}
 		if err != nil {
 			if errors.Is(err, upload.ErrClosed) {
@@ -334,8 +339,8 @@ func periodicFlush(ctx context.Context, served chan struct{}, uploader *upload.U
 // periodicSweep looks at the hot session files on a cadence while the
 // proxy serves, and once on the way in: a proxy that starts after a
 // session did meets the file the session's earlier hooks left hot.
-func periodicSweep(ctx context.Context, served chan struct{}, tail *tailer, every time.Duration) {
-	tail.sweep(true)
+func periodicSweep(ctx, uploads context.Context, served chan struct{}, tail *tailer, every time.Duration) {
+	tail.sweep(uploads, true)
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	for {
@@ -345,7 +350,7 @@ func periodicSweep(ctx context.Context, served chan struct{}, tail *tailer, ever
 		case <-served:
 			return
 		case <-ticker.C:
-			tail.sweep(false)
+			tail.sweep(uploads, false)
 		}
 	}
 }

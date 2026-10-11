@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -40,11 +41,11 @@ var doctorBundleIgnoreRules = []string{
 // never enter it. It is read-only: a bug report preserves the state
 // being diagnosed, so nothing is repaired on the way — that is
 // doctor's job.
-func (m *Machine) DoctorBundle(projectDir string, streams IO) (string, error) {
+func (m *Machine) DoctorBundle(ctx context.Context, projectDir string, streams IO) (string, error) {
 	// The bundle takes the second reading too: the question doctor
 	// reports — sessions written without a hook — is one whoever reads
 	// the archive must be able to answer from it.
-	d, err := m.diagnose(projectDir, fromTree)
+	d, err := m.diagnose(ctx, projectDir, fromTree)
 	if err != nil {
 		return "", err
 	}
@@ -79,7 +80,7 @@ func (m *Machine) DoctorBundle(projectDir string, streams IO) (string, error) {
 	// root on the machine; neither it nor the directory a user unpacks
 	// it into may ride along into their repository.
 	for _, rule := range doctorBundleIgnoreRules {
-		if _, err := claudesettings.EnsureGitIgnored(d.Project.Root, rule); err != nil {
+		if _, err := claudesettings.EnsureGitIgnored(ctx, d.Project.Root, rule); err != nil {
 			return "", err
 		}
 	}

@@ -26,7 +26,7 @@ func TestProxyServeYieldsToHealthyInstance(t *testing.T) {
 
 func TestProxyServeRefusesForeignPortHolder(t *testing.T) {
 	e := clitest.New(t)
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

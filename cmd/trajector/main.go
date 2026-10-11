@@ -3,11 +3,14 @@
 package main
 
 import (
+	"context"
 	"os"
 
 	"github.com/PublicAI01/trajector-cli/internal/cli"
 )
 
 func main() {
-	os.Exit(cli.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	// Nothing cancels a command from outside: an interrupt ends the
+	// process, and the proxy modes watch for signals themselves.
+	os.Exit(cli.Run(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }

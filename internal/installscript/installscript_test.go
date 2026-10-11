@@ -60,7 +60,7 @@ func launch(t *testing.T, releases *fakereleases.Server, env map[string]string) 
 	}
 	maps.Copy(full, env)
 
-	cmd := exec.Command("sh", scriptPath(t))
+	cmd := exec.CommandContext(t.Context(), "sh", scriptPath(t))
 	cmd.Env = nil
 	for name, value := range full {
 		cmd.Env = append(cmd.Env, name+"="+value)
@@ -231,7 +231,7 @@ func pickedByClient(t *testing.T, releases *fakereleases.Server) string {
 	if err := os.WriteFile(execPath, []byte("an older build"), 0o755); err != nil {
 		t.Fatalf("planting the installed binary: %v", err)
 	}
-	out, err := selfupdate.Upgrade(execPath, "0.0.1", releases.IndexURL())
+	out, err := selfupdate.Upgrade(t.Context(), execPath, "0.0.1", releases.IndexURL())
 	if err != nil {
 		t.Fatalf("the upgrade client installed nothing: %v", err)
 	}

@@ -97,7 +97,7 @@ func (e *env) progress(ev apiproxy.Progress) int {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	req, err := http.NewRequest(http.MethodPost, "http://"+e.assembly.Addr+apiproxy.ProgressPath, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(e.t.Context(), http.MethodPost, "http://"+e.assembly.Addr+apiproxy.ProgressPath, bytes.NewReader(body))
 	if err != nil {
 		e.t.Fatal(err)
 	}

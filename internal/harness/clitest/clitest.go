@@ -6,6 +6,7 @@ package clitest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -233,7 +234,7 @@ type Proxy struct {
 // test does not stop it first.
 func (e *Env) StartProxy(extra ...string) *Proxy {
 	e.t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(e.t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -244,9 +245,11 @@ func (e *Env) StartProxy(extra ...string) *Proxy {
 
 	p := &Proxy{t: e.t, addr: addr, layout: e.Layout(), client: e.client, stopped: make(chan struct{})}
 	args := append([]string{"proxy", "serve", "--addr", addr}, extra...)
+	// The proxy serves until it is drained, which may happen in the
+	// cleanup, after the test's context is done.
 	go func() {
 		defer close(p.stopped)
-		cli.Run(args, strings.NewReader(""), io.Discard, io.Discard)
+		cli.Run(context.WithoutCancel(e.t.Context()), args, strings.NewReader(""), io.Discard, io.Discard)
 	}()
 	e.t.Cleanup(func() {
 		select {
@@ -266,7 +269,8 @@ func (p *Proxy) Addr() string { return p.addr }
 // Stop drains the proxy and waits for it to exit.
 func (p *Proxy) Stop() {
 	p.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, nil)
+	// Stop also runs from the cleanup, where the test's context is done.
+	req, err := http.NewRequestWithContext(context.WithoutCancel(p.t.Context()), http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, nil)
 	if err != nil {
 		p.t.Fatal(err)
 	}
@@ -302,7 +306,7 @@ func (e *Env) Run(args ...string) Result {
 func (e *Env) RunInput(input string, args ...string) Result {
 	e.t.Helper()
 	var stdout, stderr bytes.Buffer
-	exit := cli.Run(args, strings.NewReader(input), &stdout, &stderr)
+	exit := cli.Run(e.t.Context(), args, strings.NewReader(input), &stdout, &stderr)
 	return Result{Exit: exit, Stdout: stdout.String(), Stderr: stderr.String()}
 }
 
@@ -324,7 +328,7 @@ func (e *Env) RunToATerminal(args ...string) Result {
 	e.t.Setenv("TERM", "xterm-256color")
 	e.t.Setenv("LC_ALL", "en_US.UTF-8")
 	var stderr bytes.Buffer
-	exit := cli.Run(args, strings.NewReader(""), terminal, &stderr)
+	exit := cli.Run(e.t.Context(), args, strings.NewReader(""), terminal, &stderr)
 	return Result{Exit: exit, Stderr: stderr.String()}
 }
 

@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
@@ -22,8 +23,8 @@ var managerHandback = map[selfupdate.Manager]struct{ name, command string }{
 // upgrade, never what it upgrades to. Every exit that does not replace
 // the binary leaves it exactly as it was — an upgrade that cannot
 // happen must never cost the user a working trajector.
-func (m *Machine) Upgrade(streams IO) error {
-	out, err := selfupdate.Upgrade(m.deps.ExecPath, m.deps.Version, m.deps.Releases)
+func (m *Machine) Upgrade(ctx context.Context, streams IO) error {
+	out, err := selfupdate.Upgrade(ctx, m.deps.ExecPath, m.deps.Version, m.deps.Releases)
 	if err != nil {
 		return err
 	}

@@ -17,7 +17,7 @@ import (
 
 func (e *env) statusOutput() string {
 	e.t.Helper()
-	if _, err := e.machine().Status(e.project, e.io()); err != nil {
+	if _, err := e.machine().Status(e.t.Context(), e.project, e.io()); err != nil {
 		e.t.Fatalf("status: %v\nstdout: %s", err, e.stdout)
 	}
 	return e.stdout.String()
@@ -29,7 +29,7 @@ func (e *env) statusOutput() string {
 func TestStatusShowsTheStateOfADeviceThatJustEnabledAProject(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.stdout.Reset()
@@ -102,7 +102,7 @@ func TestStatusCarriesTheOptionalSettingAnswerEnableRecorded(t *testing.T) {
 				tc.seed(t, e)
 			}
 			e.stdin = tc.stdin
-			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+			if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
 			e.stdout.Reset()
@@ -171,7 +171,7 @@ func TestStatusAnswersAboutAnUnprovenHolderWithoutPayingTheStartupGrace(t *testi
 
 	p := proxylife.For(e.layout(), e.deps.Version, "unused", e.deps.ProxyAddr, nil)
 	start = time.Now()
-	p.Settled()
+	p.Settled(t.Context())
 	settled := time.Since(start)
 
 	if reported*2 >= settled {
@@ -318,7 +318,7 @@ func TestStatusStopsRelayingANoticeTheServiceWithdrew(t *testing.T) {
 	m := e.machine()
 
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.stdout.Reset()
@@ -327,7 +327,7 @@ func TestStatusStopsRelayingANoticeTheServiceWithdrew(t *testing.T) {
 	}
 
 	e.sandbox.SeedRawcall("req-2", "hash-p1", time.Now().UTC())
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.stdout.Reset()
@@ -491,7 +491,7 @@ func TestStatusSaysWhenTheOnlyRecordsLeftAreQuarantined(t *testing.T) {
 func TestStatusAndDoctorNameTheConsentRecordTheyCouldNotRead(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.sandbox.CorruptConsent()
@@ -509,7 +509,7 @@ func TestStatusAndDoctorNameTheConsentRecordTheyCouldNotRead(t *testing.T) {
 	}
 
 	e.stdout.Reset()
-	problems, err := e.machine().Doctor(e.project, e.io())
+	problems, err := e.machine().Doctor(t.Context(), e.project, e.io())
 	if err != nil {
 		t.Fatalf("doctor: %v", err)
 	}

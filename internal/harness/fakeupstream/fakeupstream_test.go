@@ -15,7 +15,7 @@ func TestRecordsRequestVerbatim(t *testing.T) {
 	s.Enqueue(fakeupstream.Response{Body: []byte(`{"ok":true}`)})
 
 	body := `{"model":"claude-fake","messages":[]}`
-	req, err := http.NewRequest(http.MethodPost, s.URL()+"/v1/messages?beta=true", strings.NewReader(body))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, s.URL()+"/v1/messages?beta=true", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,12 @@ func TestServesScriptedResponsesInOrder(t *testing.T) {
 		status int
 		body   string
 	}{{200, "first"}, {529, "overloaded"}} {
-		resp, err := s.HTTP.Client().Post(s.URL(), "application/json", nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, s.URL(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := s.HTTP.Client().Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +72,11 @@ func TestServesScriptedResponsesInOrder(t *testing.T) {
 
 func TestUnscriptedRequestFailsLoudly(t *testing.T) {
 	s := fakeupstream.New(t)
-	resp, err := s.HTTP.Client().Get(s.URL())
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, s.URL(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := s.HTTP.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +95,11 @@ func TestStreamsSSEBlocksVerbatim(t *testing.T) {
 	}
 	s.Enqueue(fakeupstream.Response{SSE: blocks})
 
-	resp, err := s.HTTP.Client().Get(s.URL())
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, s.URL(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := s.HTTP.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +123,11 @@ func TestResponseHeadersWrittenVerbatim(t *testing.T) {
 	h.Set("Request-Id", "req_fake")
 	s.Enqueue(fakeupstream.Response{Header: h, Body: []byte("{}")})
 
-	resp, err := s.HTTP.Client().Get(s.URL())
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, s.URL(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := s.HTTP.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

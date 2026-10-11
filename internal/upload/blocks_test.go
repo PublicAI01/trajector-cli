@@ -64,7 +64,7 @@ func (f *fixture) storeCallRepeating(t *testing.T, id, payload string) {
 // carried of the image: "original", "reference", or "placeholder".
 func (f *fixture) uploadWith(t *testing.T, payload string) string {
 	t.Helper()
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
 	reqs := f.server.Requests()
@@ -119,16 +119,16 @@ func TestFlush_RemembersAnImageOnlyOnceABatchCarryingItIsAcknowledged(t *testing
 	x := proxytest.ConstructedImage(t)
 
 	f.storeCallRepeating(t, "req-0", "")
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	f.storeCallRepeating(t, "req-1", x)
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the flush against a failing service did not fail")
 	}
 	// The retry is acknowledged, but the service may be keeping the
 	// failed attempt instead, so the retry proves nothing about the image.
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	f.storeCallRepeating(t, "req-2", x)
@@ -163,7 +163,7 @@ func TestFlush_StopsReferringWhenAnAcknowledgementNoLongerSaysSo(t *testing.T) {
 	f.storeCallRepeating(t, "req-1", x)
 	f.uploadWith(t, x)
 	f.storeCallRepeating(t, "req-2", "")
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	f.storeCallRepeating(t, "req-3", x)
@@ -288,7 +288,7 @@ func TestFlush_RemembersNothingOfABatchAcknowledgedAfterTheRecordWasForgotten(t 
 	})
 	x := proxytest.ConstructedImage(t)
 	f.storeCallRepeating(t, "req-0", "")
-	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+	if got, err := f.uploader.Flush(t.Context(), true); err != nil || got.Outcome != upload.Uploaded {
 		t.Fatalf("Flush = %+v, %v", got, err)
 	}
 
@@ -310,7 +310,7 @@ func TestFlush_RemembersNothingOfABatchAcknowledgedAfterTheRecordWasForgotten(t 
 func (f *fixture) acknowledgedOnce(t *testing.T) {
 	t.Helper()
 	f.storeCallRepeating(t, "req-0", "")
-	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+	if got, err := f.uploader.Flush(t.Context(), true); err != nil || got.Outcome != upload.Uploaded {
 		t.Fatalf("Flush = %+v, %v", got, err)
 	}
 }
@@ -371,7 +371,7 @@ func TestFlush_KeepsWhatWasSentThroughAnAcknowledgementThatWithholdsBlockRefs(t 
 	}
 	refs = true
 	f.storeCallRepeating(t, "req-4", "")
-	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+	if got, err := f.uploader.Flush(t.Context(), true); err != nil || got.Outcome != upload.Uploaded {
 		t.Fatalf("Flush = %+v, %v", got, err)
 	}
 	f.storeCallRepeating(t, "req-5", x)
@@ -404,11 +404,11 @@ func TestFlush_KeepsWhatWasSentThroughAnUpgradeRefusal(t *testing.T) {
 
 	refuse = true
 	f.storeCallRepeating(t, "req-3", "")
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the refused upload reported no error")
 	}
 	refuse = false
-	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+	if got, err := f.uploader.Flush(t.Context(), true); err != nil || got.Outcome != upload.Uploaded {
 		t.Fatalf("Flush after the refusal = %+v, %v", got, err)
 	}
 	f.storeCallRepeating(t, "req-4", x)
@@ -431,12 +431,12 @@ func TestFlush_ForgetsWhatWasSentWhenTheServiceStopsStatingItsEpoch(t *testing.T
 
 	refs, epoch = false, ""
 	f.storeCallRepeating(t, "req-3", "")
-	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+	if got, err := f.uploader.Flush(t.Context(), true); err != nil || got.Outcome != upload.Uploaded {
 		t.Fatalf("Flush = %+v, %v", got, err)
 	}
 	refs, epoch = true, "0"
 	f.storeCallRepeating(t, "req-4", "")
-	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+	if got, err := f.uploader.Flush(t.Context(), true); err != nil || got.Outcome != upload.Uploaded {
 		t.Fatalf("Flush = %+v, %v", got, err)
 	}
 	f.storeCallRepeating(t, "req-5", x)
@@ -527,7 +527,7 @@ func TestFlush_RefersToNothingAfterAWithheldBlockRefsThatCouldNotBeKeptOnDisk(t 
 
 	refs, unwritable = false, true
 	f.storeCallRepeating(t, "req-3", "")
-	if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+	if got, err := f.uploader.Flush(t.Context(), true); err != nil || got.Outcome != upload.Uploaded {
 		t.Fatalf("Flush = %+v, %v", got, err)
 	}
 	refs, unwritable = true, false

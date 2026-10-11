@@ -58,7 +58,7 @@ func TestUpgradeReplacesThisBinaryWithTheNewestRelease(t *testing.T) {
 	e, releases := newUpgradeEnv(t)
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 
-	if err := e.machine().Upgrade(e.io()); err != nil {
+	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
 
@@ -81,7 +81,7 @@ func TestUpgradeOnTheNewestReleaseChangesNothing(t *testing.T) {
 	e, releases := newUpgradeEnv(t)
 	releases.Publish(t, "0.1.0", []byte("the 0.1.0 binary"))
 
-	if err := e.machine().Upgrade(e.io()); err != nil {
+	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
 
@@ -101,7 +101,7 @@ func TestUpgradeReportsAReleaseSourceThatIsRationingRequests(t *testing.T) {
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 	releases.Ration()
 
-	err := e.machine().Upgrade(e.io())
+	err := e.machine().Upgrade(t.Context(), e.io())
 	if err == nil {
 		t.Fatal("Upgrade succeeded against a rationing release source")
 	}
@@ -132,7 +132,7 @@ func TestUpgradeOfAnInstallationAPackageManagerOwns(t *testing.T) {
 			// Overwriting a managed binary would be undone by the
 			// manager's next command, or leave a version its records
 			// disagree with.
-			if err := e.machine().Upgrade(e.io()); err != nil {
+			if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
 				t.Fatalf("Upgrade: %v", err)
 			}
 
@@ -155,7 +155,7 @@ func TestUpgradeOfABuildThatIsNotAPublishedRelease(t *testing.T) {
 	// A build from a checkout has no place in the version order, and
 	// replacing it with a release would discard whatever it was built
 	// to test.
-	if err := e.machine().Upgrade(e.io()); err != nil {
+	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
 
@@ -173,7 +173,7 @@ func TestUpgradeUnderARedactionDriftPauseNamesTheSecondStep(t *testing.T) {
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
 
-	if err := e.machine().Upgrade(e.io()); err != nil {
+	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
 
@@ -195,7 +195,7 @@ func TestUpgradeWithRecordingNotPausedNamesNoFurtherStep(t *testing.T) {
 	e, releases := newUpgradeEnv(t)
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 
-	if err := e.machine().Upgrade(e.io()); err != nil {
+	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
 
@@ -209,7 +209,7 @@ func TestUpgradeThatInstallsNothingNamesNoFurtherStep(t *testing.T) {
 	releases.Publish(t, "0.1.0", []byte("the 0.1.0 binary"))
 	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
 
-	if err := e.machine().Upgrade(e.io()); err != nil {
+	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
 
@@ -239,7 +239,7 @@ func TestUpgradeAndStatusNameOneRemedyForARedactionDriftPause(t *testing.T) {
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
 
-	if err := e.machine().Upgrade(e.io()); err != nil {
+	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
 	step := commandTheUpgradeHintNames(t, e.stdout.String())

@@ -26,7 +26,7 @@ func TestStartPairingSendsClientVersion(t *testing.T) {
 		"poll_interval_ms": 10,
 	}))
 
-	p, err := c.StartPairing("1.2.3")
+	p, err := c.StartPairing(t.Context(), "1.2.3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestStartPairingSendsClientVersion(t *testing.T) {
 func TestStartPairingRejectsIncompleteResponse(t *testing.T) {
 	c, server := client(t)
 	server.Stub("POST", "/v1/pairings", fakeplatform.JSON(200, map[string]any{"pairing_id": "pair-1"}))
-	if _, err := c.StartPairing("1.2.3"); err == nil {
+	if _, err := c.StartPairing(t.Context(), "1.2.3"); err == nil {
 		t.Error("incomplete pairing response accepted")
 	}
 }
@@ -63,11 +63,11 @@ func TestPollPairingStates(t *testing.T) {
 		"device_token": "dev-tok-fake",
 	}))
 
-	first, err := c.PollPairing("pair-1")
+	first, err := c.PollPairing(t.Context(), "pair-1")
 	if err != nil || first.Status != platform.PairingPending {
 		t.Fatalf("first poll = %+v, %v", first, err)
 	}
-	second, err := c.PollPairing("pair-1")
+	second, err := c.PollPairing(t.Context(), "pair-1")
 	if err != nil || second.Status != platform.PairingPaired || second.DeviceToken != "dev-tok-fake" {
 		t.Fatalf("second poll = %+v, %v", second, err)
 	}
@@ -76,7 +76,7 @@ func TestPollPairingStates(t *testing.T) {
 func TestPollPairingRejectsPairedWithoutToken(t *testing.T) {
 	c, server := client(t)
 	server.Stub("GET", "/v1/pairings/pair-1", fakeplatform.JSON(200, map[string]any{"status": "paired"}))
-	if _, err := c.PollPairing("pair-1"); err == nil {
+	if _, err := c.PollPairing(t.Context(), "pair-1"); err == nil {
 		t.Error("paired response without a token accepted")
 	}
 }
@@ -86,10 +86,10 @@ func TestAuthorizedCallsCarryBearerToken(t *testing.T) {
 	server.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(200, map[string]any{}))
 	server.Stub("POST", "/v1/data-deletions", fakeplatform.JSON(202, map[string]any{}))
 
-	if err := c.RevokeDevice("dev-tok-fake"); err != nil {
+	if err := c.RevokeDevice(t.Context(), "dev-tok-fake"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.RequestDeletion("dev-tok-fake", "hash-1"); err != nil {
+	if err := c.RequestDeletion(t.Context(), "dev-tok-fake", "hash-1"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,7 +116,7 @@ func TestCallsIdentifyThisTrajectorBuild(t *testing.T) {
 	c := platform.New(server.URL(), "1.2.3")
 	server.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(200, map[string]any{}))
 
-	if err := c.RevokeDevice("dev-tok-fake"); err != nil {
+	if err := c.RevokeDevice(t.Context(), "dev-tok-fake"); err != nil {
 		t.Fatal(err)
 	}
 	reqs := server.Requests()
@@ -133,7 +133,7 @@ func TestNon2xxCarriesItsStatusAndBody(t *testing.T) {
 		c, server := client(t)
 		server.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(503, map[string]any{"error": "down"}))
 
-		err := c.RevokeDevice("dev-tok-fake")
+		err := c.RevokeDevice(t.Context(), "dev-tok-fake")
 		var status *platform.StatusError
 		if !errors.As(err, &status) {
 			t.Fatalf("err = %v, want a StatusError", err)
@@ -149,7 +149,7 @@ func TestNon2xxCarriesItsStatusAndBody(t *testing.T) {
 		c, server := client(t)
 		server.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(401, map[string]any{"error": "unknown token"}))
 
-		err := c.RevokeDevice("dev-tok-fake")
+		err := c.RevokeDevice(t.Context(), "dev-tok-fake")
 		if !errors.Is(err, platform.ErrAlreadyRevoked) {
 			t.Errorf("err = %v, want ErrAlreadyRevoked", err)
 		}
@@ -158,7 +158,7 @@ func TestNon2xxCarriesItsStatusAndBody(t *testing.T) {
 		c, server := client(t)
 		server.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(400, map[string]any{"error": "malformed"}))
 
-		err := c.RevokeDevice("dev-tok-fake")
+		err := c.RevokeDevice(t.Context(), "dev-tok-fake")
 		var status *platform.StatusError
 		if !errors.As(err, &status) || status.StatusCode != 400 || status.Temporary() {
 			t.Errorf("err = %v, want a permanent 400 StatusError", err)
@@ -168,24 +168,24 @@ func TestNon2xxCarriesItsStatusAndBody(t *testing.T) {
 
 func TestNonLoopbackHTTPEndpointFailsEveryCallClosed(t *testing.T) {
 	c := platform.New("http://203.0.113.7:1", "test")
-	if _, err := c.StartPairing("1.2.3"); err == nil || !strings.Contains(err.Error(), "https") {
+	if _, err := c.StartPairing(t.Context(), "1.2.3"); err == nil || !strings.Contains(err.Error(), "https") {
 		t.Errorf("StartPairing = %v, want a refusal naming the https requirement", err)
 	}
-	if err := c.RevokeDevice("dev-tok-fake"); err == nil || !strings.Contains(err.Error(), "https") {
+	if err := c.RevokeDevice(t.Context(), "dev-tok-fake"); err == nil || !strings.Contains(err.Error(), "https") {
 		t.Errorf("RevokeDevice = %v, want the same refusal on every call", err)
 	}
 }
 
 func TestUnparseableEndpointFailsEveryCallClosed(t *testing.T) {
 	c := platform.New("://not-a-url", "test")
-	if _, err := c.StartPairing("1.2.3"); err == nil {
+	if _, err := c.StartPairing(t.Context(), "1.2.3"); err == nil {
 		t.Error("StartPairing against an unparseable endpoint succeeded")
 	}
 }
 
 func TestNonHTTPSchemeEndpointIsRefused(t *testing.T) {
 	c := platform.New("ftp://127.0.0.1:1", "test")
-	if _, err := c.StartPairing("1.2.3"); err == nil {
+	if _, err := c.StartPairing(t.Context(), "1.2.3"); err == nil {
 		t.Error("StartPairing against a non-http(s) endpoint succeeded")
 	}
 }
@@ -194,7 +194,7 @@ func TestLoopbackHTTPEndpointIsAllowed(t *testing.T) {
 	// Every other test in this file drives a 127.0.0.1 http endpoint;
 	// this one pins the localhost spelling as equally acceptable.
 	c := platform.New("http://localhost:1", "test")
-	if _, err := c.StartPairing("1.2.3"); err == nil || strings.Contains(err.Error(), "https") {
+	if _, err := c.StartPairing(t.Context(), "1.2.3"); err == nil || strings.Contains(err.Error(), "https") {
 		t.Errorf("StartPairing = %v, want a dial failure, not an endpoint refusal", err)
 	}
 }

@@ -40,7 +40,7 @@ type imposterRequest struct {
 // shapes a live proxy serves. It is stopped with the test.
 func StartImposter(t *testing.T, health Health) *Imposter {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

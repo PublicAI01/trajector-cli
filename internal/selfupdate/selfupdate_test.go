@@ -69,7 +69,7 @@ func TestUpgradeInstallsTheHighestVersionNotTheMostRecentlyPublished(t *testing.
 	releases.Publish(t, "0.3.0", []byte("three"))
 	releases.Publish(t, "0.2.0", []byte("two"))
 
-	out, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL())
+	out, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL())
 	if err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestUpgradeMovesToAPrereleaseWhenThatIsWhatIsPublished(t *testing.T) {
 	releases.Publish(t, "0.1.0", []byte("one"))
 	releases.Publish(t, "0.2.0-rc.1", []byte("two-rc"))
 
-	out, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL())
+	out, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL())
 	if err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestUpgradePrefersAFinishedReleaseToItsOwnPrerelease(t *testing.T) {
 	releases.Publish(t, "1.0.0", []byte("final"))
 	releases.Publish(t, "1.0.0-rc.2", []byte("candidate"))
 
-	out, err := selfupdate.Upgrade(m.path, "0.9.0", releases.IndexURL())
+	out, err := selfupdate.Upgrade(t.Context(), m.path, "0.9.0", releases.IndexURL())
 	if err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestUpgradeIgnoresATagThatIsNotAVersion(t *testing.T) {
 	releases.Publish(t, "0.2.0", []byte("two"))
 	releases.PublishTag(t, "nightly", "nightly", []byte("nightly"))
 
-	out, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL())
+	out, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL())
 	if err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestUpgradeIgnoresADraftRelease(t *testing.T) {
 	releases.Publish(t, "0.1.0", []byte("one"))
 	releases.PublishDraft(t, "0.9.0", []byte("unpublished"))
 
-	out, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL())
+	out, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL())
 	if err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestUpgradeIgnoresAReleaseThisPlatformHasNoArchiveIn(t *testing.T) {
 	releases.Publish(t, "0.1.0", []byte("one"))
 	releases.PublishWithout(t, "0.2.0", []byte("two"), hostArchive("0.2.0"))
 
-	out, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL())
+	out, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL())
 	if err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestUpgradeIgnoresAReleaseWithNoChecksumFile(t *testing.T) {
 	releases.Publish(t, "0.1.0", []byte("one"))
 	releases.PublishWithout(t, "0.2.0", []byte("two"), fakereleases.ChecksumsAsset)
 
-	out, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL())
+	out, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL())
 	if err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestUpgradeNeverMovesBackToAnOlderRelease(t *testing.T) {
 	// newest thing published is behind, and behind is not an upgrade.
 	releases.Publish(t, "0.0.9", []byte("an older binary"))
 
-	out, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL())
+	out, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL())
 	if err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestUpgradeOfABuildThatIsNotAPublishedRelease(t *testing.T) {
 	releases := fakereleases.New(t)
 	releases.Publish(t, "9.9.9", []byte("a much newer binary"))
 
-	out, err := selfupdate.Upgrade(m.path, "dev", releases.IndexURL())
+	out, err := selfupdate.Upgrade(t.Context(), m.path, "dev", releases.IndexURL())
 	if err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestUpgradeOfAnInstallationAPackageManagerOwns(t *testing.T) {
 			// so every path is rooted in this test's own directory.
 			path := filepath.Join(t.TempDir(), c.path)
 
-			out, err := selfupdate.Upgrade(path, "0.1.0", releases.IndexURL())
+			out, err := selfupdate.Upgrade(t.Context(), path, "0.1.0", releases.IndexURL())
 			if c.want == "" {
 				if err == nil {
 					t.Fatalf("outcome is %+v, want the release source consulted", out)
@@ -298,7 +298,7 @@ func TestUpgradeLooksThroughTheLinkOnThePathForTheOwningManager(t *testing.T) {
 	releases := fakereleases.New(t)
 	releases.Publish(t, "9.9.9", []byte("a much newer binary"))
 
-	out, err := selfupdate.Upgrade(link, "0.1.0", releases.IndexURL())
+	out, err := selfupdate.Upgrade(t.Context(), link, "0.1.0", releases.IndexURL())
 	if err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestUpgradeLeavesTheBinaryUntouchedWhenTheDownloadFailsVerification(t *test
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 	releases.Corrupt(t, "0.2.0", runtime.GOOS, runtime.GOARCH)
 
-	_, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL())
+	_, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL())
 	if err == nil {
 		t.Fatal("Upgrade installed a download that failed verification")
 	}
@@ -337,7 +337,7 @@ func TestUpgradeRefusesAReleaseWhoseArchivesAreNotArchives(t *testing.T) {
 
 	// The checksum matches — the pipeline uploaded these bytes — so
 	// nothing before unpacking can notice.
-	_, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL())
+	_, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL())
 	if err == nil {
 		t.Fatal("Upgrade accepted a release whose archive is not an archive")
 	}
@@ -353,7 +353,7 @@ func TestUpgradeSaysSoWhenTheSourceHasPublishedNothing(t *testing.T) {
 	m := install(t, "the 0.1.0 binary")
 	releases := fakereleases.New(t)
 
-	_, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL())
+	_, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL())
 	if err == nil {
 		t.Fatal("Upgrade succeeded against a source that has published nothing")
 	}
@@ -368,7 +368,7 @@ func TestUpgradeSaysSoWhenTheSourceIsRationingRequests(t *testing.T) {
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 	releases.Ration()
 
-	_, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL())
+	_, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL())
 	if err == nil {
 		t.Fatal("Upgrade succeeded against a rationing source")
 	}
@@ -386,7 +386,7 @@ func TestUpgradeSaysSoWhenTheIndexIsNotThere(t *testing.T) {
 	m := install(t, "the 0.1.0 binary")
 	releases := fakereleases.New(t)
 
-	_, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL()+"-elsewhere")
+	_, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL()+"-elsewhere")
 	if err == nil {
 		t.Fatal("Upgrade succeeded against a source with no index")
 	}
@@ -402,7 +402,7 @@ func TestUpgradeSaysSoWhenTheIndexIsNotAReleaseList(t *testing.T) {
 	}))
 	defer elsewhere.Close()
 
-	_, err := selfupdate.Upgrade(m.path, "0.1.0", elsewhere.URL+"/releases")
+	_, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", elsewhere.URL+"/releases")
 	if err == nil {
 		t.Fatal("Upgrade read releases out of a page that lists none")
 	}
@@ -414,7 +414,7 @@ func TestUpgradeSaysSoWhenTheIndexIsNotAReleaseList(t *testing.T) {
 func TestASourceReachedOverPlaintextIsRefused(t *testing.T) {
 	m := install(t, "the 0.1.0 binary")
 
-	_, err := selfupdate.Upgrade(m.path, "0.1.0", "http://releases.example.com/releases")
+	_, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", "http://releases.example.com/releases")
 	if err == nil {
 		t.Fatal("a plaintext non-loopback release source was accepted")
 	}
@@ -434,7 +434,7 @@ func TestASourceRedirectingToPlaintextIsRefused(t *testing.T) {
 
 	// Vetting only the first hop would let a source that answers safely
 	// hand the actual bytes off to one that does not.
-	_, err := selfupdate.Upgrade(m.path, "0.1.0", redirector.URL+"/releases")
+	_, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", redirector.URL+"/releases")
 	if err == nil {
 		t.Fatal("a redirect to a plaintext non-loopback source was followed")
 	}
@@ -452,7 +452,7 @@ func TestTheReleaseSourceNamesThisBuildToTheServer(t *testing.T) {
 	}))
 	defer recorder.Close()
 
-	if _, err := selfupdate.Upgrade(m.path, "9.9.9", recorder.URL+"/releases"); err == nil {
+	if _, err := selfupdate.Upgrade(t.Context(), m.path, "9.9.9", recorder.URL+"/releases"); err == nil {
 		t.Fatal("Upgrade succeeded against a source listing nothing")
 	}
 	if len(agents) != 1 || agents[0] != "trajector/9.9.9" {
@@ -465,7 +465,7 @@ func TestTheInstalledBinaryIsLeftRunnable(t *testing.T) {
 	releases := fakereleases.New(t)
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 
-	if _, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL()); err != nil {
+	if _, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL()); err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
 
@@ -492,7 +492,7 @@ func TestUpgradeIntoADirectoryThatIsNotThereChangesNothing(t *testing.T) {
 	releases := fakereleases.New(t)
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 
-	_, err := selfupdate.Upgrade(missing, "0.1.0", releases.IndexURL())
+	_, err := selfupdate.Upgrade(t.Context(), missing, "0.1.0", releases.IndexURL())
 	if err == nil {
 		t.Fatal("Upgrade succeeded into a directory that does not exist")
 	}
@@ -513,7 +513,7 @@ func TestUpgradeOverSomethingThatIsNotAFileChangesNothing(t *testing.T) {
 	releases := fakereleases.New(t)
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 
-	_, err := selfupdate.Upgrade(occupied, "0.1.0", releases.IndexURL())
+	_, err := selfupdate.Upgrade(t.Context(), occupied, "0.1.0", releases.IndexURL())
 	if err == nil {
 		t.Fatal("Upgrade replaced a directory with a binary")
 	}
@@ -546,7 +546,7 @@ func TestUpgradeSweepsWhatAnInterruptedUpgradeLeftBehind(t *testing.T) {
 	// Even a run that installs nothing tidies up: on Windows the file an
 	// earlier upgrade stepped aside could not be deleted while it was
 	// still the running image.
-	if _, err := selfupdate.Upgrade(m.path, "0.1.0", releases.IndexURL()); err != nil {
+	if _, err := selfupdate.Upgrade(t.Context(), m.path, "0.1.0", releases.IndexURL()); err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
 

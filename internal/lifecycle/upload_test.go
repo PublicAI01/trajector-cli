@@ -44,7 +44,7 @@ func TestUploadReportsEachOutcomeThroughTheResidentProxy(t *testing.T) {
 	servedProxy(t, e)
 	m := e.machine()
 
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), "Nothing to upload.") {
@@ -53,7 +53,7 @@ func TestUploadReportsEachOutcomeThroughTheResidentProxy(t *testing.T) {
 
 	e.stdout.Reset()
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	if err := m.Upload(false, e.io()); err != nil {
+	if err := m.Upload(t.Context(), false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), "Below the upload thresholds") {
@@ -61,7 +61,7 @@ func TestUploadReportsEachOutcomeThroughTheResidentProxy(t *testing.T) {
 	}
 
 	e.stdout.Reset()
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), "Uploaded 1 batch(es), 1 record(s).") {
@@ -71,7 +71,7 @@ func TestUploadReportsEachOutcomeThroughTheResidentProxy(t *testing.T) {
 	e.stdout.Reset()
 	e.sandbox.ClearDeviceToken()
 	e.sandbox.SeedRawcall("req-2", "hash-p1", time.Now().UTC())
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), "trajector login") {
@@ -83,7 +83,7 @@ func TestUploadRefusesWhenThePortIsForeign(t *testing.T) {
 	e := newEnv(t)
 	e.occupyPort()
 
-	if err := e.machine().Upload(true, e.io()); err == nil {
+	if err := e.machine().Upload(t.Context(), true, e.io()); err == nil {
 		t.Error("Upload against a foreign port holder = nil, want a loud failure")
 	}
 }
@@ -94,7 +94,7 @@ func TestUploadReportsAnUnverifiableProxyAsAuthentication(t *testing.T) {
 	e.proxyEnv.AdminToken()
 	proxytest.RemoveAdminTokens(t, e.layout(), e.proxyEnv.Addr())
 
-	err := e.machine().Upload(true, e.io())
+	err := e.machine().Upload(t.Context(), true, e.io())
 	if !errors.Is(err, lifecycle.ErrProxyUnverified) {
 		t.Errorf("Upload = %v, want the authentication failure surfaced", err)
 	}
@@ -106,7 +106,7 @@ func TestUploadNamesTheProxyOnAnUnreadableFlushReply(t *testing.T) {
 		io.WriteString(w, "not json")
 	})))
 
-	err := e.machine().Upload(true, e.io())
+	err := e.machine().Upload(t.Context(), true, e.io())
 	if err == nil {
 		t.Fatal("Upload = nil, want the unreadable flush reply reported")
 	}
@@ -126,7 +126,7 @@ func TestUploadExplainsAServiceDeferralFromTheFirstEncounter(t *testing.T) {
 	m := e.machine()
 
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), "asked to slow down") {
@@ -134,7 +134,7 @@ func TestUploadExplainsAServiceDeferralFromTheFirstEncounter(t *testing.T) {
 	}
 
 	e.stdout.Reset()
-	if err := m.Upload(false, e.io()); err != nil {
+	if err := m.Upload(t.Context(), false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), "asked to slow down") {
@@ -149,7 +149,7 @@ func TestUploadExplainsARequiredUpgradeFromTheFirstEncounter(t *testing.T) {
 	m := e.machine()
 
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), "requires client version 9.9.9 or newer") {
@@ -164,7 +164,7 @@ func TestUploadExplainsARequiredUpgradeFromTheFirstEncounter(t *testing.T) {
 	e.sandbox.ForgetHandshake()
 
 	e.stdout.Reset()
-	if err := m.Upload(false, e.io()); err != nil {
+	if err := m.Upload(t.Context(), false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), "requires client version 9.9.9 or newer") {
@@ -184,7 +184,7 @@ func TestUploadExplainsAMissingDataAuthorizationAndWhereToComplete(t *testing.T)
 	m := e.machine()
 
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	out := e.stdout.String()
@@ -211,7 +211,7 @@ func TestUploadFallsBackToItsOwnWordingWhenTheServiceNamesNoUsableAddress(t *tes
 	servedProxy(t, e)
 
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	if err := e.machine().Upload(true, e.io()); err != nil {
+	if err := e.machine().Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	out := e.stdout.String()
@@ -266,7 +266,7 @@ func TestUploadDoesNotOfferForceToARunThatAlreadyUsedIt(t *testing.T) {
 			m := e.machine()
 			e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
 
-			if err := m.Upload(true, e.io()); err != nil {
+			if err := m.Upload(t.Context(), true, e.io()); err != nil {
 				t.Fatal(err)
 			}
 			forced := e.stdout.String()
@@ -281,7 +281,7 @@ func TestUploadDoesNotOfferForceToARunThatAlreadyUsedIt(t *testing.T) {
 			// what stopped an automatic flush, and --force is how the
 			// user asks for one anyway.
 			e.stdout.Reset()
-			if err := m.Upload(false, e.io()); err != nil {
+			if err := m.Upload(t.Context(), false, e.io()); err != nil {
 				t.Fatal(err)
 			}
 			unforced := e.stdout.String()
@@ -302,7 +302,7 @@ func TestUploadRelaysWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	m := e.machine()
 
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	out := e.stdout.String()
@@ -330,14 +330,14 @@ func TestUploadReportsProgressBeforeAPauseStopsTheDrain(t *testing.T) {
 	// The first upload's handshake caps batches at one record each, so
 	// the next drain acknowledges one batch before the service pauses it.
 	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
 	e.sandbox.SeedRawcall("req-2", "hash-p1", time.Now().UTC())
 	e.sandbox.SeedRawcall("req-3", "hash-p1", time.Now().UTC())
 	e.stdout.Reset()
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), "Uploaded 1 batch(es), 1 record(s).") {

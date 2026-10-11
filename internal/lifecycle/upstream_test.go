@@ -39,7 +39,7 @@ func enabledOnOfficial(t *testing.T) *env {
 	t.Helper()
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	return e
@@ -59,7 +59,7 @@ func TestHookAppliesUpstreamDriftToSafeDestinations(t *testing.T) {
 			e := enabledOnOfficial(t)
 			e.environ["ANTHROPIC_BASE_URL"] = tt.upstream
 
-			if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+			if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 				t.Fatal(err)
 			}
 			if got := e.status().Upstream; got != tt.upstream {
@@ -74,7 +74,7 @@ func TestHookRefusesUpstreamDriftToPlaintextNonLoopback(t *testing.T) {
 	before := e.status().Upstream
 	e.environ["ANTHROPIC_BASE_URL"] = "http://203.0.113.9"
 
-	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.status().Upstream; got != before {
@@ -87,7 +87,7 @@ func TestUpstreamDriftLeavesAVisibleTrace(t *testing.T) {
 	official := e.status().Upstream
 	e.environ["ANTHROPIC_BASE_URL"] = "https://relay.example.com"
 
-	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stderr.String(), "upstream moved to https://relay.example.com") {
@@ -99,7 +99,7 @@ func TestUpstreamDriftLeavesAVisibleTrace(t *testing.T) {
 	}
 
 	e.stdout.Reset()
-	if _, err := e.machine().Status(e.project, e.io()); err != nil {
+	if _, err := e.machine().Status(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if out := e.stdout.String(); !strings.Contains(out, "moved from "+official) {
@@ -110,11 +110,11 @@ func TestUpstreamDriftLeavesAVisibleTrace(t *testing.T) {
 func TestReEnableResetsTheUpstreamMoveTrace(t *testing.T) {
 	e := enabledOnOfficial(t)
 	e.environ["ANTHROPIC_BASE_URL"] = "https://relay.example.com"
-	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	st := e.status()
@@ -127,7 +127,7 @@ func TestHookAnnouncesARefusedUpstreamMove(t *testing.T) {
 	e := enabledOnOfficial(t)
 	e.environ["ANTHROPIC_BASE_URL"] = "http://203.0.113.9"
 
-	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stderr.String(), "must use https") {
@@ -147,7 +147,7 @@ func TestASessionsOwnInjectionIsNotReadAsTheRelayBeingGone(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.environ["ANTHROPIC_BASE_URL"] = relay
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.status().Upstream; got != relay {
@@ -156,7 +156,7 @@ func TestASessionsOwnInjectionIsNotReadAsTheRelayBeingGone(t *testing.T) {
 
 	e.environ["ANTHROPIC_BASE_URL"] = injectedBaseURL(t, e)
 	e.stderr.Reset()
-	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.status().Upstream; got != relay {
@@ -172,7 +172,7 @@ func TestASessionsOwnInjectionIsNotReadAsTheRelayBeingGone(t *testing.T) {
 	// doctor answers from the same resolution, so a user who runs it
 	// inside that session must not be told to worry either.
 	e.stdout.Reset()
-	problems, err := e.machine().Doctor(e.project, e.io())
+	problems, err := e.machine().Doctor(t.Context(), e.project, e.io())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,19 +198,19 @@ func TestEnableRefusesToGuessAMaskedUpstream(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.environ["ANTHROPIC_BASE_URL"] = relay
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 
 	// A session is running now, so the CLI's own environment carries our
 	// injection rather than the relay. The user disables from inside it.
 	e.environ["ANTHROPIC_BASE_URL"] = injectedBaseURL(t, e)
-	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
 	e.stdout.Reset()
-	err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
+	err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io())
 	if !errors.Is(err, lifecycle.ErrUpstreamMasked) {
 		t.Fatalf("re-enable with the upstream masked returned %v and granted %q; the relay was replaced by a guess",
 			err, e.status().Upstream)
@@ -236,7 +236,7 @@ func TestOurOwnInjectionIsNotReadAsTheRelayBeingGone(t *testing.T) {
 	// A plain terminal: no session applied our env block, so the shell
 	// carries nothing at all and the chain reads as empty.
 	e.stderr.Reset()
-	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.status().Upstream; got != relayInSettingsLocal {
@@ -244,7 +244,7 @@ func TestOurOwnInjectionIsNotReadAsTheRelayBeingGone(t *testing.T) {
 	}
 
 	e.stdout.Reset()
-	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+	if _, err := e.machine().Doctor(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.status().Upstream; got != relayInSettingsLocal {
@@ -260,7 +260,7 @@ func TestDoctorReportsARefusedUpstreamDrift(t *testing.T) {
 	before := e.status().Upstream
 	e.environ["ANTHROPIC_BASE_URL"] = "http://203.0.113.9"
 
-	problems, err := e.machine().Doctor(e.project, e.io())
+	problems, err := e.machine().Doctor(t.Context(), e.project, e.io())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestEnableRefusesABaseURLTheProxyCannotForwardTo(t *testing.T) {
 			e.startProxy()
 			e.environ["ANTHROPIC_BASE_URL"] = tt.upstream
 
-			err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
+			err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io())
 			if !errors.Is(err, lifecycle.ErrUpstreamUnroutable) {
 				t.Fatalf("Enable() error = %v, want ErrUpstreamUnroutable", err)
 			}

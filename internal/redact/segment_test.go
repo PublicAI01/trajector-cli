@@ -628,7 +628,7 @@ func TestPIIIsMaskedWithoutConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(exe, "-test.run=^TestPIIIsMaskedWithoutConfiguration$", "-test.v")
+	cmd := exec.CommandContext(t.Context(), exe, "-test.run=^TestPIIIsMaskedWithoutConfiguration$", "-test.v")
 	cmd.Env = append(os.Environ(), marker+"=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

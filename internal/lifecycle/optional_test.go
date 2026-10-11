@@ -43,7 +43,7 @@ func TestEnableAsksAndWritesTheOptionalSettingOnYes(t *testing.T) {
 	e.startProxy()
 	e.stdin = "yes\ny\n"
 
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 	}
 
@@ -108,7 +108,7 @@ func TestEnableEmptyInputTakesTheStatedDefault(t *testing.T) {
 			tc.seed(t, e)
 			e.stdin = "yes\n\n"
 
-			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+			if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
 			out := e.stdout.String()
@@ -132,7 +132,7 @@ func TestEnableDeclineIsRecordedAndRerunStillAsks(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\nn\n"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if value, found := settingValue(t, e.projectSettings()); found {
@@ -144,7 +144,7 @@ func TestEnableDeclineIsRecordedAndRerunStillAsks(t *testing.T) {
 
 	e.stdout.Reset()
 	e.stdin = "y\n"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("rerun: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "Turn it on? [Y/n]") {
@@ -195,7 +195,7 @@ func TestEnableLeavesAUsersOwnTrueAlone(t *testing.T) {
 			e.startProxy()
 			tc.seed(t, e)
 
-			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+			if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
 			out := e.stdout.String()
@@ -209,7 +209,7 @@ func TestEnableLeavesAUsersOwnTrueAlone(t *testing.T) {
 				t.Error("a value the user set was recorded")
 			}
 
-			if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+			if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 				t.Fatalf("disable: %v", err)
 			}
 			if !tc.stillOn(t, e) {
@@ -239,7 +239,7 @@ func TestEnableAcceptWhenAlreadyTrueRecordsNoWriteOfOurs(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\nn\n"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 
@@ -249,7 +249,7 @@ func TestEnableAcceptWhenAlreadyTrueRecordsNoWriteOfOurs(t *testing.T) {
 		},
 		answer: strings.NewReader("y\n"),
 	}
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), lifecycle.IO{In: in, Out: e.stdout, Err: e.stderr}); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), lifecycle.IO{In: in, Out: e.stdout, Err: e.stderr}); err != nil {
 		t.Fatalf("rerun: %v\nstdout: %s", err, e.stdout)
 	}
 	d, ok := settingDecision(t, e, e.status().Hash)
@@ -257,7 +257,7 @@ func TestEnableAcceptWhenAlreadyTrueRecordsNoWriteOfOurs(t *testing.T) {
 		t.Errorf("decision = %+v, %v, want accepted with a true prior", d, ok)
 	}
 
-	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if value, found := settingValue(t, e.projectSettings()); !found || !value {
@@ -269,7 +269,7 @@ func TestEnableRecordFailureLeavesTheSettingUnwritten(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\nn\n"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 
@@ -277,7 +277,7 @@ func TestEnableRecordFailureLeavesTheSettingUnwritten(t *testing.T) {
 		edit:   e.sandbox.CorruptConsent,
 		answer: strings.NewReader("y\n"),
 	}
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), lifecycle.IO{In: in, Out: e.stdout, Err: e.stderr}); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), lifecycle.IO{In: in, Out: e.stdout, Err: e.stderr}); err != nil {
 		t.Fatalf("rerun: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
 	}
 	if !strings.Contains(e.stderr.String(), "nothing was changed") {
@@ -294,14 +294,14 @@ func TestEnableSecondRunKeepsAnOptionalSettingOnByDefault(t *testing.T) {
 			e := newEnv(t)
 			e.startProxy()
 			e.stdin = "yes\ny\n"
-			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+			if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 				t.Fatalf("enable: %v", err)
 			}
 			before := e.projectSettings().Contents()
 
 			e.stdout.Reset()
 			e.stdin = input
-			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+			if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 				t.Fatalf("rerun: %v", err)
 			}
 			out := e.stdout.String()
@@ -329,13 +329,13 @@ func TestEnableSecondRunAnswerNoRestoresTheSetting(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\ny\n"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 
 	e.stdout.Reset()
 	e.stdin = "n\n"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("rerun: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "Set showThinkingSummaries back to what it was before trajector wrote it.") {
@@ -350,7 +350,7 @@ func TestEnableSecondRunAnswerNoRestoresTheSetting(t *testing.T) {
 
 	e.stdout.Reset()
 	e.stdin = "n\n"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("third run: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "Turn it on? [Y/n]") {
@@ -385,7 +385,7 @@ func TestEnableEveryOptionalQuestionMeansOnOnYes(t *testing.T) {
 			seed: func(t *testing.T, e *env) {
 				t.Helper()
 				e.stdin = "yes\ny\n"
-				if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+				if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 					t.Fatalf("first enable: %v", err)
 				}
 				e.stdout.Reset()
@@ -401,7 +401,7 @@ func TestEnableEveryOptionalQuestionMeansOnOnYes(t *testing.T) {
 			tc.seed(t, e)
 			e.stdin = tc.stdin
 
-			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+			if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
 			if !strings.Contains(e.stdout.String(), tc.wantPrompt) {
@@ -440,7 +440,7 @@ func TestDisableRestoresTheSettingToItsPriorState(t *testing.T) {
 			e.startProxy()
 			tc.seed(t, e)
 			e.stdin = "yes\ny\n"
-			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+			if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
 			if value, found := settingValue(t, e.projectSettings()); !found || !value {
@@ -448,7 +448,7 @@ func TestDisableRestoresTheSettingToItsPriorState(t *testing.T) {
 			}
 
 			e.stdout.Reset()
-			if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+			if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 				t.Fatalf("disable: %v", err)
 			}
 			if !strings.Contains(e.stdout.String(), "Set showThinkingSummaries back to what it was before trajector wrote it.") {
@@ -468,13 +468,13 @@ func TestDisableLeavesAHandEditedValueAlone(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\ny\n"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	e.projectSettings().SetTopLevelBool(optionalKey, false)
 
 	e.stdout.Reset()
-	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if value, found := settingValue(t, e.projectSettings()); !found || value {
@@ -497,7 +497,7 @@ func TestDisableKeepsTheRecordWhenRestoreFails(t *testing.T) {
 	})
 	writeProjectLocalSettings(t, e, "{ not json")
 
-	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if !strings.Contains(e.stderr.String(), "could not set showThinkingSummaries back") {
@@ -509,7 +509,7 @@ func TestDisableKeepsTheRecordWhenRestoreFails(t *testing.T) {
 
 	writeProjectLocalSettings(t, e, `{"showThinkingSummaries": true}`)
 	e.stdout.Reset()
-	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 		t.Fatalf("rerun: %v", err)
 	}
 	if _, found := settingValue(t, e.projectSettings()); found {
@@ -525,7 +525,7 @@ func TestEnableNonInteractiveChangesNoOptionalSetting(t *testing.T) {
 	e.startProxy()
 	e.stdin = "yes\n"
 
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 	}
 	out := e.stdout.String()
@@ -545,10 +545,10 @@ func TestDisableLeavesDeclinedRecordsInPlace(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\nn\n"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if d, ok := settingDecision(t, e, e.status().Hash); !ok || d.Answer != proxytest.AnswerDeclined {
@@ -561,11 +561,11 @@ func TestUninstallRestoresSettingsAcrossRoots(t *testing.T) {
 	e.startProxy()
 	second := t.TempDir()
 	e.stdin = "yes\ny\n"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable first project: %v", err)
 	}
 	e.stdin = "y\n"
-	if err := e.machine().Enable(second, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), second, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable second project: %v", err)
 	}
 	secondSettings := proxytest.ProjectSettings(t, proxytest.CanonicalRoot(t, second))
@@ -575,7 +575,7 @@ func TestUninstallRestoresSettingsAcrossRoots(t *testing.T) {
 
 	e.stdout.Reset()
 	e.stdin = "no\n"
-	if err := e.machine().Uninstall(false, e.io()); err != nil {
+	if err := e.machine().Uninstall(t.Context(), false, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
 	if _, found := settingValue(t, e.projectSettings()); found {
@@ -593,12 +593,12 @@ func TestDoctorCompletesTheWithdrawalOfAWrittenSetting(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\ny\n"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	e.sandbox.RevokeProject(e.canonicalRoot(), "2026-08-21T00:00:00Z")
 
-	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+	if _, err := e.machine().Doctor(t.Context(), e.project, e.io()); err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
 	if _, found := settingValue(t, e.projectSettings()); found {

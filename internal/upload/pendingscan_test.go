@@ -66,7 +66,7 @@ func TestResendPendingReadsOnlyItsOwnBatchsRecords(t *testing.T) {
 	// record on a pass that does need every record's bytes. What matters
 	// here is that the pending batch got out first instead of being held
 	// behind a record it never named.
-	res, _ := f.uploader.Flush(true)
+	res, _ := f.uploader.Flush(t.Context(), true)
 
 	if res.Batches != 1 {
 		t.Fatalf("batches = %d, want the pending batch resent", res.Batches)

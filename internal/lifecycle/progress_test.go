@@ -30,7 +30,7 @@ func TestSessionProgressedMarksTheSessionFileHot(t *testing.T) {
 	e.enableProject()
 	main := e.aSessionWithAnAgentFile()
 
-	e.machine().SessionProgressed(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "Stop"})
+	e.machine().SessionProgressed(t.Context(), e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "Stop"})
 
 	files := e.registeredFiles(e.canonicalRoot())
 	if len(files) != 2 || files[0].Path != main {
@@ -49,9 +49,9 @@ func TestSessionEndedMarksTheSessionFileCold(t *testing.T) {
 	e.aProxylessTarget()
 	e.enableProject()
 	main := e.aSessionWithAnAgentFile()
-	e.machine().SessionProgressed(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "Stop"})
+	e.machine().SessionProgressed(t.Context(), e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "Stop"})
 
-	e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "SessionEnd"})
+	e.machine().SessionEnded(t.Context(), e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "SessionEnd"})
 
 	files := e.registeredFiles(e.canonicalRoot())
 	if len(files) != 2 {
@@ -103,12 +103,12 @@ func TestSessionProgressedOnTheLastStopTakesEveryAgentFileOfAWorkflowRun(t *test
 	e.injectWithoutBaseURL()
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"user","message":{"id":"msg-main"}}`+"\n")
 	hook := lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "Stop"}
-	e.machine().SessionProgressed(e.project, hook)
+	e.machine().SessionProgressed(t.Context(), e.project, hook)
 	want := slices.Concat(e.putWorkflowAgent("wf_1a2b-3c", "a1"), e.putWorkflowAgent("wf_1a2b-3c", "a2"))
 	want = append(want, e.putWorkflowAgent("wf_1a2b-3c", "b1")...)
 
-	e.machine().SessionProgressed(e.project, hook)
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().SessionProgressed(t.Context(), e.project, hook)
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 
 	if got := len(e.registeredFiles(e.canonicalRoot())); got != 1+len(want) {
 		t.Errorf("registered %d files, want the main file and %d agent files", got, len(want))
@@ -138,8 +138,8 @@ func TestSessionProgressedTakesDozensOfAgentsAcrossSeveralRuns(t *testing.T) {
 		}
 	}
 
-	e.machine().SessionProgressed(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "Stop"})
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().SessionProgressed(t.Context(), e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "Stop"})
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 
 	if got := len(e.registeredFiles(e.canonicalRoot())); got != 1+len(want) {
 		t.Errorf("registered %d files, want the main file and %d agent files", got, len(want))
@@ -186,8 +186,8 @@ func TestSessionProgressedStoresEveryMessageOfAWorkflowRunAndNotItsJournal(t *te
 	}
 	e.putSessionFile(run+"journal.jsonl", `{"type":"result","agentId":"a1","result":{"id":"msg-journal"}}`+"\n")
 
-	e.machine().SessionProgressed(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "Stop"})
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().SessionProgressed(t.Context(), e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "Stop"})
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 
 	got := map[string]bool{}
 	gotFiles := map[string]bool{}

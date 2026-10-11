@@ -1,6 +1,7 @@
 package proxyserve
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -157,7 +158,7 @@ func (t *tailer) progress(ev apiproxy.Progress) bool {
 // upload before it can be drained — the takeover of its port waits on
 // the exit flush, which waits on that upload's lock. That sweep also
 // reads the cold entries that readLeftBehind picks out.
-func (t *tailer) sweep(onStart bool) {
+func (t *tailer) sweep(ctx context.Context, onStart bool) {
 	now := t.reader.Now()
 	projects, err := t.reader.Registry.Projects()
 	if err != nil {
@@ -210,9 +211,9 @@ func (t *tailer) sweep(onStart bool) {
 	// owns the thresholds, and nothing new is waiting on them.
 	switch {
 	case cooled, read && !onStart:
-		t.flushRecords()
+		t.flushRecords(ctx)
 	case read:
-		t.flushDue()
+		t.flushDue(ctx)
 	}
 }
 
@@ -255,8 +256,8 @@ func (t *tailer) project(hash string) (sessionread.Project, bool) {
 
 // flushRecords sends what the spool holds now that a session is over
 // or has gone quiet: the records just read are the last of it.
-func (t *tailer) flushRecords() {
-	if _, err := t.uploader.FlushRecords(); err != nil {
+func (t *tailer) flushRecords(ctx context.Context) {
+	if _, err := t.uploader.FlushRecords(ctx); err != nil {
 		t.logf("flush: %v", err)
 	}
 }
@@ -264,8 +265,8 @@ func (t *tailer) flushRecords() {
 // flushDue is one threshold check, the same one the flush cadence
 // runs: a read that just landed enough to pass a threshold should not
 // wait for the next tick.
-func (t *tailer) flushDue() {
-	if _, err := t.uploader.Flush(false); err != nil {
+func (t *tailer) flushDue(ctx context.Context) {
+	if _, err := t.uploader.Flush(ctx, false); err != nil {
 		t.logf("flush: %v", err)
 	}
 }

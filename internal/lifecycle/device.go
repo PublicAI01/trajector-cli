@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -26,16 +27,16 @@ func (m *Machine) pairingWindow() time.Duration {
 // Login pairs this device, or completes the signed-in state when it is
 // already paired. Either way it ends in the same place: token stored,
 // recording resumed, discovery hint installed.
-func (m *Machine) Login(streams IO) error {
+func (m *Machine) Login(ctx context.Context, streams IO) error {
 	if m.Paired() {
 		fmt.Fprintln(streams.Out, "This device is already paired.")
 		return m.finishLogin(streams)
 	}
-	return m.pair(streams)
+	return m.pair(ctx, streams)
 }
 
 // pair runs the browser pairing flow and signs the device in.
-func (m *Machine) pair(streams IO) error {
+func (m *Machine) pair(ctx context.Context, streams IO) error {
 	// A new pairing can be under another account, where none of the
 	// images and documents this device sent before are held. The record
 	// goes before the service is asked for anything: once the service
@@ -43,7 +44,7 @@ func (m *Machine) pair(streams IO) error {
 	if err := upload.ForgetSentBlocks(m.deps.Layout.UploadDir()); err != nil {
 		return fmt.Errorf("forgetting which images and documents were uploaded: %w", err)
 	}
-	pairing, err := m.service.StartPairing(m.deps.Version)
+	pairing, err := m.service.StartPairing(ctx, m.deps.Version)
 	if err != nil {
 		return fmt.Errorf("starting pairing: %w", err)
 	}
@@ -65,7 +66,7 @@ func (m *Machine) pair(streams IO) error {
 	deadline := time.Now().Add(m.pairingWindow())
 	var lastPollErr error
 	for {
-		result, err := m.service.PollPairing(pairing.PairingID)
+		result, err := m.service.PollPairing(ctx, pairing.PairingID)
 		switch {
 		case err != nil:
 			// Only the service positively refusing the check ends the wait
@@ -123,7 +124,7 @@ func (m *Machine) finishLogin(streams IO) error {
 // Logout signs the device out: the token is revoked with the service
 // and removed locally, and recording pauses everywhere. Forwarding for
 // enabled projects is untouched, and their grants survive.
-func (m *Machine) Logout(streams IO) error {
+func (m *Machine) Logout(ctx context.Context, streams IO) error {
 	token, paired := m.deviceToken()
 	if !paired {
 		fmt.Fprintln(streams.Out, "This device is not paired; nothing to do.")
@@ -149,7 +150,7 @@ func (m *Machine) Logout(streams IO) error {
 	if err := upload.ForgetSentBlocks(m.deps.Layout.UploadDir()); err != nil {
 		return fmt.Errorf("forgetting which images and documents were uploaded: %w", err)
 	}
-	if err := m.service.RevokeDevice(token); err != nil && !errors.Is(err, platform.ErrAlreadyRevoked) {
+	if err := m.service.RevokeDevice(ctx, token); err != nil && !errors.Is(err, platform.ErrAlreadyRevoked) {
 		// An already-revoked token is the goal state and stays silent;
 		// everything else is a warning with the right next step.
 		var status *platform.StatusError

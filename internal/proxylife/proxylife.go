@@ -260,8 +260,8 @@ func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/"
 // differing-version reuse is noted in the proxy log. Concurrent
 // callers converge because the port bind is the single-instance lock
 // and losers defer to the winner.
-func (p *Proxy) Ensure() error {
-	v := p.Settled()
+func (p *Proxy) Ensure(ctx context.Context) error {
+	v := p.Settled(ctx)
 	switch {
 	case v.Holder == HolderForeign:
 		// A holder that answers nothing may be a proxy of ours that
@@ -269,7 +269,7 @@ func (p *Proxy) Ensure() error {
 		// it will never hand the port over on a request it does not
 		// read. Replacing it is this build's to do only where the
 		// process is provably the binary this build starts itself.
-		if err := p.replaceHungProxy(v); err != nil {
+		if err := p.replaceHungProxy(ctx, v); err != nil {
 			return err
 		}
 	case v.Serving(p.version):
@@ -283,16 +283,16 @@ func (p *Proxy) Ensure() error {
 		// over. A drain that already failed names what stands in the
 		// way; waiting out the port would bury that cause under a
 		// timeout that cannot succeed.
-		if err := p.Stop(); err != nil {
+		if err := p.Stop(ctx); err != nil {
 			return fmt.Errorf("asking the previous proxy to drain: %w", err)
 		}
-		if err := p.waitPortFree(drainTimeout); err != nil {
+		if err := p.waitPortFree(ctx, drainTimeout); err != nil {
 			return err
 		}
 	}
 
 	argv := []string{Command, Supervise, addrFlag, p.addr}
-	pid, err := p.start(p.execPath, argv, p.layout.ProxyLog())
+	pid, err := p.start(ctx, p.execPath, argv, p.layout.ProxyLog())
 	if err != nil {
 		return fmt.Errorf("starting proxy: %w", err)
 	}
@@ -302,7 +302,7 @@ func (p *Proxy) Ensure() error {
 		// only spend the whole startup budget before failing.
 		return nil
 	}
-	return p.waitHealthy()
+	return p.waitHealthy(ctx)
 }
 
 // replaceHungProxy stops a silent holder that is provably a proxy of
@@ -313,11 +313,11 @@ func (p *Proxy) Ensure() error {
 // is killed, and nothing that is not proven ours is signalled — the
 // port may be held by a program of the user's that this build knows
 // nothing about.
-func (p *Proxy) replaceHungProxy(v Verdict) error {
+func (p *Proxy) replaceHungProxy(ctx context.Context, v Verdict) error {
 	if !errors.Is(v.Reason, ErrPortSilent) {
 		return v.Reason
 	}
-	holder, read := HolderOf(v.Addr)
+	holder, read := HolderOf(ctx, v.Addr)
 	if !read || !holder.IsProxyOf(p.execPath) {
 		return v.Reason
 	}
@@ -326,13 +326,13 @@ func (p *Proxy) replaceHungProxy(v Verdict) error {
 	// lives. The reading by pid alone must prove the same program file
 	// and command line again, or the signal would reach whatever holds
 	// the pid now.
-	if again := describe(holder.PID); !again.IsProxyOf(p.execPath) {
+	if again := describe(ctx, holder.PID); !again.IsProxyOf(p.execPath) {
 		return v.Reason
 	}
 	if err := terminate(holder.PID); err != nil {
 		return fmt.Errorf("stopping the proxy that stopped answering at %s: %w", v.Addr, err)
 	}
-	return p.waitPortFree(drainTimeout)
+	return p.waitPortFree(ctx, drainTimeout)
 }
 
 // Observe reads the port as it stands and pays no startup grace: it is
@@ -340,13 +340,13 @@ func (p *Proxy) replaceHungProxy(v Verdict) error {
 // holder that only proves itself a moment from now is reported as it
 // is right now; callers about to act on the verdict want Settled
 // instead, and the method name is the whole difference.
-func (p *Proxy) Observe() Verdict {
-	token, holder, why := p.verify()
+func (p *Proxy) Observe(ctx context.Context) Verdict {
+	token, holder, why := p.verify(ctx)
 	if holder != HolderOurs {
 		return Verdict{Addr: p.addr, Holder: holder, Reason: why}
 	}
 	var h Health
-	if err := p.get(apiproxy.HealthzPath, token, &h, "a health request"); err != nil {
+	if err := p.get(ctx, apiproxy.HealthzPath, token, &h, "a health request"); err != nil {
 		return Verdict{Addr: p.addr, Holder: HolderForeign, Reason: err}
 	}
 	if h.Service != apiproxy.ServiceName {
@@ -364,8 +364,8 @@ func (p *Proxy) Observe() Verdict {
 // nothing to it. A holder that is not proven ours comes back
 // HolderForeign with the reason the proof failed; the reason never
 // carries a token.
-func (p *Proxy) verify() (string, Holder, error) {
-	if !listening(p.addr, probeTimeout) {
+func (p *Proxy) verify(ctx context.Context) (string, Holder, error) {
+	if !listening(ctx, p.addr, probeTimeout) {
 		return "", HolderNone, nil
 	}
 
@@ -375,7 +375,7 @@ func (p *Proxy) verify() (string, Holder, error) {
 	}
 	challenge := hex.EncodeToString(nonce[:])
 
-	req, err := http.NewRequest(http.MethodGet, "http://"+p.addr+apiproxy.HealthzPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+p.addr+apiproxy.HealthzPath, nil)
 	if err != nil {
 		return "", HolderForeign, fmt.Errorf("probing %s: %v", p.addr, err)
 	}
@@ -419,8 +419,8 @@ func (p *Proxy) verify() (string, Holder, error) {
 // allowed for: the management calls that act on the holder go through
 // it, so a sibling that has bound the port but not published yet is
 // waited out instead of being blamed for the port.
-func (p *Proxy) settledVerify() (string, Holder, error) {
-	return settle(p.verify)
+func (p *Proxy) settledVerify(ctx context.Context) (string, Holder, error) {
+	return settle(func() (string, Holder, error) { return p.verify(ctx) })
 }
 
 // settle retries a HolderForeign verdict until the startup grace runs
@@ -447,9 +447,9 @@ func settle[T any](verdict func() (T, Holder, error)) (T, Holder, error) {
 // the verdict pay it — Ensure, a serve process that just lost the
 // bind, the wait for a freshly started proxy, and the drain and flush
 // requests aimed at the holder. Report-only surfaces call Observe.
-func (p *Proxy) Settled() Verdict {
+func (p *Proxy) Settled(ctx context.Context) Verdict {
 	v, _, _ := settle(func() (Verdict, Holder, error) {
-		v := p.Observe()
+		v := p.Observe(ctx)
 		return v, v.Holder, v.Reason
 	})
 	return v
@@ -459,8 +459,8 @@ func (p *Proxy) Settled() Verdict {
 // injected base-URL shape and without producing an upstream call. The
 // request carries no admin credential: it exercises what an injected
 // client would send, nothing more.
-func (p *Proxy) Selfcheck(token string) (Selfcheck, error) {
-	req, err := http.NewRequest(http.MethodGet, p.BaseURL(token)+apiproxy.SelfcheckPath, nil)
+func (p *Proxy) Selfcheck(ctx context.Context, token string) (Selfcheck, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.BaseURL(token)+apiproxy.SelfcheckPath, nil)
 	if err != nil {
 		return Selfcheck{}, err
 	}
@@ -477,8 +477,8 @@ func (p *Proxy) Selfcheck(token string) (Selfcheck, error) {
 // admin token, so it goes only to a holder that proved it knows that
 // token; an unproven holder is not Stop's to fight — its verdict's
 // reason comes back for the caller to surface.
-func (p *Proxy) Stop() error {
-	token, holder, why := p.settledVerify()
+func (p *Proxy) Stop(ctx context.Context) error {
+	token, holder, why := p.settledVerify(ctx)
 	switch holder {
 	case HolderNone:
 		return nil
@@ -486,7 +486,7 @@ func (p *Proxy) Stop() error {
 		return why
 	case HolderOurs:
 	}
-	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, nil)
 	if err != nil {
 		return err
 	}
@@ -514,8 +514,8 @@ var ErrNoProxy = errors.New("no proxy is serving")
 // reason. Progress pays no startup grace: a session hook is on the
 // session's critical path, and a sibling still publishing its token
 // is met again at the next hook.
-func (p *Proxy) Progress(ev apiproxy.Progress) error {
-	token, holder, why := p.verify()
+func (p *Proxy) Progress(ctx context.Context, ev apiproxy.Progress) error {
+	token, holder, why := p.verify(ctx)
 	switch holder {
 	case HolderNone:
 		return ErrNoProxy
@@ -527,7 +527,7 @@ func (p *Proxy) Progress(ev apiproxy.Progress) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+apiproxy.ProgressPath, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+p.addr+apiproxy.ProgressPath, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -557,11 +557,11 @@ func (p *Proxy) Progress(ev apiproxy.Progress) error {
 // serves, but not the record queue it drains after the listener closes:
 // a bounded remainder of spool writes, milliseconds against the seconds
 // a flush can take.
-func (p *Proxy) StopGone() error {
-	if err := p.Stop(); err != nil {
+func (p *Proxy) StopGone(ctx context.Context) error {
+	if err := p.Stop(ctx); err != nil {
 		return err
 	}
-	return p.waitPortFree(drainTimeout)
+	return p.waitPortFree(ctx, drainTimeout)
 }
 
 // authorize attaches the admin token the holder proved it knows.
@@ -571,8 +571,8 @@ func authorize(req *http.Request, token string) {
 	req.Header.Set(apiproxy.AdminHeader, token)
 }
 
-func (p *Proxy) get(path, token string, into any, what string) error {
-	req, err := http.NewRequest(http.MethodGet, "http://"+p.addr+path, nil)
+func (p *Proxy) get(ctx context.Context, path, token string, into any, what string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+p.addr+path, nil)
 	if err != nil {
 		return err
 	}
@@ -650,8 +650,8 @@ func (p *Proxy) noteReuse(holder string) {
 
 // listening reports whether something accepts connections at addr. A
 // dial that fails for any reason is the answer no.
-func listening(addr string, timeout time.Duration) bool {
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+func listening(ctx context.Context, addr string, timeout time.Duration) bool {
+	conn, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return false
 	}
@@ -659,10 +659,10 @@ func listening(addr string, timeout time.Duration) bool {
 	return true
 }
 
-func (p *Proxy) waitPortFree(within time.Duration) error {
+func (p *Proxy) waitPortFree(ctx context.Context, within time.Duration) error {
 	deadline := time.Now().Add(within)
 	for {
-		if !listening(p.addr, 100*time.Millisecond) {
+		if !listening(ctx, p.addr, 100*time.Millisecond) {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -672,13 +672,13 @@ func (p *Proxy) waitPortFree(within time.Duration) error {
 	}
 }
 
-func (p *Proxy) waitHealthy() error {
+func (p *Proxy) waitHealthy(ctx context.Context) error {
 	deadline := time.Now().Add(startTimeout)
 	for {
 		// The bind may have been won by a sibling rather than this
 		// call's own spawn; any holder Ensure would reuse counts as
 		// healthy, or a loser would wait out a winner it defers to.
-		v := p.Settled()
+		v := p.Settled(ctx)
 		if v.Serving(p.version) {
 			return nil
 		}
@@ -713,8 +713,8 @@ func (p *Proxy) Supervise(ctx context.Context, idle time.Duration, stdout, stder
 // Flush asks a running proxy to upload now and reports what it did.
 // The flush request carries the admin token, so it goes only to a
 // holder that proved it knows that token.
-func (p *Proxy) Flush(force bool) (upload.FlushReply, error) {
-	token, holder, why := p.settledVerify()
+func (p *Proxy) Flush(ctx context.Context, force bool) (upload.FlushReply, error) {
+	token, holder, why := p.settledVerify(ctx)
 	switch holder {
 	case HolderNone:
 		return upload.FlushReply{}, fmt.Errorf("no proxy is listening at %s", p.addr)
@@ -726,7 +726,7 @@ func (p *Proxy) Flush(force bool) (upload.FlushReply, error) {
 	if force {
 		flushURL += "?" + url.Values{"force": {"1"}}.Encode()
 	}
-	req, err := http.NewRequest(http.MethodPost, flushURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, flushURL, nil)
 	if err != nil {
 		return upload.FlushReply{}, err
 	}

@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"net"
@@ -23,7 +24,7 @@ import (
 func TestMain(m *testing.M) {
 	os.Exit(procbin.Main(m, map[string]func(args []string) int{
 		"cli": func(args []string) int {
-			return cli.Run(args, strings.NewReader(""), os.Stdout, os.Stderr)
+			return cli.Run(context.Background(), args, strings.NewReader(""), os.Stdout, os.Stderr)
 		},
 	}))
 }
@@ -50,8 +51,8 @@ func TestConcurrentStartsConvergeWithoutBlamingAForeignProcess(t *testing.T) {
 		// Windows' delete refusal measures.
 		deadline := time.Now().Add(30 * time.Second)
 		for {
-			first.Stop()
-			if portFree(addr) && logRemoved(layout) {
+			first.Stop(context.WithoutCancel(t.Context()))
+			if portFree(context.WithoutCancel(t.Context()), addr) && logRemoved(layout) {
 				return
 			}
 			if time.Now().After(deadline) {
@@ -64,7 +65,7 @@ func TestConcurrentStartsConvergeWithoutBlamingAForeignProcess(t *testing.T) {
 
 	done := make(chan error, 2)
 	for _, p := range []*proxylife.Proxy{first, second} {
-		go func() { done <- p.Ensure() }()
+		go func() { done <- p.Ensure(t.Context()) }()
 	}
 	for range 2 {
 		if err := <-done; err != nil {
@@ -72,7 +73,7 @@ func TestConcurrentStartsConvergeWithoutBlamingAForeignProcess(t *testing.T) {
 		}
 	}
 
-	if v := first.Observe(); v.Holder != proxylife.HolderOurs {
+	if v := first.Observe(t.Context()); v.Holder != proxylife.HolderOurs {
 		t.Fatalf("holder = %v after concurrent starts, want ours", v.Holder)
 	}
 	log := proxyLogContents(t, layout)
@@ -86,7 +87,7 @@ func TestConcurrentStartsConvergeWithoutBlamingAForeignProcess(t *testing.T) {
 
 func freeLoopbackAddr(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +97,8 @@ func freeLoopbackAddr(t *testing.T) string {
 }
 
 // portFree reports whether nothing accepts connections at addr.
-func portFree(addr string) bool {
-	conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+func portFree(ctx context.Context, addr string) bool {
+	conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return true
 	}

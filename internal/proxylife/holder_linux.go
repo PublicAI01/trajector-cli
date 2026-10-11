@@ -3,6 +3,7 @@ package proxylife
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -17,7 +18,7 @@ import (
 // listening socket is found by port, and the process is the one
 // holding that socket. A socket held by another user's process is not
 // attributable from here, which answers false.
-func HolderOf(addr string) (Process, bool) {
+func HolderOf(ctx context.Context, addr string) (Process, bool) {
 	inodes := listeningInodes(addr)
 	if len(inodes) == 0 {
 		return Process{}, false
@@ -26,7 +27,7 @@ func HolderOf(addr string) (Process, bool) {
 	if !ok {
 		return Process{}, false
 	}
-	return describe(pid), true
+	return describe(ctx, pid), true
 }
 
 // listeningInodes are the socket inodes of every listening socket on
@@ -107,7 +108,7 @@ func holderCommand(port string) string { return "ss -ltnp 'sport = :" + port + "
 
 // describe reads what the process says about itself. A field that
 // cannot be read is left empty rather than guessed at.
-func describe(pid int) Process {
+func describe(_ context.Context, pid int) Process {
 	proc := Process{PID: pid}
 	dir := filepath.Join("/proc", strconv.Itoa(pid))
 	if name, err := os.ReadFile(filepath.Join(dir, "comm")); err == nil {

@@ -104,11 +104,11 @@ func hostPlatform() (goos, goarch string) { return runtime.GOOS, runtime.GOARCH 
 // given platform. Highest is by semantic-version precedence rather
 // than by publication order, and pre-releases count: during 0.x every
 // release is one, so skipping them would leave nothing to upgrade to.
-func (s *source) newest(goos, goarch string) (release, error) {
+func (s *source) newest(ctx context.Context, goos, goarch string) (release, error) {
 	if err := checkURL(s.url); err != nil {
 		return release{}, err
 	}
-	body, err := s.get(s.url, indexTimeout, maxIndexBytes)
+	body, err := s.get(ctx, s.url, indexTimeout, maxIndexBytes)
 	if err != nil {
 		return release{}, err
 	}
@@ -163,8 +163,8 @@ func (s *source) newest(goos, goarch string) (release, error) {
 // download fetches rel's archive, checks it against rel's checksum
 // file, and returns the binary from inside it. Every failure leaves
 // the caller with nothing to install rather than something unverified.
-func (s *source) download(rel release, goos string) ([]byte, error) {
-	sums, err := s.get(rel.checksums.url, indexTimeout, maxChecksumBytes)
+func (s *source) download(ctx context.Context, rel release, goos string) ([]byte, error) {
+	sums, err := s.get(ctx, rel.checksums.url, indexTimeout, maxChecksumBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +172,7 @@ func (s *source) download(rel release, goos string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	archive, err := s.get(rel.archive.url, downloadTimeout, maxArchiveBytes)
+	archive, err := s.get(ctx, rel.archive.url, downloadTimeout, maxArchiveBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -184,11 +184,11 @@ func (s *source) download(rel release, goos string) ([]byte, error) {
 }
 
 // get reads a URL's body with a deadline and a size bound.
-func (s *source) get(url string, timeout time.Duration, limit int64) ([]byte, error) {
+func (s *source) get(ctx context.Context, url string, timeout time.Duration, limit int64) ([]byte, error) {
 	if err := checkURL(url); err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

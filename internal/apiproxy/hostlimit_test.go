@@ -15,7 +15,7 @@ func TestForeignHostHeaderIsRejectedOnEveryPath(t *testing.T) {
 	e.WriteTable(activeTable(e.Upstream.URL()))
 
 	for _, path := range []string{"/t/tok1/v1/messages", apiproxy.HealthzPath, apiproxy.DrainPath} {
-		req, err := http.NewRequest(http.MethodPost, e.BaseURL()+path, strings.NewReader("{}"))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, e.BaseURL()+path, strings.NewReader("{}"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -45,7 +45,7 @@ func TestLoopbackAliasHostsAreAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, host := range []string{"localhost:" + port, "127.0.0.1:" + port} {
-		req, err := http.NewRequest(http.MethodGet, e.BaseURL()+apiproxy.HealthzPath, nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, e.BaseURL()+apiproxy.HealthzPath, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

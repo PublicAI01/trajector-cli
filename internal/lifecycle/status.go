@@ -1,6 +1,8 @@
 package lifecycle
 
 import (
+	"context"
+
 	"github.com/PublicAI01/trajector-cli/internal/report"
 )
 
@@ -9,8 +11,8 @@ import (
 // it to the renderer: status repairs nothing, always leaves the fixing
 // to doctor, never starts a proxy just to look at one, and pays only
 // for what the registry already holds.
-func (m *Machine) Status(dir string, streams IO) (problems int, err error) {
-	d, err := m.diagnose(dir, fromRegistry)
+func (m *Machine) Status(ctx context.Context, dir string, streams IO) (problems int, err error) {
+	d, err := m.diagnose(ctx, dir, fromRegistry)
 	if err != nil {
 		return 0, err
 	}
@@ -24,8 +26,8 @@ func (m *Machine) Status(dir string, streams IO) (problems int, err error) {
 // line status opens with. A diagnosis that cannot be resolved reads as
 // a project that does not contribute: the line must still answer the
 // question.
-func (m *Machine) verdict(dir string) string {
-	d, err := m.diagnose(dir, fromRegistry)
+func (m *Machine) verdict(ctx context.Context, dir string) string {
+	d, err := m.diagnose(ctx, dir, fromRegistry)
 	if err != nil {
 		return report.Verdict(report.RecordingOffHere, 0)
 	}

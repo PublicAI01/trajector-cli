@@ -60,11 +60,11 @@ func TestReadSessionFiles_HoldsOnlyTheSegmentWhoseShapeIsNew(t *testing.T) {
 	// One read per segment: a read consumes what the file gained since
 	// the cursor, so three reads over a growing file are three
 	// segments, the middle one of a shape this build cannot mask.
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	e.appendSessionLines(main, unanchored)
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	e.appendSessionLines(main, plain)
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 
 	if got := e.storedRecords(); len(got) != 2 {
 		t.Errorf("records = %d, want the two segments this build can mask", len(got))
@@ -107,7 +107,7 @@ func TestStatusAndDoctorReportTheSegmentsHeldOnThisMachine(t *testing.T) {
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl",
 		`{"type":"user","cwd":"/srv/work/sample","message":{"role":"user","content":"hi"},"someNewPath":"/srv/work/sample/elsewhere/thing"}`+"\n")
 	e.registerFile(root, main, "")
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 
 	held := e.sandbox.HeldRecords()
 	if len(held) != 1 {
@@ -116,14 +116,14 @@ func TestStatusAndDoctorReportTheSegmentsHeldOnThisMachine(t *testing.T) {
 	want := "1 segment(s) from 1 session(s) (" + platform.HumanBytes(held[0].Size) +
 		") are held on this machine because their shape is new to this build; they are not uploaded"
 	e.stdout.Reset()
-	if _, err := e.machine().Status(e.project, e.io()); err != nil {
+	if _, err := e.machine().Status(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), want) {
 		t.Errorf("status = %s, want the held line", e.stdout.String())
 	}
 	e.stdout.Reset()
-	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+	if _, err := e.machine().Doctor(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(e.stdout.String(), want) {
@@ -140,7 +140,7 @@ func TestForgetDeletesTheSegmentsHeldForThatSession(t *testing.T) {
 	main := e.putSessionFile("-work-sample/"+sessionOne+".jsonl",
 		`{"type":"user","cwd":"/srv/work/sample","sessionId":"`+sessionOne+`","message":{"role":"user","content":"hi"},"someNewPath":"/srv/work/sample/elsewhere/thing"}`+"\n")
 	e.registerFile(root, main, "")
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if len(e.sandbox.HeldRecords()) != 1 {
 		t.Fatalf("held records = %d, want one before forgetting", len(e.sandbox.HeldRecords()))
 	}
@@ -163,7 +163,7 @@ func TestDoctorUploadsAHeldSegmentOnceTheBuildKnowsItsShape(t *testing.T) {
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl",
 		`{"type":"user","cwd":"/srv/work/sample","message":{"role":"user","content":"hi"},"someNewPath":`+jsonString(t, filepath.Join(e.deps.Home, "notes", "plan.md"))+`}`+"\n")
 	e.registerFile(root, main, "")
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if len(e.sandbox.HeldRecords()) != 1 {
 		t.Fatalf("held records = %d, want the segment held by the reading build", len(e.sandbox.HeldRecords()))
 	}
@@ -173,7 +173,7 @@ func TestDoctorUploadsAHeldSegmentOnceTheBuildKnowsItsShape(t *testing.T) {
 	// detector, not through the one that held them.
 	e.deps.Home = filepath.Join(e.deps.Home, "moved")
 	e.stdout.Reset()
-	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+	if _, err := e.machine().Doctor(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -197,12 +197,12 @@ func TestDoctorKeepsHoldingASegmentWhoseLinesNameTheProjectWithoutACwd(t *testin
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl",
 		`{"type":"summary","summary":"done","someNewPath":`+jsonString(t, filepath.Join(root, "x.bak"))+`}`+"\n")
 	e.registerFile(root, main, "")
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if len(e.sandbox.HeldRecords()) != 1 {
 		t.Fatalf("held records = %d, want the segment held by the reading build", len(e.sandbox.HeldRecords()))
 	}
 
-	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+	if _, err := e.machine().Doctor(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -226,7 +226,7 @@ func TestReadSessionFiles_RecordsAlertsWithoutStopping(t *testing.T) {
 			`{"type":"mood-ring","mood":"calm"}`+"\n")
 	e.registerFile(root, main, "")
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 
 	if got := e.storedRecords(); len(got) != 1 {
 		t.Errorf("records = %d, want the segment stored", len(got))
@@ -247,7 +247,7 @@ func TestReadSessionFiles_RecordsAlertsWithoutStopping(t *testing.T) {
 
 	// The same lines read again on a rewrite are counted again: the
 	// registry sums reads, it does not remember lines.
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.signals(root); got.AssistantLines != 2 {
 		t.Errorf("signals after a run over unchanged files = %+v, want unchanged", got)
 	}
@@ -264,7 +264,7 @@ func TestReadSessionFiles_CountsLinesCarryingNoReasoningWithoutLoggingThem(t *te
 			`{"type":"assistant","cwd":"/srv/work/sample","apiBlockIndex":0,"message":{"id":"msg_2","role":"assistant","content":[{"type":"thinking","thinking":""}]}}`+"\n")
 	e.registerFile(root, main, "")
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 
 	if got := e.storedRecords(); len(got) != 1 {
 		t.Errorf("records = %d, want the segment stored", len(got))
@@ -288,7 +288,7 @@ func TestReadSessionFiles_LinesOfTheExpectedShapeLeaveNoTrace(t *testing.T) {
 		`{"type":"assistant","cwd":"/srv/work/sample","apiBlockIndex":0,"message":{"id":"msg_1","role":"assistant","content":[]}}`+"\n")
 	e.registerFile(root, main, "")
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.signals(root); got.Any() {
 		t.Errorf("signals = %+v, want nothing recorded for lines of the expected shape", got)
 	}
@@ -394,7 +394,7 @@ func TestStatus_PairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.
 			e := newEnv(t)
 			e.startProxy()
 			e.stdin = tc.stdin
-			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+			if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 			}
 			e.sandbox.AddSignals(proxytest.ProjectIDHash(e.canonicalRoot()), proxytest.Signals{
@@ -427,7 +427,7 @@ func TestDoctorResumesARedactionPauseThisBuildSetOnceItReadsTheFilesCleanly(t *t
 	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
 
 	e.stdout.Reset()
-	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+	if _, err := e.machine().Doctor(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -438,7 +438,7 @@ func TestDoctorResumesARedactionPauseThisBuildSetOnceItReadsTheFilesCleanly(t *t
 	if !strings.Contains(e.stdout.String(), want) {
 		t.Errorf("doctor = %s, want %q", e.stdout.String(), want)
 	}
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 1 {
 		t.Errorf("records = %d, want reading to go on after the pause was lifted", len(got))
 	}

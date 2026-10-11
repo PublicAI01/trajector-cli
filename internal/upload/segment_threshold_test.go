@@ -29,7 +29,7 @@ func TestFreshSessionFileRecordsStayBelowTheirOwnThreshold(t *testing.T) {
 	f := newFixture(t)
 	f.storeTailSegment(t, "sess-1", f.now)
 
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestSessionFileRecordsLeaveAfterFiveMinutesNotADay(t *testing.T) {
 	f.storeTailSegment(t, "sess-1", f.now.Add(-6*time.Minute))
 	f.storeRawcall(t, "req-1", f.now)
 
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestSessionFileRecordThresholdsFollowTheHandshake(t *testing.T) {
 	f := newFixture(t)
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{SegmentFlushAgeSeconds: 3600}))
 	f.storeTailSegment(t, "sess-1", f.now.Add(-6*time.Minute))
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	if got := upload.LoadHandshake(f.dir).SegmentFlushAgeSeconds; got != 3600 {
@@ -68,7 +68,7 @@ func TestSessionFileRecordThresholdsFollowTheHandshake(t *testing.T) {
 	}
 
 	f.storeTailSegment(t, "sess-2", f.now.Add(-6*time.Minute))
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestFlushRecordsSendsFreshSessionFileRecordsAtOnce(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeTailSegment(t, "sess-1", f.now)
 
-	res, err := f.uploader.FlushRecords()
+	res, err := f.uploader.FlushRecords(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestFlushRecordsLeavesASpoolOfFreshCallsAlone(t *testing.T) {
 	f := newFixture(t)
 	f.storeRawcall(t, "req-1", f.now)
 
-	res, err := f.uploader.FlushRecords()
+	res, err := f.uploader.FlushRecords(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

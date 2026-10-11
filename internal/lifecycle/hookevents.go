@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"path/filepath"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -35,9 +36,9 @@ import (
 // not be brought up hears that instead, and stays untold about the
 // device: one hook writes one line, and the failure the user can act on
 // now is the one worth that line.
-func (m *Machine) SessionStarting(cwd string, hook HookInput, streams IO) (tell bool, err error) {
-	err = m.EnsureProxy(cwd, streams)
-	m.followAndObserve(cwd, hook, false)
+func (m *Machine) SessionStarting(ctx context.Context, cwd string, hook HookInput, streams IO) (tell bool, err error) {
+	err = m.EnsureProxy(ctx, cwd, streams)
+	m.followAndObserve(ctx, cwd, hook, false)
 	if err != nil {
 		return false, err
 	}
@@ -51,8 +52,8 @@ func (m *Machine) SessionStarting(cwd string, hook HookInput, streams IO) (tell 
 // failure of it is reported. A subagent's stop is never told: the
 // session hears the notice once, and that once belongs to a turn of
 // the session's own, not to the end of a subagent's.
-func (m *Machine) SessionProgressed(cwd string, hook HookInput) (tell bool) {
-	m.followSession(cwd, hook, false)
+func (m *Machine) SessionProgressed(ctx context.Context, cwd string, hook HookInput) (tell bool) {
+	m.followSession(ctx, cwd, hook, false)
 	if hook.HookEvent == claudesettings.EventSubagentStop {
 		return false
 	}
@@ -62,8 +63,8 @@ func (m *Machine) SessionProgressed(cwd string, hook HookInput) (tell bool) {
 // SessionEnded is the moment a session closes. No failure of it is
 // reported: what outlasts the session is the file registered now, read
 // to its end, and what the repository looked like at the end.
-func (m *Machine) SessionEnded(cwd string, hook HookInput) (tell bool) {
-	m.followAndObserve(cwd, hook, true)
+func (m *Machine) SessionEnded(ctx context.Context, cwd string, hook HookInput) (tell bool) {
+	m.followAndObserve(ctx, cwd, hook, true)
 	return m.tellSession(cwd, hook)
 }
 
@@ -71,8 +72,8 @@ func (m *Machine) SessionEnded(cwd string, hook HookInput) (tell bool) {
 // shell tool use, so it must cost a session as close to nothing as it
 // can: what the tool was given and what it answered are what decide
 // whether anything is observed, and every failure is silent.
-func (m *Machine) ToolUsed(cwd string, hook HookInput) {
-	m.ObserveGitSnapshot(cwd, hook)
+func (m *Machine) ToolUsed(ctx context.Context, cwd string, hook HookInput) {
+	m.ObserveGitSnapshot(ctx, cwd, hook)
 }
 
 // followAndObserve is what a session's opening and its close have in
@@ -85,9 +86,9 @@ func (m *Machine) ToolUsed(cwd string, hook HookInput) {
 // asks for, and the follow is what asks for it; a record written
 // after it would wait for a later flush. The opening has no such
 // flush to catch, so the order costs it nothing.
-func (m *Machine) followAndObserve(cwd string, hook HookInput, ended bool) {
-	m.ObserveGitSnapshot(cwd, hook)
-	m.followSession(cwd, hook, ended)
+func (m *Machine) followAndObserve(ctx context.Context, cwd string, hook HookInput, ended bool) {
+	m.ObserveGitSnapshot(ctx, cwd, hook)
+	m.followSession(ctx, cwd, hook, ended)
 }
 
 // tellSession answers whether this session is the one to hear that the

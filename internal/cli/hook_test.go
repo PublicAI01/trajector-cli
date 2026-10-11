@@ -104,7 +104,7 @@ func TestHook_SessionStartRecordsTheProxyItWouldStartAndStartsNone(t *testing.T)
 	if got, want := h.ProxyStarts(), []string{h.ProxyAddr()}; !slices.Equal(got, want) {
 		t.Errorf("recorded proxy starts = %q, want %q", got, want)
 	}
-	if conn, err := net.DialTimeout("tcp", h.ProxyAddr(), 2*time.Second); err == nil {
+	if conn, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(t.Context(), "tcp", h.ProxyAddr()); err == nil {
 		conn.Close()
 		t.Errorf("something listens at %s, want the hook to have started no proxy", h.ProxyAddr())
 	}

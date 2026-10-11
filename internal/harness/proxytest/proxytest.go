@@ -128,7 +128,7 @@ type Env struct {
 // the test's.
 func IdleAddr(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func New(t *testing.T, opts ...Option) *Env {
 	if listenOn == "" {
 		listenOn = "127.0.0.1:0"
 	}
-	l, err := net.Listen("tcp", listenOn)
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", listenOn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func (e *Env) readReply(resp *http.Response) Reply {
 // Post sends one request through the proxy and reads the reply.
 func (e *Env) Post(path, body string, header http.Header) Reply {
 	e.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, e.BaseURL()+path, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(e.t.Context(), http.MethodPost, e.BaseURL()+path, strings.NewReader(body))
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func (e *Env) AdminToken() string {
 // wants to look like a browser uses it.
 func (e *Env) PostAdmin(path string) Reply {
 	e.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, e.BaseURL()+path, nil)
+	req, err := http.NewRequestWithContext(e.t.Context(), http.MethodPost, e.BaseURL()+path, nil)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -416,8 +416,8 @@ func (e *Env) PostAdmin(path string) Reply {
 // addr. A non-200 answer becomes an error carrying the status code:
 // handing such a body to the JSON decoder would surface as a bare EOF
 // far from the cause.
-func readHealthz(client *http.Client, addr string, layout userdirs.Layout) (Health, error) {
-	req, err := http.NewRequest(http.MethodGet, "http://"+addr+apiproxy.HealthzPath, nil)
+func readHealthz(ctx context.Context, client *http.Client, addr string, layout userdirs.Layout) (Health, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+apiproxy.HealthzPath, nil)
 	if err != nil {
 		return Health{}, err
 	}
@@ -451,7 +451,7 @@ func (e *Env) WaitHealthz(want func(Health) bool) Health {
 	e.t.Helper()
 	deadline := time.Now().Add(settle)
 	for {
-		h, err := readHealthz(e.client, e.addr, e.layout)
+		h, err := readHealthz(e.t.Context(), e.client, e.addr, e.layout)
 		if err == nil && want(h) {
 			return h
 		}
@@ -477,7 +477,7 @@ func WaitServing(t *testing.T, client *http.Client, addr string, layout userdirs
 	// proxy answers off the request path, so it outlasts settle.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		_, err := readHealthz(client, addr, layout)
+		_, err := readHealthz(t.Context(), client, addr, layout)
 		if err == nil {
 			return
 		}
@@ -505,7 +505,7 @@ const (
 // asking on purpose, not waiting on a threshold.
 func Flush(t *testing.T, client *http.Client, addr string, layout userdirs.Layout) FlushReply {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, "http://"+addr+upload.FlushPath+"?force=1", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+addr+upload.FlushPath+"?force=1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,7 +529,11 @@ type Selfcheck = apiproxy.Selfcheck
 // injected base-URL shape.
 func (e *Env) Selfcheck(token string) Selfcheck {
 	e.t.Helper()
-	resp, err := e.client.Get(e.TokenURL(token) + apiproxy.SelfcheckPath)
+	req, err := http.NewRequestWithContext(e.t.Context(), http.MethodGet, e.TokenURL(token)+apiproxy.SelfcheckPath, nil)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	resp, err := e.client.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
 	}

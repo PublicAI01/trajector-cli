@@ -298,7 +298,7 @@ func (e *BatchRejectedError) Unwrap() error {
 // acknowledgement is only trusted when it echoes the batch id — a 2xx
 // that names no batch proves nothing was persisted, and the caller must
 // keep its data.
-func (c *Client) UploadBatch(deviceToken, batchID string, envelope []byte, records redact.RedactedBytes, budget time.Duration) (BatchAck, error) {
+func (c *Client) UploadBatch(ctx context.Context, deviceToken, batchID string, envelope []byte, records redact.RedactedBytes, budget time.Duration) (BatchAck, error) {
 	if c.initErr != nil {
 		return BatchAck{}, c.initErr
 	}
@@ -319,7 +319,7 @@ func (c *Client) UploadBatch(deviceToken, batchID string, envelope []byte, recor
 		budget = UploadBudget(bodyBytes, 0)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+BatchesPath, &body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+BatchesPath, &body)
 	if err != nil {
 		return BatchAck{}, err
 	}

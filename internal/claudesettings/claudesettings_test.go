@@ -737,7 +737,7 @@ func initRepo(t *testing.T) string {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(isolated, "gitconfig"))
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	root := t.TempDir()
-	cmd := exec.Command("git", "init", "-q")
+	cmd := exec.CommandContext(t.Context(), "git", "init", "-q")
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
@@ -747,14 +747,14 @@ func initRepo(t *testing.T) string {
 
 func TestEnsureGitIgnoredAppendsWhenUncovered(t *testing.T) {
 	root := initRepo(t)
-	action, err := EnsureGitIgnored(root, ".claude/settings.local.json")
+	action, err := EnsureGitIgnored(t.Context(), root, ".claude/settings.local.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if action != IgnoreAppended {
 		t.Errorf("action = %q, want appended", action)
 	}
-	again, err := EnsureGitIgnored(root, ".claude/settings.local.json")
+	again, err := EnsureGitIgnored(t.Context(), root, ".claude/settings.local.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -765,7 +765,7 @@ func TestEnsureGitIgnoredAppendsWhenUncovered(t *testing.T) {
 
 func TestEnsureGitIgnoredPreservesDirectoryOnlyRules(t *testing.T) {
 	root := initRepo(t)
-	action, err := EnsureGitIgnored(root, "dist-*/")
+	action, err := EnsureGitIgnored(t.Context(), root, "dist-*/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -779,7 +779,7 @@ func TestEnsureGitIgnoredPreservesDirectoryOnlyRules(t *testing.T) {
 	if string(data) != "dist-*/\n" {
 		t.Errorf(".gitignore = %q, want the trailing slash kept", data)
 	}
-	again, err := EnsureGitIgnored(root, "dist-*/")
+	again, err := EnsureGitIgnored(t.Context(), root, "dist-*/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -793,7 +793,7 @@ func TestEnsureGitIgnoredRespectsExistingCoverage(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".claude/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	action, err := EnsureGitIgnored(root, ".claude/settings.local.json")
+	action, err := EnsureGitIgnored(t.Context(), root, ".claude/settings.local.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -816,7 +816,7 @@ func TestEnsureGitIgnoredRefusesASymlinkedGitignore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	action, err := EnsureGitIgnored(root, ".claude/settings.local.json")
+	action, err := EnsureGitIgnored(t.Context(), root, ".claude/settings.local.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -864,7 +864,7 @@ func TestInjectProjectRefusesASymlinkedSettingsFile(t *testing.T) {
 
 func TestEnsureGitIgnoredSkipsOutsideRepo(t *testing.T) {
 	gitAvailable(t)
-	action, err := EnsureGitIgnored(t.TempDir(), ".claude/settings.local.json")
+	action, err := EnsureGitIgnored(t.Context(), t.TempDir(), ".claude/settings.local.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -876,7 +876,7 @@ func TestEnsureGitIgnoredSkipsOutsideRepo(t *testing.T) {
 func TestEnsureGitIgnoredSkipsWithoutGitOnPath(t *testing.T) {
 	root := initRepo(t)
 	t.Setenv("PATH", t.TempDir())
-	action, err := EnsureGitIgnored(root, ".claude/settings.local.json")
+	action, err := EnsureGitIgnored(t.Context(), root, ".claude/settings.local.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -951,7 +951,7 @@ func TestEnsureGitIgnoredDoesNotClobberAConcurrentAppend(t *testing.T) {
 	}()
 	<-holding
 
-	action, err := EnsureGitIgnored(root, ".claude/settings.local.json")
+	action, err := EnsureGitIgnored(t.Context(), root, ".claude/settings.local.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -983,7 +983,7 @@ func TestEnsureGitIgnoredKeepsTheExistingFileMode(t *testing.T) {
 	if err := os.WriteFile(path, []byte("build/\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnsureGitIgnored(root, ".claude/settings.local.json"); err != nil {
+	if _, err := EnsureGitIgnored(t.Context(), root, ".claude/settings.local.json"); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)

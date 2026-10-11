@@ -10,6 +10,7 @@ package upload
 
 import (
 	"cmp"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -287,8 +288,8 @@ var errBudgetSpent = errors.New("upload: the flush ran out of its budget; what i
 // and a batch whose disposition asks for nothing but another attempt
 // carries no outcome at all — never a leftover in-progress one. Readers
 // act on the outcome first.
-func (u *Uploader) Flush(force bool) (Result, error) {
-	return u.locked(flushMode{ignoreThreshold: force, ignoreGates: force})
+func (u *Uploader) Flush(ctx context.Context, force bool) (Result, error) {
+	return u.locked(ctx, flushMode{ignoreThreshold: force, ignoreGates: force})
 }
 
 // FlushRecords uploads what the spool holds as soon as it holds any
@@ -296,20 +297,20 @@ func (u *Uploader) Flush(force bool) (Result, error) {
 // session's end, or a session gone quiet, asks for. Every gate and
 // the backoff still stand, and the thresholds for recorded calls
 // still hold a spool that carries only those.
-func (u *Uploader) FlushRecords() (Result, error) {
-	return u.locked(flushMode{recordsDue: true})
+func (u *Uploader) FlushRecords(ctx context.Context) (Result, error) {
+	return u.locked(ctx, flushMode{recordsDue: true})
 }
 
 // locked runs one flush under the uploader's lock and the closed
 // gate, and reports a failed flush's outcome from the disposition it
 // reached.
-func (u *Uploader) locked(mode flushMode) (Result, error) {
+func (u *Uploader) locked(ctx context.Context, mode flushMode) (Result, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.closed {
 		return Result{}, ErrClosed
 	}
-	res, err := u.flush(mode, time.Time{})
+	res, err := u.flush(ctx, mode, time.Time{})
 	if err != nil {
 		res.Outcome, res.Standing = "", Standing{}
 		u.reportDisposition(&res)
@@ -422,14 +423,14 @@ func (u *Uploader) reportBackoff(res *Result) bool {
 // It is measured on the wall clock — no injected clock can shorten a
 // successor's wait — and what it does not manage to upload stays in the
 // spool, with its batch id pinned, for whoever flushes next.
-func (u *Uploader) Close(budget time.Duration) error {
+func (u *Uploader) Close(ctx context.Context, budget time.Duration) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.closed {
 		return nil
 	}
 	u.closed = true
-	_, err := u.flush(flushMode{ignoreThreshold: true}, time.Now().Add(budget))
+	_, err := u.flush(ctx, flushMode{ignoreThreshold: true}, time.Now().Add(budget))
 	return err
 }
 
@@ -455,7 +456,7 @@ type flushMode struct {
 // flush is Flush without the lock and the closed gate. A zero deadline
 // is a flush with no budget: it runs until the spool is drained or an
 // attempt fails.
-func (u *Uploader) flush(mode flushMode, deadline time.Time) (Result, error) {
+func (u *Uploader) flush(ctx context.Context, mode flushMode, deadline time.Time) (Result, error) {
 	res := Result{Outcome: Empty}
 
 	token, err := u.deps.DeviceToken()
@@ -500,7 +501,7 @@ func (u *Uploader) flush(mode flushMode, deadline time.Time) (Result, error) {
 	// A pending batch is finished before anything else: its id was
 	// already offered to the service, and only its acknowledgement (or
 	// the disappearance of its records) releases it.
-	if err := u.resendPending(token, &res, deadline); err != nil {
+	if err := u.resendPending(ctx, token, &res, deadline); err != nil {
 		return res, err
 	}
 
@@ -540,7 +541,7 @@ func (u *Uploader) flush(mode flushMode, deadline time.Time) (Result, error) {
 		if err != nil {
 			return res, fmt.Errorf("upload: %w", err)
 		}
-		if err := u.send(token, l, entries, &res, deadline); err != nil {
+		if err := u.send(ctx, token, l, entries, &res, deadline); err != nil {
 			return res, err
 		}
 	}
@@ -554,7 +555,7 @@ func (u *Uploader) flush(mode flushMode, deadline time.Time) (Result, error) {
 // of its records still exist. The batch id is reused verbatim: if the
 // earlier attempt was ingested and only the acknowledgement was lost,
 // the service recognizes the id and does not ingest it again.
-func (u *Uploader) resendPending(token string, res *Result, deadline time.Time) error {
+func (u *Uploader) resendPending(ctx context.Context, token string, res *Result, deadline time.Time) error {
 	l, ok, err := resumeLease(u.deps.Dir)
 	var unreadable *unreadablePendingError
 	if errors.As(err, &unreadable) {
@@ -589,7 +590,7 @@ func (u *Uploader) resendPending(token string, res *Result, deadline time.Time) 
 		// out from under a pending batch. Nothing is left to send.
 		return l.release()
 	}
-	return u.send(token, l, entries, res, deadline)
+	return u.send(ctx, token, l, entries, res, deadline)
 }
 
 // discardUnreadablePending is the recovery for a pending file whose
@@ -615,7 +616,7 @@ func (u *Uploader) discardUnreadablePending(raw []byte) error {
 // applied. Failures leave the spool and the lease exactly as they were
 // — except records the build itself refused, which move to the rejected
 // store so one unreadable file cannot stall every upload behind it.
-func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Result, deadline time.Time) error {
+func (u *Uploader) send(ctx context.Context, token string, l lease, entries spool.Entries, res *Result, deadline time.Time) error {
 	entries, err := u.dropWithdrawn(entries)
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
@@ -656,7 +657,7 @@ func (u *Uploader) send(token string, l lease, entries spool.Entries, res *Resul
 			return errBudgetSpent
 		}
 	}
-	ack, err := u.deps.Service.UploadBatch(token, b.ID, b.Envelope, b.Records, budget)
+	ack, err := u.deps.Service.UploadBatch(ctx, token, b.ID, b.Envelope, b.Records, budget)
 	u.noteAttempt(err)
 	if err != nil {
 		res.Disposition, err = u.settleFailure(token, l, b.Packed, err)

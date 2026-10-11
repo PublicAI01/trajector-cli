@@ -146,7 +146,7 @@ func TestFlush_MixesBothRecordKindsInOneBatch(t *testing.T) {
 	seg := f.storeSegment(t, sessionX, 0, f.now, `{"type":"user","message":{"role":"user","content":"hi"}}`+"\n")
 	snap := f.storeXMetaSnapshot(t, f.now, `{"agentId":"a"}`)
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestFlush_SegmentSignatureBytesReachTheService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	reqs := f.server.Requests()
@@ -237,7 +237,7 @@ func TestFlush_AckDeletesBothKinds(t *testing.T) {
 	f.storeSegment(t, sessionX, 0, f.now, "{}\n")
 	f.storeXMetaSnapshot(t, f.now, `{"agentId":"a"}`)
 
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	if ids := spooledRawcallIDs(t, f.spool); len(ids) != 0 {
@@ -275,7 +275,7 @@ func TestFlush_FailureKeepsBothKinds(t *testing.T) {
 			seg := f.storeSegment(t, sessionX, 0, f.now, "{}\n")
 			snap := f.storeXMetaSnapshot(t, f.now, `{"agentId":"a"}`)
 
-			res, err := f.uploader.Flush(true)
+			res, err := f.uploader.Flush(t.Context(), true)
 			if err == nil {
 				t.Fatal("a refused upload reported no error")
 			}
@@ -302,7 +302,7 @@ func TestFlush_RejectedMixedBatchIsQuarantinedWholeAndRequeuesToBothSlots(t *tes
 	seg := f.storeSegment(t, sessionX, 0, f.now, "{}\n")
 	snap := f.storeXMetaSnapshot(t, f.now, `{"agentId":"a"}`)
 
-	res, _ := f.uploader.Flush(true)
+	res, _ := f.uploader.Flush(t.Context(), true)
 	if res.Outcome != upload.Rejected {
 		t.Fatalf("result = %+v, want the batch rejected", res)
 	}
@@ -345,7 +345,7 @@ func TestFlush_OrdersAdjacentBySourceThenSession(t *testing.T) {
 	y1 := f.storeSegment(t, sessionY, 1, f.now.Add(time.Second), "{}\n")
 	xMeta := f.storeXMetaSnapshot(t, f.now, `{"agentId":"a"}`)
 
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	reqs := f.server.Requests()
@@ -380,7 +380,7 @@ func TestFlush_IncompleteSegmentIsSetAside(t *testing.T) {
 			good := f.storeSegment(t, sessionX, 0, f.now, "{}\n")
 			bad := tc.plant(t, f)
 
-			res, err := f.uploader.Flush(true)
+			res, err := f.uploader.Flush(t.Context(), true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -415,7 +415,7 @@ func TestFlush_SnapshotIDFollowsRedactedContent(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	snap := f.storeXMetaSnapshot(t, f.now, `{"agentId":"a","note":"`+fakeSecret+`"}`)
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil || res.Records != 1 {
 		t.Fatalf("result = %+v, %v", res, err)
 	}
@@ -454,7 +454,7 @@ func TestFlush_NeverSendsRecordsOfAProjectThatWithdrewConsent(t *testing.T) {
 	gone := f.storeSegmentFor(t, sessionY, "hash-withdrawn", "", 0, f.now, "{}\n")
 	f.withdrawn["hash-withdrawn"] = true
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,10 +481,10 @@ func TestFlush_PendingBatchResendsBothKindsUnderTheSameID(t *testing.T) {
 	f.storeRawcall(t, "req-1", f.now)
 	seg := f.storeSegment(t, sessionX, 0, f.now, "{}\n")
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("first flush against a failing service did not error")
 	}
-	res, err := f.newUploader(t).Flush(true)
+	res, err := f.newUploader(t).Flush(t.Context(), true)
 	if err != nil || res.Outcome != upload.Uploaded || res.Records != 2 {
 		t.Fatalf("resend = %+v, %v; want both records acknowledged", res, err)
 	}
@@ -508,12 +508,12 @@ func TestFlush_AResumedBatchResendsOnlyTheSlotItNamed(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	seg := f.storeSegment(t, sessionX, 0, f.now, "{}\n")
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("first flush against a failing service did not error")
 	}
 	f.storeRawcall(t, seg.RecordID, f.now)
 
-	res, err := f.newUploader(t).Flush(true)
+	res, err := f.newUploader(t).Flush(t.Context(), true)
 	if err != nil || res.Outcome != upload.Uploaded || res.Batches != 2 {
 		t.Fatalf("flush = %+v, %v; want the pending batch resent and the rawcall sent under an id of its own", res, err)
 	}
@@ -554,7 +554,7 @@ func TestFlush_APendingFileFromAnEarlierBuildKeepsItsID(t *testing.T) {
 	f.storeRawcall(t, "req-1", f.now)
 	writePendingBytes(t, f.dir, []byte(`{"batch_id":"b-from-an-earlier-build","request_ids":["req-1"]}`))
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil || res.Records != 1 {
 		t.Fatalf("result = %+v, %v", res, err)
 	}
@@ -572,7 +572,7 @@ func TestFlush_AgedRecordsInTheSecondSlotTriggerAnUnforcedFlush(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeSegment(t, sessionX, 0, f.now.Add(-25*time.Hour), "{}\n")
 
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -692,7 +692,7 @@ func TestFlush_UnmaskableRecordTriggersTheCallback(t *testing.T) {
 			f.storeSegment(t, sessionX, 0, f.now, "{}\n")
 			tc.plant(t, f)
 
-			res, err := f.uploader.Flush(true)
+			res, err := f.uploader.Flush(t.Context(), true)
 			if err != nil {
 				t.Fatal(err)
 			}

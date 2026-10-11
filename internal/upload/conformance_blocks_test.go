@@ -80,7 +80,7 @@ func TestSharedFixturesUploadTheRecordedCallsAsTheirStream(t *testing.T) {
 			f := newFixture(t)
 			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Echoes(c.Response.Status, c.Response.Body))
 			f.storeCallRepeating(t, "req-0", "")
-			if _, err := f.uploader.Flush(true); err != nil {
+			if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 				t.Fatalf("Flush: %v", err)
 			}
 
@@ -103,7 +103,7 @@ func TestSharedFixturesUploadTheRecordedCallsAsTheirStream(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := f.uploader.Flush(true); err != nil {
+			if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 				t.Fatalf("Flush: %v", err)
 			}
 			reqs := f.server.Requests()
@@ -219,7 +219,7 @@ func TestSharedFixturesThatWithholdBlockRefsKeepWhatWasSent(t *testing.T) {
 			f.uploadWith(t, y)
 			current = &refs[i]
 			f.storeCallRepeating(t, "req-4", "")
-			if got, err := f.uploader.Flush(true); err != nil || got.Outcome != upload.Uploaded {
+			if got, err := f.uploader.Flush(t.Context(), true); err != nil || got.Outcome != upload.Uploaded {
 				t.Fatalf("Flush = %+v, %v", got, err)
 			}
 			f.storeCallRepeating(t, "req-5", x)

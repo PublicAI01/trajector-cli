@@ -15,10 +15,7 @@ func TestFlushHandlerServesTheWireContract(t *testing.T) {
 	srv := httptest.NewServer(f.uploader.Handler("test-proxy"))
 	defer srv.Close()
 
-	resp, err := srv.Client().Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := send(t, srv, http.MethodPost, upload.FlushPath+"?force=1")
 	defer resp.Body.Close()
 	var reply upload.FlushReply
 	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
@@ -28,18 +25,12 @@ func TestFlushHandlerServesTheWireContract(t *testing.T) {
 		t.Errorf("reply = %+v, want the empty-spool outcome from test-proxy", reply)
 	}
 
-	get, err := srv.Client().Get(srv.URL + upload.FlushPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	get := send(t, srv, http.MethodGet, upload.FlushPath)
 	get.Body.Close()
 	if get.StatusCode != http.StatusNotFound {
 		t.Errorf("GET flush = %d, want 404", get.StatusCode)
 	}
-	other, err := srv.Client().Post(srv.URL+"/trajector/other", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	other := send(t, srv, http.MethodPost, "/trajector/other")
 	other.Body.Close()
 	if other.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown mounted path = %d, want 404", other.StatusCode)
@@ -53,10 +44,7 @@ func TestFlushHandlerCarriesTheOutcomeWithTheError(t *testing.T) {
 	srv := httptest.NewServer(f.uploader.Handler("test-proxy"))
 	defer srv.Close()
 
-	resp, err := srv.Client().Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := send(t, srv, http.MethodPost, upload.FlushPath+"?force=1")
 	defer resp.Body.Close()
 	var reply upload.FlushReply
 	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
@@ -84,10 +72,7 @@ func TestFlushHandlerCarriesWhatTheServiceSaidAboutTheVersion(t *testing.T) {
 	srv := httptest.NewServer(f.uploader.Handler("test-proxy"))
 	defer srv.Close()
 
-	resp, err := srv.Client().Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := send(t, srv, http.MethodPost, upload.FlushPath+"?force=1")
 	defer resp.Body.Close()
 	var reply upload.FlushReply
 	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
@@ -105,10 +90,7 @@ func TestFlushHandlerReportsAFailedFlush(t *testing.T) {
 	srv := httptest.NewServer(f.uploader.Handler("test-proxy"))
 	defer srv.Close()
 
-	resp, err := srv.Client().Post(srv.URL+upload.FlushPath+"?force=1", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := send(t, srv, http.MethodPost, upload.FlushPath+"?force=1")
 	defer resp.Body.Close()
 	var reply upload.FlushReply
 	if err := json.NewDecoder(resp.Body).Decode(&reply); err != nil {
@@ -117,4 +99,18 @@ func TestFlushHandlerReportsAFailedFlush(t *testing.T) {
 	if reply.Error == "" {
 		t.Errorf("reply = %+v, want the flush failure carried in the reply", reply)
 	}
+}
+
+// send makes one request to the handler srv serves.
+func send(t *testing.T, srv *httptest.Server, method, path string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), method, srv.URL+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
 }

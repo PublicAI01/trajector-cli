@@ -311,7 +311,7 @@ func TestDoctorLeavesNeverReadSessionsAloneWhereEarlierSessionsWereSkipped(t *te
 	e := newEnv(t)
 	var res resident
 	e.startProxy(res.handler())
-	if err := e.machine().Enable(e.project, lifecycle.EnableChoices{Shape: proxytest.WithProxy, SkipEarlier: true}, e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, lifecycle.EnableChoices{Shape: proxytest.WithProxy, SkipEarlier: true}, e.io()); err != nil {
 		t.Fatalf("enable: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
 	}
 	path := e.sessionFile(sessionMarker+"-1", e.deps.Now().Add(-48*time.Hour))
@@ -336,7 +336,7 @@ func TestDoctorAsksForANeverReadSessionWrittenAfterAGrantThatSkippedTheEarlierOn
 	e := newEnv(t)
 	var res resident
 	e.startProxy(res.handler())
-	if err := e.machine().Enable(e.project, lifecycle.EnableChoices{Shape: proxytest.WithProxy, SkipEarlier: true}, e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, lifecycle.EnableChoices{Shape: proxytest.WithProxy, SkipEarlier: true}, e.io()); err != nil {
 		t.Fatalf("enable: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
 	}
 	earlier := e.sessionFile(sessionMarker+"-1", e.deps.Now().Add(-48*time.Hour))
@@ -366,7 +366,7 @@ func TestStatusShowsWhenAFileWasLastReadAndWhatIsNotReadYet(t *testing.T) {
 	e.startProxy()
 	path := e.sessionFile("s-1", time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC))
 	e.enable(proxytest.WithProxy)
-	e.machine().ReadSessionFiles(e.project, e.io())
+	e.machine().ReadSessionFiles(t.Context(), e.project, e.io())
 	e.stdout.Reset()
 
 	out := e.statusOutput()
@@ -535,7 +535,7 @@ func TestDoctorBundleCarriesSessionCountsWithoutIdsOrPaths(t *testing.T) {
 	e.enable(proxytest.WithProxy)
 
 	t.Chdir(t.TempDir())
-	path, err := e.machine().DoctorBundle(e.project, e.io())
+	path, err := e.machine().DoctorBundle(t.Context(), e.project, e.io())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +560,7 @@ func TestDoctorBundleCarriesTheSessionsNoHookReported(t *testing.T) {
 	locked := e.enabledWithOneSessionAndOneUnreported()
 
 	t.Chdir(t.TempDir())
-	path, err := e.machine().DoctorBundle(e.project, e.io())
+	path, err := e.machine().DoctorBundle(t.Context(), e.project, e.io())
 	if err != nil {
 		t.Fatal(err)
 	}

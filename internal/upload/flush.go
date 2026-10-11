@@ -1,6 +1,7 @@
 package upload
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 )
@@ -47,7 +48,9 @@ func (u *Uploader) Handler(serviceName string) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		result, err := u.Flush(r.URL.Query().Get("force") == "1")
+		// A flush runs to its end even when the caller stops waiting:
+		// the caller's timeout bounds its wait, not the upload.
+		result, err := u.Flush(context.WithoutCancel(r.Context()), r.URL.Query().Get("force") == "1")
 		reply := FlushReply{
 			Service:  serviceName,
 			Outcome:  result.Outcome,

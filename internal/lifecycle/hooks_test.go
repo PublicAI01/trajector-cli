@@ -56,7 +56,7 @@ func TestEnsureProxyPausesRecordingOnAStaleAgreement(t *testing.T) {
 	e.startProxy()
 	e.sandbox.AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z")
 
-	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 		t.Fatalf("ensure-proxy: %v", err)
 	}
 	if reason := e.sandbox.PausedReason(); reason != proxytest.PauseConsentReconfirm {
@@ -70,12 +70,12 @@ func TestEnsureProxyPausesRecordingOnAStaleAgreement(t *testing.T) {
 func TestEnsureProxyFollowsUpstreamDrift(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 
 	e.environ["ANTHROPIC_BASE_URL"] = "https://relay.example.com"
-	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	grant := e.status()
@@ -84,7 +84,7 @@ func TestEnsureProxyFollowsUpstreamDrift(t *testing.T) {
 	}
 
 	delete(e.environ, "ANTHROPIC_BASE_URL")
-	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	grant = e.status()
@@ -97,7 +97,7 @@ func TestUnsupportedChannelIsReportedNotRewritten(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.environ["ANTHROPIC_BASE_URL"] = "https://relay.example.com"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	// The user moves the project to Bedrock after enabling it. From here
@@ -106,7 +106,7 @@ func TestUnsupportedChannelIsReportedNotRewritten(t *testing.T) {
 	delete(e.environ, "ANTHROPIC_BASE_URL")
 	e.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"
 
-	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.status().Upstream; got != "https://relay.example.com" {
@@ -114,7 +114,7 @@ func TestUnsupportedChannelIsReportedNotRewritten(t *testing.T) {
 	}
 
 	e.stdout.Reset()
-	problems, err := e.machine().Doctor(e.project, e.io())
+	problems, err := e.machine().Doctor(t.Context(), e.project, e.io())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestEnsureProxyRefusesAForeignPortHolder(t *testing.T) {
 	e := newEnv(t)
 	e.occupyPort()
 
-	err := e.machine().EnsureProxy(e.project, e.io())
+	err := e.machine().EnsureProxy(t.Context(), e.project, e.io())
 	if err == nil {
 		t.Fatal("ensure-proxy succeeded against a foreign port holder")
 	}
@@ -153,7 +153,7 @@ func TestEnsureProxyPausesRecordingWhenConsentCannotBeRead(t *testing.T) {
 	e.acceptCurrentAgreement()
 	e.sandbox.CorruptConsent()
 
-	if err := e.machine().EnsureProxy(e.project, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
 		t.Fatalf("ensure-proxy: %v", err)
 	}
 	if reason := e.sandbox.PausedReason(); reason != proxytest.PauseConsentUnreadable {
@@ -179,7 +179,7 @@ func TestEnableResumesBothConsentPauses(t *testing.T) {
 			e.sandbox.Pause(reason)
 			e.stdin = "yes\nyes\nyes\n"
 
-			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+			if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 				t.Fatalf("enable: %v", err)
 			}
 			if got := e.sandbox.PausedReason(); got != "" {

@@ -7,6 +7,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -124,7 +125,7 @@ func takeAnywhere(args []string, flag string) ([]string, bool) {
 }
 
 // Run executes the CLI and returns the process exit code.
-func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	args, noColor := takeAnywhere(args, noColorFlag)
 	a := &app{stdin: stdin, stdout: stdout, stderr: stderr}
 	a.outStyle = report.DetectStyle(stdout, os.LookupEnv)
@@ -148,29 +149,29 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "trajector %s\n", buildVersion())
 		return 0
 	case "login":
-		return a.loginCmd(args[1:])
+		return a.loginCmd(ctx, args[1:])
 	case "logout":
-		return a.logoutCmd(args[1:])
+		return a.logoutCmd(ctx, args[1:])
 	case "enable":
-		return a.enableCmd(args[1:])
+		return a.enableCmd(ctx, args[1:])
 	case "disable":
-		return a.disableCmd(args[1:])
+		return a.disableCmd(ctx, args[1:])
 	case "uninstall":
-		return a.uninstallCmd(args[1:])
+		return a.uninstallCmd(ctx, args[1:])
 	case "status":
-		return a.statusCmd(args[1:])
+		return a.statusCmd(ctx, args[1:])
 	case "doctor":
-		return a.doctorCmd(args[1:])
+		return a.doctorCmd(ctx, args[1:])
 	case "upload":
-		return a.uploadCmd(args[1:])
+		return a.uploadCmd(ctx, args[1:])
 	case "forget":
 		return a.forgetCmd(args[1:])
 	case "upgrade":
-		return a.upgradeCmd(args[1:])
+		return a.upgradeCmd(ctx, args[1:])
 	case "hook":
-		return a.hookCmd(args[1:])
+		return a.hookCmd(ctx, args[1:])
 	case proxylife.Command:
-		return a.proxyCmd(args[1:])
+		return a.proxyCmd(ctx, args[1:])
 	default:
 		fmt.Fprintf(stderr, "trajector: unknown command %q\n", args[0])
 		usage(stderr)

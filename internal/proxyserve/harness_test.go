@@ -54,7 +54,7 @@ func newEnv(t *testing.T) *env {
 
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func freeAddr(t *testing.T) string {
 // trajector proxy.
 func (e *env) occupyPort() {
 	e.t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(e.t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func (e *env) waitHealthy() {
 // published.
 func (e *env) drain() {
 	e.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, "http://"+e.assembly.Addr+apiproxy.DrainPath, nil)
+	req, err := http.NewRequestWithContext(e.t.Context(), http.MethodPost, "http://"+e.assembly.Addr+apiproxy.DrainPath, nil)
 	if err != nil {
 		e.t.Fatal(err)
 	}

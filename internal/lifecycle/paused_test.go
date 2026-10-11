@@ -27,7 +27,7 @@ func TestEnableExplainsWhyRecordingIsPaused(t *testing.T) {
 			e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
 			e.sandbox.Pause(tt.reason)
 
-			err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
+			err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io())
 			if err == nil {
 				t.Fatalf("enable succeeded while recording was paused for %q", tt.reason)
 			}
@@ -65,7 +65,7 @@ func TestReadSessionFilesStoresNothingWhileRecordingIsPaused(t *testing.T) {
 			e.registerFile(root, meta, "")
 			tt.pause(e)
 
-			e.machine().ReadSessionFiles(e.project, discardIO())
+			e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 
 			if got := e.storedRecords(); len(got) != 0 {
 				t.Errorf("records = %d, want nothing stored while recording is paused", len(got))
@@ -85,7 +85,7 @@ func TestReadSessionFilesStoresNothingWhileRecordingIsPaused(t *testing.T) {
 func TestUninstallOnACleanMachineReportsNothingToRemove(t *testing.T) {
 	e := newEnv(t)
 	e.stdin = "\n"
-	if err := e.machine().Uninstall(false, e.io()); err != nil {
+	if err := e.machine().Uninstall(t.Context(), false, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "0 project(s)") {
@@ -98,7 +98,7 @@ func TestUninstallOnACleanMachineReportsNothingToRemove(t *testing.T) {
 
 func TestDisableOnANeverEnabledProjectDeletesNothing(t *testing.T) {
 	e := newEnv(t)
-	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "not enabled") {
@@ -117,7 +117,7 @@ func TestSessionHooksSurviveAProjectDirectoryThatIsGone(t *testing.T) {
 	// A hook runs inside whatever directory the session is in; it must
 	// not break a session because that directory moved.
 	e.machine().Discovery(missing, e.io())
-	if err := e.machine().EnsureProxy(missing, e.io()); err != nil {
+	if err := e.machine().EnsureProxy(t.Context(), missing, e.io()); err != nil {
 		t.Errorf("ensure-proxy on a missing project = %v, want the proxy up anyway", err)
 	}
 }
@@ -125,11 +125,11 @@ func TestSessionHooksSurviveAProjectDirectoryThatIsGone(t *testing.T) {
 func TestPurgeReportsAFailedDeletionRequestWithoutUndoingTheLocalDisable(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	// No stub for the deletion endpoint, so the service refuses it.
-	err := e.machine().Disable(e.project, true, e.io())
+	err := e.machine().Disable(t.Context(), e.project, true, e.io())
 	if err == nil || !strings.Contains(err.Error(), "disabled locally") {
 		t.Errorf("disable --purge = %v, want the local disable confirmed and the request reported", err)
 	}
@@ -141,7 +141,7 @@ func TestPurgeReportsAFailedDeletionRequestWithoutUndoingTheLocalDisable(t *test
 func TestEnableRefusesAnUnreachableService(t *testing.T) {
 	e := newUnpairedEnv(t)
 	// No pairing stubs, so the service refuses to start one.
-	err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
+	err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io())
 	if err == nil || !strings.Contains(err.Error(), "starting pairing") {
 		t.Errorf("enable = %v, want the pairing failure", err)
 	}
@@ -152,13 +152,13 @@ func TestEnableRefusesAnUnreachableService(t *testing.T) {
 
 func TestLoginKeepsAnExistingDiscoveryHook(t *testing.T) {
 	e := newEnv(t)
-	if err := e.machine().Login(e.io()); err != nil {
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	before := e.userSettingsContents()
 	e.stdout.Reset()
 
-	if err := e.machine().Login(e.io()); err != nil {
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if after := e.userSettingsContents(); after != before {

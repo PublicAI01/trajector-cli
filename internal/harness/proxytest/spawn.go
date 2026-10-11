@@ -1,6 +1,7 @@
 package proxytest
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -40,7 +41,7 @@ func Main(m *testing.M) int {
 }
 
 func runTrajector(args []string) int {
-	exit := cli.Run(args, strings.NewReader(""), io.Discard, io.Discard)
+	exit := cli.Run(context.Background(), args, strings.NewReader(""), io.Discard, io.Discard)
 	path := os.Getenv(runFileEnv)
 	if path == "" {
 		return exit
@@ -135,12 +136,12 @@ func SpawnDevice(t *testing.T, home, version, service string) *SpawnedDevice {
 	d.Sandbox.WriteUserConfig(`{"platform_url":"` + service + `"}`)
 	t.Setenv(cli.ProxyAddrEnv, d.ProxyAddr)
 	d.proxy = proxylife.For(layout, version, d.ExecPath, d.ProxyAddr, nil)
-	t.Cleanup(func() { _ = d.proxy.StopGone() })
+	t.Cleanup(func() { _ = d.proxy.StopGone(context.WithoutCancel(t.Context())) })
 	return d
 }
 
 // ResidentProcessIsOurs reports whether a healthy proxy of this
 // device's build holds the proxy address.
 func (d *SpawnedDevice) ResidentProcessIsOurs() bool {
-	return d.proxy.Observe().Holder == proxylife.HolderOurs
+	return d.proxy.Observe(d.Sandbox.t.Context()).Holder == proxylife.HolderOurs
 }

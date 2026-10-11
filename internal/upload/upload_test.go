@@ -177,7 +177,7 @@ func TestUnforcedFlushBelowThresholdsLeavesTheSpoolAlone(t *testing.T) {
 	f := newFixture(t)
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestForcedFlushUploadsAndDeletesAcknowledgedRecords(t *testing.T) {
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	f.storeRawcall(t, "req-2", time.Now().UTC())
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestFlushWithoutADeviceTokenPauses(t *testing.T) {
 	f.token = ""
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestFlushWithoutADeviceTokenPauses(t *testing.T) {
 
 func TestEmptySpoolFlushesToNothing(t *testing.T) {
 	f := newFixture(t)
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestAgedRecordsTriggerAnUnforcedFlush(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
 
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestFailedUploadKeepsRecordsAndRetriesUnderTheSameBatchID(t *testing.T) {
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	usageBefore := f.spool.Usage()
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("first flush against a failing service did not error")
 	}
 	if f.spool.Usage() != usageBefore {
@@ -289,7 +289,7 @@ func TestFailedUploadKeepsRecordsAndRetriesUnderTheSameBatchID(t *testing.T) {
 		t.Error("failed attempt left no error in state")
 	}
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestAnAckNamingAnotherBatchIsNotTrusted(t *testing.T) {
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	usageBefore := f.spool.Usage()
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("mismatched acknowledgement was accepted")
 	}
 	if f.spool.Usage() != usageBefore {
@@ -333,7 +333,7 @@ func TestHandshakeTunesThresholdsQuotaAndSurfaces(t *testing.T) {
 		Notice:           "an upgrade is available",
 	}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -348,7 +348,7 @@ func TestHandshakeTunesThresholdsQuotaAndSurfaces(t *testing.T) {
 	// The one-byte flush threshold now makes any fresh record enough for
 	// an unforced flush.
 	f.storeRawcall(t, "req-2", time.Now().UTC())
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,14 +361,14 @@ func TestADrainSplitsIntoBoundedBatches(t *testing.T) {
 	f := newFixture(t)
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{FlushBytes: 1}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 
 	for _, id := range []string{"req-2", "req-3", "req-4"} {
 		f.storeRawcall(t, id, time.Now().UTC())
 	}
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,14 +386,14 @@ func TestAPendingBatchWhoseRecordsWereWithdrawnIsReleased(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("first flush against a failing service did not error")
 	}
 	if _, err := f.spool.DeleteWhere(func(string) bool { return true }); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +409,7 @@ func TestBatchesCarryRunMetadata(t *testing.T) {
 	f := newFixture(t)
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -444,7 +444,7 @@ func TestATokenSourceFailureStopsTheFlush(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.storeRawcall(t, "req-1", time.Now().UTC())
-	if _, err := broken.Flush(true); err == nil || !strings.Contains(err.Error(), "keyring unavailable") {
+	if _, err := broken.Flush(t.Context(), true); err == nil || !strings.Contains(err.Error(), "keyring unavailable") {
 		t.Fatalf("flush error = %v, want the token source failure", err)
 	}
 }
@@ -460,7 +460,7 @@ func TestCloseRunsAFinalFlushAndThenRefusesToFlush(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
 
-	if err := f.uploader.Close(time.Minute); err != nil {
+	if err := f.uploader.Close(t.Context(), time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if f.spool.Usage() != 0 {
@@ -471,10 +471,10 @@ func TestCloseRunsAFinalFlushAndThenRefusesToFlush(t *testing.T) {
 	}
 
 	f.storeRawcall(t, "req-2", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); !errors.Is(err, upload.ErrClosed) {
+	if _, err := f.uploader.Flush(t.Context(), true); !errors.Is(err, upload.ErrClosed) {
 		t.Fatalf("flush after close = %v, want ErrClosed", err)
 	}
-	if err := f.uploader.Close(time.Minute); err != nil {
+	if err := f.uploader.Close(t.Context(), time.Minute); err != nil {
 		t.Errorf("second close = %v, want nil", err)
 	}
 	if f.uploadCount() != 1 {
@@ -490,7 +490,7 @@ func TestCloseUploadsRecordsBelowTheUploadThresholds(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	if err := f.uploader.Close(time.Minute); err != nil {
+	if err := f.uploader.Close(t.Context(), time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if f.uploadCount() != 1 {
@@ -506,12 +506,12 @@ func TestCloseDoesNotUploadPastARefusal(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the refusal did not surface as an error")
 	}
 	before := f.uploadCount()
 
-	if err := f.uploader.Close(time.Minute); err != nil {
+	if err := f.uploader.Close(t.Context(), time.Minute); err != nil {
 		t.Fatalf("close after a refusal = %v", err)
 	}
 	if got := f.uploadCount(); got != before {
@@ -537,7 +537,7 @@ func TestCloseAbandonsAnUploadThatOutlastsItsBudget(t *testing.T) {
 
 	const budget = 200 * time.Millisecond
 	start := time.Now()
-	err := f.uploader.Close(budget)
+	err := f.uploader.Close(t.Context(), budget)
 	spent := time.Since(start)
 
 	if spent > 30*budget {
@@ -568,7 +568,7 @@ func TestARejectedBatchIsQuarantinedAndUnblocksUploads(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	_, err := f.uploader.Flush(true)
+	_, err := f.uploader.Flush(t.Context(), true)
 	if err == nil || !strings.Contains(err.Error(), "moved to") {
 		t.Fatalf("flush error = %v, want a rejection notice naming the rejected dir", err)
 	}
@@ -596,7 +596,7 @@ func TestARejectedBatchIsQuarantinedAndUnblocksUploads(t *testing.T) {
 	}
 
 	f.storeRawcall(t, "req-2", time.Now().UTC())
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("flush after quarantine = %+v, %v; the queue must be unblocked", res, err)
 	}
@@ -610,10 +610,10 @@ func TestARejectedBatchIsNotRetriedAutomatically(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", rejectStub(422, "unacceptable"))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("rejection did not surface")
 	}
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Empty {
 		t.Fatalf("flush after quarantine = %+v, %v", res, err)
 	}
@@ -642,7 +642,7 @@ func TestAClassifiedFailureCarriesItsOutcomeAlongsideTheError(t *testing.T) {
 			f.server.Stub("POST", "/v1/batches", tc.stub)
 			f.storeRawcall(t, "req-1", time.Now().UTC())
 
-			res, err := f.uploader.Flush(true)
+			res, err := f.uploader.Flush(t.Context(), true)
 			if err == nil {
 				t.Fatal("the refusal did not surface as an error")
 			}
@@ -667,7 +667,7 @@ func TestAnUnclassifiedFailureCarriesNoOutcome(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(503, map[string]any{"error": "down"}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err == nil {
 		t.Fatal("the failure did not surface as an error")
 	}
@@ -685,7 +685,7 @@ func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	if _, err := f.uploader.Flush(true); err == nil || !strings.Contains(err.Error(), "9.9.9") {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil || !strings.Contains(err.Error(), "9.9.9") {
 		t.Fatalf("426 flush error = %v, want the required version", err)
 	}
 	if f.spool.Usage() == 0 {
@@ -698,7 +698,7 @@ func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
 		t.Errorf("persisted min client version = %q", got)
 	}
 
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.UpgradeRequired {
 		t.Fatalf("automatic flush under the gate = %+v, %v", res, err)
 	}
@@ -706,11 +706,11 @@ func TestAnUpgradeGatePausesAutomaticFlushes(t *testing.T) {
 		t.Fatalf("automatic flush uploaded despite the gate")
 	}
 
-	res, err = f.uploader.Flush(true)
+	res, err = f.uploader.Flush(t.Context(), true)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("forced flush past the gate = %+v, %v", res, err)
 	}
-	if res2, err := f.uploader.Flush(false); err != nil || res2.Outcome != upload.Empty {
+	if res2, err := f.uploader.Flush(t.Context(), false); err != nil || res2.Outcome != upload.Empty {
 		t.Fatalf("flush after a success = %+v, %v; the gate must have lifted", res2, err)
 	}
 }
@@ -721,7 +721,7 @@ func TestAnAuthorizationGatePausesAutomaticFlushesWithoutTouchingData(t *testing
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("451 did not surface")
 	}
 	if f.spool.Usage() == 0 {
@@ -731,7 +731,7 @@ func TestAnAuthorizationGatePausesAutomaticFlushesWithoutTouchingData(t *testing
 		t.Fatal("an authorization refusal quarantined valid data")
 	}
 
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.AuthorizationRequired {
 		t.Fatalf("automatic flush under the gate = %+v, %v", res, err)
 	}
@@ -742,11 +742,11 @@ func TestAnAuthorizationGatePausesAutomaticFlushesWithoutTouchingData(t *testing
 	// Forcing is the recovery path: the user authorizes in a browser and
 	// nothing on this machine changes, so without it they would wait out
 	// a flush cycle for uploads that could go now.
-	res, err = f.uploader.Flush(true)
+	res, err = f.uploader.Flush(t.Context(), true)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("forced flush past the gate = %+v, %v", res, err)
 	}
-	if res2, err := f.uploader.Flush(false); err != nil || res2.Outcome != upload.Empty {
+	if res2, err := f.uploader.Flush(t.Context(), false); err != nil || res2.Outcome != upload.Empty {
 		t.Fatalf("flush after a success = %+v, %v; the gate must have lifted", res2, err)
 	}
 	if f.standing(upload.AuthorizationGate).Held() {
@@ -760,7 +760,7 @@ func TestAnAuthorizationRefusalIsRememberedAcrossProcesses(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses451("https://dashboard.example.com/authorization", said))
 	f.storeRawcall(t, "req-1", f.now)
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("451 did not surface")
 	}
 	got := f.standing(upload.AuthorizationGate)
@@ -778,7 +778,7 @@ func TestAnAuthorizationRefusalWithNoDetailIsStillRemembered(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses451("", ""))
 	f.storeRawcall(t, "req-1", f.now)
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("451 did not surface")
 	}
 	if got := f.standing(upload.AuthorizationGate); !got.Held() {
@@ -795,10 +795,10 @@ func TestTheTwoRefusalsDoNotEraseEachOther(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", "please upgrade"))
 	f.storeRawcall(t, "req-1", f.now)
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("451 did not surface")
 	}
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("426 did not surface")
 	}
 	if got := f.standing(upload.VersionGate).Message; got != "please upgrade" {
@@ -822,7 +822,7 @@ func TestAVersionRefusalRelaysWhatTheServiceSaid(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", f.now)
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err == nil {
 		t.Fatal("426 did not surface")
 	}
@@ -835,7 +835,7 @@ func TestAVersionRefusalRelaysWhatTheServiceSaid(t *testing.T) {
 
 	// A later process — status, doctor — reads the message from disk;
 	// so does the gate that answers without asking the service again.
-	res, err = f.uploader.Flush(false)
+	res, err = f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.UpgradeRequired {
 		t.Fatalf("gated flush = %+v, %v", res, err)
 	}
@@ -845,7 +845,7 @@ func TestAVersionRefusalRelaysWhatTheServiceSaid(t *testing.T) {
 
 	// An acknowledged upload is the service accepting this version, so
 	// the refusal it once made is no longer true and must stop showing.
-	res, err = f.uploader.Flush(true)
+	res, err = f.uploader.Flush(t.Context(), true)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("forced flush past the gate = %+v, %v", res, err)
 	}
@@ -862,7 +862,7 @@ func TestAVersionRefusalWithoutWordsPersistsNone(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 	f.storeRawcall(t, "req-1", f.now)
 
-	res, _ := f.uploader.Flush(true)
+	res, _ := f.uploader.Flush(t.Context(), true)
 	if res.Standing.MinClientVersion != "9.9.9" {
 		t.Fatalf("refusal = %+v, want the required version", res)
 	}
@@ -880,7 +880,7 @@ func TestAServiceMessageOnDiskCannotDrawOnTheTerminal(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", "upgrade now\rtrajector: everything is fine"))
 	f.storeRawcall(t, "req-1", f.now)
 
-	res, _ := f.uploader.Flush(true)
+	res, _ := f.uploader.Flush(t.Context(), true)
 	for _, got := range []string{res.Standing.Message, f.standing(upload.VersionGate).Message} {
 		if strings.ContainsAny(got, "\r\n\x1b") {
 			t.Errorf("relayed message = %q, want the terminal control runes gone", got)
@@ -906,10 +906,10 @@ func TestRateLimitingDefersAutomaticFlushes(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("429 did not surface")
 	}
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Deferred {
 		t.Fatalf("automatic flush during the pause = %+v, %v", res, err)
 	}
@@ -918,7 +918,7 @@ func TestRateLimitingDefersAutomaticFlushes(t *testing.T) {
 	}
 
 	f.now = f.now.Add(121 * time.Second)
-	res, err = f.uploader.Flush(false)
+	res, err = f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("flush after the pause = %+v, %v", res, err)
 	}
@@ -932,10 +932,10 @@ func TestAForcedFlushIgnoresTheRateLimitPause(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("429 did not surface")
 	}
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("forced flush during the pause = %+v, %v", res, err)
 	}
@@ -949,11 +949,11 @@ func TestTheRetryAfterPauseIsCapped(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("429 did not surface")
 	}
 	f.now = f.now.Add(time.Hour + time.Second)
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("flush an hour into a day-long pause = %+v, %v; the cap must apply", res, err)
 	}
@@ -965,7 +965,7 @@ func TestARateLimitWithoutRetryAfterDefersAutomaticFlushes(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err == nil {
 		t.Fatal("429 did not surface")
 	}
@@ -977,7 +977,7 @@ func TestARateLimitWithoutRetryAfterDefersAutomaticFlushes(t *testing.T) {
 	}
 
 	f.now = f.now.Add(4 * time.Minute)
-	res, err = f.uploader.Flush(false)
+	res, err = f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Deferred {
 		t.Fatalf("automatic flush four minutes into the pause = %+v, %v", res, err)
 	}
@@ -986,7 +986,7 @@ func TestARateLimitWithoutRetryAfterDefersAutomaticFlushes(t *testing.T) {
 	}
 
 	f.now = f.now.Add(time.Minute + time.Second)
-	res, err = f.uploader.Flush(false)
+	res, err = f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("flush after the pause = %+v, %v", res, err)
 	}
@@ -1012,11 +1012,11 @@ func TestAnAckOmittingASettingLeavesTheStoredValueAlone(t *testing.T) {
 	}
 
 	f.storeRawcall(t, "req-1", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	f.storeRawcall(t, "req-2", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	if h := upload.LoadHandshake(f.dir); h != want {
@@ -1027,7 +1027,7 @@ func TestAnAckOmittingASettingLeavesTheStoredValueAlone(t *testing.T) {
 	}
 
 	f.storeRawcall(t, "req-3", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	if h := upload.LoadHandshake(f.dir); h != want {
@@ -1049,11 +1049,11 @@ func TestAnAckClearingTheNoticeRemovesOnlyTheStoredNotice(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{ClearsNotice: true}))
 
 	f.storeRawcall(t, "req-1", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	f.storeRawcall(t, "req-2", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1079,11 +1079,11 @@ func TestAVersionRefusalPreservesTheRestOfTheStoredHandshake(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", fakeplatform.Refuses426("9.9.9", ""))
 
 	f.storeRawcall(t, "req-1", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	f.storeRawcall(t, "req-2", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("426 did not surface")
 	}
 
@@ -1110,7 +1110,7 @@ func TestConsecutiveTimeoutsBackOffAndRetryTheSameBatch(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	_, err := f.uploader.Flush(true)
+	_, err := f.uploader.Flush(t.Context(), true)
 	if err == nil {
 		t.Fatal("timed-out upload did not surface")
 	}
@@ -1125,7 +1125,7 @@ func TestConsecutiveTimeoutsBackOffAndRetryTheSameBatch(t *testing.T) {
 		t.Errorf("state.LastError = %q, want the batch size", st.LastError)
 	}
 
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Deferred {
 		t.Fatalf("automatic flush right after a timeout = %+v, %v, want %q", res, err, upload.Deferred)
 	}
@@ -1134,7 +1134,7 @@ func TestConsecutiveTimeoutsBackOffAndRetryTheSameBatch(t *testing.T) {
 	}
 
 	f.now = f.now.Add(61 * time.Second)
-	if _, err := f.uploader.Flush(false); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), false); err == nil {
 		t.Fatal("second timed-out attempt did not surface")
 	}
 	if f.uploadCount() != 2 {
@@ -1142,13 +1142,13 @@ func TestConsecutiveTimeoutsBackOffAndRetryTheSameBatch(t *testing.T) {
 	}
 
 	f.now = f.now.Add(61 * time.Second)
-	res, err = f.uploader.Flush(false)
+	res, err = f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Deferred {
 		t.Fatalf("flush one minute into a doubled pause = %+v, %v, want %q", res, err, upload.Deferred)
 	}
 
 	f.now = f.now.Add(60 * time.Second)
-	res, err = f.uploader.Flush(false)
+	res, err = f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("flush after the doubled pause = %+v, %v", res, err)
 	}
@@ -1175,20 +1175,20 @@ func TestAnAcknowledgedUploadResetsTheTimeoutEscalation(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("timed-out upload did not surface")
 	}
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("forced flush during the timeout pause = %+v, %v; force must not wait", res, err)
 	}
 
 	f.storeRawcall(t, "req-2", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("timed-out upload after a success did not surface")
 	}
 	f.now = f.now.Add(61 * time.Second)
-	res, err = f.uploader.Flush(false)
+	res, err = f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("flush a minute after a fresh timeout = %+v, %v; the pause must restart from its base", res, err)
 	}
@@ -1198,7 +1198,7 @@ func TestPurgeRejectedRemovesOnlyThatProject(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", rejectStub(400, "nope"))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("rejection did not surface")
 	}
 
@@ -1229,7 +1229,7 @@ func TestARefusedCredentialStopsAutomaticFlushesAndIsNotASignedOutDevice(t *test
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the refusal did not surface as an error")
 	}
 	if f.spool.Usage() == 0 {
@@ -1240,7 +1240,7 @@ func TestARefusedCredentialStopsAutomaticFlushesAndIsNotASignedOutDevice(t *test
 	}
 	before := f.uploadCount()
 
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil {
 		t.Fatalf("automatic flush after a 401 = %v", err)
 	}
@@ -1264,13 +1264,13 @@ func TestPairingAgainAfterARefusedCredentialResumesTheNextAutomaticFlush(t *test
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the refusal did not surface as an error")
 	}
 
 	f.token = "dev-tok-fake-2"
 
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Uploaded || res.Records != 1 {
 		t.Fatalf("automatic flush under the new pairing = %+v, %v; want the waiting record uploaded", res, err)
 	}
@@ -1281,7 +1281,7 @@ func TestARefusedEndpointKeepsTheBatchAndStopsAutomaticFlushes(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the refusal did not surface as an error")
 	}
 	if n := rejectedRecords(t, f.rejected); n != 0 {
@@ -1292,7 +1292,7 @@ func TestARefusedEndpointKeepsTheBatchAndStopsAutomaticFlushes(t *testing.T) {
 	}
 	before := f.uploadCount()
 
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil {
 		t.Fatalf("automatic flush after a 403 = %v", err)
 	}
@@ -1316,16 +1316,16 @@ func TestAnAcknowledgedForcedFlushEndsTheRefusedEndpointWait(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the refusal did not surface as an error")
 	}
 
-	if res, err := f.uploader.Flush(true); err != nil || res.Outcome != upload.Uploaded {
+	if res, err := f.uploader.Flush(t.Context(), true); err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("forced flush past the gate = %+v, %v", res, err)
 	}
 
 	f.storeRawcall(t, "req-2", time.Now().UTC())
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.BelowThreshold {
 		t.Fatalf("automatic flush after the acknowledgement = %+v, %v; want %q", res, err, upload.BelowThreshold)
 	}
@@ -1336,7 +1336,7 @@ func TestARefusedEndpointWidensItsWaitAndRetriesWhenItExpires(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
 	f.storeRawcall(t, "req-1", f.now)
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the refusal did not surface as an error")
 	}
 	for i, want := range []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute} {
@@ -1344,14 +1344,14 @@ func TestARefusedEndpointWidensItsWaitAndRetriesWhenItExpires(t *testing.T) {
 			t.Fatalf("refusal %d: next try at %s, want %s after a wait of %s", i+1, got, f.now.Add(want), want)
 		}
 		before := f.uploadCount()
-		if _, err := f.uploader.Flush(false); err != nil {
+		if _, err := f.uploader.Flush(t.Context(), false); err != nil {
 			t.Fatalf("refusal %d: automatic flush inside the wait = %v", i+1, err)
 		}
 		if got := f.uploadCount(); got != before {
 			t.Fatalf("refusal %d: automatic flush inside the wait made %d more attempts, want 0", i+1, got-before)
 		}
 		f.now = f.now.Add(want + time.Second)
-		if _, err := f.uploader.Flush(false); err == nil {
+		if _, err := f.uploader.Flush(t.Context(), false); err == nil {
 			t.Fatalf("refusal %d: the automatic flush after the wait did not attempt again", i+1)
 		}
 		if f.uploadCount() != before+1 {
@@ -1364,11 +1364,11 @@ func TestARestartWaitsOutTheRecordedRefusalAndThenCountsFromTheStart(t *testing.
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
 	f.storeRawcall(t, "req-1", f.now)
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the refusal did not surface as an error")
 	}
 	f.now = f.now.Add(time.Minute + time.Second)
-	if _, err := f.uploader.Flush(false); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), false); err == nil {
 		t.Fatal("the automatic flush after the first wait did not attempt again")
 	}
 	recorded := f.now.Add(2 * time.Minute)
@@ -1378,7 +1378,7 @@ func TestARestartWaitsOutTheRecordedRefusalAndThenCountsFromTheStart(t *testing.
 
 	f.uploader = f.newUploader(t)
 	before := f.uploadCount()
-	res, err := f.uploader.Flush(false)
+	res, err := f.uploader.Flush(t.Context(), false)
 	if err != nil {
 		t.Fatalf("automatic flush after a restart = %v", err)
 	}
@@ -1390,7 +1390,7 @@ func TestARestartWaitsOutTheRecordedRefusalAndThenCountsFromTheStart(t *testing.
 	}
 
 	f.now = recorded.Add(time.Second)
-	if _, err := f.uploader.Flush(false); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), false); err == nil {
 		t.Fatal("the automatic flush after the recorded wait did not attempt again")
 	}
 	if got, want := f.standing(upload.AccessRefused).NotBefore, f.now.Add(time.Minute); !got.Equal(want) {
@@ -1402,7 +1402,7 @@ func TestARefusedCredentialSurvivesARestartAndIsNeverRetriedOnItsOwn(t *testing.
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
 	f.storeRawcall(t, "req-1", f.now)
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the refusal did not surface as an error")
 	}
 
@@ -1417,7 +1417,7 @@ func TestPairingAgainClearsTheRecordedCredentialRefusal(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}))
 	f.storeRawcall(t, "req-1", f.now)
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the refusal did not surface as an error")
 	}
 
@@ -1443,14 +1443,14 @@ func TestAnAcknowledgedUploadClearsBothRecordedAccessRefusals(t *testing.T) {
 			f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(tc.status, map[string]any{"error": "refused"}))
 			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 			f.storeRawcall(t, "req-1", f.now)
-			if _, err := f.uploader.Flush(true); err == nil {
+			if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 				t.Fatal("the refusal did not surface as an error")
 			}
 			if got := f.standing(tc.reason).Reason; got != tc.reason {
 				t.Fatalf("standing after the refusal = %q, want %q", got, tc.reason)
 			}
 
-			if _, err := f.uploader.Flush(true); err != nil {
+			if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 				t.Fatalf("forced flush after the refusal = %v", err)
 			}
 			if held := upload.LoadStandings(f.dir, "1.0.0", f.now); len(held) != 0 {
@@ -1475,13 +1475,13 @@ func TestTheLaterRefusalReplacesTheEarlierOne(t *testing.T) {
 			f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(tc.second, map[string]any{"error": "refused"}))
 			f.storeRawcall(t, "req-1", f.now)
 
-			if _, err := f.uploader.Flush(true); err == nil {
+			if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 				t.Fatal("the first refusal did not surface as an error")
 			}
 			if got := f.standing(tc.gone).Reason; got != tc.gone {
 				t.Fatalf("standing after the first refusal = %q, want %q", got, tc.gone)
 			}
-			if _, err := f.uploader.Flush(true); err == nil {
+			if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 				t.Fatal("the second refusal did not surface as an error")
 			}
 

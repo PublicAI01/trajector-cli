@@ -30,7 +30,7 @@ func TestFlushNeverSendsRecordsOfAProjectThatWithdrewConsent(t *testing.T) {
 	f.storeRawcallFor(t, "req-after-withdrawal", "hash-withdrawn", time.Now().UTC())
 	f.withdrawn["hash-withdrawn"] = true
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestFlushWithEveryRecordWithdrawnReleasesTheBatch(t *testing.T) {
 	f.storeRawcallFor(t, "req-gone", "hash-withdrawn", time.Now().UTC())
 	f.withdrawn["hash-withdrawn"] = true
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestFlushWithEveryRecordWithdrawnReleasesTheBatch(t *testing.T) {
 	}
 	// A second flush must find nothing left rather than a pending batch
 	// it can never satisfy.
-	again, err := f.uploader.Flush(true)
+	again, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}

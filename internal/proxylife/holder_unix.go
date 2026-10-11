@@ -25,13 +25,13 @@ const holderTimeout = 2 * time.Second
 // started. A tool that is absent, refuses, or says nothing answers
 // the same way as a holder that cannot be attributed — nothing was
 // read.
-func HolderOf(addr string) (Process, bool) {
+func HolderOf(ctx context.Context, addr string) (Process, bool) {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return Process{}, false
 	}
 	ask := holderQuery(port)
-	out, err := run(ask[0], append(ask[1:], "-Fpc")...)
+	out, err := run(ctx, ask[0], append(ask[1:], "-Fpc")...)
 	if err != nil {
 		return Process{}, false
 	}
@@ -55,7 +55,7 @@ func HolderOf(addr string) (Process, bool) {
 	if pid == 0 {
 		return Process{}, false
 	}
-	proc := describe(pid)
+	proc := describe(ctx, pid)
 	// The name is the one the port reading gave: it is what the
 	// operating system calls the process, which the reading by pid asks
 	// nothing about.
@@ -78,10 +78,10 @@ func holderCommand(port string) string { return strings.Join(holderQuery(port), 
 // field that cannot be read is left empty rather than guessed at, and
 // the name is not asked for here — the tool that finds the holder by
 // port is the one that reports it.
-func describe(pid int) Process {
+func describe(ctx context.Context, pid int) Process {
 	proc := Process{PID: pid}
 	id := strconv.Itoa(pid)
-	if exe, err := run("ps", "-o", "comm=", "-p", id); err == nil {
+	if exe, err := run(ctx, "ps", "-o", "comm=", "-p", id); err == nil {
 		// Some of these systems report a name, and a truncated one at
 		// that, where others report the path. A name names no program
 		// file, so it is not kept.
@@ -89,14 +89,14 @@ func describe(pid int) Process {
 			proc.Exe = path
 		}
 	}
-	if argv, err := run("ps", "-o", "args=", "-p", id); err == nil {
+	if argv, err := run(ctx, "ps", "-o", "args=", "-p", id); err == nil {
 		proc.Argv = strings.Fields(argv)
 	}
 	return proc
 }
 
-func run(name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), holderTimeout)
+func run(ctx context.Context, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, holderTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, name, args...).Output()
 	return string(out), err

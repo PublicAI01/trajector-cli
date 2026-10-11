@@ -72,7 +72,7 @@ func TestSharedContractFixtures(t *testing.T) {
 			}
 			f.storeRawcall(t, "req-1", time.Now().UTC())
 
-			res, _ := f.uploader.Flush(true)
+			res, _ := f.uploader.Flush(t.Context(), true)
 			assertContractRow(t, f, c, res)
 			if indexed(c) {
 				assertStreamFixture(t, c)
@@ -114,7 +114,7 @@ const priorNotice = "a notice from an earlier acknowledgement"
 func flushPriorNotice(t *testing.T, f *fixture) {
 	t.Helper()
 	f.storeRawcall(t, "req-0", time.Now().UTC())
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatalf("the upload that gives the prior notice: %v", err)
 	}
 	if got := upload.LoadHandshake(f.dir).Notice; got != priorNotice {

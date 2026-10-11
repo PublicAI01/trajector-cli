@@ -39,7 +39,7 @@ func (e *env) observe(event string, extra map[string]any) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.machine().ObserveGitSnapshot(e.project, lifecycle.ReadHookInput(strings.NewReader(string(data))))
+	e.machine().ObserveGitSnapshot(e.t.Context(), e.project, lifecycle.ReadHookInput(strings.NewReader(string(data))))
 }
 
 // observations is every git snapshot the spool holds.
@@ -140,7 +140,7 @@ func TestDisableForgetsTheCommitTheProjectWasLastObservedAt(t *testing.T) {
 	e.observe("SessionStart", nil)
 	head := e.gitCommit("a.txt", "two")
 
-	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.enableProject()

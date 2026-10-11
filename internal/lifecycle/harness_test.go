@@ -2,6 +2,7 @@ package lifecycle_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -115,7 +116,7 @@ func (e *env) startProxy(opts ...proxytest.Option) {
 // trajector proxy.
 func (e *env) occupyPort() {
 	e.t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(e.t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -342,7 +343,7 @@ func (e *env) seedDeviceToken() {
 
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,9 +359,10 @@ func waitHealthy(t *testing.T, e *env, addr string) {
 
 // adminPost posts to a served proxy's reserved endpoint with the admin
 // token it published.
+// It also runs from cleanups, where the test's context is done.
 func adminPost(t *testing.T, e *env, url string) *http.Response {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+	req, err := http.NewRequestWithContext(context.WithoutCancel(t.Context()), http.MethodPost, url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -152,7 +152,7 @@ func TestSessionEndedRegistersTheSessionFileItWasToldAbout(t *testing.T) {
 			}
 			path := strings.NewReplacer("%s", e.sessionFilesRoot(), "%c", configRoot).Replace(tt.path)
 
-			e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: path})
+			e.machine().SessionEnded(t.Context(), e.project, lifecycle.HookInput{SessionPath: path})
 
 			registered := e.registeredPaths(e.canonicalRoot())
 			if tt.want && (len(registered) != 1 || registered[0] != filepath.Clean(path)) {
@@ -182,7 +182,7 @@ func TestSessionEndedTakesTheAgentFilesBesideTheSessionFile(t *testing.T) {
 	}
 
 	for range 2 {
-		e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: main})
+		e.machine().SessionEnded(t.Context(), e.project, lifecycle.HookInput{SessionPath: main})
 	}
 	want := []string{
 		main,
@@ -200,7 +200,7 @@ func TestSessionEndedLeavesAProjectUnderTheWSLMountAlone(t *testing.T) {
 	e.enableRoot(root)
 	path := filepath.Join(e.sessionFilesRoot(), "-mnt-c-work-sample", "0f1e2d3c.jsonl")
 
-	e.machine().SessionEnded(root, lifecycle.HookInput{SessionPath: path})
+	e.machine().SessionEnded(t.Context(), root, lifecycle.HookInput{SessionPath: path})
 
 	if got := e.registeredPaths(root); len(got) != 0 {
 		t.Errorf("registry = %q, want nothing", got)
@@ -221,7 +221,7 @@ func TestSessionStartingFollowsTheSessionAndObservesTheRepository(t *testing.T) 
 		Cwd:         e.project,
 		HookEvent:   "SessionStart",
 	}
-	if _, err := e.machine().SessionStarting(e.project, hook, e.io()); err != nil {
+	if _, err := e.machine().SessionStarting(t.Context(), e.project, hook, e.io()); err != nil {
 		t.Fatalf("session start: %v", err)
 	}
 	if got := e.registeredPaths(e.canonicalRoot()); len(got) != 1 || got[0] != main {
@@ -240,7 +240,7 @@ func TestSessionEndedStartsAReaderThatExitsCleanly(t *testing.T) {
 	e.enableProject()
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", "")
 
-	e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
+	e.machine().SessionEnded(t.Context(), e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
 
 	args, exit := trajector.AwaitRun(10 * time.Second)
 	if want := "hook read " + e.project; args != want || exit != 0 {
@@ -254,7 +254,7 @@ func TestSessionEndedKeepsTheRegistrationWhenTheReaderCannotStart(t *testing.T) 
 	e.enableProject()
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", "")
 
-	e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
+	e.machine().SessionEnded(t.Context(), e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
 
 	if got := e.registeredPaths(e.canonicalRoot()); len(got) != 1 || got[0] != main {
 		t.Errorf("registry = %q, want %q", got, main)
@@ -401,7 +401,7 @@ func TestReadSessionFiles_StoresSegmentsAndAdvancesTheCursor(t *testing.T) {
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
 	e.registerFile(root, main, "")
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 
 	recs := e.storedRecords()
 	if len(recs) != 1 || recs[0].Kind != "segment" {
@@ -412,7 +412,7 @@ func TestReadSessionFiles_StoresSegmentsAndAdvancesTheCursor(t *testing.T) {
 		t.Fatalf("cursor = %+v, want advanced past the segment", files)
 	}
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 1 {
 		t.Fatalf("records after a second run over unchanged files = %d, want still 1", len(got))
 	}
@@ -429,7 +429,7 @@ func TestReadSessionFiles_FullSpoolLeavesTheCursorAlone(t *testing.T) {
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
 	e.registerFile(root, main, "")
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 0 {
 		t.Fatalf("records = %d, want none stored under a full spool", len(got))
 	}
@@ -439,7 +439,7 @@ func TestReadSessionFiles_FullSpoolLeavesTheCursorAlone(t *testing.T) {
 
 	// Space returns; the same bytes are read once, not repeated or lost.
 	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1 << 20})
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 1 {
 		t.Fatalf("records after space returns = %d, want the one delayed segment", len(got))
 	}
@@ -453,7 +453,7 @@ func TestReadSessionFiles_DropsAFileThatVanished(t *testing.T) {
 	root := e.canonicalRoot()
 	e.registerFile(root, filepath.Join(e.sessionFilesRoot(), "-work-sample", "gone.jsonl"), "")
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.registeredFiles(root); len(got) != 0 {
 		t.Errorf("registry = %+v, want nothing left to read", got)
 	}
@@ -469,7 +469,7 @@ func TestReadSessionFiles_StoresNothingASessionWroteOutsideTheProject(t *testing
 		`{"type":"relocated","relocatedCwd":"/elsewhere/entirely"}`+"\n"+`{"type":"user","message":{"id":"m1"}}`+"\n")
 	e.registerFile(root, path, "")
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.registeredFiles(root); len(got) != 1 || !got[0].Outside {
 		t.Errorf("registry = %+v, want the entry kept, outside", got)
 	}
@@ -490,7 +490,7 @@ func TestReadSessionFiles_KeepsReadingPastAFileThatFails(t *testing.T) {
 	e.registerFile(root, bad, "")
 	e.registerFile(root, good, "")
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	recs := e.storedRecords()
 	if len(recs) != 1 || recs[0].Kind != "segment" {
 		t.Fatalf("records = %+v, want the good file's segment despite the failing one", recs)
@@ -528,7 +528,7 @@ func TestReadSessionFiles_FillsCaptureFromTheShapeTheGrantRecords(t *testing.T) 
 			main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
 			e.registerFile(root, main, "service/api")
 
-			e.machine().ReadSessionFiles(e.project, discardIO())
+			e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 			recs := e.storedRecords()
 			if len(recs) != 1 {
 				t.Fatalf("records = %+v, want one segment", recs)
@@ -558,7 +558,7 @@ func TestReadSessionFiles_UnenabledProjectDoesNothing(t *testing.T) {
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
 	e.registerFile(root, main, "")
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 0 {
 		t.Errorf("records = %d, want nothing for a project that is not enabled", len(got))
 	}
@@ -573,14 +573,14 @@ func TestReadSessionFiles_KilledReaderIsIdempotentOnRerun(t *testing.T) {
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
 	e.registerFile(root, main, "")
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 1 {
 		t.Fatalf("records after the first run = %d, want 1", len(got))
 	}
 
 	e.sandbox.RewindCursor(proxytest.ProjectIDHash(root), main)
 
-	e.machine().ReadSessionFiles(e.project, discardIO())
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 1 {
 		t.Fatalf("records after the rerun = %d, want the segment stored once, not twice", len(got))
 	}
@@ -616,7 +616,7 @@ func TestReadSessionFiles_BringsUpTheResidentProcess(t *testing.T) {
 			main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
 			e.registerFile(root, main, "")
 
-			e.machine().ReadSessionFiles(e.project, discardIO())
+			e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 
 			waitHealthy(t, e, e.deps.ProxyAddr)
 			if !device.ResidentProcessIsOurs() {
@@ -634,7 +634,7 @@ func TestHook_EndToEnd_RegisterReadStore(t *testing.T) {
 	e.injectWithoutBaseURL()
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", `{"type":"assistant","message":{"id":"m1"}}`+"\n")
 
-	e.machine().SessionEnded(e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
+	e.machine().SessionEnded(t.Context(), e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
 
 	deadline := time.Now().Add(15 * time.Second)
 	for {

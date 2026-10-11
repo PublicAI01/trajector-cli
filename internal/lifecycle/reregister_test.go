@@ -84,7 +84,7 @@ func TestEnableAfterASessionLeftTheProjectKeepsItsCursorAndSendsItsSegmentOnce(t
 
 	appendLine(t, path, `{"type":"relocated","relocatedCwd":"/elsewhere/entirely"}`)
 	appendLine(t, path, `{"type":"user","message":{"id":"m2"}}`)
-	m.ReadSessionFiles(e.project, discardIO())
+	m.ReadSessionFiles(t.Context(), e.project, discardIO())
 	left := e.registeredFiles(root)
 	if len(left) != 1 || !left[0].Outside {
 		t.Fatalf("registry after the session left the project = %+v, want the entry kept, outside", left)
@@ -95,11 +95,11 @@ func TestEnableAfterASessionLeftTheProjectKeepsItsCursorAndSendsItsSegmentOnce(t
 		t.Fatalf("registry after the second enable = %+v, want the entry left as it was", got)
 	}
 
-	m.ReadSessionFiles(e.project, discardIO())
+	m.ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.storedRecords(); len(got) != 0 {
 		t.Fatalf("records after the second enable = %d, want nothing of what the session wrote outside", len(got))
 	}
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 

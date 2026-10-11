@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -92,7 +93,7 @@ func projectHooks(execPath string) claudesettings.HookCommands {
 // the one answer enable ever waits for is given with the facts in
 // view. Re-running enable on an enabled project walks the same steps:
 // that is how an injection made by an older build is completed.
-func (m *Machine) enableProject(projectDir string, choices EnableChoices, streams IO) error {
+func (m *Machine) enableProject(ctx context.Context, projectDir string, choices EnableChoices, streams IO) error {
 	shape := choices.Shape
 	// Every prompt in one enable must read through one buffered reader: a
 	// second bufio over the same stream would find the bytes the first
@@ -212,7 +213,7 @@ func (m *Machine) enableProject(projectDir string, choices EnableChoices, stream
 	}
 
 	var ledger enableLedger
-	if err := m.installAndVerify(streams, st, upstream, choices, earlier, prior, &ledger); err != nil {
+	if err := m.installAndVerify(ctx, streams, st, upstream, choices, earlier, prior, &ledger); err != nil {
 		if undoErr := ledger.undo(); undoErr != nil {
 			return fmt.Errorf("%w (rollback incomplete: %v)", err, undoErr)
 		}
@@ -243,7 +244,7 @@ func (m *Machine) readBeforeChanging(st report.ProjectStatus) (priorState, error
 	return prior, err
 }
 
-func (m *Machine) installAndVerify(streams IO, st report.ProjectStatus, upstream string, choices EnableChoices, earlier discover.Result, prior priorState, ledger *enableLedger) error {
+func (m *Machine) installAndVerify(ctx context.Context, streams IO, st report.ProjectStatus, upstream string, choices EnableChoices, earlier discover.Result, prior priorState, ledger *enableLedger) error {
 	shape := choices.Shape
 	token, err := projectToken(st)
 	if err != nil {
@@ -300,7 +301,7 @@ func (m *Machine) installAndVerify(streams IO, st report.ProjectStatus, upstream
 	var appended []string
 	symlinked := false
 	for _, rule := range projectIgnoreRules {
-		action, err := claudesettings.EnsureGitIgnored(st.Root, rule)
+		action, err := claudesettings.EnsureGitIgnored(ctx, st.Root, rule)
 		if err != nil {
 			return fmt.Errorf("ensuring .gitignore covers %s: %w", rule, err)
 		}
@@ -320,7 +321,7 @@ func (m *Machine) installAndVerify(streams IO, st report.ProjectStatus, upstream
 		fmt.Fprintf(streams.Err, "WARNING: .gitignore is a symbolic link and was left alone; add %s to your git ignores so the injected settings and diagnostic bundles are never committed.\n", strings.Join(projectIgnoreRules, ", "))
 	}
 
-	if err := m.selfCheck(token, shape); err != nil {
+	if err := m.selfCheck(ctx, token, shape); err != nil {
 		return err
 	}
 	if shape == routing.WithoutProxy {
@@ -340,7 +341,7 @@ func (m *Machine) installAndVerify(streams IO, st report.ProjectStatus, upstream
 	// hook of this project starts one the same way, so the session that
 	// follows may fail for the same reason this run did.
 	if len(toRead) > 0 {
-		if err := m.readEarlierSessions(st, toRead); err != nil {
+		if err := m.readEarlierSessions(ctx, st, toRead); err != nil {
 			fmt.Fprintf(streams.Err, "WARNING: %d earlier session record(s) are registered but nothing could be asked to read them now (%v). Run `trajector doctor` to ask again. The next session of this project reads them too, where a reader can be started for it.\n", len(toRead), err)
 		} else {
 			fmt.Fprintf(streams.Out, "Reading %d earlier session record(s) in the background.\n", len(toRead))
@@ -349,7 +350,7 @@ func (m *Machine) installAndVerify(streams IO, st report.ProjectStatus, upstream
 	fmt.Fprintln(streams.Out, report.ShapeNotice(shape))
 	fmt.Fprintln(streams.Out, report.UnwitnessedReward)
 	fmt.Fprintln(streams.Out, contributesNow)
-	fmt.Fprintln(streams.Out, m.verdict(st.Root))
+	fmt.Fprintln(streams.Out, m.verdict(ctx, st.Root))
 	return nil
 }
 
@@ -577,8 +578,8 @@ func projectToken(st report.ProjectStatus) (string, error) {
 // what the hooks will bring up on every session is the resident process
 // that uploads what this device records, and that it comes up is the
 // check. No upstream call is made and nothing is billed.
-func (m *Machine) selfCheck(token string, shape routing.Shape) error {
-	if err := m.proxy.Ensure(); err != nil {
+func (m *Machine) selfCheck(ctx context.Context, token string, shape routing.Shape) error {
+	if err := m.proxy.Ensure(ctx); err != nil {
 		if remedy := report.ProxyRemedy(err); remedy != "" {
 			return fmt.Errorf("self-check failed: %v. %s", err, remedy)
 		}
@@ -587,7 +588,7 @@ func (m *Machine) selfCheck(token string, shape routing.Shape) error {
 	if shape == routing.WithoutProxy {
 		return nil
 	}
-	if _, err := m.verifyRoute(token); err != nil {
+	if _, err := m.verifyRoute(ctx, token); err != nil {
 		return fmt.Errorf("self-check failed: %v", err)
 	}
 	return nil
@@ -598,8 +599,8 @@ func (m *Machine) selfCheck(token string, shape routing.Shape) error {
 // without an upstream call. enable proves a fresh route with it and
 // doctor re-proves an existing one; the returned error is the one
 // explanation both present.
-func (m *Machine) verifyRoute(token string) (proxylife.Selfcheck, error) {
-	reply, err := m.proxy.Selfcheck(token)
+func (m *Machine) verifyRoute(ctx context.Context, token string) (proxylife.Selfcheck, error) {
+	reply, err := m.proxy.Selfcheck(ctx, token)
 	if err != nil {
 		return reply, fmt.Errorf("the self-check request failed: %w", err)
 	}

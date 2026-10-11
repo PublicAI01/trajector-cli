@@ -19,7 +19,12 @@ func TestStubbedEndpointServesJSON(t *testing.T) {
 	s := fakeplatform.New(t)
 	s.Stub("POST", "/v1/batches", fakeplatform.JSON(200, map[string]any{"ack": true}))
 
-	resp, err := s.HTTP.Client().Post(s.URL()+"/v1/batches", "application/octet-stream", strings.NewReader("payload"))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, s.URL()+"/v1/batches", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := s.HTTP.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +45,11 @@ func TestStubsConsumedFIFOWithStickyLast(t *testing.T) {
 
 	wantStatuses := []int{500, 200, 200}
 	for i, want := range wantStatuses {
-		resp, err := s.HTTP.Client().Get(s.URL() + "/v1/handshake")
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, s.URL()+"/v1/handshake", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := s.HTTP.Client().Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,7 +62,11 @@ func TestStubsConsumedFIFOWithStickyLast(t *testing.T) {
 
 func TestUnstubbedEndpointFailsLoudly(t *testing.T) {
 	s := fakeplatform.New(t)
-	resp, err := s.HTTP.Client().Get(s.URL() + "/v1/unknown")
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, s.URL()+"/v1/unknown", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := s.HTTP.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +80,7 @@ func TestRecordsRequests(t *testing.T) {
 	s := fakeplatform.New(t)
 	s.Stub("POST", "/v1/batches", fakeplatform.JSON(200, map[string]bool{"ack": true}))
 
-	req, err := http.NewRequest(http.MethodPost, s.URL()+"/v1/batches?batch_id=b1", bytes.NewReader([]byte{0x28, 0xb5, 0x2f, 0xfd}))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, s.URL()+"/v1/batches?batch_id=b1", bytes.NewReader([]byte{0x28, 0xb5, 0x2f, 0xfd}))
 	if err != nil {
 		t.Fatal(err)
 	}

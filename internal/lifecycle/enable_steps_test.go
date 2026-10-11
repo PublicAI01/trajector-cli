@@ -1,6 +1,7 @@
 package lifecycle_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,7 +90,7 @@ func (e *env) acceptCurrentAgreement() {
 
 func (e *env) enable(shape proxytest.Shape) {
 	e.t.Helper()
-	if err := e.machine().Enable(e.project, choices(shape), e.io()); err != nil {
+	if err := e.machine().Enable(e.t.Context(), e.project, choices(shape), e.io()); err != nil {
 		e.t.Fatalf("enable: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
 	}
 }
@@ -637,7 +638,7 @@ func TestEnable_StartsAReaderWhenNoResidentProcessIsUpToReadTheEarlierSessions(t
 // process up; the one-shot reader the fallback asks for cannot be
 // started at all, so neither shape of the ask reaches a reader.
 func noReaderStarts() proxylife.Starter {
-	return func(_ string, args []string, _ string) (int, error) {
+	return func(_ context.Context, _ string, args []string, _ string) (int, error) {
 		if len(args) > 0 && args[0] == "hook" {
 			return 0, errors.New("exec format error")
 		}
@@ -670,7 +671,7 @@ func TestEnable_SkippingEarlierSessionsRegistersNoneOfThem(t *testing.T) {
 	e.startProxy()
 	e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
 
-	if err := e.machine().Enable(e.project, lifecycle.EnableChoices{Shape: proxytest.WithProxy, SkipEarlier: true}, e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, lifecycle.EnableChoices{Shape: proxytest.WithProxy, SkipEarlier: true}, e.io()); err != nil {
 		t.Fatalf("enable: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
 	}
 
@@ -699,7 +700,7 @@ func TestEnable_SkippingEarlierSessionsHoldsInEitherShape(t *testing.T) {
 			e.startProxy()
 			e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
 
-			if err := e.machine().Enable(e.project, lifecycle.EnableChoices{Shape: shape, SkipEarlier: true}, e.io()); err != nil {
+			if err := e.machine().Enable(t.Context(), e.project, lifecycle.EnableChoices{Shape: shape, SkipEarlier: true}, e.io()); err != nil {
 				t.Fatalf("enable: %v\nstdout: %s\nstderr: %s", err, e.stdout, e.stderr)
 			}
 
@@ -733,7 +734,7 @@ func TestEnable_RollbackUnregistersWhatItRegistered(t *testing.T) {
 				e.sandbox.RegisterSessionFile(e.status().Hash, earlier, "")
 			}
 
-			if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err == nil {
+			if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err == nil {
 				t.Fatal("enable succeeded against a foreign port")
 			}
 
@@ -793,7 +794,7 @@ func TestEnable_RollsBackEveryChangeWhereverItFails(t *testing.T) {
 			}
 			tt.prepare(e)
 
-			err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
+			err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io())
 
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) || !strings.Contains(err.Error(), "all changes rolled back") {
 				t.Fatalf("err = %v, want %q and every change taken back", err, tt.wantErr)
@@ -829,7 +830,7 @@ func TestDisable_UnregistersTheProject(t *testing.T) {
 		t.Fatal("precondition: enable registers the session file")
 	}
 
-	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 
@@ -871,12 +872,12 @@ func TestDisableAndUninstall_LeaveSessionFilesUntouched(t *testing.T) {
 
 	e.enable(proxytest.WithProxy)
 	check("enable")
-	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	check("disable")
 	e.stdin = ""
-	if err := e.machine().Uninstall(true, e.io()); err != nil {
+	if err := e.machine().Uninstall(t.Context(), true, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
 	check("uninstall --delete-data")
@@ -894,7 +895,7 @@ func TestDoctorRewritesTheInjectionInTheGrantsShape(t *testing.T) {
 	}
 	e.stdout.Reset()
 
-	if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+	if _, err := e.machine().Doctor(t.Context(), e.project, e.io()); err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
 
@@ -965,7 +966,7 @@ func TestEnable_RollsBackWhenSessionFilesCannotBeRegistered(t *testing.T) {
 	e.sessionFile("s-1", time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC))
 	e.obstruct(e.layout().FollowDir())
 
-	err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
+	err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io())
 	if err == nil || !strings.Contains(err.Error(), "session files") || !strings.Contains(err.Error(), "rolled back") {
 		t.Fatalf("err = %v, want the registration failure with the rollback notice", err)
 	}
@@ -992,7 +993,7 @@ func TestEnable_FailsWhenTheProjectTreeCannotBeListed(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(root, 0o755) })
 
-	err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io())
+	err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io())
 	if err == nil || !strings.Contains(err.Error(), "looking for this project's session files") {
 		t.Fatalf("err = %v, want the walk failure named", err)
 	}
@@ -1023,7 +1024,7 @@ func TestEnable_NoProxyFailsWhenTheAnswerIsUnavailable(t *testing.T) {
 	e.lockHooksInUserSettings()
 	e.stdin = ""
 
-	err := e.machine().Enable(e.project, choices(proxytest.WithoutProxy), e.io())
+	err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithoutProxy), e.io())
 	if err == nil || !strings.Contains(err.Error(), "reading the answer") {
 		t.Fatalf("err = %v, want the unavailable answer reported", err)
 	}
@@ -1042,7 +1043,7 @@ func TestDisable_FailsLoudlyWhenTheRegistryCannotBeRemoved(t *testing.T) {
 	e.enable(proxytest.WithProxy)
 	e.obstruct(e.layout().FollowDir())
 
-	err := e.machine().Disable(e.project, false, e.io())
+	err := e.machine().Disable(t.Context(), e.project, false, e.io())
 	if err == nil || !strings.Contains(err.Error(), "withdrawing this project's session files") {
 		t.Fatalf("err = %v, want the registry failure named", err)
 	}
@@ -1051,7 +1052,7 @@ func TestDisable_FailsLoudlyWhenTheRegistryCannotBeRemoved(t *testing.T) {
 	}
 	// The rerun takes the withdrawal-in-progress path and meets the same
 	// obstacle.
-	err = e.machine().Disable(e.project, false, e.io())
+	err = e.machine().Disable(t.Context(), e.project, false, e.io())
 	if err == nil || !strings.Contains(err.Error(), "withdrawing this project's session files") {
 		t.Fatalf("rerun err = %v, want the registry failure named again", err)
 	}
@@ -1081,7 +1082,7 @@ func TestDoctorPutsBackAUsersOwnBaseURLWhenTheGrantsShapeHasNoBaseURL(t *testing
 			}
 			e.stdout.Reset()
 
-			if _, err := e.machine().Doctor(e.project, e.io()); err != nil {
+			if _, err := e.machine().Doctor(t.Context(), e.project, e.io()); err != nil {
 				t.Fatalf("doctor: %v", err)
 			}
 

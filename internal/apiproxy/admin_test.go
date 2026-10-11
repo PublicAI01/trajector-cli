@@ -15,7 +15,7 @@ import (
 
 func challenge(t *testing.T, client *http.Client, url, host, nonce string) (status int, proof string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,11 +69,11 @@ func TestReservedEndpointsAnswer401WithoutTheAdminToken(t *testing.T) {
 
 	for name, req := range map[string]func() *http.Request{
 		"missing": func() *http.Request {
-			req, _ := http.NewRequest(http.MethodPost, e.BaseURL()+apiproxy.DrainPath, nil)
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.BaseURL()+apiproxy.DrainPath, nil)
 			return req
 		},
 		"wrong": func() *http.Request {
-			req, _ := http.NewRequest(http.MethodPost, e.BaseURL()+apiproxy.DrainPath, nil)
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.BaseURL()+apiproxy.DrainPath, nil)
 			req.Header.Set(apiproxy.AdminHeader, "0000feed0000feed0000feed0000feed")
 			return req
 		},
@@ -145,7 +145,7 @@ func waitNoPublications(t *testing.T, layout userdirs.Layout, addr string) {
 
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestExitRemovesOnlyTheExitingInstancesPublication(t *testing.T) {
 	const successor = "feedfacefeedfacefeedfacefeedface"
 	proxytest.PublishAdminToken(t, layout, e.Addr(), successor)
 
-	req, err := http.NewRequest(http.MethodPost, e.BaseURL()+apiproxy.DrainPath, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, e.BaseURL()+apiproxy.DrainPath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

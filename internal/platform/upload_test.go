@@ -51,7 +51,7 @@ func TestEveryUploadFailureClassCarriesItsStatus(t *testing.T) {
 			c, server := client(t)
 			server.Stub("POST", "/v1/batches", tt.response)
 
-			_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
+			_, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
 			if err == nil {
 				t.Fatal("upload succeeded against a failing service")
 			}
@@ -70,7 +70,7 @@ func TestUploadBatchPostsEnvelopeAndRecordsAsMultipart(t *testing.T) {
 	c, server := client(t)
 	server.Stub("POST", "/v1/batches", ackStub(200, "batch-1"))
 
-	ack, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte(`{"batch_id":"batch-1"}`), redact.AlreadyRedacted([]byte("zstd-bytes")), 0)
+	ack, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte(`{"batch_id":"batch-1"}`), redact.AlreadyRedacted([]byte("zstd-bytes")), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestUploadBatchPostsEnvelopeAndRecordsAsMultipart(t *testing.T) {
 func TestUploadBatchRejectsAnAckNamingAnotherBatch(t *testing.T) {
 	c, server := client(t)
 	server.Stub("POST", "/v1/batches", ackStub(200, "batch-other"))
-	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err == nil {
+	if _, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err == nil {
 		t.Error("acknowledgement for another batch accepted")
 	}
 }
@@ -121,7 +121,7 @@ func TestUploadBatchRejectsAnAckNamingAnotherBatch(t *testing.T) {
 func TestUploadBatchRejectsAnAckNamingNoBatch(t *testing.T) {
 	c, server := client(t)
 	server.Stub("POST", "/v1/batches", fakeplatform.JSON(200, map[string]any{}))
-	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err == nil {
+	if _, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err == nil {
 		t.Error("acknowledgement without a batch id accepted")
 	}
 }
@@ -129,7 +129,7 @@ func TestUploadBatchRejectsAnAckNamingNoBatch(t *testing.T) {
 func TestUploadBatchSurfacesServiceFailure(t *testing.T) {
 	c, server := client(t)
 	server.Stub("POST", "/v1/batches", ackStub(503, "batch-1"))
-	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err == nil {
+	if _, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err == nil {
 		t.Error("503 response did not fail")
 	}
 }
@@ -147,7 +147,7 @@ func uploadRefused(t *testing.T, resp fakeplatform.Response) error {
 	t.Helper()
 	c, server := client(t)
 	server.Stub("POST", "/v1/batches", resp)
-	_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
+	_, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
 	if err == nil {
 		t.Fatalf("status %d did not fail", resp.Status)
 	}
@@ -256,7 +256,7 @@ func TestUploadBatchAckWordingCannotDrawOnTheTerminal(t *testing.T) {
 		"batch_id": "batch-1",
 		"notice":   "scheduled\x1b[2J\rmaintenance",
 	}))
-	ack, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
+	ack, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestUploadBatchAckTellsAnEmptyNoticeFromAMissingOne(t *testing.T) {
 			h.Set("Content-Type", "application/json")
 			server.Stub("POST", "/v1/batches", fakeplatform.Response{Status: 200, Header: h, Body: []byte(tt.body)})
 
-			ack, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
+			ack, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -298,7 +298,7 @@ func TestUploadBatchReadsANoticeTheFakeServiceClears(t *testing.T) {
 	c, server := client(t)
 	server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{FlushBytes: 1024, ClearsNotice: true}))
 
-	ack, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte(`{"schema_version":"3","batch_id":"batch-1"}`), redact.AlreadyRedacted([]byte("z")), 0)
+	ack, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte(`{"schema_version":"3","batch_id":"batch-1"}`), redact.AlreadyRedacted([]byte("z")), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +395,7 @@ func TestUploadBatchTimeoutNamesTheBatchSizeInsteadOfABareDeadline(t *testing.T)
 	})
 	server.Stub("POST", "/v1/batches", ackStub(200, "batch-1"))
 
-	_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 50*time.Millisecond)
+	_, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 50*time.Millisecond)
 	var timedOut *platform.UploadTimeoutError
 	if !errors.As(err, &timedOut) {
 		t.Fatalf("error = %v, want UploadTimeoutError", err)
@@ -411,7 +411,7 @@ func TestUploadBatchTimeoutNamesTheBatchSizeInsteadOfABareDeadline(t *testing.T)
 		t.Errorf("error %q surfaces the bare deadline", msg)
 	}
 
-	if _, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err != nil {
+	if _, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0); err != nil {
 		t.Errorf("upload with the default budget = %v, want success once the response arrives", err)
 	}
 }
@@ -484,7 +484,7 @@ func TestARejectionBodyCannotDrawItsOwnLinesOnTheTerminal(t *testing.T) {
 		Status: 400,
 		Body:   []byte("rejected\r\x1b[2K  ok: everything checks out\n  ok: nothing to do"),
 	})
-	_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
+	_, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
 	var rejected *platform.BatchRejectedError
 	if !errors.As(err, &rejected) {
 		t.Fatalf("error = %v, want BatchRejectedError", err)
@@ -503,7 +503,7 @@ func TestALongRejectionBodyIsCutWithoutBreakingACharacter(t *testing.T) {
 		Status: 400,
 		Body:   []byte(strings.Repeat("界", 8192)),
 	})
-	_, err := c.UploadBatch("dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
+	_, err := c.UploadBatch(t.Context(), "dev-tok-fake", "batch-1", []byte("{}"), redact.AlreadyRedacted([]byte("z")), 0)
 	var rejected *platform.BatchRejectedError
 	if !errors.As(err, &rejected) {
 		t.Fatalf("error = %v, want BatchRejectedError", err)

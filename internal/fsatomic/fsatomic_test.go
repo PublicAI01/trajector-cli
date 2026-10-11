@@ -66,7 +66,7 @@ func TestTwoProcessesRewritingOnePathNeverTearItOrFailEachOther(t *testing.T) {
 	writers := make([]*exec.Cmd, len(fills))
 	var stdout, stderr [2]bytes.Buffer
 	for i, fill := range fills {
-		cmd := exec.Command(exe, path, fill, deadlineArg)
+		cmd := exec.CommandContext(t.Context(), exe, path, fill, deadlineArg)
 		cmd.Stdout = &stdout[i]
 		cmd.Stderr = &stderr[i]
 		if err := cmd.Start(); err != nil {

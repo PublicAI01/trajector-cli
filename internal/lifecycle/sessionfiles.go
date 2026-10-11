@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -133,7 +134,7 @@ func (m *Machine) registerSessionFile(cwd string, hook HookInput) (registered bo
 // registered is nothing to read, and a failure of any step stays
 // here: the session must not learn what the hook did, and the
 // registry is where the outcome is read afterwards.
-func (m *Machine) followSession(cwd string, hook HookInput, ended bool) {
+func (m *Machine) followSession(ctx context.Context, cwd string, hook HookInput, ended bool) {
 	registered, err := m.registerSessionFile(cwd, hook)
 	if err != nil || !registered {
 		return
@@ -149,9 +150,9 @@ func (m *Machine) followSession(cwd string, hook HookInput, ended bool) {
 	} else {
 		_ = m.registry.Warm(st.Hash, path, pid, m.deps.Now())
 	}
-	err = m.proxy.Progress(apiproxy.Progress{ProjectIDHash: st.Hash, Path: path, End: ended})
+	err = m.proxy.Progress(ctx, apiproxy.Progress{ProjectIDHash: st.Hash, Path: path, End: ended})
 	if err != nil {
-		_ = m.spawnReader(cwd)
+		_ = m.spawnReader(ctx, cwd)
 	}
 }
 

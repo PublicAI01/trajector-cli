@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"errors"
 	"os"
 	"time"
@@ -40,7 +41,7 @@ const (
 // project resolution itself can fail the call. The reading decides how
 // the session files are learned about, and the value says which one it
 // carries, so a surface never has to ask again.
-func (m *Machine) diagnose(dir string, reading sessionFileReading) (report.Diagnosis, error) {
+func (m *Machine) diagnose(ctx context.Context, dir string, reading sessionFileReading) (report.Diagnosis, error) {
 	d := report.Diagnosis{Version: m.deps.Version}
 	cfg, err := userconfig.Read(m.deps.Layout.ConfigFile())
 	d.ImageUpload = report.ImageUploadState{Placeholders: cfg.OmitsImagesAndDocuments(), ConfigErr: err}
@@ -66,7 +67,7 @@ func (m *Machine) diagnose(dir string, reading sessionFileReading) (report.Diagn
 	// Observe, never Settled: only callers that act on the verdict pay
 	// to wait out a sibling's startup. A diagnosis reports the port as
 	// it stands and must answer at once.
-	d.Proxy = m.proxy.Observe()
+	d.Proxy = m.proxy.Observe(ctx)
 	if proxylife.PortIsHeld(d.Proxy.Reason) {
 		// Only a holder this device may not use is looked into, and
 		// only for what the operating system says about it: a surface
@@ -75,12 +76,12 @@ func (m *Machine) diagnose(dir string, reading sessionFileReading) (report.Diagn
 		// answered the challenge without proof is not one of them, and
 		// reading the port for it costs a scan of every process for a
 		// process no surface may name.
-		if holder, read := proxylife.HolderOf(d.Proxy.Addr); read {
+		if holder, read := proxylife.HolderOf(ctx, d.Proxy.Addr); read {
 			d.ProxyHolder = report.HolderProcess{PID: holder.PID, Name: holder.Name}
 		}
 	}
 	if st.Enabled && d.Proxy.Holder == proxylife.HolderOurs {
-		if reply, err := m.proxy.Selfcheck(st.Token); err == nil {
+		if reply, err := m.proxy.Selfcheck(ctx, st.Token); err == nil {
 			d.Selfcheck = &reply
 		}
 	}

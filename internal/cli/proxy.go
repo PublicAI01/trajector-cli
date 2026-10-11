@@ -28,7 +28,7 @@ const (
 // the proxy modes take, so the pre-parse lets them through to it.
 var proxyFlags = []string{"-" + addrFlag, "--" + addrFlag, "-" + idleFlag, "--" + idleFlag}
 
-func (a *app) proxyCmd(args []string) int {
+func (a *app) proxyCmd(ctx context.Context, args []string) int {
 	if code, answered := a.preparse(proxyUsage, args, proxyFlags); answered {
 		return code
 	}
@@ -38,7 +38,7 @@ func (a *app) proxyCmd(args []string) int {
 	}
 	switch args[0] {
 	case proxylife.Supervise, proxylife.Serve:
-		return a.runProxy(args[0], args[1:])
+		return a.runProxy(ctx, args[0], args[1:])
 	default:
 		fmt.Fprintf(a.stderr, "trajector: unknown proxy command %q\n", args[0])
 		return 2
@@ -46,14 +46,14 @@ func (a *app) proxyCmd(args []string) int {
 }
 
 // uploadCmd triggers a flush through the machine's one flusher.
-func (a *app) uploadCmd(args []string) int {
+func (a *app) uploadCmd(ctx context.Context, args []string) int {
 	args, force := takeFlag(args, "--force")
 	return a.with("usage: trajector upload [--force]", args, 0, func(m *lifecycle.Machine, _ string) error {
-		return m.Upload(force, a.io())
+		return m.Upload(ctx, force, a.io())
 	})
 }
 
-func (a *app) runProxy(mode string, args []string) int {
+func (a *app) runProxy(ctx context.Context, mode string, args []string) int {
 	fs := flag.NewFlagSet("proxy "+mode, flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
 	addr := fs.String(addrFlag, "", "listen address, matched by its literal spelling: probes, admin-token files, and the challenge all treat localhost and 127.0.0.1 as different addresses, so every command must spell it the way serve did")
@@ -67,7 +67,7 @@ func (a *app) runProxy(mode string, args []string) int {
 		return a.fail(err)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if mode == proxylife.Supervise {
 		err = m.SuperviseProxy(ctx, *idle, a.stdout, a.stderr)

@@ -10,7 +10,11 @@
 // runnable.
 package selfupdate
 
-import "github.com/PublicAI01/trajector-cli/internal/semver"
+import (
+	"context"
+
+	"github.com/PublicAI01/trajector-cli/internal/semver"
+)
 
 // DefaultReleasesURL is where published releases are listed. The
 // /releases/latest endpoint is deliberately not used: it omits
@@ -60,7 +64,7 @@ type Outcome struct {
 // before anything is replaced, so a run that returns an error has left
 // the machine exactly as it found it, minus whatever residue an
 // interrupted earlier upgrade had left beside the binary.
-func Upgrade(execPath, version, indexURL string) (Outcome, error) {
+func Upgrade(ctx context.Context, execPath, version, indexURL string) (Outcome, error) {
 	// Housekeeping comes first, whether or not this run installs
 	// anything: on Windows the binary an earlier upgrade stepped aside
 	// could not be deleted while it was still the running image.
@@ -75,7 +79,7 @@ func Upgrade(execPath, version, indexURL string) (Outcome, error) {
 
 	goos, goarch := hostPlatform()
 	src := newSource(indexURL, version)
-	rel, err := src.newest(goos, goarch)
+	rel, err := src.newest(ctx, goos, goarch)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -86,7 +90,7 @@ func Upgrade(execPath, version, indexURL string) (Outcome, error) {
 		return Outcome{Kind: AlreadyNewest, From: version}, nil
 	}
 
-	binary, err := src.download(rel, goos)
+	binary, err := src.download(ctx, rel, goos)
 	if err != nil {
 		return Outcome{}, err
 	}

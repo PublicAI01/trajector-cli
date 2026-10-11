@@ -253,7 +253,7 @@ func TestReader_LeavesAFileAReaderInAnotherProcessHoldsForTheNextRun(t *testing.
 	entered, release := filepath.Join(dir, "entered"), filepath.Join(dir, "release")
 
 	var stderr strings.Builder
-	holder := exec.Command(procbin.Self(t, "hold"), registryDir, path, entered, release)
+	holder := exec.CommandContext(t.Context(), procbin.Self(t, "hold"), registryDir, path, entered, release)
 	holder.Stderr = &stderr
 	if err := holder.Start(); err != nil {
 		t.Fatal(err)

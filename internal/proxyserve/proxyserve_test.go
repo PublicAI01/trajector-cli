@@ -101,7 +101,7 @@ func TestServeReportsAnUncontestedBindFailureAsItsOwnCause(t *testing.T) {
 }
 
 func TestServeReportsAPermissionRefusedBindAsItsOwnCause(t *testing.T) {
-	probe, err := net.Listen("tcp", "127.0.0.1:1")
+	probe, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:1")
 	if err == nil {
 		probe.Close()
 		t.Skip("this environment allows binding low ports without privilege")
@@ -143,7 +143,7 @@ func TestServeFinishesItsExitFlushBeforeReleasingThePort(t *testing.T) {
 
 	portHeldDuringUpload := make(chan bool, 1)
 	e.service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
-		conn, err := net.DialTimeout("tcp", e.assembly.Addr, time.Second)
+		conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", e.assembly.Addr)
 		if err == nil {
 			conn.Close()
 		}
@@ -200,7 +200,7 @@ func TestASlowExitFlushReleasesThePortAndLeavesItsRecordsToTheSuccessor(t *testi
 	predecessor := e.serve(io.Discard, io.Discard)
 	e.waitHealthy()
 
-	takeover := proxylife.For(e.assembly.Layout, "2.0.0", "unspawnable", e.assembly.Addr, nil).Ensure()
+	takeover := proxylife.For(e.assembly.Layout, "2.0.0", "unspawnable", e.assembly.Addr, nil).Ensure(t.Context())
 	if takeover == nil || !strings.Contains(takeover.Error(), "starting proxy") {
 		t.Fatalf("takeover = %v, want it to have reached the point of starting the replacement", takeover)
 	}
@@ -295,7 +295,7 @@ func TestProxyTakeoverNeverUploadsARecordUnderTwoBatchIDs(t *testing.T) {
 		// Take the port the moment it is free, as a newer binary's
 		// takeover does after asking the old proxy to drain.
 		for {
-			conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+			conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(t.Context(), "tcp", addr)
 			if err != nil {
 				break
 			}

@@ -48,7 +48,7 @@ func readBundle(t *testing.T, path string) map[string]string {
 func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	writeUploadFile(t, e, "state.json", map[string]any{"last_error": "boom"})
@@ -62,7 +62,7 @@ func TestDoctorBundleContainsTheDiagnosticSurfaces(t *testing.T) {
 	out := t.TempDir()
 	t.Chdir(out)
 	e.stdout.Reset()
-	path, err := e.machine().DoctorBundle(e.project, e.io())
+	path, err := e.machine().DoctorBundle(t.Context(), e.project, e.io())
 	if err != nil {
 		t.Fatalf("bundle: %v\nstdout: %s", err, e.stdout)
 	}
@@ -117,7 +117,7 @@ func TestDoctorBundleRecordsStoreFailuresInsteadOfFailing(t *testing.T) {
 	e.obstruct(e.layout().RejectedDir())
 
 	t.Chdir(t.TempDir())
-	path, err := e.machine().DoctorBundle(e.project, e.io())
+	path, err := e.machine().DoctorBundle(t.Context(), e.project, e.io())
 	if err != nil {
 		t.Fatalf("bundle: %v\nstdout: %s", err, e.stdout)
 	}
@@ -135,7 +135,7 @@ func TestDoctorBundleRecordsStoreFailuresInsteadOfFailing(t *testing.T) {
 func TestDoctorBundleNeverLeaksRecordDataOrTokens(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	token := e.status().Token
@@ -147,7 +147,7 @@ func TestDoctorBundleNeverLeaksRecordDataOrTokens(t *testing.T) {
 		})
 
 	t.Chdir(t.TempDir())
-	path, err := e.machine().DoctorBundle(e.project, e.io())
+	path, err := e.machine().DoctorBundle(t.Context(), e.project, e.io())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,12 +167,12 @@ func TestDoctorBundleStripsUpstreamCredentials(t *testing.T) {
 	// A user routes through their own relay and put credentials in the
 	// base URL. The bundle records where traffic went, never the secret.
 	e.environ["ANTHROPIC_BASE_URL"] = "https://user:sekret-pw@relay.example.com/v1?api_key=SECRET-KEY"
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Chdir(t.TempDir())
-	path, err := e.machine().DoctorBundle(e.project, e.io())
+	path, err := e.machine().DoctorBundle(t.Context(), e.project, e.io())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestDoctorBundleStripsUpstreamCredentials(t *testing.T) {
 func TestDoctorBundleRepairsNothing(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	// Drift the injected token — exactly what doctor would repair by
@@ -215,7 +215,7 @@ func TestDoctorBundleRepairsNothing(t *testing.T) {
 	}
 
 	t.Chdir(t.TempDir())
-	if _, err := e.machine().DoctorBundle(e.project, e.io()); err != nil {
+	if _, err := e.machine().DoctorBundle(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -247,12 +247,12 @@ func TestDoctorBundleIsGitIgnoredInTheProject(t *testing.T) {
 	e := newEnv(t)
 	e.gitRepo()
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Chdir(e.canonicalRoot())
-	path, err := e.machine().DoctorBundle(e.project, e.io())
+	path, err := e.machine().DoctorBundle(t.Context(), e.project, e.io())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestDoctorBundleIsGitIgnoredInTheProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.machine().DoctorBundle(e.project, e.io()); err != nil {
+	if _, err := e.machine().DoctorBundle(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.ReadFile(filepath.Join(e.canonicalRoot(), ".gitignore"))
@@ -280,7 +280,7 @@ func TestDoctorBundleRestoresIgnoreRulesWhenMissing(t *testing.T) {
 	e := newEnv(t)
 	e.gitRepo()
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(e.canonicalRoot(), ".gitignore")); err != nil {
@@ -288,7 +288,7 @@ func TestDoctorBundleRestoresIgnoreRulesWhenMissing(t *testing.T) {
 	}
 
 	t.Chdir(e.canonicalRoot())
-	if _, err := e.machine().DoctorBundle(e.project, e.io()); err != nil {
+	if _, err := e.machine().DoctorBundle(t.Context(), e.project, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	ignore, err := os.ReadFile(filepath.Join(e.canonicalRoot(), ".gitignore"))

@@ -20,7 +20,7 @@ func TestATornRawcallIsSetAsideAndTheRestUploads(t *testing.T) {
 	f.storeRawcall(t, "req-torn", time.Now().UTC().Add(time.Second))
 	torn := f.tearStoredRawcall(t, "req-torn")
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestATornRawcallIsSetAsideAndTheRestUploads(t *testing.T) {
 		t.Errorf("log = %q, want the set-aside reported", f.logs.String())
 	}
 
-	res, err = f.uploader.Flush(true)
+	res, err = f.uploader.Flush(t.Context(), true)
 	if err != nil || res.Outcome != upload.Empty {
 		t.Fatalf("flush after the set-aside = %+v, %v; nothing may linger", res, err)
 	}
@@ -74,7 +74,7 @@ func TestAFlushOfOnlyTornRawcallsSetsThemAsideWithoutUploading(t *testing.T) {
 	f.storeRawcall(t, "req-torn", time.Now().UTC())
 	f.tearStoredRawcall(t, "req-torn")
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestAFlushOfOnlyTornRawcallsSetsThemAsideWithoutUploading(t *testing.T) {
 		t.Errorf("rejected store holds %d records, want 1", n)
 	}
 
-	res, err = f.uploader.Flush(true)
+	res, err = f.uploader.Flush(t.Context(), true)
 	if err != nil || res.Outcome != upload.Empty || len(res.SetAside) != 0 {
 		t.Fatalf("second flush = %+v, %v; the set-aside must not repeat", res, err)
 	}
@@ -104,12 +104,12 @@ func TestAPendingBatchWithATornRecordResendsTheRestUnderTheSameID(t *testing.T) 
 	f.storeRawcall(t, "req-1", time.Now().UTC())
 	f.storeRawcall(t, "req-2", time.Now().UTC().Add(time.Second))
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("first flush against a failing service did not error")
 	}
 	f.tearStoredRawcall(t, "req-2")
 
-	res, err := f.uploader.Flush(true)
+	res, err := f.uploader.Flush(t.Context(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestAnUnreadablePendingRecordIsSetAsideAndUploadsResume(t *testing.T) {
 			f.storeRawcall(t, "req-1", time.Now().UTC())
 			writePendingBytes(t, f.dir, tc.pending)
 
-			res, err := f.uploader.Flush(true)
+			res, err := f.uploader.Flush(t.Context(), true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,7 +182,7 @@ func TestAPendingRecordThatCannotBeReadStillStopsTheFlush(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := f.uploader.Flush(true); err == nil || !strings.Contains(err.Error(), "pending") {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil || !strings.Contains(err.Error(), "pending") {
 		t.Fatalf("flush error = %v, want the pending read failure surfaced", err)
 	}
 	if f.uploadCount() != 0 {

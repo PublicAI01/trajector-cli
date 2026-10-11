@@ -538,7 +538,7 @@ func TestDrainRequestShutsDownGracefully(t *testing.T) {
 	if err := e.WaitStopped(5 * time.Second); err != nil {
 		t.Errorf("Serve returned %v after drain, want nil", err)
 	}
-	if _, err := net.DialTimeout("tcp", e.Addr(), 100*time.Millisecond); err == nil {
+	if _, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(t.Context(), "tcp", e.Addr()); err == nil {
 		t.Error("port still open after drain")
 	}
 }
@@ -592,7 +592,7 @@ func TestMountedCallDoesNotHoldTheProxyOpen(t *testing.T) {
 
 	token := e.AdminToken()
 	go func() {
-		req, err := http.NewRequest(http.MethodPost, e.BaseURL()+"/trajector/flush", nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, e.BaseURL()+"/trajector/flush", nil)
 		if err != nil {
 			return
 		}

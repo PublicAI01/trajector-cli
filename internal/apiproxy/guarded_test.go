@@ -55,7 +55,7 @@ func TestConsentWithdrawnMidExchangeStopsTheCapture(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		req, err := http.NewRequest(http.MethodPost, e.BaseURL()+"/t/tok-live/v1/messages", strings.NewReader(`{"m":1}`))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, e.BaseURL()+"/t/tok-live/v1/messages", strings.NewReader(`{"m":1}`))
 		if err != nil {
 			return
 		}
@@ -409,7 +409,7 @@ func TestPausedTrafficKeepsTheProxyAlive(t *testing.T) {
 	started := time.Now()
 	for i := 0; time.Since(started) < 3*idle; i++ {
 		e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_alive"}`)})
-		req, err := http.NewRequest(http.MethodPost, e.BaseURL()+"/t/tok1/v1/messages", strings.NewReader(`{"m":1}`))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, e.BaseURL()+"/t/tok1/v1/messages", strings.NewReader(`{"m":1}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -456,7 +456,7 @@ func TestUnresolvedTrafficKeepsTheProxyAlive(t *testing.T) {
 	started := time.Now()
 	for i := 0; time.Since(started) < 3*idle; i++ {
 		e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_alive"}`)})
-		req, err := http.NewRequest(http.MethodPost, e.BaseURL()+"/t/tok1/v1/messages", strings.NewReader(`{"m":1}`))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, e.BaseURL()+"/t/tok1/v1/messages", strings.NewReader(`{"m":1}`))
 		if err != nil {
 			t.Fatal(err)
 		}

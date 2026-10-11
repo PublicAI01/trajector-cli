@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -9,15 +10,15 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
-func (a *app) loginCmd(args []string) int {
+func (a *app) loginCmd(ctx context.Context, args []string) int {
 	return a.with("usage: trajector login", args, 0, func(m *lifecycle.Machine, _ string) error {
-		return m.Login(a.io())
+		return m.Login(ctx, a.io())
 	})
 }
 
-func (a *app) logoutCmd(args []string) int {
+func (a *app) logoutCmd(ctx context.Context, args []string) int {
 	return a.with("usage: trajector logout", args, 0, func(m *lifecycle.Machine, _ string) error {
-		return m.Logout(a.io())
+		return m.Logout(ctx, a.io())
 	})
 }
 
@@ -27,7 +28,7 @@ func (a *app) logoutCmd(args []string) int {
 // decides whether the sessions it already has are collected.
 const noEarlierFlag = "--no-earlier"
 
-func (a *app) enableCmd(args []string) int {
+func (a *app) enableCmd(ctx context.Context, args []string) int {
 	// The shape flag is spelled exactly as the marker the injected hook
 	// carries, so the one word names the shape everywhere it shows.
 	args, taken := takeFlags(args, claudesettings.NoProxyMarker, noEarlierFlag)
@@ -36,14 +37,14 @@ func (a *app) enableCmd(args []string) int {
 		choices.Shape = routing.WithoutProxy
 	}
 	return a.with("usage: trajector enable [--no-proxy] [--no-earlier]", args, 0, func(m *lifecycle.Machine, cwd string) error {
-		return m.Enable(cwd, choices, a.io())
+		return m.Enable(ctx, cwd, choices, a.io())
 	}, claudesettings.NoProxyMarker, noEarlierFlag)
 }
 
-func (a *app) disableCmd(args []string) int {
+func (a *app) disableCmd(ctx context.Context, args []string) int {
 	args, purge := takeFlag(args, "--purge")
 	return a.with("usage: trajector disable [--purge]", args, 0, func(m *lifecycle.Machine, cwd string) error {
-		return m.Disable(cwd, purge, a.io())
+		return m.Disable(ctx, cwd, purge, a.io())
 	})
 }
 
@@ -51,11 +52,11 @@ func (a *app) disableCmd(args []string) int {
 // broken exits non-zero: a user who runs status from a script must be
 // able to tell a device that records from one that stopped, without
 // reading the text.
-func (a *app) statusCmd(args []string) int {
+func (a *app) statusCmd(ctx context.Context, args []string) int {
 	problems := 0
 	exit := a.withMachine(a.surfaceMachine, "usage: trajector status", args, 0, func(m *lifecycle.Machine, cwd string) error {
 		var err error
-		problems, err = m.Status(cwd, a.io())
+		problems, err = m.Status(ctx, cwd, a.io())
 		return err
 	})
 	if exit == 0 && problems > 0 {
@@ -64,12 +65,12 @@ func (a *app) statusCmd(args []string) int {
 	return exit
 }
 
-func (a *app) doctorCmd(args []string) int {
+func (a *app) doctorCmd(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		problems := 0
 		exit := a.with("usage: trajector doctor", args, 0, func(m *lifecycle.Machine, cwd string) error {
 			var err error
-			problems, err = m.Doctor(cwd, a.io())
+			problems, err = m.Doctor(ctx, cwd, a.io())
 			return err
 		})
 		if exit == 0 && problems > 0 {
@@ -88,7 +89,7 @@ func (a *app) doctorCmd(args []string) int {
 	case "discard":
 		return a.discardCmd(args[1:])
 	case "bundle":
-		return a.bundleCmd(args[1:])
+		return a.bundleCmd(ctx, args[1:])
 	default:
 		fmt.Fprintln(a.stderr, doctorUsage)
 		return 2
@@ -104,9 +105,9 @@ const doctorUsage = `usage: trajector doctor [bundle | requeue <batch-id>|--all 
   discard  delete a quarantined batch and its rawcalls from this machine
            for good; use it to give up on a batch that will never upload`
 
-func (a *app) bundleCmd(args []string) int {
+func (a *app) bundleCmd(ctx context.Context, args []string) int {
 	return a.withMachine(a.surfaceMachine, "usage: trajector doctor bundle", args, 0, func(m *lifecycle.Machine, cwd string) error {
-		_, err := m.DoctorBundle(cwd, a.io())
+		_, err := m.DoctorBundle(ctx, cwd, a.io())
 		return err
 	})
 }
@@ -132,16 +133,16 @@ func (a *app) discardCmd(args []string) int {
 	}, "--all")
 }
 
-func (a *app) upgradeCmd(args []string) int {
+func (a *app) upgradeCmd(ctx context.Context, args []string) int {
 	return a.with("usage: trajector upgrade", args, 0, func(m *lifecycle.Machine, _ string) error {
-		return m.Upgrade(a.io())
+		return m.Upgrade(ctx, a.io())
 	})
 }
 
-func (a *app) uninstallCmd(args []string) int {
+func (a *app) uninstallCmd(ctx context.Context, args []string) int {
 	args, deleteData := takeFlag(args, "--delete-data")
 	return a.with("usage: trajector uninstall [--delete-data]", args, 0, func(m *lifecycle.Machine, _ string) error {
-		return m.Uninstall(deleteData, a.io())
+		return m.Uninstall(ctx, deleteData, a.io())
 	})
 }
 
@@ -150,7 +151,7 @@ func (a *app) uninstallCmd(args []string) int {
 // non-blocking exit code, and success is silent — what a session hook
 // writes on stdout reaches the model, and what it writes on stderr
 // reaches the user.
-func (a *app) hookCmd(args []string) int {
+func (a *app) hookCmd(ctx context.Context, args []string) int {
 	// A hook runs where nobody is watching, so a mistyped flag must be
 	// refused before the hook name is read as an event and before any
 	// session file is looked for.
@@ -178,7 +179,7 @@ func (a *app) hookCmd(args []string) int {
 		if err != nil {
 			return a.fail(err)
 		}
-		tell, err := m.SessionStarting(cwd, hook, a.io())
+		tell, err := m.SessionStarting(ctx, cwd, hook, a.io())
 		if exit := a.exit(err); exit != 0 {
 			return exit
 		}
@@ -190,7 +191,7 @@ func (a *app) hookCmd(args []string) int {
 		}
 		hook := a.hookInput()
 		if m, cwd, err := a.prelude(); err == nil {
-			return a.tellSession(m.SessionEnded(cwd, hook))
+			return a.tellSession(m.SessionEnded(ctx, cwd, hook))
 		}
 		return 0
 	case claudesettings.HookGitSnapshot:
@@ -200,7 +201,7 @@ func (a *app) hookCmd(args []string) int {
 		}
 		hook := a.hookInput()
 		if m, cwd, err := a.prelude(); err == nil {
-			m.ToolUsed(cwd, hook)
+			m.ToolUsed(ctx, cwd, hook)
 		}
 		return 0
 	case claudesettings.HookProgress:
@@ -210,7 +211,7 @@ func (a *app) hookCmd(args []string) int {
 		}
 		hook := a.hookInput()
 		if m, cwd, err := a.prelude(); err == nil {
-			return a.tellSession(m.SessionProgressed(cwd, hook))
+			return a.tellSession(m.SessionProgressed(ctx, cwd, hook))
 		}
 		return 0
 	case claudesettings.HookDiscovery:
@@ -233,7 +234,7 @@ func (a *app) hookCmd(args []string) int {
 		if err != nil {
 			return a.fail(err)
 		}
-		m.ReadSessionFiles(rest[0], a.io())
+		m.ReadSessionFiles(ctx, rest[0], a.io())
 		return 0
 	default:
 		fmt.Fprintf(a.stderr, "trajector: unknown hook %q\n", name)

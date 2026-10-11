@@ -17,7 +17,7 @@ func TestLoginPairsStoresTheTokenAndResumesRecording(t *testing.T) {
 	e.pairable()
 	e.sandbox.Pause(proxytest.PauseSignedOut)
 
-	if err := e.machine().Login(e.io()); err != nil {
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	if !e.machine().Paired() {
@@ -38,7 +38,7 @@ func TestLoginOnAlreadyPairedDeviceStillReachesTheSignedInState(t *testing.T) {
 	e := newEnv(t)
 	e.sandbox.Pause(proxytest.PauseSignedOut)
 
-	if err := e.machine().Login(e.io()); err != nil {
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "already paired") {
@@ -53,7 +53,7 @@ func TestLoginRidesOutATransientPairingCheckFailure(t *testing.T) {
 	e := newUnpairedEnv(t)
 	e.service.PairableAsAfterOutage("pair-1", "dev-tok-fake")
 
-	if err := e.machine().Login(e.io()); err != nil {
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	if !e.machine().Paired() {
@@ -69,7 +69,7 @@ func TestLoginKeepsPollingThroughAnOutageUntilTheWindowCloses(t *testing.T) {
 	// window from closing.
 	e.deps.PairingWindow = 50 * time.Millisecond
 
-	err := e.machine().Login(e.io())
+	err := e.machine().Login(t.Context(), e.io())
 	if err == nil || !strings.Contains(err.Error(), "timed out waiting for approval") {
 		t.Fatalf("login = %v, want the approval window reported closed", err)
 	}
@@ -104,7 +104,7 @@ func TestLoginTerminatesUnderAPinnedClock(t *testing.T) {
 	e.deps.Now = func() time.Time { return pinned }
 
 	done := make(chan error, 1)
-	go func() { done <- e.machine().Login(e.io()) }()
+	go func() { done <- e.machine().Login(t.Context(), e.io()) }()
 
 	select {
 	case err := <-done:
@@ -120,7 +120,7 @@ func TestLoginStopsWhenTheServiceNoLongerKnowsThePairing(t *testing.T) {
 	e := newUnpairedEnv(t)
 	e.service.PairingVanishes("pair-1")
 
-	err := e.machine().Login(e.io())
+	err := e.machine().Login(t.Context(), e.io())
 	if err == nil || !strings.Contains(err.Error(), "checking pairing") {
 		t.Fatalf("login = %v, want the refused check surfaced", err)
 	}
@@ -142,7 +142,7 @@ func TestLoginReportsAnExpiredPairingLink(t *testing.T) {
 	e := newUnpairedEnv(t)
 	e.service.PairingExpires("pair-1")
 
-	err := e.machine().Login(e.io())
+	err := e.machine().Login(t.Context(), e.io())
 	if err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Errorf("login = %v, want the expired link reported", err)
 	}
@@ -155,7 +155,7 @@ func TestLoginSurfacesAPairingStartFailure(t *testing.T) {
 	e := newUnpairedEnv(t)
 	e.service.Stub("POST", "/v1/pairings", fakeplatform.JSON(500, map[string]any{"error": "down"}))
 
-	if err := e.machine().Login(e.io()); err == nil || !strings.Contains(err.Error(), "starting pairing") {
+	if err := e.machine().Login(t.Context(), e.io()); err == nil || !strings.Contains(err.Error(), "starting pairing") {
 		t.Errorf("login with a failing pairing start = %v, want the start failure surfaced", err)
 	}
 }
@@ -164,7 +164,7 @@ func TestLogoutRevokesPausesAndKeepsGrants(t *testing.T) {
 	e := newEnv(t)
 	e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(200, map[string]any{}))
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	grant := e.status()
@@ -172,7 +172,7 @@ func TestLogoutRevokesPausesAndKeepsGrants(t *testing.T) {
 		t.Fatal("project not enabled")
 	}
 
-	if err := e.machine().Logout(e.io()); err != nil {
+	if err := e.machine().Logout(t.Context(), e.io()); err != nil {
 		t.Fatalf("logout: %v", err)
 	}
 	if e.machine().Paired() {
@@ -194,7 +194,7 @@ func TestLogoutRevokesPausesAndKeepsGrants(t *testing.T) {
 func TestLogoutWithAnUnreachableServiceStillSignsOutLocally(t *testing.T) {
 	e := newEnv(t)
 	// No stub for revoke, so the service answers with a loud failure.
-	if err := e.machine().Logout(e.io()); err != nil {
+	if err := e.machine().Logout(t.Context(), e.io()); err != nil {
 		t.Fatalf("logout: %v", err)
 	}
 	if !strings.Contains(e.stderr.String(), "account page") {
@@ -212,7 +212,7 @@ func TestLogoutTellsAnAlreadyRevokedTokenFromAServiceOutage(t *testing.T) {
 	t.Run("an already-revoked token is the goal state, not a warning", func(t *testing.T) {
 		e := newEnv(t)
 		e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(401, map[string]any{"error": "unknown token"}))
-		if err := e.machine().Logout(e.io()); err != nil {
+		if err := e.machine().Logout(t.Context(), e.io()); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(e.stderr.String(), "account page") {
@@ -222,7 +222,7 @@ func TestLogoutTellsAnAlreadyRevokedTokenFromAServiceOutage(t *testing.T) {
 	t.Run("a service outage advises retrying later", func(t *testing.T) {
 		e := newEnv(t)
 		e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(503, map[string]any{"error": "down"}))
-		if err := e.machine().Logout(e.io()); err != nil {
+		if err := e.machine().Logout(t.Context(), e.io()); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(e.stderr.String(), "retry `trajector logout` later") {
@@ -234,12 +234,12 @@ func TestLogoutTellsAnAlreadyRevokedTokenFromAServiceOutage(t *testing.T) {
 func TestPurgeRefusedByTheServiceDoesNotAdviseRetrying(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.service.Stub("POST", "/v1/data-deletions", fakeplatform.JSON(400, map[string]any{"error": "malformed"}))
 
-	err := e.machine().Disable(e.project, true, e.io())
+	err := e.machine().Disable(t.Context(), e.project, true, e.io())
 	if err == nil {
 		t.Fatal("a refused deletion request reported success")
 	}
@@ -266,7 +266,7 @@ func TestLogoutStatesTheDevicePauseInTheWordsStatusUses(t *testing.T) {
 	e := newEnv(t)
 	e.service.Stub("POST", "/v1/device/revoke", fakeplatform.JSON(200, map[string]any{}))
 
-	if err := e.machine().Logout(e.io()); err != nil {
+	if err := e.machine().Logout(t.Context(), e.io()); err != nil {
 		t.Fatalf("logout: %v", err)
 	}
 	said := pauseSentenceIn(t, e.stdout.String())
@@ -290,7 +290,7 @@ func TestLogoutStatesTheDevicePauseInTheWordsStatusUses(t *testing.T) {
 
 func TestLogoutWhenNotPairedIsANoop(t *testing.T) {
 	e := newUnpairedEnv(t)
-	if err := e.machine().Logout(e.io()); err != nil {
+	if err := e.machine().Logout(t.Context(), e.io()); err != nil {
 		t.Fatalf("logout: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "not paired") {
@@ -306,7 +306,7 @@ func TestEnableOnAnUnpairedDevicePairsFirst(t *testing.T) {
 	e.pairable()
 	e.startProxy()
 
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "not paired yet") {
@@ -323,13 +323,13 @@ func TestEnableOnAnUnpairedDevicePairsFirst(t *testing.T) {
 func TestPurgeSendsADeletionRequestForThisProjectOnly(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	grant := e.status()
 	e.service.Stub("POST", "/v1/data-deletions", fakeplatform.JSON(202, map[string]any{}))
 
-	if err := e.machine().Disable(e.project, true, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, true, e.io()); err != nil {
 		t.Fatalf("disable --purge: %v", err)
 	}
 	reqs := e.service.Requests()
@@ -353,7 +353,7 @@ func TestPurgeOnANeverEnabledProjectStillRequestsDeletion(t *testing.T) {
 	// The project was never enabled on this device, but the same root may
 	// have contributed under an earlier enable; deletion is scoped by
 	// project hash, not by the current grant, so the request still goes out.
-	if err := e.machine().Disable(e.project, true, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, true, e.io()); err != nil {
 		t.Fatalf("disable --purge: %v", err)
 	}
 	if !strings.Contains(e.stdout.String(), "not enabled") {
@@ -379,12 +379,12 @@ func TestPurgeOnANeverEnabledProjectStillRequestsDeletion(t *testing.T) {
 func TestPurgeWithoutAPairedDeviceStillDisablesLocally(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	e.sandbox.ClearDeviceToken()
 
-	err := e.machine().Disable(e.project, true, e.io())
+	err := e.machine().Disable(t.Context(), e.project, true, e.io())
 	if err == nil || !strings.Contains(err.Error(), "trajector login") {
 		t.Errorf("disable --purge = %v, want the missing pairing explained", err)
 	}
@@ -396,15 +396,15 @@ func TestPurgeWithoutAPairedDeviceStillDisablesLocally(t *testing.T) {
 func TestUninstallRemovesEveryInjectionAndKeepsDataByDefault(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Login(e.io()); err != nil {
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 
 	e.stdin = "\n"
-	if err := e.machine().Uninstall(false, e.io()); err != nil {
+	if err := e.machine().Uninstall(t.Context(), false, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
 	if e.status().InjectedBaseURL != "" {
@@ -425,7 +425,7 @@ func TestUninstallPointsAtLeftoverIgnoreLinesWithoutEditingThem(t *testing.T) {
 	e := newEnv(t)
 	e.gitRepo()
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 	ignorePath := filepath.Join(e.canonicalRoot(), ".gitignore")
@@ -436,7 +436,7 @@ func TestUninstallPointsAtLeftoverIgnoreLinesWithoutEditingThem(t *testing.T) {
 
 	e.stdin = "\n"
 	e.stdout.Reset()
-	if err := e.machine().Uninstall(false, e.io()); err != nil {
+	if err := e.machine().Uninstall(t.Context(), false, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
 	out := e.stdout.String()
@@ -460,13 +460,13 @@ func TestUninstallPointsAtLeftoverIgnoreLinesWithoutEditingThem(t *testing.T) {
 func TestUninstallSkipsIgnoreNoteWithoutAnIgnoreFile(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 
 	e.stdin = "\n"
 	e.stdout.Reset()
-	if err := e.machine().Uninstall(false, e.io()); err != nil {
+	if err := e.machine().Uninstall(t.Context(), false, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
 	if strings.Contains(e.stdout.String(), ".gitignore") {
@@ -477,11 +477,11 @@ func TestUninstallSkipsIgnoreNoteWithoutAnIgnoreFile(t *testing.T) {
 func TestUninstallDeletesEverythingWhenAsked(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
-	if err := e.machine().Enable(e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := e.machine().Uninstall(true, e.io()); err != nil {
+	if err := e.machine().Uninstall(t.Context(), true, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
 	for _, dir := range e.layout().Roots() {
@@ -516,7 +516,7 @@ func TestUninstallDeletesDataOnlyOnceTheProxyIsGone(t *testing.T) {
 		im.ReleasePort()
 	})
 
-	if err := e.machine().Uninstall(true, e.io()); err != nil {
+	if err := e.machine().Uninstall(t.Context(), true, e.io()); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
 	// An uninstall that waited has already seen this; one that did not
@@ -551,7 +551,7 @@ func TestLogoutStaysRetryableWhenPausingFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := e.machine().Logout(e.io()); err == nil {
+	if err := e.machine().Logout(t.Context(), e.io()); err == nil {
 		t.Fatal("logout reported success while recording was left unpaused")
 	}
 	if !e.machine().Paired() {
@@ -561,7 +561,7 @@ func TestLogoutStaysRetryableWhenPausingFails(t *testing.T) {
 	if err := os.Remove(table); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.machine().Logout(e.io()); err != nil {
+	if err := e.machine().Logout(t.Context(), e.io()); err != nil {
 		t.Fatalf("rerun: %v", err)
 	}
 	if e.machine().Paired() {
@@ -578,7 +578,7 @@ func TestLoginClearsARefusedCredentialRecordedByAnEarlierUpload(t *testing.T) {
 	refusedAt := time.Date(2026, 8, 30, 14, 32, 0, 0, time.UTC)
 	e.sandbox.SeedCredentialRefusal(refusedAt)
 
-	if err := e.machine().Login(e.io()); err != nil {
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	for _, s := range e.sandbox.HeldStandings(refusedAt.Add(time.Hour)) {

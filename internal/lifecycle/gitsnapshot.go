@@ -25,7 +25,7 @@ import (
 // every recording path. A directory outside the project, one that is
 // not inside a repository, and a repository with no commit yet are all
 // the same answer: there is nothing to observe.
-func (m *Machine) ObserveGitSnapshot(cwd string, hook HookInput) {
+func (m *Machine) ObserveGitSnapshot(ctx context.Context, cwd string, hook HookInput) {
 	// Asked before anything is opened or run: the hook after a shell
 	// tool use runs on every command, and almost none of them can have
 	// made a commit.
@@ -46,7 +46,7 @@ func (m *Machine) ObserveGitSnapshot(cwd string, hook HookInput) {
 	}
 
 	observer := gitsnapshot.Observer{Dir: dir}
-	position, err := observer.Position(context.Background())
+	position, err := observer.Position(ctx)
 	if err != nil {
 		return
 	}
@@ -58,7 +58,7 @@ func (m *Machine) ObserveGitSnapshot(cwd string, hook HookInput) {
 
 	var changed []envelope.Change
 	if base != "" {
-		if changed, err = observer.Changes(context.Background(), base, position.Head); err != nil {
+		if changed, err = observer.Changes(ctx, base, position.Head); err != nil {
 			return
 		}
 	}

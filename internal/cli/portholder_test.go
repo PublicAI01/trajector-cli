@@ -65,7 +65,7 @@ func TestEveryCommandNeedingTheProxyExplainsASilentPortHolder(t *testing.T) {
 // on the holder's command line, and a test binary carries none.
 func silentPortHolder(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

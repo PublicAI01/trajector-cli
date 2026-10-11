@@ -18,7 +18,7 @@ import (
 func (e *env) uploadImage(t *testing.T, id, x string) string {
 	t.Helper()
 	e.sandbox.SeedRawcall(id, "hash-images", time.Now().UTC(), proxytest.WithImage(x))
-	if err := e.machine().Upload(true, e.io()); err != nil {
+	if err := e.machine().Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
 	reqs := e.service.Requests()
@@ -62,7 +62,7 @@ func TestLogoutMakesTheNextUploadSendImagesInFull(t *testing.T) {
 	x := proxytest.ConstructedImage(t)
 	e.imageUploaded(t, x)
 
-	if err := e.machine().Logout(e.io()); err != nil {
+	if err := e.machine().Logout(t.Context(), e.io()); err != nil {
 		t.Fatalf("logout: %v", err)
 	}
 	// The same token back, so only what logout itself did is tested.
@@ -81,7 +81,7 @@ func TestPairingMakesTheNextUploadSendImagesInFull(t *testing.T) {
 	// only what pairing itself did is tested.
 	e.sandbox.ClearDeviceToken()
 	e.pairable()
-	if err := e.machine().Login(e.io()); err != nil {
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	if got := e.uploadImage(t, "req-3", x); got != "original" {
@@ -100,7 +100,7 @@ func TestPairingDoesNotStartWhenTheRecordOfSentImagesCannotBeForgotten(t *testin
 		t.Fatal(err)
 	}
 
-	if err := e.machine().Login(e.io()); err == nil {
+	if err := e.machine().Login(t.Context(), e.io()); err == nil {
 		t.Fatal("login succeeded although the record of sent images could not be forgotten")
 	}
 	for _, r := range e.service.Requests() {
@@ -115,7 +115,7 @@ func TestLoginOnAPairedDeviceKeepsReferringToImages(t *testing.T) {
 	x := proxytest.ConstructedImage(t)
 	e.imageUploaded(t, x)
 
-	if err := e.machine().Login(e.io()); err != nil {
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 	if got := e.uploadImage(t, "req-3", x); got != "reference" {
@@ -129,7 +129,7 @@ func TestPurgeMakesTheNextUploadSendImagesInFull(t *testing.T) {
 	x := proxytest.ConstructedImage(t)
 	e.imageUploaded(t, x)
 
-	if err := e.machine().Disable(e.project, true, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, true, e.io()); err != nil {
 		t.Fatalf("disable --purge: %v", err)
 	}
 	if got := e.uploadImage(t, "req-3", x); got != "original" {
@@ -142,7 +142,7 @@ func TestDisableWithoutPurgeKeepsReferringToImages(t *testing.T) {
 	x := proxytest.ConstructedImage(t)
 	e.imageUploaded(t, x)
 
-	if err := e.machine().Disable(e.project, false, e.io()); err != nil {
+	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if got := e.uploadImage(t, "req-3", x); got != "reference" {

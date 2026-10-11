@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -88,15 +89,15 @@ type EnableChoices struct {
 // records: with the proxy, or the session hooks and no base URL, where
 // the files its sessions leave are read and its traffic is not routed
 // through the proxy.
-func (m *Machine) Enable(projectDir string, choices EnableChoices, streams IO) error {
+func (m *Machine) Enable(ctx context.Context, projectDir string, choices EnableChoices, streams IO) error {
 	m.warnNonDefaultEndpoint(streams.Out)
 	if !m.Paired() {
 		fmt.Fprintln(streams.Out, "This device is not paired yet; starting pairing first.")
-		if err := m.pair(streams); err != nil {
+		if err := m.pair(ctx, streams); err != nil {
 			return err
 		}
 	}
-	return m.enableProject(projectDir, choices, streams)
+	return m.enableProject(ctx, projectDir, choices, streams)
 }
 
 // Disable stops contributing from a project. With purge it also asks
@@ -105,7 +106,7 @@ func (m *Machine) Enable(projectDir string, choices EnableChoices, streams IO) e
 // request is sent even when no grant stands right now (wasEnabled
 // false): data may have been uploaded under an earlier enable, and the
 // service scopes deletion by project hash, not by the current grant.
-func (m *Machine) Disable(projectDir string, purge bool, streams IO) error {
+func (m *Machine) Disable(ctx context.Context, projectDir string, purge bool, streams IO) error {
 	w, err := m.disableProject(projectDir, streams)
 	if err != nil {
 		return err
@@ -124,7 +125,7 @@ func (m *Machine) Disable(projectDir string, purge bool, streams IO) error {
 	if err := upload.ForgetSentBlocks(m.deps.Layout.UploadDir()); err != nil {
 		return fmt.Errorf("the project is disabled locally, but no deletion was requested: forgetting which images and documents were uploaded failed: %w; retry with `trajector disable --purge`", err)
 	}
-	if err := m.service.RequestDeletion(token, w.hash); err != nil {
+	if err := m.service.RequestDeletion(ctx, token, w.hash); err != nil {
 		var status *platform.StatusError
 		if errors.As(err, &status) && !status.Temporary() {
 			// Retrying the same request cannot succeed; do not tell the
@@ -166,7 +167,7 @@ func leftoverIgnoreRules(root string) []string {
 // injection would point an enabled project at a dead port. Whether
 // local data goes too is the user's call: a caller that has not already
 // decided (deleteData false) is asked here, before anything changes.
-func (m *Machine) Uninstall(deleteData bool, streams IO) error {
+func (m *Machine) Uninstall(ctx context.Context, deleteData bool, streams IO) error {
 	if !deleteData {
 		deleteData, _ = askYesNo(streams, "Delete local data (captured records, configuration, device token)? [y/N]: ", false)
 	}
@@ -223,7 +224,7 @@ func (m *Machine) Uninstall(deleteData bool, streams IO) error {
 	// Gone, not merely asked to go: everything deleted below is
 	// something an exiting proxy still writes, and its writes create the
 	// directories they need. See StopGone.
-	if err := m.proxy.StopGone(); err != nil {
+	if err := m.proxy.StopGone(ctx); err != nil {
 		fmt.Fprintf(streams.Err, "trajector: warning: the proxy was not stopped: %v\n", err)
 	}
 
@@ -248,11 +249,11 @@ func (m *Machine) Uninstall(deleteData bool, streams IO) error {
 // device's consent state honest on the way: a stale agreement pauses
 // recording, and a project's own base-URL configuration is re-read in
 // case the user moved it.
-func (m *Machine) EnsureProxy(projectDir string, streams IO) error {
+func (m *Machine) EnsureProxy(ctx context.Context, projectDir string, streams IO) error {
 	m.pauseIfAgreementStale(streams)
 	m.refreshUpstreamDrift(projectDir, streams)
 
-	if err := m.proxy.Ensure(); err != nil {
+	if err := m.proxy.Ensure(ctx); err != nil {
 		// Every port-holder verdict is passed through with its own
 		// words: each of them has a remedy of its own that a command
 		// states, and a sentence wrapped around one would bury it.

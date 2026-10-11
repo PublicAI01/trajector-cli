@@ -97,7 +97,7 @@ func TestForget_UploadedRecordsAreNotAffected(t *testing.T) {
 	seedSessionRawcall(e, "req-uploaded", sessionOne)
 	segmentID, snapshotID := seedSessionRecords(e, sessionOne)
 	m := e.machine()
-	if err := m.Upload(true, e.io()); err != nil {
+	if err := m.Upload(t.Context(), true, e.io()); err != nil {
 		t.Fatal(err)
 	}
 	if rawcalls, records := spoolHeld(e); len(rawcalls)+len(records) != 0 {

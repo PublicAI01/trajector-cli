@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -22,7 +23,7 @@ import (
 // it. It returns how many problems remain unresolved. Repairs only ever
 // touch state trajector itself wrote, and every repair is idempotent:
 // running doctor twice is always safe.
-func (m *Machine) Doctor(dir string, streams IO) (problems int, err error) {
+func (m *Machine) Doctor(ctx context.Context, dir string, streams IO) (problems int, err error) {
 	fmt.Fprintf(streams.Out, "trajector %s doctor\n\n", m.deps.Version)
 
 	// An upgrade that could not delete the binary it replaced — on
@@ -60,7 +61,7 @@ func (m *Machine) Doctor(dir string, streams IO) (problems int, err error) {
 	// Doctor is the one command that pays for the second reading: it
 	// acts on the session files no hook reported, and it repairs from
 	// the same value it reports.
-	d, err := m.diagnose(dir, fromTree)
+	d, err := m.diagnose(ctx, dir, fromTree)
 	if err != nil {
 		return 0, err
 	}
@@ -80,13 +81,13 @@ func (m *Machine) Doctor(dir string, streams IO) (problems int, err error) {
 	// prints is what is still held after this run.
 	d.Spool.Held = m.releaseHeldSegments(f)
 	report.DoctorDevice(f, d)
-	m.doctorProxy(f, d)
-	if err := m.doctorInjection(f, d.Project); err != nil {
+	m.doctorProxy(ctx, f, d)
+	if err := m.doctorInjection(ctx, f, d.Project); err != nil {
 		return 0, err
 	}
 	m.doctorDiscoveryHint(f, d.TokenStore)
 	m.doctorStaleDiscoveryHook(f, d)
-	m.doctorEarlierSessions(f, &d)
+	m.doctorEarlierSessions(ctx, f, &d)
 	report.DoctorProject(f, d)
 	report.DoctorData(f, d)
 	report.DoctorEnvironment(f)
@@ -238,7 +239,7 @@ func heldOfProject(held []spool.Record, projectIDHash string) []spool.Record {
 // run: a registration that failed to be written, and a reading no
 // reader took, both leave the files where they were. Only an ask a
 // reader took is reported as done.
-func (m *Machine) doctorEarlierSessions(f *report.Findings, d *report.Diagnosis) {
+func (m *Machine) doctorEarlierSessions(ctx context.Context, f *report.Findings, d *report.Diagnosis) {
 	st := d.Project
 	if !st.Enabled || st.WindowsSideClaude {
 		return
@@ -251,7 +252,7 @@ func (m *Machine) doctorEarlierSessions(f *report.Findings, d *report.Diagnosis)
 	if len(toRead) == 0 {
 		return
 	}
-	if err := m.readEarlierSessions(st, toRead); err != nil {
+	if err := m.readEarlierSessions(ctx, st, toRead); err != nil {
 		f.Problemf("%d never-read session file(s) of this project could not be asked for: %v", len(toRead), err)
 		f.Detailf("The next session of this project reads them, where a reader can be started for it.")
 		return
@@ -299,12 +300,12 @@ func (m *Machine) earlierSessionsRepair(s report.SessionFilesState, st report.Pr
 // remedy; an authentication failure may be the user's own proxy. Which
 // of our own proxies doctor replaces and which it leaves alone is the
 // verdict's own answer, never a version comparison made here.
-func (m *Machine) doctorProxy(f *report.Findings, d report.Diagnosis) {
+func (m *Machine) doctorProxy(ctx context.Context, f *report.Findings, d report.Diagnosis) {
 	h := d.Proxy.Health
 	up := time.Duration(h.UptimeSeconds) * time.Second
 	switch {
 	case d.Proxy.Replaceable(m.deps.Version):
-		if err := m.proxy.Ensure(); err != nil {
+		if err := m.proxy.Ensure(ctx); err != nil {
 			f.Problemf("a trajector proxy version %s holds %s and could not be replaced: %v", h.Version, d.Proxy.Addr, err)
 			return
 		}
@@ -329,7 +330,7 @@ func (m *Machine) doctorProxy(f *report.Findings, d report.Diagnosis) {
 			f.OKf("proxy not running; on this device it runs only while a session is open, because every enabled project records without it")
 			return
 		}
-		if err := m.proxy.Ensure(); err != nil {
+		if err := m.proxy.Ensure(ctx); err != nil {
 			f.Problemf("the proxy is down and could not be started: %v", err)
 			return
 		}
@@ -342,7 +343,7 @@ func (m *Machine) doctorProxy(f *report.Findings, d report.Diagnosis) {
 // active token and both hooks — is restored where the settings file
 // alone is wrong; disagreements about consent are reported, never
 // guessed at.
-func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) error {
+func (m *Machine) doctorInjection(ctx context.Context, f *report.Findings, st report.ProjectStatus) error {
 	settingsPath := st.SettingsPath()
 	switch {
 	case st.TableUnreadable != nil:
@@ -425,7 +426,7 @@ func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) e
 		f.OKf("injection and routing agree for this project")
 	}
 
-	if action, err := claudesettings.EnsureGitIgnored(st.Root, claudesettings.ProjectLocalIgnoreRule); err != nil {
+	if action, err := claudesettings.EnsureGitIgnored(ctx, st.Root, claudesettings.ProjectLocalIgnoreRule); err != nil {
 		f.Problemf("could not verify .gitignore covers %s: %v", claudesettings.ProjectLocalIgnoreRule, err)
 	} else if action == claudesettings.IgnoreAppended {
 		f.Fixedf("added %s to .gitignore", claudesettings.ProjectLocalIgnoreRule)

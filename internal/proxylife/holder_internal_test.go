@@ -12,7 +12,7 @@ import (
 // the ones a proxy this build starts itself carries.
 func proxyShaped(t *testing.T, exe string) *exec.Cmd {
 	t.Helper()
-	cmd := exec.Command(exe, Command, Serve)
+	cmd := exec.CommandContext(t.Context(), exe, Command, Serve)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestTheReadingByPIDProvesAProxyOnlyWhileItsProcessRuns(t *testing.T) {
 		{name: "a pid whose process is gone", pid: gone.Process.Pid, want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := describe(tc.pid).IsProxyOf(exe); got != tc.want {
+			if got := describe(t.Context(), tc.pid).IsProxyOf(exe); got != tc.want {
 				t.Errorf("IsProxyOf = %v, want %v", got, tc.want)
 			}
 		})

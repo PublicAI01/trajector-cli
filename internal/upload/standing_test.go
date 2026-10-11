@@ -22,12 +22,12 @@ func TestAPauseTheServiceAskedForOutlivesTheProcessThatWasToldIt(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", f.now.Add(-25*time.Hour))
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("429 did not surface")
 	}
 
 	restarted := f.newUploader(t)
-	res, err := restarted.Flush(false)
+	res, err := restarted.Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Deferred {
 		t.Fatalf("automatic flush after a restart = %+v, %v, want the pause still honoured", res, err)
 	}
@@ -45,14 +45,14 @@ func TestAPauseEndsWhenItsTimeRunsOut(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", f.now.Add(-25*time.Hour))
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("429 did not surface")
 	}
 	f.now = f.now.Add(121 * time.Second)
 	if got := f.standing(upload.RateLimited); got.Held() {
 		t.Errorf("standing after the pause elapsed = %+v, want none", got)
 	}
-	res, err := f.newUploader(t).Flush(false)
+	res, err := f.newUploader(t).Flush(t.Context(), false)
 	if err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("flush after the pause = %+v, %v", res, err)
 	}
@@ -68,19 +68,19 @@ func TestAnAcknowledgementEndsThePauseThatPrecededIt(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	f.storeRawcall(t, "req-1", f.now.Add(-25*time.Hour))
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("429 did not surface")
 	}
 	if got := f.standing(upload.RateLimited); !got.Held() {
 		t.Fatal("the pause was not recorded")
 	}
-	if res, err := f.uploader.Flush(true); err != nil || res.Outcome != upload.Uploaded {
+	if res, err := f.uploader.Flush(t.Context(), true); err != nil || res.Outcome != upload.Uploaded {
 		t.Fatalf("forced flush past the pause = %+v, %v", res, err)
 	}
 	if got := f.standing(upload.RateLimited); got.Held() {
 		t.Errorf("the pause = %+v, want it cleared by the acknowledgement that answered it", got)
 	}
-	if res, err := f.newUploader(t).Flush(false); err != nil || res.Outcome != upload.Empty {
+	if res, err := f.newUploader(t).Flush(t.Context(), false); err != nil || res.Outcome != upload.Empty {
 		t.Fatalf("automatic flush after the acknowledgement = %+v, %v", res, err)
 	}
 }
@@ -90,7 +90,7 @@ func TestATimedOutAttemptIsNotTheServiceAskingToSlowDown(t *testing.T) {
 	f.server.Stub("POST", "/v1/batches", timeoutStub())
 	f.storeRawcall(t, "req-1", f.now.Add(-25*time.Hour))
 
-	if _, err := f.uploader.Flush(true); err == nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
 		t.Fatal("the timed-out attempt did not surface")
 	}
 	got := f.standing(upload.TimedOut)
@@ -199,7 +199,7 @@ func TestAMinimumThisBuildMeetsIsNotAReasonToStop(t *testing.T) {
 	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{MinClientVersion: "0.9.0"}))
 	f.storeRawcall(t, "req-1", f.now.Add(-25*time.Hour))
 
-	if _, err := f.uploader.Flush(true); err != nil {
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	if held := upload.LoadStandings(f.dir, "1.0.0", f.now); len(held) != 0 {

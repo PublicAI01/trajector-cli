@@ -80,7 +80,7 @@ func (r *GitRepo) run(args ...string) string {
 // thing that decides what git answers.
 func (r *GitRepo) command(args ...string) *exec.Cmd {
 	global := []string{"-c", "core.excludesFile=" + os.DevNull, "-C", r.dir}
-	cmd := exec.Command("git", append(global, args...)...)
+	cmd := exec.CommandContext(r.t.Context(), "git", append(global, args...)...)
 	cmd.Env = append(os.Environ(),
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_SYSTEM="+os.DevNull,

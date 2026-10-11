@@ -1,6 +1,7 @@
 package proxylife
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -29,14 +30,16 @@ func openLogAppend(logPath string) (*os.File, error) {
 // group so it survives the caller's exit. Stdout and stderr are appended
 // to logPath (the null device when empty); stdin is the null device. The
 // child is released, not awaited.
-func StartDetached(path string, args []string, logPath string) (pid int, err error) {
+func StartDetached(ctx context.Context, path string, args []string, logPath string) (pid int, err error) {
 	logFile, err := openLogAppend(logPath)
 	if err != nil {
 		return 0, err
 	}
 	defer logFile.Close()
 
-	cmd := exec.Command(path, args...)
+	// The child outlives the caller, so the caller's cancellation must
+	// not reach it.
+	cmd := exec.CommandContext(context.WithoutCancel(ctx), path, args...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = detachAttr()
@@ -54,7 +57,7 @@ func StartDetached(path string, args []string, logPath string) (pid int, err err
 // StartDetached is the one production uses. A starter that
 // deliberately starts no process reports the pid noProcess, and the
 // caller then has nothing to wait for.
-type Starter func(path string, args []string, logPath string) (pid int, err error)
+type Starter func(ctx context.Context, path string, args []string, logPath string) (pid int, err error)
 
 // OrDetached reports s, or the detached spawn when s is nil. A caller
 // handed no starter reaches production's default through this, so "no
@@ -91,7 +94,7 @@ type LoggedStart struct {
 // caller asks for, because a caller that wants no log of its own must
 // stay observable all the same.
 func RecordStartsIn(logPath string) Starter {
-	return func(_ string, args []string, _ string) (int, error) {
+	return func(_ context.Context, _ string, args []string, _ string) (int, error) {
 		f, err := openLogAppend(logPath)
 		if err != nil {
 			return noProcess, err
