@@ -1,0 +1,35 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      gomod:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # The tool images that scripts/check_static.sh runs. Every new
+  # tools/<tool>/ directory is added here.
+  - package-ecosystem: docker
+    directories:
+      - /tools/actionlint
+      - /tools/zizmor
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      docker:
+        patterns: ["*"]
