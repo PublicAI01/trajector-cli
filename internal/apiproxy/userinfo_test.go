@@ -2,7 +2,6 @@ package apiproxy_test
 
 import (
 	"encoding/base64"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -45,8 +44,7 @@ func TestUpstreamUserinfoReachesTheRelayAsBasicAuth(t *testing.T) {
 		})
 		header.Set("Content-Type", "application/json")
 		resp := e.Post("/t/tok1/v1/messages", `{"model":"m"}`, header)
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		body := resp.Body
 		if resp.StatusCode != 200 {
 			t.Fatalf("status = %d, body %s", resp.StatusCode, body)
 		}

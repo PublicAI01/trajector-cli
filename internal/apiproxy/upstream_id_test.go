@@ -2,7 +2,6 @@ package apiproxy_test
 
 import (
 	"bytes"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -33,9 +32,7 @@ func TestRecorder_KeepsUpstreamRequestID(t *testing.T) {
 			}
 			e.Upstream.Enqueue(fakeupstream.Response{Header: header, Body: []byte(tc.body)})
 
-			resp := e.Post("/t/tok1/v1/messages", `{"model":"claude-fable-5","messages":[{"role":"user","content":"hi"}]}`, http.Header{"Content-Type": {"application/json"}})
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			e.Post("/t/tok1/v1/messages", `{"model":"claude-fable-5","messages":[{"role":"user","content":"hi"}]}`, http.Header{"Content-Type": {"application/json"}})
 
 			stored := e.WaitRawcalls(1)
 			env := readEnvelope(t, stored[0])

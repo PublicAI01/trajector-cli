@@ -143,10 +143,7 @@ func TestOversizedExchangeIsDroppedWithoutTouchingForwarding(t *testing.T) {
 	})
 
 	resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
-	got, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := resp.Body
 	if resp.StatusCode != 200 {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -182,10 +179,7 @@ func TestPanicInsideTheGuardedRegionDoesNotBreakForwarding(t *testing.T) {
 	})
 
 	resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
-	got, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := resp.Body
 	if resp.StatusCode != 200 || string(got) != body {
 		t.Fatalf("status = %d, %d of %d bytes: the panic disturbed forwarding", resp.StatusCode, len(got), len(body))
 	}
@@ -223,7 +217,7 @@ func TestUnusableRouteUpstreamRefusesRatherThanRedirect(t *testing.T) {
 	// on the fake upstream running dry.
 	defaultUp.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_fallback"}`)})
 	resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
-	body, _ := io.ReadAll(resp.Body)
+	body := resp.Body
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("status = %d (%s), want 502: a resolved token whose upstream cannot be parsed must not be forwarded anywhere", resp.StatusCode, body)
 	}
@@ -281,7 +275,7 @@ func TestPausedDeviceForwardsWithoutRecording(t *testing.T) {
 	respBody := `{"id":"msg_paused"}`
 	upstream.Enqueue(fakeupstream.Response{Body: []byte(respBody)})
 	resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
-	body, _ := io.ReadAll(resp.Body)
+	body := resp.Body
 	if resp.StatusCode != 200 || string(body) != respBody {
 		t.Fatalf("pausing recording changed the exchange: %d %s", resp.StatusCode, body)
 	}
@@ -335,7 +329,7 @@ func TestATableThatBreaksKeepsForwardingWhereItLastSaidAndRecordsNothing(t *test
 			relay.Enqueue(fakeupstream.Response{Body: []byte(respBody)})
 			defaultUp.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_default"}`)})
 			resp := e.Post("/t/tok1/v1/messages", `{"m":2}`, nil)
-			body, _ := io.ReadAll(resp.Body)
+			body := resp.Body
 			if resp.StatusCode != 200 || string(body) != respBody {
 				t.Fatalf("an unreadable table changed the exchange: %d %s", resp.StatusCode, body)
 			}
@@ -365,7 +359,7 @@ func TestATableUnreadableSinceTheProxyStartedRefusesATokenRatherThanGuess(t *tes
 
 			e.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_guess"}`)})
 			resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
-			body, _ := io.ReadAll(resp.Body)
+			body := resp.Body
 			if resp.StatusCode != http.StatusBadGateway || !strings.Contains(string(body), "trajector doctor") {
 				t.Fatalf("status = %d (%s), want 502 naming `trajector doctor`", resp.StatusCode, body)
 			}

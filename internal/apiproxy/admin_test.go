@@ -13,7 +13,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
-func challenge(t *testing.T, client *http.Client, url, host, nonce string) *http.Response {
+func challenge(t *testing.T, client *http.Client, url, host, nonce string) (status int, proof string) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -28,7 +28,7 @@ func challenge(t *testing.T, client *http.Client, url, host, nonce string) *http
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	return resp
+	return resp.StatusCode, resp.Header.Get(apiproxy.ProofHeader)
 }
 
 func TestHealthzAnswersAChallengeWithoutTheAdminToken(t *testing.T) {
@@ -36,11 +36,11 @@ func TestHealthzAnswersAChallengeWithoutTheAdminToken(t *testing.T) {
 	token := e.AdminToken()
 
 	const nonce = "00112233445566778899aabbccddeeff"
-	resp := challenge(t, proxytest.Client(t), e.BaseURL()+apiproxy.HealthzPath, "", nonce)
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("healthz with a challenge and no token = %d, want 401 with the counters withheld", resp.StatusCode)
+	status, proof := challenge(t, proxytest.Client(t), e.BaseURL()+apiproxy.HealthzPath, "", nonce)
+	if status != http.StatusUnauthorized {
+		t.Errorf("healthz with a challenge and no token = %d, want 401 with the counters withheld", status)
 	}
-	if got, want := resp.Header.Get(apiproxy.ProofHeader), apiproxy.Proof(token, nonce, e.Addr()); got != want {
+	if got, want := proof, apiproxy.Proof(token, nonce, e.Addr()); got != want {
 		t.Errorf("proof = %q, want the answer for the published token over this nonce and host", got)
 	}
 }
@@ -55,8 +55,7 @@ func TestChallengeProofIsBoundToTheRequestedHost(t *testing.T) {
 	alias := net.JoinHostPort("localhost", port)
 
 	const nonce = "ffeeddccbbaa99887766554433221100"
-	resp := challenge(t, proxytest.Client(t), "http://"+e.Addr()+apiproxy.HealthzPath, alias, nonce)
-	got := resp.Header.Get(apiproxy.ProofHeader)
+	_, got := challenge(t, proxytest.Client(t), "http://"+e.Addr()+apiproxy.HealthzPath, alias, nonce)
 	if got != apiproxy.Proof(token, nonce, alias) {
 		t.Errorf("proof = %q, want the answer for the host the caller addressed", got)
 	}

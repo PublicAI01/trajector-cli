@@ -1,6 +1,7 @@
 package spool_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -150,7 +151,7 @@ func TestEachIgnoresForeignFilesAndStopsOnVisitorError(t *testing.T) {
 		visited++
 		return stop
 	})
-	if err != stop || visited != 1 {
+	if !errors.Is(err, stop) || visited != 1 {
 		t.Errorf("Each = %v after %d visits, want the visitor error immediately", err, visited)
 	}
 }

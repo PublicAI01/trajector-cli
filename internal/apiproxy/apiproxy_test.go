@@ -66,7 +66,7 @@ func TestAuthorizedCallForwardedVerbatimAndRecorded(t *testing.T) {
 		"Anthropic-Beta":    {"beta-a, beta-b"},
 		"Content-Type":      {"application/json"},
 	})
-	body, _ := io.ReadAll(resp.Body)
+	body := resp.Body
 	if resp.StatusCode != 200 {
 		t.Fatalf("status = %d, body %s", resp.StatusCode, body)
 	}
@@ -149,7 +149,7 @@ func TestStreamedResponseReassembledIntoEnvelope(t *testing.T) {
 	upstream.Enqueue(fakeupstream.Response{SSE: []string{stream[:57], stream[57:200], stream[200:]}})
 
 	resp := e.Post("/t/tok1/v1/messages", `{"model":"claude-fable-5","stream":true}`, nil)
-	body, _ := io.ReadAll(resp.Body)
+	body := resp.Body
 	if string(body) != stream {
 		t.Errorf("client stream diverged from upstream bytes:\n%s", body)
 	}
@@ -195,7 +195,7 @@ func TestGarbledStreamStoredRawWithMarker(t *testing.T) {
 	})
 
 	resp := e.Post("/t/tok1/v1/messages", `{"stream":true}`, nil)
-	body, _ := io.ReadAll(resp.Body)
+	body := resp.Body
 	if string(body) != stream {
 		t.Error("degraded recording altered the forwarded stream")
 	}
@@ -300,7 +300,7 @@ func TestRevokedTokenKeepsItsUpstreamButNeverRecords(t *testing.T) {
 
 	relay.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_revoked"}`)})
 	resp := e.Post("/t/tok-revoked/v1/messages", `{"m":1}`, nil)
-	body, _ := io.ReadAll(resp.Body)
+	body := resp.Body
 	if resp.StatusCode != 200 || string(body) != `{"id":"msg_revoked"}` {
 		t.Fatalf("revoked token forwarding broken: %d %s", resp.StatusCode, body)
 	}
@@ -376,7 +376,7 @@ func TestRecordingFailureDoesNotBreakForwarding(t *testing.T) {
 	respBody := `{"id":"msg_lost","usage":{"output_tokens":1}}`
 	upstream.Enqueue(fakeupstream.Response{Body: []byte(respBody)})
 	resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
-	body, _ := io.ReadAll(resp.Body)
+	body := resp.Body
 	if resp.StatusCode != 200 || string(body) != respBody {
 		t.Fatalf("forwarding broken by spool failure: %d %s", resp.StatusCode, body)
 	}
@@ -450,7 +450,7 @@ func TestCompressedResponseRecordedDecoded(t *testing.T) {
 	})
 
 	resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil)
-	body, _ := io.ReadAll(resp.Body)
+	body := resp.Body
 	if string(body) != plain {
 		t.Errorf("client body = %q, want transparently decoded bytes", body)
 	}
@@ -562,7 +562,7 @@ func TestMountedInternalHandlerServesUnderReservedPrefix(t *testing.T) {
 	})))
 
 	resp := e.PostAdmin("/trajector/flush")
-	body, _ := io.ReadAll(resp.Body)
+	body := resp.Body
 	if resp.StatusCode != 200 || string(body) != "mounted:/trajector/flush" {
 		t.Errorf("mounted endpoint = %d %q", resp.StatusCode, body)
 	}

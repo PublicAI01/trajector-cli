@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"net/http"
@@ -235,8 +236,28 @@ func (e *Env) WriteTable(content string) {
 	writeFile(e.t, e.layout.RoutingTable(), content)
 }
 
-// Post sends one request through the proxy.
-func (e *Env) Post(path, body string, header http.Header) *http.Response {
+// Reply is a response read to its end. Its connection is free again
+// by the time a test sees it.
+type Reply struct {
+	StatusCode int
+	Header     http.Header
+	Body       []byte
+}
+
+// readReply reads resp to its end and closes it. A body that ends
+// early fails the test: the proxy must forward every byte it receives.
+func (e *Env) readReply(resp *http.Response) Reply {
+	e.t.Helper()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return Reply{StatusCode: resp.StatusCode, Header: resp.Header, Body: body}
+}
+
+// Post sends one request through the proxy and reads the reply.
+func (e *Env) Post(path, body string, header http.Header) Reply {
 	e.t.Helper()
 	req, err := http.NewRequest(http.MethodPost, e.BaseURL()+path, strings.NewReader(body))
 	if err != nil {
@@ -247,8 +268,7 @@ func (e *Env) Post(path, body string, header http.Header) *http.Response {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.t.Cleanup(func() { resp.Body.Close() })
-	return resp
+	return e.readReply(resp)
 }
 
 // Do sends a caller-built request through the sandbox's own client, for
@@ -378,7 +398,7 @@ func (e *Env) AdminToken() string {
 // PostAdmin sends one POST to a reserved endpoint, carrying the admin
 // token the proxy published. Post stays bare on purpose: a test that
 // wants to look like a browser uses it.
-func (e *Env) PostAdmin(path string) *http.Response {
+func (e *Env) PostAdmin(path string) Reply {
 	e.t.Helper()
 	req, err := http.NewRequest(http.MethodPost, e.BaseURL()+path, nil)
 	if err != nil {
@@ -389,8 +409,7 @@ func (e *Env) PostAdmin(path string) *http.Response {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.t.Cleanup(func() { resp.Body.Close() })
-	return resp
+	return e.readReply(resp)
 }
 
 // readHealthz performs one authorized health read against the proxy at

@@ -431,7 +431,7 @@ func TestSpool_EachRecordOrdersByDayThenID(t *testing.T) {
 		visited++
 		return stop
 	})
-	if err != stop || visited != 1 {
+	if !errors.Is(err, stop) || visited != 1 {
 		t.Errorf("EachRecord = %v after %d visits, want the visitor error immediately", err, visited)
 	}
 }
