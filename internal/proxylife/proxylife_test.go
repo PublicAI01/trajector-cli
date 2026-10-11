@@ -99,6 +99,7 @@ func holdSilently(args []string) int {
 		for {
 			conn, err := l.Accept()
 			if err != nil {
+				runtime.KeepAlive(held)
 				return
 			}
 			held = append(held, conn)

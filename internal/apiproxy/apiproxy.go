@@ -59,10 +59,10 @@ func ValidateAddr(addr string) error {
 	if err != nil {
 		return fmt.Errorf("apiproxy: %q is not a host:port listen address: %w", addr, err)
 	}
-	switch {
-	case host == "localhost":
+	switch host {
+	case "localhost":
 		return nil
-	case host == "":
+	case "":
 		return fmt.Errorf("apiproxy: refusing to listen on %q: an address with no host binds every interface, and the proxy binds loopback only", addr)
 	}
 	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {

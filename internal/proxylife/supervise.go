@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"syscall"
 	"time"
 )
@@ -88,13 +89,8 @@ func superviseChild(ctx context.Context, cfg superviseConfig) error {
 		}
 
 		now := time.Now()
-		recent := crashes[:0]
-		for _, c := range crashes {
-			if now.Sub(c) < crashWindow {
-				recent = append(recent, c)
-			}
-		}
-		crashes = append(recent, now)
+		crashes = slices.DeleteFunc(crashes, func(c time.Time) bool { return now.Sub(c) >= crashWindow })
+		crashes = append(crashes, now)
 		if len(crashes) > maxCrashes {
 			return fmt.Errorf("proxylife: %d crashes within %s, giving up: %w", len(crashes), crashWindow, err)
 		}

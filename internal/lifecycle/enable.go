@@ -128,7 +128,8 @@ func (m *Machine) enableProject(projectDir string, choices EnableChoices, io IO)
 	// configuration chain. The unattended reconcile asks the same
 	// question through the same predicate, so the two cannot drift.
 	keep := want.keepsRecordedUpstream(st)
-	if keep && st.Upstream != upstream {
+	switch {
+	case keep && st.Upstream != upstream:
 		// The chain names no base URL of the user's own — but our own
 		// injection stands in the first file it reads, and this project
 		// already has a grant naming one, so the silence is ours: enable
@@ -139,7 +140,7 @@ func (m *Machine) enableProject(projectDir string, choices EnableChoices, io IO)
 		// any more than it re-keys the token. 2026-08-14.
 		upstream = st.Upstream
 		fmt.Fprintf(io.Out, "Keeping the base URL this project was enabled with: %s\n", upstream)
-	} else if want.masked && !keep {
+	case want.masked && !keep:
 		// Masked and nothing of this project's own to fall back on: our
 		// injection stands in the shell where the user's own base URL
 		// would be, and no grant records what it was. want.upstream is
@@ -153,7 +154,7 @@ func (m *Machine) enableProject(projectDir string, choices EnableChoices, io IO)
 		// and disable already refuse to act on masked; granting is the
 		// one path that did not. 2026-08-16.
 		return ErrUpstreamMasked
-	} else if want.external {
+	case want.external:
 		fmt.Fprintf(io.Out, "Detected an existing base URL (%s): %s\n", want.source, want.upstream)
 		fmt.Fprintln(io.Out, "Your traffic will keep flowing through it unchanged. Records from this")
 		fmt.Fprintln(io.Out, "project are marked as third-party origin; reward terms are the same")

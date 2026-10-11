@@ -271,8 +271,7 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 	res.File.Inode, res.File.Size, res.File.Offset = st.Inode, st.Size, offset
 	res.File.Outside = outside
 	// The caller's slices are never grown in place.
-	ids := f.MessageIDs[:len(f.MessageIDs):len(f.MessageIDs)]
-	res.File.MessageIDs = append(ids, added...)
+	res.File.MessageIDs = append(slices.Clip(f.MessageIDs), added...)
 	res.File.BeforeRewrite = nil
 	if res.More && len(skipIDs) > 0 {
 		res.File.BeforeRewrite = slices.Clip(skipIDs)

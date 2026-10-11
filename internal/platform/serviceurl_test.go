@@ -58,8 +58,8 @@ func TestSafeServiceURLRefusesRunesThatLetAPrintedLineLieAboutItself(t *testing.
 		"https://dashboard.example.com/a\x1b[31mb",
 		"https://dashboard.example.com/a\nStatus: OK",
 		"https://dashboard.example.com/a b",
-		"https://dashboard.example.com/‮evil",
-		"https://dashboard.example.com/a​b",
+		"https://dashboard.example.com/\u202eevil",
+		"https://dashboard.example.com/a\u200bb",
 		"https://dashboard.example.com/\xff\xfe",
 	} {
 		if got := platform.SafeServiceURL(s); got != "" {

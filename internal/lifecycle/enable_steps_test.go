@@ -223,7 +223,7 @@ func TestEnable_PrintsEarlierSessionCountBeforeInjecting(t *testing.T) {
 
 			out := e.stdout.String()
 			assertOrdered(t, out, tt.want, "Injected ")
-			after := out[strings.Index(out, tt.want):]
+			_, after, _ := strings.Cut(out, tt.want)
 			for _, prompt := range []string{"[y/N]", "[yes/no]"} {
 				if strings.Contains(after, prompt) {
 					t.Errorf("a question follows the count:\n%s", after)

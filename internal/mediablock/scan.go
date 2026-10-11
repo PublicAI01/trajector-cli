@@ -103,13 +103,13 @@ func (w *walker) value(i, depth int) (int, *members, bool) {
 	if i >= len(w.data) || depth > maxDepth {
 		return 0, nil, false
 	}
-	switch c := w.data[i]; {
-	case c == '{':
+	switch w.data[i] {
+	case '{':
 		return w.object(i, depth+1)
-	case c == '[':
+	case '[':
 		end, ok := w.array(i, depth+1)
 		return end, nil, ok
-	case c == '"':
+	case '"':
 		end, ok := stringEnd(w.data, i)
 		return end, nil, ok
 	default:
