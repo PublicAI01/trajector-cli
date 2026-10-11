@@ -177,7 +177,7 @@ var acknowledgedPaths = []pathField{
 	},
 }
 
-// RedactSegment masks one segment for upload: the anchored project
+// Segment masks one segment for upload: the anchored project
 // paths are stripped first, then the raw JSONL bytes go through the
 // same pass every rawcall goes through. The envelope around the lines
 // (session_id, file, segment_index, capture) is not scanned: every one
@@ -190,7 +190,7 @@ var acknowledgedPaths = []pathField{
 // the field policy that kept signatures and ids intact.
 //
 // Lines must end in a newline, or ErrIncompleteLine is returned.
-func RedactSegment(seg envelope.Segment) (envelope.Segment, error) {
+func Segment(seg envelope.Segment) (envelope.Segment, error) {
 	if !strings.HasSuffix(seg.Lines, "\n") {
 		return envelope.Segment{}, ErrIncompleteLine
 	}
@@ -219,7 +219,7 @@ func RedactSegment(seg envelope.Segment) (envelope.Segment, error) {
 	return seg, nil
 }
 
-// RedactMetaSnapshot masks one snapshot for upload. Content is a JSON
+// MetaSnapshot masks one snapshot for upload. Content is a JSON
 // object and goes through the field-aware pass as a single document;
 // the envelope around it is not scanned. The record id names the
 // content, so it is computed again from the masked content: what the
@@ -227,7 +227,7 @@ func RedactSegment(seg envelope.Segment) (envelope.Segment, error) {
 //
 // The returned snapshot is redacted as a whole; the caller wraps its
 // serialized bytes with AlreadyRedacted.
-func RedactMetaSnapshot(snap envelope.MetaSnapshot) (envelope.MetaSnapshot, error) {
+func MetaSnapshot(snap envelope.MetaSnapshot) (envelope.MetaSnapshot, error) {
 	redacted, err := JSONLBytes(snap.Content)
 	if err != nil {
 		return envelope.MetaSnapshot{}, err
@@ -531,7 +531,7 @@ func walkStringValues(s string, visit func(path []string, start, end int, value 
 	}
 }
 
-// RedactGitSnapshot masks one git snapshot for upload. The branch name
+// GitSnapshot masks one git snapshot for upload. The branch name
 // and the observed paths are text the user wrote, so both go through
 // the pass, and through the same one, so a secret is masked the same
 // way wherever the record carries it. Every other field — the commit
@@ -541,7 +541,7 @@ func walkStringValues(s string, visit func(path []string, start, end int, value 
 //
 // The returned snapshot is redacted as a whole; the caller wraps its
 // serialized bytes with AlreadyRedacted.
-func RedactGitSnapshot(snap envelope.GitSnapshot) (envelope.GitSnapshot, error) {
+func GitSnapshot(snap envelope.GitSnapshot) (envelope.GitSnapshot, error) {
 	// The branch leads, so one pass covers every user-written string
 	// the record holds and the reply can be read back by position.
 	written := make([]string, 0, len(snap.Changed)+1)

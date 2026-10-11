@@ -69,9 +69,9 @@ func fixtureLines(t *testing.T, name string) []string {
 func redactSegmentLines(t *testing.T, lines string) string {
 	t.Helper()
 	seg := envelope.NewSegment(fixtureSessionID, "", 0, fixtureCapture(), lines)
-	got, err := redact.RedactSegment(seg)
+	got, err := redact.Segment(seg)
 	if err != nil {
-		t.Fatalf("RedactSegment: %v", err)
+		t.Fatalf("Segment: %v", err)
 	}
 	return got.Lines
 }
@@ -104,7 +104,7 @@ func signaturesIn(t *testing.T, line string) []string {
 	return sigs
 }
 
-func TestRedactSegment_SignatureBytesSurvive(t *testing.T) {
+func TestSegment_SignatureBytesSurvive(t *testing.T) {
 	t.Parallel()
 	input := string(readFixture(t, "segment_lines.jsonl"))
 	var want []string
@@ -135,7 +135,7 @@ func TestRedactSegment_SignatureBytesSurvive(t *testing.T) {
 	}
 }
 
-func TestRedactSegment_IncompleteTrailingLineIsRefused(t *testing.T) {
+func TestSegment_IncompleteTrailingLineIsRefused(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name  string
@@ -150,7 +150,7 @@ func TestRedactSegment_IncompleteTrailingLineIsRefused(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			seg := envelope.NewSegment(fixtureSessionID, "", 0, fixtureCapture(), tc.lines)
-			_, err := redact.RedactSegment(seg)
+			_, err := redact.Segment(seg)
 			if !errors.Is(err, redact.ErrIncompleteLine) {
 				t.Fatalf("err = %v, want ErrIncompleteLine", err)
 			}
@@ -158,7 +158,7 @@ func TestRedactSegment_IncompleteTrailingLineIsRefused(t *testing.T) {
 	}
 }
 
-func TestRedactSegment_StripsOnlyAnchoredPaths(t *testing.T) {
+func TestSegment_StripsOnlyAnchoredPaths(t *testing.T) {
 	t.Parallel()
 	scratch := "/tmp/agent-1001/-srv-work-project-alpha/" + fixtureSessionID + "/scratchpad"
 	cases := []struct {
@@ -247,7 +247,7 @@ func TestRedactSegment_StripsOnlyAnchoredPaths(t *testing.T) {
 	}
 }
 
-func TestRedactSegment_OtherBytesUnchanged(t *testing.T) {
+func TestSegment_OtherBytesUnchanged(t *testing.T) {
 	t.Parallel()
 	prefix := `{"z":1e5,"n":-0.0,"html":"<a href=\"x\">&amp;</a>","u":"caf\u00e9 \ud83d\ude00 é",  "cwd" : `
 	suffix := `,"nested":{"k":[1,2,{"cwd":"/srv/x"}],"b":true},"a":"last"}`
@@ -267,7 +267,7 @@ func TestRedactSegment_OtherBytesUnchanged(t *testing.T) {
 	}
 }
 
-func TestRedactSegment_KeepsALineThatIsNotASessionLine(t *testing.T) {
+func TestSegment_KeepsALineThatIsNotASessionLine(t *testing.T) {
 	t.Parallel()
 	lines := `{"type":"user","cwd":"` + fixtureProject + `"}` + "\n" +
 		`plain text, no object here` + "\n" +
@@ -289,7 +289,7 @@ func TestRedactSegment_KeepsALineThatIsNotASessionLine(t *testing.T) {
 	}
 }
 
-func TestRedactSegment_EnvelopeFieldsAreNotScanned(t *testing.T) {
+func TestSegment_EnvelopeFieldsAreNotScanned(t *testing.T) {
 	t.Parallel()
 	secretLike := highEntropySecret
 	capture := fixtureCapture()
@@ -298,7 +298,7 @@ func TestRedactSegment_EnvelopeFieldsAreNotScanned(t *testing.T) {
 	seg := envelope.NewSegment(secretLike, "subagents/agent-"+secretLike+".jsonl", 3, capture,
 		`{"type":"user","message":{"role":"user","content":"key `+secretLike+` here"}}`+"\n")
 
-	got, err := redact.RedactSegment(seg)
+	got, err := redact.Segment(seg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestRedactSegment_EnvelopeFieldsAreNotScanned(t *testing.T) {
 	}
 }
 
-func TestRedactMetaSnapshot(t *testing.T) {
+func TestMetaSnapshot(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name        string
@@ -339,7 +339,7 @@ func TestRedactMetaSnapshot(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got, err := redact.RedactMetaSnapshot(snap)
+			got, err := redact.MetaSnapshot(snap)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -365,10 +365,10 @@ func TestRedactMetaSnapshot(t *testing.T) {
 	}
 }
 
-func TestRedactMetaSnapshot_RefusesContentThatIsNotJSON(t *testing.T) {
+func TestMetaSnapshot_RefusesContentThatIsNotJSON(t *testing.T) {
 	t.Parallel()
 	snap := envelope.MetaSnapshot{SessionID: fixtureSessionID, File: "subagents/agent-a1.meta.json", Content: json.RawMessage(`not json`)}
-	if _, err := redact.RedactMetaSnapshot(snap); err == nil {
+	if _, err := redact.MetaSnapshot(snap); err == nil {
 		t.Fatal("expected an error for content that is not a JSON document")
 	}
 }
@@ -669,7 +669,7 @@ func TestJSONFieldPolicy_GitBranchIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestRedactGitSnapshotMasksThePathsAndLeavesWhatGitPrinted(t *testing.T) {
+func TestGitSnapshotMasksThePathsAndLeavesWhatGitPrinted(t *testing.T) {
 	const secret = "sk-test-fake-xK9mZ2vL8nQ5rT1wY4bC7dF0gH3jE6pA"
 	const head = "d0cf90f327430f11f8a68493a58f402fa11d7c9e"
 	const parent = "4d0071c7e54967da4d11e6a397df9844797bdf81"
@@ -683,7 +683,7 @@ func TestRedactGitSnapshotMasksThePathsAndLeavesWhatGitPrinted(t *testing.T) {
 			{Path: "src/app.ts", Status: "M", OldBlob: parent, NewBlob: head},
 		})
 
-	masked, err := redact.RedactGitSnapshot(snap)
+	masked, err := redact.GitSnapshot(snap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -710,7 +710,7 @@ func TestRedactGitSnapshotMasksThePathsAndLeavesWhatGitPrinted(t *testing.T) {
 	}
 }
 
-func TestRedactGitSnapshotMasksASecretInTheBranchName(t *testing.T) {
+func TestGitSnapshotMasksASecretInTheBranchName(t *testing.T) {
 	const secret = "sk-test-fake-xK9mZ2vL8nQ5rT1wY4bC7dF0gH3jE6pA"
 	const head = "d0cf90f327430f11f8a68493a58f402fa11d7c9e"
 
@@ -718,7 +718,7 @@ func TestRedactGitSnapshotMasksASecretInTheBranchName(t *testing.T) {
 		envelope.Capture{ClientVersion: "test", Timestamp: "2026-09-18T10:00:00.000000000Z", ProjectIDHash: "hash-a", Injection: envelope.InjectionProxy},
 		"feat/"+secret+"-rotate", head, nil, nil, nil)
 
-	masked, err := redact.RedactGitSnapshot(snap)
+	masked, err := redact.GitSnapshot(snap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -733,12 +733,12 @@ func TestRedactGitSnapshotMasksASecretInTheBranchName(t *testing.T) {
 	}
 }
 
-func TestRedactGitSnapshotWithNothingChanged(t *testing.T) {
+func TestGitSnapshotWithNothingChanged(t *testing.T) {
 	snap := envelope.NewGitSnapshot("s-1", "SessionStart", envelope.TriggerSessionStart,
 		envelope.Capture{ClientVersion: "test", Timestamp: "2026-09-18T10:00:00.000000000Z", ProjectIDHash: "hash-a", Injection: envelope.InjectionProxy},
 		"main", "d0cf90f327430f11f8a68493a58f402fa11d7c9e", nil, nil, nil)
 
-	masked, err := redact.RedactGitSnapshot(snap)
+	masked, err := redact.GitSnapshot(snap)
 	if err != nil {
 		t.Fatal(err)
 	}

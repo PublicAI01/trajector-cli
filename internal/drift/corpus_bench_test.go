@@ -83,7 +83,7 @@ func BenchmarkRedactFiveThousandLines(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := redact.RedactSegment(seg); err != nil {
+		if _, err := redact.Segment(seg); err != nil {
 			b.Fatal(err)
 		}
 	}

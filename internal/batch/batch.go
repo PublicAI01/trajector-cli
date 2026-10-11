@@ -410,7 +410,7 @@ func maskRawcall(kind envelope.Kind, e spool.Entry, env envelope.Envelope, rewri
 // after that would state a digest and a size of no content at all.
 func maskSegment(kind envelope.Kind, seg envelope.Segment, rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
 	seg.Lines = string(rewrite([]byte(seg.Lines)))
-	masked, err := redact.RedactSegment(seg)
+	masked, err := redact.Segment(seg)
 	if err != nil {
 		return IndexItem{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
 	}
@@ -426,7 +426,7 @@ func maskSegment(kind envelope.Kind, seg envelope.Segment, rewrite func([]byte) 
 // the id the masked content names, since the id must name what the
 // record carries.
 func maskMetaSnapshot(kind envelope.Kind, snap envelope.MetaSnapshot) (IndexItem, redact.RedactedBytes, error) {
-	masked, err := redact.RedactMetaSnapshot(snap)
+	masked, err := redact.MetaSnapshot(snap)
 	if err != nil {
 		return IndexItem{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
 	}
@@ -443,7 +443,7 @@ func maskMetaSnapshot(kind envelope.Kind, snap envelope.MetaSnapshot) (IndexItem
 // commit or blob identifier this client read from git, and a scan could
 // only damage those.
 func maskGitSnapshot(kind envelope.Kind, snap envelope.GitSnapshot) (IndexItem, redact.RedactedBytes, error) {
-	masked, err := redact.RedactGitSnapshot(snap)
+	masked, err := redact.GitSnapshot(snap)
 	if err != nil {
 		return IndexItem{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)
 	}
