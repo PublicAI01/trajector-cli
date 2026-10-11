@@ -22,16 +22,16 @@ type Findings struct {
 	lines
 }
 
-// OK records a check that passed.
-func (f *Findings) OK(format string, a ...any) { f.add(severityOK, format, a...) }
+// OKf records a check that passed.
+func (f *Findings) OKf(format string, a ...any) { f.addf(severityOK, format, a...) }
 
-// Fixed records a repair this run already made.
-func (f *Findings) Fixed(format string, a ...any) { f.add(severityFixed, format, a...) }
+// Fixedf records a repair this run already made.
+func (f *Findings) Fixedf(format string, a ...any) { f.addf(severityFixed, format, a...) }
 
-// Problem records something the user still has to act on, where no one
+// Problemf records something the user still has to act on, where no one
 // command resolves it. A problem that has one is stated by ProblemFix
 // instead, so that the command is never buried in the sentence.
-func (f *Findings) Problem(format string, a ...any) { f.add(severityError, format, a...) }
+func (f *Findings) Problemf(format string, a ...any) { f.addf(severityError, format, a...) }
 
 // ProblemFix records something the user has to act on, split into the
 // three things they need: what is wrong, why it is wrong, and the one
@@ -40,19 +40,19 @@ func (f *Findings) Problem(format string, a ...any) { f.add(severityError, forma
 // headline carries no command, so the two never state it twice.
 func (f *Findings) ProblemFix(headline, why, fix string) { f.problemFix(headline, why, fix) }
 
-// warn records something to watch that no one command ends. It never
+// warnf records something to watch that no one command ends. It never
 // counts toward the exit code: a state this device cannot explain is
 // not a state it can call broken.
-func (f *Findings) warn(format string, a ...any) { f.add(severityWarning, format, a...) }
+func (f *Findings) warnf(format string, a ...any) { f.addf(severityWarning, format, a...) }
 
-// note records something the user should read that doctor can neither
-// verify nor fix, so it never counts toward the exit code. Every note a
+// notef records something the user should read that doctor can neither
+// verify nor fix, so it never counts toward the exit code. Every notef a
 // run prints comes from a diagnosis rather than from a repair, which is
 // why it is this package's to write and not the machine's.
-func (f *Findings) note(format string, a ...any) { f.add(severityNote, format, a...) }
+func (f *Findings) notef(format string, a ...any) { f.addf(severityNote, format, a...) }
 
-// Detail attaches a follow-up line to the most recent finding.
-func (f *Findings) Detail(format string, a ...any) { f.detail(format, a...) }
+// Detailf attaches a follow-up line to the most recent finding.
+func (f *Findings) Detailf(format string, a ...any) { f.detailf(format, a...) }
 
 // Problems counts the findings the user still must act on.
 func (f *Findings) Problems() int { return f.count(severityError) }
@@ -79,11 +79,11 @@ func DoctorDevice(f *Findings, d Diagnosis) {
 // returned: nil means the file no longer carries it.
 func DoctorStaleDiscoveryHook(f *Findings, err error) {
 	if err != nil {
-		f.Problem("%s, and it could not be removed: %v", staleDiscoveryHookFact, err)
-		f.Detail("%s", staleDiscoveryHookWhy)
+		f.Problemf("%s, and it could not be removed: %v", staleDiscoveryHookFact, err)
+		f.Detailf("%s", staleDiscoveryHookWhy)
 		return
 	}
-	f.Fixed("%s", staleDiscoveryHookRemoved)
+	f.Fixedf("%s", staleDiscoveryHookRemoved)
 }
 
 // DoctorData reports the captured data on this machine: the spool that
@@ -104,7 +104,7 @@ func doctorTokenStore(f *Findings, ts TokenStoreState) {
 		return
 	}
 	f.ProblemFix(tokenStoreUnreadableHeadline, tokenStoreUnreadableWhy(ts.Err), tokenStoreUnreadableFix)
-	f.Detail("Set the backend that way only where the OS keyring is unavailable on this device.")
+	f.Detailf("Set the backend that way only where the OS keyring is unavailable on this device.")
 }
 
 // The three parts of an unreadable token store. The distinction the why
@@ -130,7 +130,7 @@ func doctorPause(f *Findings, st ProjectStatus) {
 	why, fix := pauseWhyFixFor(st)
 	f.ProblemFix(strings.ToLower(pausedEverywhere), why, fix)
 	for _, next := range pauseNextSteps(st.PauseReason) {
-		f.Detail("%s", next)
+		f.Detailf("%s", next)
 	}
 }
 
@@ -147,9 +147,9 @@ func DoctorProject(f *Findings, d Diagnosis) {
 		return
 	}
 	if st.WindowsSideClaude {
-		f.Problem("%s", windowsSideClaudeFact)
-		f.Detail("%s", windowsSideClaudeWhy)
-		f.Detail("%s", windowsSideWayOut)
+		f.Problemf("%s", windowsSideClaudeFact)
+		f.Detailf("%s", windowsSideClaudeWhy)
+		f.Detailf("%s", windowsSideWayOut)
 	}
 	doctorHookPolicy(f, d)
 	doctorSessionFiles(f, d)
@@ -165,12 +165,12 @@ func doctorHookPolicy(f *Findings, d Diagnosis) {
 	}
 	outlook := ExplainHooks(*d.HookPolicy, d.Project.Shape)
 	if outlook.Runs {
-		f.OK("%s", outlook.Judgement)
+		f.OKf("%s", outlook.Judgement)
 		return
 	}
-	f.note("%s", outlook.Judgement)
-	f.Detail("Change that setting where it is set, or ask whoever manages it to.")
-	f.Detail("%s", outlook.follows())
+	f.notef("%s", outlook.Judgement)
+	f.Detailf("Change that setting where it is set, or ask whoever manages it to.")
+	f.Detailf("%s", outlook.follows())
 }
 
 // doctorSessionFiles reports the second reading of the project's
@@ -188,11 +188,11 @@ func doctorHookPolicy(f *Findings, d Diagnosis) {
 func doctorSessionFiles(f *Findings, d Diagnosis) {
 	s := d.SessionFiles
 	if s.Err != nil {
-		f.Problem("the session file registry could not be read: %v", s.Err)
+		f.Problemf("the session file registry could not be read: %v", s.Err)
 		return
 	}
 	if s.WalkErr != nil {
-		f.Problem("could not look for this project's session files: %v", s.WalkErr)
+		f.Problemf("could not look for this project's session files: %v", s.WalkErr)
 		return
 	}
 	if !s.Walked {
@@ -200,23 +200,23 @@ func doctorSessionFiles(f *Findings, d Diagnosis) {
 	}
 	switch {
 	case s.Unregistered == 0:
-		f.OK("every session file of this project is registered (%d session(s))", s.Sessions)
+		f.OKf("every session file of this project is registered (%d session(s))", s.Sessions)
 	case d.HookPolicy != nil && !d.HookPolicy.Runs:
 		doctorEarlierSessions(f, d)
 		if s.unreported() > 0 {
-			f.note("%d session(s) of this project were written without a hook of trajector's reporting them, which follows from the setting above", s.unreported())
+			f.notef("%d session(s) of this project were written without a hook of trajector's reporting them, which follows from the setting above", s.unreported())
 		}
 	default:
 		doctorEarlierSessions(f, d)
 		if s.unreported() > 0 {
-			f.warn("%s", unreportedSessionsHeadline(s.unreported()))
+			f.warnf("%s", unreportedSessionsHeadline(s.unreported()))
 			for _, cause := range unreportedSessionCauses {
-				f.Detail("%s", cause)
+				f.Detailf("%s", cause)
 			}
 		}
 	}
 	for _, line := range gapLines(s.Gaps) {
-		f.note("%s", line)
+		f.notef("%s", line)
 	}
 }
 
@@ -231,28 +231,28 @@ func doctorEarlierSessions(f *Findings, d Diagnosis) {
 	if d.SessionFiles.Earlier == 0 || d.Project.EarlierSkipped {
 		return
 	}
-	f.note("%s", earlierSessionsHeadline(d.SessionFiles.Earlier))
-	f.Detail("%s", earlierSessionsFix)
+	f.notef("%s", earlierSessionsHeadline(d.SessionFiles.Earlier))
+	f.Detailf("%s", earlierSessionsFix)
 }
 
 // doctorSpool verifies the capture spool accepts writes within quota.
 func doctorSpool(f *Findings, s SpoolState) {
 	if s.OpenErr != nil {
-		f.Problem("%s", spoolUnusableHeadline(s))
+		f.Problemf("%s", spoolUnusableHeadline(s))
 		return
 	}
 	if s.WritableErr != nil {
 		if s.full() {
 			f.ProblemFix(spoolFullHeadline, spoolFullWhy, spoolFullFix)
 		} else {
-			f.Problem("%s", spoolUnwritableHeadline(s.WritableErr))
+			f.Problemf("%s", spoolUnwritableHeadline(s.WritableErr))
 		}
-		f.Detail("Spool: %s of %s used at %s.", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota), s.Dir)
+		f.Detailf("Spool: %s of %s used at %s.", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota), s.Dir)
 		return
 	}
-	f.OK("capture spool writable (%s of %s used)", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota))
+	f.OKf("capture spool writable (%s of %s used)", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota))
 	if s.Held.Records > 0 {
-		f.note("%s", heldHeadline(s.Held))
+		f.notef("%s", heldHeadline(s.Held))
 	}
 }
 
@@ -275,15 +275,15 @@ func heldHeadline(h HeldRecords) string {
 // them would send the user to a command that refuses.
 func doctorRejected(f *Findings, d Diagnosis) {
 	if d.RejectedErr != nil {
-		f.Problem("%s", rejectedUnreadableHeadline(d))
+		f.Problemf("%s", rejectedUnreadableHeadline(d))
 		return
 	}
 	if len(d.Rejected) == 0 {
-		f.OK("no rejected batches quarantined")
+		f.OKf("no rejected batches quarantined")
 		return
 	}
 	f.ProblemFix(quarantineHeadline(d.Rejected), quarantineWhy, quarantineFix)
-	f.Detail("%s", quarantineAllNote)
+	f.Detailf("%s", quarantineAllNote)
 	refused, unreadable := false, false
 	for _, b := range d.Rejected {
 		line := fmt.Sprintf("%s: %d record(s)", b.BatchID, b.Records)
@@ -303,13 +303,13 @@ func doctorRejected(f *Findings, d Diagnosis) {
 		if b.Reason.Details != "" {
 			line += " (" + b.Reason.Details + ")"
 		}
-		f.Detail("%s", line)
+		f.Detailf("%s", line)
 	}
 	if refused {
-		f.Detail("Requeue uploads them again; `trajector doctor discard <batch-id>` (or `--all`) deletes them for good.")
+		f.Detailf("Requeue uploads them again; `trajector doctor discard <batch-id>` (or `--all`) deletes them for good.")
 	}
 	if unreadable {
-		f.Detail("Unreadable records cannot be requeued; `trajector doctor discard <batch-id>` deletes them for good.")
+		f.Detailf("Unreadable records cannot be requeued; `trajector doctor discard <batch-id>` deletes them for good.")
 	}
 }
 
@@ -327,17 +327,17 @@ func doctorRejected(f *Findings, d Diagnosis) {
 // a healthy install over states the user resolves elsewhere.
 func doctorStandings(f *Findings, standings []upload.Standing) {
 	for _, s := range standings {
-		f.note("%s", doctorClause(s.Explain()))
+		f.notef("%s", doctorClause(s.Explain()))
 		if s.Message != "" {
-			f.Detail("%s", ServiceWords(s.Message))
+			f.Detailf("%s", ServiceWords(s.Message))
 		}
 		if remedy := s.Remedy(); remedy != "" {
-			f.Detail("%s", remedy)
+			f.Detailf("%s", remedy)
 		}
 		if s.Reason == upload.AuthorizationGate {
 			// The one gate a user is likeliest to read as data loss: the
 			// service refused the account, not the batch.
-			f.Detail("Captured data is kept; nothing was quarantined.")
+			f.Detailf("Captured data is kept; nothing was quarantined.")
 		}
 	}
 }
@@ -347,7 +347,7 @@ func doctorStandings(f *Findings, standings []upload.Standing) {
 // it gave for not uploading is a standing.
 func doctorService(f *Findings, h platform.Handshake) {
 	if h.Notice != "" {
-		f.note("notice from the service: %s", h.Notice)
+		f.notef("notice from the service: %s", h.Notice)
 	}
 }
 
@@ -409,10 +409,10 @@ func rejectedUnreadableHeadline(d Diagnosis) string {
 // so nothing here counts as a problem.
 func DoctorEnvironment(f *Findings) {
 	if runtime.GOOS == "linux" && isWSL() {
-		f.OK("running under WSL: Claude Code must also run inside WSL; a Windows-native claude cannot reach this trajector")
+		f.OKf("running under WSL: Claude Code must also run inside WSL; a Windows-native claude cannot reach this trajector")
 	}
 	if runtime.GOOS == "windows" {
-		f.OK("Windows: if a firewall prompt appears for the proxy, allow loopback access; the proxy only ever binds 127.0.0.1")
+		f.OKf("Windows: if a firewall prompt appears for the proxy, allow loopback access; the proxy only ever binds 127.0.0.1")
 	}
 }
 

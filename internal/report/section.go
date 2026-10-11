@@ -34,8 +34,8 @@ type lines struct {
 	all []line
 }
 
-// add states a fact of one severity that names no command.
-func (l *lines) add(sev severity, format string, a ...any) {
+// addf states a fact of one severity that names no command.
+func (l *lines) addf(sev severity, format string, a ...any) {
 	l.all = append(l.all, line{severity: sev, text: fmt.Sprintf(format, a...)})
 }
 
@@ -59,8 +59,8 @@ func (l *lines) warnFix(headline, why, fix string) {
 	l.take(line{severity: severityWarning, text: headline, why: why, fix: fix})
 }
 
-// detail attaches a follow-up line to the line stated last.
-func (l *lines) detail(format string, a ...any) {
+// detailf attaches a follow-up line to the line stated last.
+func (l *lines) detailf(format string, a ...any) {
 	last := &l.all[len(l.all)-1]
 	last.details = append(last.details, fmt.Sprintf(format, a...))
 }
@@ -124,10 +124,10 @@ type section struct {
 }
 
 // linef states a fact that asks for nothing.
-func (s *section) linef(format string, a ...any) { s.add(severityNote, format, a...) }
+func (s *section) linef(format string, a ...any) { s.addf(severityNote, format, a...) }
 
 // warnf states something to watch that still records.
-func (s *section) warnf(format string, a ...any) { s.add(severityWarning, format, a...) }
+func (s *section) warnf(format string, a ...any) { s.addf(severityWarning, format, a...) }
 
 // problem states something that stopped working, with the one sentence
 // that says why and the one command that ends it.

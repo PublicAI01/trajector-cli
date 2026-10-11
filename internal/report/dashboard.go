@@ -70,7 +70,7 @@ func deviceSection(d Diagnosis) *section {
 		why, fix := pauseWhyFixFor(d.Project)
 		s.problem(pausedEverywhere, why, fix)
 		for _, next := range pauseNextSteps(d.Project.PauseReason) {
-			s.detail("%s", next)
+			s.detailf("%s", next)
 		}
 	}
 	if d.StaleDiscoveryHook {
@@ -113,7 +113,7 @@ func projectSection(d Diagnosis) *section {
 		}
 		if st.WindowsSideClaude {
 			s.warnFix(windowsSideClaudeFact, windowsSideClaudeWhy, fixDoctor)
-			s.detail("%s", windowsSideWayOut)
+			s.detailf("%s", windowsSideWayOut)
 		}
 		if st.MissingSessionHooks() {
 			s.problem(sessionHooksMissingHeadline, sessionHooksMissingWhy(st.SettingsPath()), fixDoctor)
@@ -211,7 +211,7 @@ func uploadsSection(d Diagnosis) *section {
 		s.problem(trimPeriod(rejectedUnreadableHeadline(d)), "quarantined batches cannot be listed, so what waits there is unknown", fixDoctor)
 	case len(d.Rejected) > 0:
 		s.problem(quarantineHeadline(d.Rejected), quarantineWhy, quarantineFix)
-		s.detail("%s", quarantineAllNote)
+		s.detailf("%s", quarantineAllNote)
 	}
 
 	// Every reason uploads are held back is printed here, in the order

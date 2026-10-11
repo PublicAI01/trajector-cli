@@ -37,8 +37,8 @@ func TestASectionReadsWhatIsBrokenFirst(t *testing.T) {
 func TestProblemFixPrintsTheCommandOnALineOfItsOwn(t *testing.T) {
 	f := &Findings{}
 	f.ProblemFix("recording is paused everywhere", "this device is signed out", "trajector login")
-	f.Detail("Pairing is what lifts it.")
-	f.OK("capture spool writable")
+	f.Detailf("Pairing is what lifts it.")
+	f.OKf("capture spool writable")
 
 	var b bytes.Buffer
 	f.Render(&b, Style{})

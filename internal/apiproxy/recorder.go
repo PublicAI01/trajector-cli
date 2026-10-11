@@ -123,7 +123,7 @@ func (r *recorder) finish() {
 			return
 		}
 		if !r.s.enqueue(r.write) {
-			r.abandon(abandonQueueFull, "recorder: capture queue is full; rawcall not recorded")
+			r.abandonf(abandonQueueFull, "recorder: capture queue is full; rawcall not recorded")
 		}
 	})
 }
@@ -137,7 +137,7 @@ func (r *recorder) guard(step func()) {
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			r.abandon(abandonPanic, "recorder panic: %v", p)
+			r.abandonf(abandonPanic, "recorder panic: %v", p)
 		}
 	}()
 	step()
@@ -163,7 +163,7 @@ func (r *recorder) absorb(buf *bytes.Buffer, complete *bool, p []byte, eof bool)
 		}
 	}()
 	if over {
-		r.abandon(abandonOverLimit, "recorder: exchange exceeds the %d byte capture limit; not recorded", r.limit)
+		r.abandonf(abandonOverLimit, "recorder: exchange exceeds the %d byte capture limit; not recorded", r.limit)
 	}
 }
 
@@ -191,8 +191,8 @@ func (r *recorder) drop() {
 	r.resp.Reset()
 }
 
-// abandon gives up on this capture and says why, once.
-func (r *recorder) abandon(category string, format string, args ...any) {
+// abandonf gives up on this capture and says why, once.
+func (r *recorder) abandonf(category string, format string, args ...any) {
 	r.mu.Lock()
 	already := r.dropped
 	r.dropped = true
@@ -212,7 +212,7 @@ func (r *recorder) abandon(category string, format string, args ...any) {
 func (r *recorder) write(ctx context.Context) {
 	r.guard(func() {
 		if err := ctx.Err(); err != nil {
-			r.abandon(abandonDeadline, "recorder: capture waited past its deadline; not recorded")
+			r.abandonf(abandonDeadline, "recorder: capture waited past its deadline; not recorded")
 			return
 		}
 		// Consent is read again here, not only where the exchange was
@@ -235,11 +235,11 @@ func (r *recorder) write(ctx context.Context) {
 		}
 		env, err := envelope.Record(obs)
 		if err != nil {
-			r.abandon(abandonEnvelope, "%v", err)
+			r.abandonf(abandonEnvelope, "%v", err)
 			return
 		}
 		if err := r.s.cfg.Spool.Write(env); err != nil {
-			r.abandon(abandonSpoolWrite, "spooling rawcall: %v", err)
+			r.abandonf(abandonSpoolWrite, "spooling rawcall: %v", err)
 			return
 		}
 		r.s.stats.recorded(env.Garbled())

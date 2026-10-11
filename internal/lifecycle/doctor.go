@@ -69,12 +69,12 @@ func (m *Machine) Doctor(dir string, streams IO) (problems int, err error) {
 	// are written in is the order the user reads them.
 	f := &report.Findings{}
 	if rescanned {
-		f.Fixed("recording resumed: this build read the session files again and every line it read ended in a newline")
-		f.Detail("Session files are read again from where reading stopped.")
+		f.Fixedf("recording resumed: this build read the session files again and every line it read ended in a newline")
+		f.Detailf("Session files are read again from where reading stopped.")
 	}
 	if resumed {
-		f.Fixed("recording resumed after upgrade: it was paused by %s, and this build is %s", pausedBy, m.deps.Version)
-		f.Detail("Session files are read again from where reading stopped.")
+		f.Fixedf("recording resumed after upgrade: it was paused by %s, and this build is %s", pausedBy, m.deps.Version)
+		f.Detailf("Session files are read again from where reading stopped.")
 	}
 	// Before anything is rendered, so the count the data section
 	// prints is what is still held after this run.
@@ -192,11 +192,11 @@ func (m *Machine) releaseHeldSegments(f *report.Findings) report.HeldRecords {
 		}
 	}
 	if released > 0 {
-		f.Fixed("%d held segment(s) read cleanly under this build and will be uploaded", released)
+		f.Fixedf("%d held segment(s) read cleanly under this build and will be uploaded", released)
 	}
 	if failed != nil {
-		f.Problem("a segment held on this machine could not be moved to where uploads read it: %v", failed)
-		f.Detail("It stays held; nothing was rewritten, and nothing was lost.")
+		f.Problemf("a segment held on this machine could not be moved to where uploads read it: %v", failed)
+		f.Detailf("It stays held; nothing was rewritten, and nothing was lost.")
 	}
 	return heldRecords(sp)
 }
@@ -245,22 +245,22 @@ func (m *Machine) doctorEarlierSessions(f *report.Findings, d *report.Diagnosis)
 	}
 	registered, toRead, err := m.earlierSessionsRepair(d.SessionFiles, st)
 	if err != nil {
-		f.Problem("this project's session files could not be put back on the path that reads them: %v", err)
+		f.Problemf("this project's session files could not be put back on the path that reads them: %v", err)
 		return
 	}
 	if len(toRead) == 0 {
 		return
 	}
 	if err := m.readEarlierSessions(st, toRead); err != nil {
-		f.Problem("%d never-read session file(s) of this project could not be asked for: %v", len(toRead), err)
-		f.Detail("The next session of this project reads them, where a reader can be started for it.")
+		f.Problemf("%d never-read session file(s) of this project could not be asked for: %v", len(toRead), err)
+		f.Detailf("The next session of this project reads them, where a reader can be started for it.")
 		return
 	}
 	if registered == 0 {
-		f.Fixed("asked for %d never-read session file(s) of this project to be read", len(toRead))
+		f.Fixedf("asked for %d never-read session file(s) of this project to be read", len(toRead))
 		return
 	}
-	f.Fixed("registered %d session file(s) of this project that no hook reported, and asked for them to be read", registered)
+	f.Fixedf("registered %d session file(s) of this project that no hook reported, and asked for them to be read", registered)
 	d.SessionFiles.Unregistered -= d.SessionFiles.Earlier
 	d.SessionFiles.Earlier = 0
 }
@@ -305,35 +305,35 @@ func (m *Machine) doctorProxy(f *report.Findings, d report.Diagnosis) {
 	switch {
 	case d.Proxy.Replaceable(m.deps.Version):
 		if err := m.proxy.Ensure(); err != nil {
-			f.Problem("a trajector proxy version %s holds %s and could not be replaced: %v", h.Version, d.Proxy.Addr, err)
+			f.Problemf("a trajector proxy version %s holds %s and could not be replaced: %v", h.Version, d.Proxy.Addr, err)
 			return
 		}
-		f.Fixed("replaced the version %s proxy at %s with this build (%s)", h.Version, d.Proxy.Addr, m.deps.Version)
+		f.Fixedf("replaced the version %s proxy at %s with this build (%s)", h.Version, d.Proxy.Addr, m.deps.Version)
 	case d.Proxy.Serving(m.deps.Version):
 		if h.Version != m.deps.Version {
-			f.OK("proxy running at %s (version %s, up %s); %s", d.Proxy.Addr, h.Version, up, proxylife.ReuseReason)
+			f.OKf("proxy running at %s (version %s, up %s); %s", d.Proxy.Addr, h.Version, up, proxylife.ReuseReason)
 			return
 		}
-		f.OK("proxy running at %s (version %s, up %s)", d.Proxy.Addr, h.Version, up)
+		f.OKf("proxy running at %s (version %s, up %s)", d.Proxy.Addr, h.Version, up)
 	case d.Proxy.Holder == proxylife.HolderForeign:
 		f.ProxyProblem(d.Proxy.Reason, d.ProxyHolder)
 	default:
 		if !d.Project.Enabled {
-			f.OK("proxy not running; it starts on demand with the next session")
+			f.OKf("proxy not running; it starts on demand with the next session")
 			return
 		}
 		if d.ProxyIdleBetweenSessions {
 			// Nothing to start: the resident process comes up with the
 			// next session, and a device where no project routes through
 			// it has no traffic waiting on it in between.
-			f.OK("proxy not running; on this device it runs only while a session is open, because every enabled project records without it")
+			f.OKf("proxy not running; on this device it runs only while a session is open, because every enabled project records without it")
 			return
 		}
 		if err := m.proxy.Ensure(); err != nil {
-			f.Problem("the proxy is down and could not be started: %v", err)
+			f.Problemf("the proxy is down and could not be started: %v", err)
 			return
 		}
-		f.Fixed("started the capture proxy at %s", d.Proxy.Addr)
+		f.Fixedf("started the capture proxy at %s", d.Proxy.Addr)
 	}
 }
 
@@ -352,15 +352,15 @@ func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) e
 		return nil //nolint:nilerr // the device finding reports the table; it is not this step's failure
 
 	case !st.Enabled && !st.Injected:
-		f.OK("this project is not enabled; nothing to reconcile")
+		f.OKf("this project is not enabled; nothing to reconcile")
 		return nil
 
 	case st.Enabled && !st.Injected:
 		// Re-injecting would resume capture the user may have stopped on
 		// purpose by hand-editing; consent questions are theirs to answer.
-		f.Problem("the routing table grants this project but its settings inject nothing.")
-		f.Detail("Run `trajector enable` to restore the injection, or `trajector disable`")
-		f.Detail("to withdraw this project.")
+		f.Problemf("the routing table grants this project but its settings inject nothing.")
+		f.Detailf("Run `trajector enable` to restore the injection, or `trajector disable`")
+		f.Detailf("to withdraw this project.")
 		return nil
 
 	case !st.Enabled && st.Injected:
@@ -373,37 +373,37 @@ func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) e
 			// grant says what the injection wrote over, so the user's own
 			// value would be gone for good. It stays until they put that
 			// value back.
-			f.Problem("%v; doctor leaves the injection in %s in place", ErrInjectionWithoutGrant, settingsPath)
+			f.Problemf("%v; doctor leaves the injection in %s in place", ErrInjectionWithoutGrant, settingsPath)
 			for _, step := range injectionWithoutGrantSteps() {
-				f.Detail("%s", step)
+				f.Detailf("%s", step)
 			}
 			return nil
 		}
 		restored, unrestored, err := m.removeInjection(st.Root)
 		if err != nil {
-			f.Problem("a stale injection points traffic at a token that no longer records, and removing it failed: %v", err)
+			f.Problemf("a stale injection points traffic at a token that no longer records, and removing it failed: %v", err)
 			return nil
 		}
-		f.Fixed("removed a stale injection from %s (its token no longer records)", settingsPath)
+		f.Fixedf("removed a stale injection from %s (its token no longer records)", settingsPath)
 		if restored != "" {
-			f.Detail("Put back the base URL of your own that the injection had displaced: %s", restored)
+			f.Detailf("Put back the base URL of your own that the injection had displaced: %s", restored)
 		}
 		if unrestored != "" {
-			f.Problem("%s", unrestoredBaseURLWarning(settingsPath, unrestored))
+			f.Problemf("%s", unrestoredBaseURLWarning(settingsPath, unrestored))
 		}
 		undone, failures := m.restoreRecordedSettings(st.Root, st.Hash, claudesettings.OptionalSettings)
 		for _, key := range undone {
-			f.Detail("%s", settingRestoredLine(key))
+			f.Detailf("%s", settingRestoredLine(key))
 		}
 		for _, err := range failures {
-			f.Problem("%v", err)
+			f.Problemf("%v", err)
 		}
 		return nil
 	}
 
 	if st.IdentityDisagreement() {
-		f.Problem("the routing table and the consent record disagree about this project's identity.")
-		f.Detail("Run `trajector disable` and then `trajector enable` to record both afresh.")
+		f.Problemf("the routing table and the consent record disagree about this project's identity.")
+		f.Detailf("Run `trajector disable` and then `trajector enable` to record both afresh.")
 		return nil
 	}
 	if !st.Consistent() {
@@ -414,23 +414,23 @@ func (m *Machine) doctorInjection(f *report.Findings, st report.ProjectStatus) e
 		if err != nil {
 			return fmt.Errorf("repairing the injection in %s: %w", settingsPath, err)
 		}
-		f.Fixed("rewrote the injection in %s (token and session hooks restored)", settingsPath)
+		f.Fixedf("rewrote the injection in %s (token and session hooks restored)", settingsPath)
 		if restored != "" {
-			f.Detail("Put back the base URL of your own that the injection had displaced: %s", restored)
+			f.Detailf("Put back the base URL of your own that the injection had displaced: %s", restored)
 		}
 		if unrestored != "" {
-			f.Problem("%s", unrestoredBaseURLWarning(settingsPath, unrestored))
+			f.Problemf("%s", unrestoredBaseURLWarning(settingsPath, unrestored))
 		}
 	} else {
-		f.OK("injection and routing agree for this project")
+		f.OKf("injection and routing agree for this project")
 	}
 
 	if action, err := claudesettings.EnsureGitIgnored(st.Root, claudesettings.ProjectLocalIgnoreRule); err != nil {
-		f.Problem("could not verify .gitignore covers %s: %v", claudesettings.ProjectLocalIgnoreRule, err)
+		f.Problemf("could not verify .gitignore covers %s: %v", claudesettings.ProjectLocalIgnoreRule, err)
 	} else if action == claudesettings.IgnoreAppended {
-		f.Fixed("added %s to .gitignore", claudesettings.ProjectLocalIgnoreRule)
+		f.Fixedf("added %s to .gitignore", claudesettings.ProjectLocalIgnoreRule)
 	} else if action == claudesettings.IgnoreSymlinked {
-		f.Problem(".gitignore is a symbolic link and was left alone; add %s to your git ignores yourself", claudesettings.ProjectLocalIgnoreRule)
+		f.Problemf(".gitignore is a symbolic link and was left alone; add %s to your git ignores yourself", claudesettings.ProjectLocalIgnoreRule)
 	}
 
 	m.doctorUpstream(f, st)
@@ -443,13 +443,13 @@ func (m *Machine) doctorUpstream(f *report.Findings, st report.ProjectStatus) {
 	want, moved, refused, err := m.reconcileUpstream(st)
 	switch {
 	case want.unsupportedKey != "":
-		f.Problem("%s is set: Bedrock and Vertex channels are not supported, so this project's traffic is not being captured.", want.unsupportedKey)
+		f.Problemf("%s is set: Bedrock and Vertex channels are not supported, so this project's traffic is not being captured.", want.unsupportedKey)
 	case refused:
-		f.Problem("this project's base-URL configuration moved to %s, which is refused: %s. The recorded upstream is unchanged.", want.upstream, nonLoopbackUpstreamRemedy)
+		f.Problemf("this project's base-URL configuration moved to %s, which is refused: %s. The recorded upstream is unchanged.", want.upstream, nonLoopbackUpstreamRemedy)
 	case err != nil:
-		f.Problem("this project's base URL moved to %s but the routing table could not be updated: %v", want.upstream, err)
+		f.Problemf("this project's base URL moved to %s but the routing table could not be updated: %v", want.upstream, err)
 	case moved:
-		f.Fixed("updated this project's upstream to %s (its base-URL configuration moved)", want.upstream)
+		f.Fixedf("updated this project's upstream to %s (its base-URL configuration moved)", want.upstream)
 	}
 }
 
@@ -465,10 +465,10 @@ func (m *Machine) doctorDiscoveryHint(f *report.Findings, ts report.TokenStoreSt
 		return
 	}
 	if err := claudesettings.InjectUserHook(userSettings, hookCommand(m.deps.ExecPath, claudesettings.HookDiscovery)); err != nil {
-		f.Problem("the project-discovery hint is missing from %s and could not be re-added: %v", userSettings, err)
+		f.Problemf("the project-discovery hint is missing from %s and could not be re-added: %v", userSettings, err)
 		return
 	}
-	f.Fixed("re-added the project-discovery hint to %s", userSettings)
+	f.Fixedf("re-added the project-discovery hint to %s", userSettings)
 }
 
 // doctorStaleDiscoveryHook takes out the discovery hook an earlier
@@ -498,12 +498,12 @@ func (m *Machine) doctorSelfcheck(f *report.Findings, d report.Diagnosis) {
 		return
 	}
 	if d.Selfcheck == nil {
-		f.Problem("the live proxy did not answer this project's self-check; run `trajector doctor` again once it settles")
+		f.Problemf("the live proxy did not answer this project's self-check; run `trajector doctor` again once it settles")
 		return
 	}
 	if err := m.explainSelfcheck(*d.Selfcheck); err != nil {
-		f.Problem("the files agree, but the live proxy will not record this project: %v", err)
+		f.Problemf("the files agree, but the live proxy will not record this project: %v", err)
 		return
 	}
-	f.OK("live proxy confirms this project routes and records")
+	f.OKf("live proxy confirms this project routes and records")
 }
