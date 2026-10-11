@@ -265,7 +265,7 @@ func TestInjectProjectNarrowsAnExistingFileToOwnerOnly(t *testing.T) {
 func TestInjectProjectIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 	path := ProjectLocalPath(root)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if err := InjectProject(path, testBaseURL, testHooks); err != nil {
 			t.Fatal(err)
 		}
@@ -432,7 +432,7 @@ func TestMalformedHookSettingsHandledConsistently(t *testing.T) {
 				t.Errorf("HasHook = %v, want %v", got, tt.wantHas)
 			}
 
-			for i := 0; i < 2; i++ {
+			for i := range 2 {
 				if err := RemoveUserHook(path); err != nil {
 					t.Fatalf("RemoveUserHook #%d: %v", i+1, err)
 				}
@@ -1041,7 +1041,7 @@ func TestInjectProjectWithoutBaseURLInstallsMarkedHooksAndNoEnv(t *testing.T) {
 
 func TestInjectProjectWithoutBaseURLIsIdempotent(t *testing.T) {
 	path := ProjectLocalPath(t.TempDir())
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if err := InjectProject(path, "", testHooks); err != nil {
 			t.Fatal(err)
 		}

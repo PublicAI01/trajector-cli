@@ -284,7 +284,7 @@ func printDisclosures(w io.Writer, disclosures []claudesettings.Disclosure) {
 func wrapText(text string, width int) []string {
 	var lines []string
 	line := ""
-	for _, word := range strings.Fields(text) {
+	for word := range strings.FieldsSeq(text) {
 		switch {
 		case line == "":
 			line = word

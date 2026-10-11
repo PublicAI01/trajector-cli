@@ -136,7 +136,7 @@ func TestLogPastItsSizeLimitKeepsItsNewestEntriesAndGrowsNoFurther(t *testing.T)
 		}
 	}
 	shrunkTo, grown := size, appended
-	for i := 0; i < grown; i++ {
+	for range grown {
 		if got := add(); got > peak+entrySize {
 			t.Fatalf("log = %d bytes after %d entries, want it near the %d bytes it was rewritten at", got, appended, peak)
 		}

@@ -310,9 +310,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := respond(recorded)
-	for k, vs := range resp.Header {
-		w.Header()[k] = vs
-	}
+	maps.Copy(w.Header(), resp.Header)
 	status := resp.Status
 	if status == 0 {
 		status = http.StatusOK

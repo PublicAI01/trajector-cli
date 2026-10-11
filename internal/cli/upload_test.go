@@ -419,7 +419,7 @@ func TestARejectedBatchCannotWriteItsOwnLineIntoDoctorsVerdicts(t *testing.T) {
 		if strings.Contains(out.text, "\x1b") || strings.Contains(out.text, "\r") {
 			t.Errorf("%s = %q, want no rune the service supplied that can move the cursor", out.what, out.text)
 		}
-		for _, line := range strings.Split(out.text, "\n") {
+		for line := range strings.SplitSeq(out.text, "\n") {
 			if strings.TrimSpace(line) == "ok: everything checks out" {
 				t.Errorf("%s = %q, want the forged verdict to have stayed inside the quoted detail", out.what, out.text)
 			}

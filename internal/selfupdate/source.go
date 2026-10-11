@@ -243,7 +243,7 @@ func checkURL(url string) error {
 // named archive's line is read: the file covers every platform, and
 // the absent ones are not failures.
 func expectedSum(sums []byte, name string) (string, error) {
-	for _, line := range strings.Split(string(sums), "\n") {
+	for line := range strings.SplitSeq(string(sums), "\n") {
 		sum, file, ok := strings.Cut(strings.TrimSpace(line), " ")
 		if !ok {
 			continue

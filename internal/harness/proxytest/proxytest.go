@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -241,9 +242,7 @@ func (e *Env) Post(path, body string, header http.Header) *http.Response {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	for k, vs := range header {
-		req.Header[k] = vs
-	}
+	maps.Copy(req.Header, header)
 	resp, err := e.client.Do(req)
 	if err != nil {
 		e.t.Fatal(err)

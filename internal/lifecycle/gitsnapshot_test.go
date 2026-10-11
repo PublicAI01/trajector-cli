@@ -2,6 +2,7 @@ package lifecycle_test
 
 import (
 	"encoding/json"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -33,9 +34,7 @@ func (e *env) observe(event string, extra map[string]any) {
 		"cwd":             e.project,
 		"hook_event_name": event,
 	}
-	for k, v := range extra {
-		in[k] = v
-	}
+	maps.Copy(in, extra)
 	data, err := json.Marshal(in)
 	if err != nil {
 		e.t.Fatal(err)

@@ -1902,7 +1902,7 @@ func TestJSONLBytes_CredentialKeyVerdictIsDeterministic(t *testing.T) {
 	const doc = `{"svc":{"password":"` + value + `"},` +
 		`"db":{"password":"` + value + `","host":"db.example.com","user":"svc"}}`
 	want := redactedString(t, doc)
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		if got := redactedString(t, doc); got != want {
 			t.Fatalf("run %d differs:\n got %s\nwant %s", i, got, want)
 		}

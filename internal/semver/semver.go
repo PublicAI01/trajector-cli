@@ -54,7 +54,7 @@ func parse(s string) (version, bool) {
 	}
 	var v version
 	if i := strings.IndexByte(s, '-'); i >= 0 {
-		for _, id := range strings.Split(s[i+1:], ".") {
+		for id := range strings.SplitSeq(s[i+1:], ".") {
 			if !validIdentifier(id) {
 				return version{}, false
 			}

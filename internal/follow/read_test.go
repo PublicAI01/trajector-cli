@@ -646,12 +646,12 @@ func TestRead_SignatureBytesSurvive(t *testing.T) {
 	}
 	signatures := 0
 	for _, l := range lines {
-		i := strings.Index(l, `"signature":"`)
-		if i < 0 {
+		_, after, ok := strings.Cut(l, `"signature":"`)
+		if !ok {
 			continue
 		}
 		signatures++
-		sig := l[i+len(`"signature":"`):]
+		sig := after
 		sig = sig[:strings.IndexByte(sig, '"')]
 		if !strings.ContainsAny(sig, "+/") || !strings.HasSuffix(sig, "==") {
 			t.Fatalf("fixture signature %q lacks the characters the check relies on", sig)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"maps"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -136,9 +137,7 @@ func TestUploadBatchSurfacesServiceFailure(t *testing.T) {
 func upload4xx(t *testing.T, status int, header http.Header, body map[string]any) error {
 	t.Helper()
 	resp := fakeplatform.JSON(status, body)
-	for k, vs := range header {
-		resp.Header[k] = vs
-	}
+	maps.Copy(resp.Header, header)
 	return uploadRefused(t, resp)
 }
 

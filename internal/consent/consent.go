@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
@@ -171,10 +172,8 @@ func (s *Store) MarkPrompted(projectIDHash string) (first bool, err error) {
 		return false, fmt.Errorf("consent: project hash is required")
 	}
 	err = s.update(func(f *storeFile) {
-		for _, h := range f.Prompted {
-			if h == projectIDHash {
-				return
-			}
+		if slices.Contains(f.Prompted, projectIDHash) {
+			return
 		}
 		first = true
 		f.Prompted = append(f.Prompted, projectIDHash)

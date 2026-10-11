@@ -171,7 +171,7 @@ func TestSpool_RecordsLiveApartFromRawcalls(t *testing.T) {
 		Timestamp     string `json:"timestamp"`
 	}
 	var lines []line
-	for _, raw := range bytes.Split(bytes.TrimSpace(recordIndex), []byte("\n")) {
+	for raw := range bytes.SplitSeq(bytes.TrimSpace(recordIndex), []byte("\n")) {
 		var l line
 		if err := json.Unmarshal(raw, &l); err != nil {
 			t.Fatalf("record index line %q: %v", raw, err)

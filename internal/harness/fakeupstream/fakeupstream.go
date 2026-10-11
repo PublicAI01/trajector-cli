@@ -7,6 +7,7 @@ package fakeupstream
 import (
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -111,9 +112,7 @@ func writeResponse(w http.ResponseWriter, resp Response) {
 	if len(resp.SSE) > 0 && resp.Header.Get("Content-Type") == "" {
 		header.Set("Content-Type", "text/event-stream")
 	}
-	for k, vs := range resp.Header {
-		header[k] = vs
-	}
+	maps.Copy(header, resp.Header)
 	status := resp.Status
 	if status == 0 {
 		status = http.StatusOK

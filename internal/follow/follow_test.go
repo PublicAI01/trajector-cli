@@ -542,7 +542,7 @@ func TestRegistry_UnregisterRemovesProjectFile(t *testing.T) {
 		t.Fatalf("registry file before Unregister: %v", err)
 	}
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := r.Unregister(project); err != nil {
 			t.Fatalf("Unregister() #%d = %v, want nil", i+1, err)
 		}
@@ -697,9 +697,9 @@ func TestRegistry_ConcurrentRegistersDoNotLoseEntries(t *testing.T) {
 	errs := make(chan error, len(registries)*perRegistry*perGoroutine)
 	var want []string
 	for ri, r := range registries {
-		for g := 0; g < perRegistry; g++ {
+		for g := range perRegistry {
 			var paths []string
-			for i := 0; i < perGoroutine; i++ {
+			for i := range perGoroutine {
 				paths = append(paths, abs(t, filepath.Join("r"+string(rune('0'+ri)), "g"+string(rune('0'+g)), "f"+string(rune('0'+i))+".jsonl")))
 			}
 			want = append(want, paths...)

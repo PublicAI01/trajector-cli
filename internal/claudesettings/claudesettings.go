@@ -348,12 +348,7 @@ func InjectionShape(path string) (routing.Shape, bool) {
 // hasArgument reports whether a shell command carries arg as one of
 // its whitespace-separated words.
 func hasArgument(cmd, arg string) bool {
-	for _, word := range strings.Fields(cmd) {
-		if word == arg {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(cmd), arg)
 }
 
 // SetBaseURL writes value as this settings file's own base URL. It

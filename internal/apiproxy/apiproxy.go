@@ -443,13 +443,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
-		tick := s.cfg.IdleTimeout / 8
-		if tick < 5*time.Millisecond {
-			tick = 5 * time.Millisecond
-		}
-		if tick > 5*time.Second {
-			tick = 5 * time.Second
-		}
+		tick := min(max(s.cfg.IdleTimeout/8, 5*time.Millisecond), 5*time.Second)
 		ticker := time.NewTicker(tick)
 		defer ticker.Stop()
 		for {

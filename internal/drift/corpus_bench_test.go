@@ -33,7 +33,7 @@ func benchmarkCorpus(b *testing.B) string {
 		shapes = append(shapes, strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")...)
 	}
 	var corpus strings.Builder
-	for i := 0; i < benchmarkLines; i++ {
+	for i := range benchmarkLines {
 		line := shapes[i%len(shapes)]
 		line = strings.ReplaceAll(line, "msg_", fmt.Sprintf("msg%d_", i/3))
 		line = strings.ReplaceAll(line, `"uuid":"`, fmt.Sprintf(`"uuid":"%d-`, i))

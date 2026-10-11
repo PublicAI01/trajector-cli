@@ -232,7 +232,7 @@ func splitToken(path string) (token, rest string, ok bool) {
 func splitBetaHeader(values []string) []string {
 	var betas []string
 	for _, v := range values {
-		for _, part := range strings.Split(v, ",") {
+		for part := range strings.SplitSeq(v, ",") {
 			if part = strings.TrimSpace(part); part != "" {
 				betas = append(betas, part)
 			}

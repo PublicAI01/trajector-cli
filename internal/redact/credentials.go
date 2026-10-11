@@ -206,10 +206,8 @@ func secretKeyClassOf(key string) *secretKeyClass {
 	}
 	for i := range secretKeyClasses {
 		class := &secretKeyClasses[i]
-		for _, n := range class.names {
-			if compact == n {
-				return class
-			}
+		if slices.Contains(class.names, compact) {
+			return class
 		}
 		for _, s := range class.suffixes {
 			if strings.HasSuffix(compact, compactKey(s)) {

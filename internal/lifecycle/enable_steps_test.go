@@ -246,7 +246,7 @@ func TestEnable_SaysTheCountIsIncompleteAboveTheWalkLimit(t *testing.T) {
 	e.acceptCurrentAgreement()
 	e.stdin = ""
 	e.sessionFile("s-1", time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC))
-	for i := 0; i < discover.Limit; i++ {
+	for i := range discover.Limit {
 		if err := os.Mkdir(filepath.Join(e.project, fmt.Sprintf("d%05d", i)), 0o755); err != nil {
 			t.Fatal(err)
 		}

@@ -162,22 +162,24 @@ func TestSessionProgressedStoresEveryMessageOfAWorkflowRunAndNotItsJournal(t *te
 		return `{"type":"assistant","requestId":"req-` + id + `","message":{"id":"` + id + `","role":"assistant","content":[{"type":"text","text":"ok"}]}}` + "\n"
 	}
 	want := map[string]bool{}
-	mainLines := `{"type":"user","message":{"role":"user","content":"run it"}}` + "\n"
+	var mainLines strings.Builder
+	mainLines.WriteString(`{"type":"user","message":{"role":"user","content":"run it"}}` + "\n")
 	for _, id := range []string{"msg-main-1", "msg-main-2"} {
-		mainLines += assistant(id)
+		mainLines.WriteString(assistant(id))
 		want[id] = true
 	}
-	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", mainLines)
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", mainLines.String())
 	run := "-work-sample/0f1e2d3c/subagents/workflows/wf_7c-1/"
 	wantFiles := map[string]bool{"": true}
 	for _, agent := range []string{"a1", "a2", "a3"} {
-		lines := `{"type":"user","isSidechain":true,"agentId":"` + agent + `","message":{"role":"user","content":"phase"}}` + "\n"
+		var lines strings.Builder
+		lines.WriteString(`{"type":"user","isSidechain":true,"agentId":"` + agent + `","message":{"role":"user","content":"phase"}}` + "\n")
 		for n := range 3 {
 			id := fmt.Sprintf("msg-%s-%d", agent, n)
-			lines += assistant(id)
+			lines.WriteString(assistant(id))
 			want[id] = true
 		}
-		e.putSessionFile(run+"agent-"+agent+".jsonl", lines)
+		e.putSessionFile(run+"agent-"+agent+".jsonl", lines.String())
 		e.putSessionFile(run+"agent-"+agent+".meta.json", `{"agentType":"workflow-subagent","workflowPhase":"review","spawnDepth":1}`)
 		wantFiles["subagents/workflows/wf_7c-1/agent-"+agent+".jsonl"] = true
 		wantFiles["subagents/workflows/wf_7c-1/agent-"+agent+".meta.json"] = true

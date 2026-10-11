@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"encoding/json"
+	"maps"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,9 +45,7 @@ func (g *gitEnv) hookInput(event string, extra map[string]any) string {
 		"cwd":             g.Project(),
 		"hook_event_name": event,
 	}
-	for k, v := range extra {
-		in[k] = v
-	}
+	maps.Copy(in, extra)
 	data, err := json.Marshal(in)
 	if err != nil {
 		g.t.Fatal(err)

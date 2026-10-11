@@ -531,7 +531,7 @@ func (s *Spool) rewriteIndexFileLocked(path string, drop func(line []byte) bool)
 	var delta int64
 	err := fsatomic.Update(path, 0o600, func(old []byte) ([]byte, error) {
 		var kept []byte
-		for _, line := range bytes.Split(old, []byte("\n")) {
+		for line := range bytes.SplitSeq(old, []byte("\n")) {
 			if len(line) == 0 || drop(line) {
 				continue
 			}

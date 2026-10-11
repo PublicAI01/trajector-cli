@@ -203,7 +203,7 @@ func readRecords(path string) ([][]byte, error) {
 		return nil, err
 	}
 	var records [][]byte
-	for _, line := range bytes.Split(bytes.TrimSuffix(data, []byte{'\n'}), []byte{'\n'}) {
+	for line := range bytes.SplitSeq(bytes.TrimSuffix(data, []byte{'\n'}), []byte{'\n'}) {
 		if len(line) == 0 {
 			return nil, errors.New(path + ": empty line in record stream")
 		}

@@ -2,6 +2,7 @@ package upload_test
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -277,12 +278,12 @@ func sharedFixtures(t *testing.T) []conformance.Case {
 }
 
 func join(paths []string) string {
-	out := ""
+	var out strings.Builder
 	for i, p := range paths {
 		if i > 0 {
-			out += "\n  "
+			out.WriteString("\n  ")
 		}
-		out += p
+		out.WriteString(p)
 	}
-	return out
+	return out.String()
 }

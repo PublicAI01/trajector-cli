@@ -122,7 +122,7 @@ func describe(pid int) Process {
 		}
 	}
 	if argv, err := os.ReadFile(filepath.Join(dir, "cmdline")); err == nil {
-		for _, arg := range strings.Split(string(argv), "\x00") {
+		for arg := range strings.SplitSeq(string(argv), "\x00") {
 			if arg != "" {
 				proc.Argv = append(proc.Argv, arg)
 			}

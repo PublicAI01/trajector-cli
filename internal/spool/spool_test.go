@@ -577,7 +577,7 @@ func TestUsageSurvivesRecordsDeletedMidWalk(t *testing.T) {
 		}
 	}
 
-	for round := 0; round < 40; round++ {
+	for round := range 40 {
 		writeChurn()
 		done := make(chan struct{})
 		go func() {

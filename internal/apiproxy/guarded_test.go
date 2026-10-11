@@ -246,10 +246,10 @@ func TestFinishedExchangeDoesNotWaitOnTheSpool(t *testing.T) {
 	e.WriteTable(activeTable("tok1", upstream.URL()))
 
 	const n = 20
-	for i := 0; i < n; i++ {
+	for i := range n {
 		upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_q` + string(rune('a'+i)) + `"}`)})
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if resp := e.Post("/t/tok1/v1/messages", `{"m":1}`, nil); resp.StatusCode != 200 {
 			t.Fatalf("request %d status = %d", i, resp.StatusCode)
 		}

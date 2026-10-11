@@ -306,7 +306,7 @@ func everyFixOffered() []string {
 
 	var fixes []string
 	for _, out := range printed {
-		for _, line := range strings.Split(out, "\n") {
+		for line := range strings.SplitSeq(out, "\n") {
 			if command, ok := strings.CutPrefix(line, "    fix:  "); ok {
 				fixes = append(fixes, command)
 			}

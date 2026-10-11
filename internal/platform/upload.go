@@ -413,10 +413,7 @@ func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, bu
 			status:       status,
 		}
 	case resp.StatusCode == http.StatusTooManyRequests:
-		pause := retryAfter(resp.Header.Get("Retry-After"))
-		if pause > MaxRetryAfter {
-			pause = MaxRetryAfter
-		}
+		pause := min(retryAfter(resp.Header.Get("Retry-After")), MaxRetryAfter)
 		return &RateLimitedError{RetryAfter: pause, status: status}
 	case resp.StatusCode == http.StatusRequestTimeout:
 		// The service saying the upload took too long is the same

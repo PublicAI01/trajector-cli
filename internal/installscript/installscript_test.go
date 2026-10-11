@@ -19,6 +19,7 @@ package installscript
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,9 +58,7 @@ func launch(t *testing.T, releases *fakereleases.Server, env map[string]string) 
 		"TRAJECTOR_API_BASE": releases.APIBase(),
 		"TRAJECTOR_DL_BASE":  releases.AssetBase(),
 	}
-	for name, value := range env {
-		full[name] = value
-	}
+	maps.Copy(full, env)
 
 	cmd := exec.Command("sh", scriptPath(t))
 	cmd.Env = nil
@@ -248,7 +247,7 @@ func pickedByClient(t *testing.T, releases *fakereleases.Server) string {
 // another is caught too.
 func reportedVersion(t *testing.T, out string) string {
 	t.Helper()
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		rest, ok := strings.CutPrefix(line, "Installed trajector ")
 		if !ok {
 			continue

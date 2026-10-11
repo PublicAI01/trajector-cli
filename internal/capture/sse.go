@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 )
 
@@ -116,15 +117,11 @@ func Assemble(raw []byte) (json.RawMessage, error) {
 
 		case "message_delta":
 			if delta, ok := data["delta"].(map[string]any); ok {
-				for k, v := range delta {
-					message[k] = v
-				}
+				maps.Copy(message, delta)
 			}
 			if usage, ok := data["usage"].(map[string]any); ok {
 				if existing, ok := message["usage"].(map[string]any); ok {
-					for k, v := range usage {
-						existing[k] = v
-					}
+					maps.Copy(existing, usage)
 				} else {
 					message["usage"] = usage
 				}
@@ -271,7 +268,7 @@ func parseEvents(raw []byte) ([]event, error) {
 		fieldsSeen, dataSeen = false, false
 	}
 
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		switch {
 		case line == "":

@@ -255,8 +255,7 @@ func factsOf(t *testing.T, at reflect.Type, prefix string, holding []reflect.Typ
 		return []string{fact}
 	}
 	var facts []string
-	for i := range at.NumField() {
-		field := at.Field(i)
+	for field := range at.Fields() {
 		if field.PkgPath != "" {
 			continue
 		}
@@ -331,9 +330,9 @@ func fillForTheBundle(t *testing.T, v reflect.Value) {
 			v.Set(reflect.ValueOf(time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)))
 			return
 		}
-		for i := range v.NumField() {
-			if v.Field(i).CanSet() {
-				fillForTheBundle(t, v.Field(i))
+		for _, field := range v.Fields() {
+			if field.CanSet() {
+				fillForTheBundle(t, field)
 			}
 		}
 	default:

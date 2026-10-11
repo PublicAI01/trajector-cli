@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -195,9 +196,7 @@ func (s *Sandbox) overlayHandshake(update any) {
 			s.t.Fatal(err)
 		}
 	}
-	for name, value := range s.statedFields(update) {
-		stored[name] = value
-	}
+	maps.Copy(stored, s.statedFields(update))
 	data, err := json.Marshal(stored)
 	if err != nil {
 		s.t.Fatal(err)

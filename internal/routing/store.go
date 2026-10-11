@@ -217,9 +217,7 @@ func (s *Store) RestoreGrants(snap GrantSnapshot) error {
 				delete(f.Projects, tok)
 			}
 		}
-		for tok, rec := range snap.entries {
-			f.Projects[tok] = rec
-		}
+		maps.Copy(f.Projects, snap.entries)
 	})
 }
 

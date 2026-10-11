@@ -149,7 +149,7 @@ func leftoverIgnoreRules(root string) []string {
 		return nil
 	}
 	present := map[string]bool{}
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		present[strings.TrimSpace(line)] = true
 	}
 	var rules []string
