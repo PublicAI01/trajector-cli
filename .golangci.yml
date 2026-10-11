@@ -37,6 +37,7 @@ linters:
     - nilerr
     - nilnesserr
     - nilnil
+    - noctx
     - nolintlint
     - reassign
     - recvcheck
