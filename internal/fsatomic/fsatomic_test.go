@@ -20,9 +20,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	procbin.Main(m, map[string]func(args []string) int{
+	os.Exit(procbin.Main(m, map[string]func(args []string) int{
 		"writer": rewriteUntilDeadline,
-	})
+	}))
 }
 
 const writerPayloadSize = 4096

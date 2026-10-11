@@ -21,11 +21,11 @@ import (
 // a process tree started by one command prints exactly what production
 // prints.
 func TestMain(m *testing.M) {
-	procbin.Main(m, map[string]func(args []string) int{
+	os.Exit(procbin.Main(m, map[string]func(args []string) int{
 		"cli": func(args []string) int {
 			return cli.Run(args, strings.NewReader(""), os.Stdout, os.Stderr)
 		},
-	})
+	}))
 }
 
 // Two sessions starting a proxy at once is the ordinary race, and the

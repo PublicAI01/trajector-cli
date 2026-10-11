@@ -33,9 +33,10 @@ const runUnrecordable = 98
 
 // Main runs the package's tests, except in a process a test spawned as
 // the executable a device installs: there this binary is the trajector
-// CLI, as silent as a detached process is.
-func Main(m *testing.M) {
-	procbin.Main(m, map[string]func(args []string) int{trajectorBehavior: runTrajector})
+// CLI, as silent as a detached process is. TestMain exits with the code
+// it returns.
+func Main(m *testing.M) int {
+	return procbin.Main(m, map[string]func(args []string) int{trajectorBehavior: runTrajector})
 }
 
 func runTrajector(args []string) int {

@@ -14,19 +14,19 @@ import (
 
 const envKey = "TRAJECTOR_PROCBIN_BEHAVIOR"
 
-// Main must be called from TestMain. In a re-executed child it runs
-// the requested behavior with the process arguments and exits; in the
-// test process it runs the tests.
-func Main(m *testing.M, behaviors map[string]func(args []string) int) {
+// Main must be called from TestMain, which exits with the code it
+// returns. In a re-executed child it runs the requested behavior with
+// the process arguments; in the test process it runs the tests.
+func Main(m *testing.M, behaviors map[string]func(args []string) int) int {
 	if name := os.Getenv(envKey); name != "" {
 		behavior, ok := behaviors[name]
 		if !ok {
 			fmt.Fprintf(os.Stderr, "procbin: unknown behavior %q\n", name)
-			os.Exit(97)
+			return 97
 		}
-		os.Exit(behavior(os.Args[1:]))
+		return behavior(os.Args[1:])
 	}
-	os.Exit(m.Run())
+	return m.Run()
 }
 
 // Self selects the behavior for every process the test spawns from

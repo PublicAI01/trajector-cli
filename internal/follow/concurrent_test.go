@@ -17,9 +17,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	procbin.Main(m, map[string]func(args []string) int{
+	os.Exit(procbin.Main(m, map[string]func(args []string) int{
 		"hold": holdWhileReading,
-	})
+	}))
 }
 
 // holdWhileReading reads the entry registered for args[1] in the

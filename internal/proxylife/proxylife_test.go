@@ -120,7 +120,7 @@ func holdSilently(args []string) int {
 const versionEnv = "TRAJECTOR_TEST_PROXY_VERSION"
 
 func TestMain(m *testing.M) {
-	procbin.Main(m, map[string]func(args []string) int{
+	os.Exit(procbin.Main(m, map[string]func(args []string) int{
 		"proxy":        serveProxy,
 		"exit-clean":   func([]string) int { return 0 },
 		"always-crash": func([]string) int { return 1 },
@@ -174,7 +174,7 @@ func TestMain(m *testing.M) {
 			}
 			return 1
 		},
-	})
+	}))
 }
 
 func freeAddr(t *testing.T) string {

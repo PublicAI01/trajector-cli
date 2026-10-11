@@ -14,7 +14,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
 
-func TestMain(m *testing.M) { proxytest.Main(m) }
+func TestMain(m *testing.M) { os.Exit(proxytest.Main(m)) }
 
 func (e *env) enableProject() {
 	e.t.Helper()
