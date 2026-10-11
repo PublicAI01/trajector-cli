@@ -221,7 +221,6 @@ func TestWritableProbe(t *testing.T) {
 	if len(entries) != 0 {
 		t.Errorf("probe left %d entries behind", len(entries))
 	}
-
 }
 
 func TestWritableReportsExhaustedQuota(t *testing.T) {

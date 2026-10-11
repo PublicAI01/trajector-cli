@@ -183,7 +183,6 @@ func TestEachEntryCompletesWhenRecordsVanishMidWalk(t *testing.T) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		t.Fatalf("EachEntry = %v, want the walk to complete over the records still on disk", err)
 	}

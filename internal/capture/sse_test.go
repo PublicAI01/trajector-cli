@@ -182,25 +182,35 @@ func TestAssembleRefusesToGuess(t *testing.T) {
 		{"missing message_stop", start},
 		{"stream cut mid event", start + "event: message_stop\ndata: {\"type\":\"message_stop\"}"},
 		{"event after message_stop", start + ev("message_stop", `{"type":"message_stop"}`) + ev("ping", `{"type":"ping"}`)},
-		{"unknown delta type",
+		{
+			"unknown delta type",
 			start + ev("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`) +
 				ev("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"mystery_delta","text":"x"}}`) +
-				ev("message_stop", `{"type":"message_stop"}`)},
-		{"delta for unstarted block",
+				ev("message_stop", `{"type":"message_stop"}`),
+		},
+		{
+			"delta for unstarted block",
 			start + ev("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}}`) +
-				ev("message_stop", `{"type":"message_stop"}`)},
-		{"out of order block index",
+				ev("message_stop", `{"type":"message_stop"}`),
+		},
+		{
+			"out of order block index",
 			start + ev("content_block_start", `{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`) +
-				ev("message_stop", `{"type":"message_stop"}`)},
-		{"tool input fragments are not valid JSON",
+				ev("message_stop", `{"type":"message_stop"}`),
+		},
+		{
+			"tool input fragments are not valid JSON",
 			start + ev("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_03","name":"f","input":{}}}`) +
 				ev("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a\":"}}`) +
 				ev("content_block_stop", `{"type":"content_block_stop","index":0}`) +
-				ev("message_stop", `{"type":"message_stop"}`)},
-		{"tool input fragments left unclosed",
+				ev("message_stop", `{"type":"message_stop"}`),
+		},
+		{
+			"tool input fragments left unclosed",
 			start + ev("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_04","name":"f","input":{}}}`) +
 				ev("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}`) +
-				ev("message_stop", `{"type":"message_stop"}`)},
+				ev("message_stop", `{"type":"message_stop"}`),
+		},
 		{"unrecognized stream line", "garbage without a field name\n\n" + start + ev("message_stop", `{"type":"message_stop"}`)},
 	}
 	for _, tt := range tests {

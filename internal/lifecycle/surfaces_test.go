@@ -164,6 +164,7 @@ func TestDoctorRegistersTheSessionsThatPredateTheGrantAndHasThemRead(t *testing.
 		t.Errorf("doctor = %q, want no leftover note about what it has just registered", out)
 	}
 }
+
 func TestDoctorRegistersOnlyTheSessionsThatPredateTheGrantAndKeepsReportingTheRest(t *testing.T) {
 	e := newEnv(t)
 	var res resident
@@ -330,6 +331,7 @@ func TestDoctorLeavesNeverReadSessionsAloneWhereEarlierSessionsWereSkipped(t *te
 		t.Errorf("doctor = %q, want no reading asked where the user asked for none", out)
 	}
 }
+
 func TestDoctorAsksForANeverReadSessionWrittenAfterAGrantThatSkippedTheEarlierOnes(t *testing.T) {
 	e := newEnv(t)
 	var res resident

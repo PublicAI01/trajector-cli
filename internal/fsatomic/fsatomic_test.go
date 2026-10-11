@@ -255,7 +255,6 @@ func TestUpdateWritesNothingWhenFnAnswersUnchanged(t *testing.T) {
 	err = fsatomic.Update(path, 0o600, func([]byte) ([]byte, error) {
 		return []byte("replaced"), fmt.Errorf("nothing to add: %w", fsatomic.ErrUnchanged)
 	})
-
 	if err != nil {
 		t.Fatalf("Update = %v, want nil", err)
 	}

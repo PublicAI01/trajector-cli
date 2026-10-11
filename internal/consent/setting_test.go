@@ -68,20 +68,34 @@ func TestSettingDecisionRejectsMalformedShapes(t *testing.T) {
 		hash, key string
 		decision  consent.SettingDecision
 	}{
-		{"accepted without a prior state", "hash-p", "showThinkingSummaries",
-			consent.SettingDecision{Answer: consent.AnswerAccepted, DecidedAt: "2026-08-31T10:00:00Z"}},
-		{"accepted with an unknown prior state", "hash-p", "showThinkingSummaries",
-			consent.SettingDecision{Answer: consent.AnswerAccepted, Prior: "maybe", DecidedAt: "2026-08-31T10:00:00Z"}},
-		{"declined carrying a prior state", "hash-p", "showThinkingSummaries",
-			consent.SettingDecision{Answer: consent.AnswerDeclined, Prior: consent.PriorAbsent, DecidedAt: "2026-08-31T10:00:00Z"}},
-		{"unknown answer", "hash-p", "showThinkingSummaries",
-			consent.SettingDecision{Answer: "shrugged", DecidedAt: "2026-08-31T10:00:00Z"}},
-		{"empty answer", "hash-p", "showThinkingSummaries",
-			consent.SettingDecision{DecidedAt: "2026-08-31T10:00:00Z"}},
-		{"empty setting key", "hash-p", "",
-			consent.SettingDecision{Answer: consent.AnswerDeclined, DecidedAt: "2026-08-31T10:00:00Z"}},
-		{"empty project hash", "", "showThinkingSummaries",
-			consent.SettingDecision{Answer: consent.AnswerDeclined, DecidedAt: "2026-08-31T10:00:00Z"}},
+		{
+			"accepted without a prior state", "hash-p", "showThinkingSummaries",
+			consent.SettingDecision{Answer: consent.AnswerAccepted, DecidedAt: "2026-08-31T10:00:00Z"},
+		},
+		{
+			"accepted with an unknown prior state", "hash-p", "showThinkingSummaries",
+			consent.SettingDecision{Answer: consent.AnswerAccepted, Prior: "maybe", DecidedAt: "2026-08-31T10:00:00Z"},
+		},
+		{
+			"declined carrying a prior state", "hash-p", "showThinkingSummaries",
+			consent.SettingDecision{Answer: consent.AnswerDeclined, Prior: consent.PriorAbsent, DecidedAt: "2026-08-31T10:00:00Z"},
+		},
+		{
+			"unknown answer", "hash-p", "showThinkingSummaries",
+			consent.SettingDecision{Answer: "shrugged", DecidedAt: "2026-08-31T10:00:00Z"},
+		},
+		{
+			"empty answer", "hash-p", "showThinkingSummaries",
+			consent.SettingDecision{DecidedAt: "2026-08-31T10:00:00Z"},
+		},
+		{
+			"empty setting key", "hash-p", "",
+			consent.SettingDecision{Answer: consent.AnswerDeclined, DecidedAt: "2026-08-31T10:00:00Z"},
+		},
+		{
+			"empty project hash", "", "showThinkingSummaries",
+			consent.SettingDecision{Answer: consent.AnswerDeclined, DecidedAt: "2026-08-31T10:00:00Z"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

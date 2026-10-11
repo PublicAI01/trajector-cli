@@ -109,10 +109,14 @@ func TestDoctorExplainsEveryUploadGateInTheSameShape(t *testing.T) {
 	until := time.Date(2026, 8, 2, 14, 32, 0, 0, time.UTC)
 	d := device()
 	d.Standings = []upload.Standing{
-		{Reason: upload.VersionGate, MinClientVersion: "9.9.9", Version: "0.1.0",
-			Message: "Upload format 0.1.x is retired on 2026-09-01.", Upgradable: true},
-		{Reason: upload.AuthorizationGate, AuthorizeURL: "https://dashboard.example.com/authorization",
-			Message: "Your data authorization is not complete."},
+		{
+			Reason: upload.VersionGate, MinClientVersion: "9.9.9", Version: "0.1.0",
+			Message: "Upload format 0.1.x is retired on 2026-09-01.", Upgradable: true,
+		},
+		{
+			Reason: upload.AuthorizationGate, AuthorizeURL: "https://dashboard.example.com/authorization",
+			Message: "Your data authorization is not complete.",
+		},
 		{Reason: upload.RateLimited, NotBefore: until},
 	}
 
