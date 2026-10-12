@@ -160,6 +160,7 @@ deleting the binary alone leaves the settings injections behind.
 | `internal/tokenstore` | The device pairing secret, in the OS keyring or owner-only files |
 | `internal/fsatomic` | Atomic file writes, and updates serialized across processes |
 | `internal/selfupdate` | Finding, verifying, and installing a newer published release over this one |
+| `internal/notice` | The lines this device leaves for its user's next command, each shown once |
 | `internal/semver` | The one version comparison: which release is newer, and which proxy a newer one may replace |
 | `internal/cli` | argv, exit codes, and what the user reads |
 | `internal/harness` | Test doubles and sandboxes: a fake upstream, a fake service, a real proxy in a temp directory |

@@ -30,6 +30,7 @@ const (
 	gitHeadsName     = "git-heads.json"
 	upgradeStateName = "upgrade.json"
 	upgradeLockName  = "upgrade"
+	noticesName      = "notices.json"
 )
 
 // UpgradeVerifyPrefix begins the name of every directory a newly
@@ -134,6 +135,10 @@ func (l Layout) UpgradeState() string { return filepath.Join(l.state, upgradeSta
 // fsatomic.Update, which takes that file's own lock, while the upgrade
 // lock is held.
 func (l Layout) UpgradeLock() string { return filepath.Join(l.state, upgradeLockName) }
+
+// Notices holds the lines this device has to tell its user at the next
+// command they run, until that command shows them.
+func (l Layout) Notices() string { return filepath.Join(l.state, noticesName) }
 
 // NewUpgradeVerifyDir creates a fresh, empty directory beside the
 // upgrade state file for a newly installed build to start a proxy in

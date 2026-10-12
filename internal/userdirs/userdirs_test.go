@@ -328,6 +328,16 @@ func TestUpgradeBookkeepingSitsInTheStateDirectoryUnderTwoNames(t *testing.T) {
 	}
 }
 
+func TestNoticesSitInTheStateDirectory(t *testing.T) {
+	l, err := userdirs.Resolve(env("linux", map[string]string{"HOME": "/home/u"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := slash(l.Notices()); got != "/home/u/.local/state/trajector/notices.json" {
+		t.Errorf("Notices() = %q", got)
+	}
+}
+
 func TestUpgradeVerifyDirectoriesAreFreshAndSitBesideTheUpgradeState(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "state")
 	l, err := userdirs.Resolve(env(runtime.GOOS, map[string]string{

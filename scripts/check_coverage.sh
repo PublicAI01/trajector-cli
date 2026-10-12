@@ -7,13 +7,14 @@ REPO_MIN=87
 CORE_MIN=85
 # Core packages (capture and SSE reassembly, redaction, the rewrite of
 # image and document blocks, routing, spool, batches, upload, consent
-# lifecycle, session-file following, observing a git repository, the
-# reading of one session line and the shape checks on what it reads,
+# lifecycle, the lines left for the next command (notice), session-file
+# following, observing a git repository, the reading of one session
+# line and the shape checks on what it reads,
 # what the surfaces render, the served proxy, and atomic file writes and
 # locks; selfupdate, which installs a newer release over this one) are
 # added here as they land. A package joins once its own tests
 # hold it above the floor without a knob that exists only for the tests.
-CORE_PACKAGES="internal/apiproxy internal/batch internal/capture internal/mediablock internal/claudesettings internal/drift internal/envelope internal/follow internal/follow/discover internal/fsatomic internal/gitsnapshot internal/proxyserve internal/routing internal/selfupdate internal/sessionline internal/spool internal/lifecycle internal/redact internal/report internal/upload"
+CORE_PACKAGES="internal/apiproxy internal/batch internal/capture internal/mediablock internal/claudesettings internal/drift internal/envelope internal/follow internal/follow/discover internal/fsatomic internal/gitsnapshot internal/proxyserve internal/routing internal/selfupdate internal/sessionline internal/spool internal/lifecycle internal/notice internal/redact internal/report internal/upload"
 
 go test -race -timeout 30m -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 
