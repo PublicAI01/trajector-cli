@@ -29,6 +29,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // hostArchive is the asset of release 0.2.0 that the script picks on the
@@ -231,7 +232,25 @@ func pickedByClient(t *testing.T, releases *fakereleases.Server) string {
 	if err := os.WriteFile(execPath, []byte("an older build"), 0o755); err != nil {
 		t.Fatalf("planting the installed binary: %v", err)
 	}
-	out, err := selfupdate.Upgrade(t.Context(), execPath, "0.0.1", releases.IndexURL())
+	env := map[string]string{}
+	userdirs.Isolate(func(key, value string) { env[key] = value }, t.TempDir())
+	layout, err := userdirs.Resolve(userdirs.Env{GOOS: runtime.GOOS, Getenv: func(key string) string { return env[key] }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := selfupdate.Installation{
+		ExecPath: execPath,
+		Version:  "0.0.1",
+		State:    layout.UpgradeState(),
+		Lock:     layout.UpgradeLock(),
+	}
+	out, err := selfupdate.Upgrade(t.Context(), in, releases.IndexURL(), 0)
+	// The releases these tests publish carry stand-in bytes, which the
+	// client runs once and refuses to install; the release it refused
+	// is still the one it picked.
+	if unusable, ok := errors.AsType[*selfupdate.UnusableError](err); ok {
+		return unusable.Version
+	}
 	if err != nil {
 		t.Fatalf("the upgrade client installed nothing: %v", err)
 	}

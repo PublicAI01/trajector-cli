@@ -2,7 +2,9 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 )
@@ -15,6 +17,22 @@ var managerHandback = map[selfupdate.Manager]struct{ name, command string }{
 	selfupdate.Scoop:    {"Scoop", "scoop update trajector"},
 }
 
+// upgradeLockWait is how long a manual upgrade waits for one already
+// running on this machine — the background checker, or another
+// terminal — before saying so. The one running takes minutes when it
+// downloads, so waiting it out would look like a hang.
+const upgradeLockWait = 2 * time.Second
+
+// installation is this machine's trajector as selfupdate sees it.
+func (m *Machine) installation() selfupdate.Installation {
+	return selfupdate.Installation{
+		ExecPath: m.deps.ExecPath,
+		Version:  m.deps.Version,
+		State:    m.deps.Layout.UpgradeState(),
+		Lock:     m.deps.Layout.UpgradeLock(),
+	}
+}
+
 // Upgrade replaces this binary with the newest published release and
 // says which of the four things happened to it.
 //
@@ -24,7 +42,14 @@ var managerHandback = map[selfupdate.Manager]struct{ name, command string }{
 // the binary leaves it exactly as it was — an upgrade that cannot
 // happen must never cost the user a working trajector.
 func (m *Machine) Upgrade(ctx context.Context, streams IO) error {
-	out, err := selfupdate.Upgrade(ctx, m.deps.ExecPath, m.deps.Version, m.deps.Releases)
+	out, err := selfupdate.Upgrade(ctx, m.installation(), m.deps.Releases, upgradeLockWait)
+	if errors.Is(err, selfupdate.ErrBusy) {
+		return errors.New("another upgrade is running on this machine; try again in a minute")
+	}
+	if unusable, ok := errors.AsType[*selfupdate.UnusableError](err); ok {
+		fmt.Fprintf(streams.Out, "trajector %s does not start on this machine, so %s was kept.\n", unusable.Version, m.deps.Version)
+		return fmt.Errorf("version %s was not installed: %s", unusable.Version, unusable.Reason)
+	}
 	if err != nil {
 		return err
 	}

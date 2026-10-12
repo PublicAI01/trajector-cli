@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ func newEnv(t *testing.T) *env {
 		Layout:      layout,
 		PlatformURL: e.service.URL(),
 		Version:     "testv",
-		ExecPath:    home + "/bin/trajector",
+		ExecPath:    exeName(filepath.Join(home, "bin", "trajector")),
 		Home:        home,
 		Getenv:      func(key string) string { return e.environ[key] },
 		ProxyAddr:   proxytest.IdleAddr(t),
@@ -372,4 +373,12 @@ func adminPost(t *testing.T, e *env, url string) *http.Response {
 		t.Fatal(err)
 	}
 	return resp
+}
+
+// exeName is path as this platform names the executable at it.
+func exeName(path string) string {
+	if runtime.GOOS == "windows" {
+		return path + ".exe"
+	}
+	return path
 }

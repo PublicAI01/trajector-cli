@@ -10,11 +10,12 @@ CORE_MIN=85
 # lifecycle, session-file following, observing a git repository, the
 # reading of one session line and the shape checks on what it reads,
 # what the surfaces render, the served proxy, and atomic file writes and
-# locks) are added here as they land. A package joins once its own tests
+# locks; selfupdate, which installs a newer release over this one) are
+# added here as they land. A package joins once its own tests
 # hold it above the floor without a knob that exists only for the tests.
-CORE_PACKAGES="internal/apiproxy internal/batch internal/capture internal/mediablock internal/claudesettings internal/drift internal/envelope internal/follow internal/follow/discover internal/fsatomic internal/gitsnapshot internal/proxyserve internal/routing internal/sessionline internal/spool internal/lifecycle internal/redact internal/report internal/upload"
+CORE_PACKAGES="internal/apiproxy internal/batch internal/capture internal/mediablock internal/claudesettings internal/drift internal/envelope internal/follow internal/follow/discover internal/fsatomic internal/gitsnapshot internal/proxyserve internal/routing internal/selfupdate internal/sessionline internal/spool internal/lifecycle internal/redact internal/report internal/upload"
 
-go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+go test -race -timeout 30m -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 
 fail=0
 total=$(go tool cover -func=coverage.out | awk '/^total:/ { sub(/%/, "", $3); print $3 }')
@@ -31,7 +32,7 @@ fi
 # produce, without the serial rebuilds.
 set --
 for pkg in $CORE_PACKAGES; do set -- "$@" "./$pkg"; done
-go test -covermode=atomic -coverprofile=coverage.pkg.out "$@"
+go test -timeout 30m -covermode=atomic -coverprofile=coverage.pkg.out "$@"
 
 module=$(go list -m)
 for pkg in $CORE_PACKAGES; do

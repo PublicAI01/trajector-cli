@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,13 +23,14 @@ const (
 // runnable as: everyone may run it, only its owner may rewrite it.
 const executablePerm = 0o755
 
-// install puts binary at execPath, which is normally the running
-// program's own path. The new content is staged as a sibling of
-// execPath — same directory, so the move into place is a rename within
-// one filesystem — and only then swapped in. Every failure leaves the
-// previous binary in place and runnable: a machine that cannot be
-// upgraded must still be a machine that works.
-func install(execPath string, binary []byte) error {
+// install puts binary, the release of version, at execPath, which is
+// normally the running program's own path. The new content is staged
+// as a sibling of execPath — same directory, so the move into place is
+// a rename within one filesystem — run once to check it starts as that
+// version, and only then swapped in. Every failure leaves the previous
+// binary in place and runnable: a machine that cannot be upgraded must
+// still be a machine that works.
+func install(ctx context.Context, execPath, version string, binary []byte) error {
 	// Whatever occupies execPath must be a file before anything is
 	// staged over it. What a rename does when a directory stands there
 	// is not the same everywhere — POSIX refuses it, Windows can move
@@ -40,7 +42,10 @@ func install(execPath string, binary []byte) error {
 		return fmt.Errorf("selfupdate: %s is not a file; nothing was installed over it", execPath)
 	}
 	dir := filepath.Dir(execPath)
-	f, err := os.CreateTemp(dir, filepath.Base(execPath)+incomingMarker+"*")
+	// The staged name ends as the binary's own does, so the system that
+	// runs only files named like programs runs this one too.
+	base := filepath.Base(execPath)
+	f, err := os.CreateTemp(dir, base+incomingMarker+"*"+filepath.Ext(base))
 	if err != nil {
 		return fmt.Errorf("selfupdate: cannot write to %s: %w", dir, err)
 	}
@@ -64,6 +69,10 @@ func install(execPath string, binary []byte) error {
 		os.Remove(staged)
 		return fmt.Errorf("selfupdate: staging the new binary: %w", err)
 	}
+	if err := smoke(ctx, staged, version); err != nil {
+		os.Remove(staged)
+		return err
+	}
 	if err := replaceExecutable(staged, execPath); err != nil {
 		os.Remove(staged)
 		return err
@@ -71,18 +80,32 @@ func install(execPath string, binary []byte) error {
 	return nil
 }
 
-// SweepResidue removes what an earlier upgrade left beside execPath:
-// a staged binary that never landed, and — on Windows, where the
-// running executable can only be renamed aside rather than overwritten
-// — the previous binary under its stepped-aside name, which could not
-// be deleted while it was still the running process. Anything still
-// held open is left for the next sweep. This is housekeeping, not a
-// diagnosis: it reports nothing and fails at nothing.
+// SweepResidue removes what an earlier upgrade left beside in's
+// binary: a staged binary that never landed, and — on Windows, where
+// the running executable can only be renamed aside rather than
+// overwritten — the previous binary under its stepped-aside name, which
+// could not be deleted while it was still the running process. Anything
+// still held open is left for the next sweep. This is housekeeping, not
+// a diagnosis: it reports nothing and fails at nothing.
 //
-// Upgrade sweeps before it does anything else. It is a second entry
-// point because doctor tidies the same residue on a run that installs
-// nothing — the user never had to know an upgrade was interrupted.
-func SweepResidue(execPath string) {
+// It runs only under the upgrade lock, and does not wait for it: what
+// sits beside the binary while another upgrade holds the lock is that
+// upgrade's work in progress, and this sweep leaves it to that upgrade
+// and to the next sweep. Upgrade sweeps under the lock it already holds,
+// before it does anything else; this is the entry point for doctor,
+// which tidies the same residue on a run that installs nothing — the
+// user never had to know an upgrade was interrupted.
+func SweepResidue(in Installation) {
+	unlock, err := takeLock(in.Lock, 0)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	sweepResidue(in.ExecPath)
+}
+
+// sweepResidue is SweepResidue for a caller already holding the lock.
+func sweepResidue(execPath string) {
 	dir := filepath.Dir(execPath)
 	entries, err := os.ReadDir(dir)
 	if err != nil {

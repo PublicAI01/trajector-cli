@@ -3,15 +3,22 @@
 // manager owns the binary, whether this build has a place in the
 // release order at all, which release is the newest published one, and
 // — when there is one to move to — fetching it, checking it against
-// its published checksum, and swapping it in. It decides nothing the
-// user reads: the Outcome carries the facts and the caller writes every
-// sentence. A binary it has not verified is never installed, and every
-// exit that installs nothing leaves the previous binary in place and
-// runnable.
+// its published checksum, running it once, and swapping it in. It
+// decides nothing the user reads: the Outcome carries the facts and the
+// caller writes every sentence. A binary it has not verified, or one
+// that does not start here, is never installed, and every exit that
+// installs nothing leaves the previous binary in place and runnable.
+//
+// One upgrade at a time runs on a machine, under a lock in the user's
+// state directory, and only the holder of that lock writes the upgrade
+// state file (State, LoadState).
 package selfupdate
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/semver"
 )
@@ -55,30 +62,92 @@ type Outcome struct {
 	To string
 }
 
-// Upgrade moves the installation at execPath, announcing version, to
-// the newest release published at indexURL.
+// Installation is one machine's trajector as an upgrade sees it: the
+// binary to replace, the version that binary announces, and where the
+// machine keeps the bookkeeping that lets one upgrade run at a time.
+type Installation struct {
+	// ExecPath is the binary an upgrade replaces, normally the running
+	// program's own path.
+	ExecPath string
+	// Version is what the binary at ExecPath announces.
+	Version string
+	// State is the upgrade state file (userdirs Layout.UpgradeState).
+	State string
+	// Lock is the path whose lock one upgrade at a time holds (userdirs
+	// Layout.UpgradeLock). It must not be State: the state file is
+	// rewritten under a lock of its own while this one is held.
+	Lock string
+}
+
+// ErrBusy reports that another upgrade on this machine held the upgrade
+// lock for the whole wait. Nothing was fetched, recorded or changed.
+var ErrBusy = errors.New("selfupdate: another upgrade is running on this machine")
+
+// UnusableError reports a release that was fetched and verified but
+// does not start on this machine. It was not installed, the binary at
+// ExecPath is byte for byte what it was, and the release is recorded in
+// the state file's unusable versions.
+type UnusableError struct {
+	// Version is the release that does not start.
+	Version string
+	// Reason is one line saying what running it did instead.
+	Reason string
+}
+
+func (e *UnusableError) Error() string {
+	return fmt.Sprintf("selfupdate: trajector %s does not start on this machine (%s); nothing was installed", e.Version, e.Reason)
+}
+
+// Upgrade moves in to the newest release published at indexURL. It
+// waits up to wait for another upgrade on this machine to finish, and
+// returns ErrBusy when that one still holds the lock: a manual upgrade
+// waits a moment, a background one not at all.
 //
 // Which release that is comes from the release index alone: nothing
 // else — no service, no argument — names what a machine upgrades to.
-// The archive is checked against the release's published checksum
-// before anything is replaced, so a run that returns an error has left
-// the machine exactly as it found it, minus whatever residue an
-// interrupted earlier upgrade had left beside the binary.
-func Upgrade(ctx context.Context, execPath, version, indexURL string) (Outcome, error) {
+// The archive is checked against the release's published checksum, and
+// the binary inside it has to answer `version` with the release's own
+// version, before anything is replaced; so a run that returns an error
+// has left the machine exactly as it found it, minus whatever residue
+// an interrupted earlier upgrade had left beside the binary.
+//
+// Every run that takes the lock records how it ended in the state file
+// before letting go of it.
+func Upgrade(ctx context.Context, in Installation, indexURL string, wait time.Duration) (Outcome, error) {
+	unlock, err := takeLock(in.Lock, wait)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer unlock()
+
+	out, err := upgrade(ctx, in, indexURL)
+	// The record is a note for status and for the background checker,
+	// not part of the installation: the binary on disk is what is
+	// installed whatever the note says, and the next run that takes the
+	// lock writes it afresh. The lock file was just created in the same
+	// directory, so a record that cannot be written is a disk failing
+	// mid-run, and reporting that over the run's own result would tell
+	// the user an installed upgrade failed.
+	_ = record(in, out, err)
+	return out, err
+}
+
+// upgrade is one run under the upgrade lock.
+func upgrade(ctx context.Context, in Installation, indexURL string) (Outcome, error) {
 	// Housekeeping comes first, whether or not this run installs
 	// anything: on Windows the binary an earlier upgrade stepped aside
 	// could not be deleted while it was still the running image.
-	SweepResidue(execPath)
+	sweepResidue(in.ExecPath)
 
-	if manager := packageManager(execPath); manager != "" {
-		return Outcome{Kind: Managed, Manager: manager, From: version}, nil
+	if manager := packageManager(in.ExecPath); manager != "" {
+		return Outcome{Kind: Managed, Manager: manager, From: in.Version}, nil
 	}
-	if !semver.Comparable(version) {
-		return Outcome{Kind: NotARelease, From: version}, nil
+	if !semver.Comparable(in.Version) {
+		return Outcome{Kind: NotARelease, From: in.Version}, nil
 	}
 
 	goos, goarch := hostPlatform()
-	src := newSource(indexURL, version)
+	src := newSource(indexURL, in.Version)
 	rel, err := src.newest(ctx, goos, goarch)
 	if err != nil {
 		return Outcome{}, err
@@ -86,16 +155,16 @@ func Upgrade(ctx context.Context, execPath, version, indexURL string) (Outcome, 
 	// A release that is not strictly newer is not an upgrade: a
 	// withdrawn release, or a machine built from a tag ahead of the
 	// source, must not be moved backwards.
-	if order, ok := semver.Compare(rel.version, version); !ok || order <= 0 {
-		return Outcome{Kind: AlreadyNewest, From: version}, nil
+	if order, ok := semver.Compare(rel.version, in.Version); !ok || order <= 0 {
+		return Outcome{Kind: AlreadyNewest, From: in.Version}, nil
 	}
 
 	binary, err := src.download(ctx, rel, goos)
 	if err != nil {
 		return Outcome{}, err
 	}
-	if err := install(execPath, binary); err != nil {
+	if err := install(ctx, in.ExecPath, rel.version, binary); err != nil {
 		return Outcome{}, err
 	}
-	return Outcome{Kind: Upgraded, From: version, To: rel.version}, nil
+	return Outcome{Kind: Upgraded, From: in.Version, To: rel.version}, nil
 }

@@ -5,17 +5,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
 // newUpgradeEnv is a device on a published release, with an installed
 // binary the machine may actually replace and a release source it
-// upgrades from. The binary is a stand-in file rather than a build of
-// trajector: what upgrade must get right is that the bytes on disk
-// become the release's bytes, which a real binary would only make
-// slower to assert.
+// upgrades from. The installed binary is a stand-in file: nothing runs
+// it. A release that is to be installed has to be a real build
+// (fakereleases.BuildRelease), because the upgrade runs it once before
+// putting it in place.
 func newUpgradeEnv(t *testing.T) (*env, *fakereleases.Server) {
 	t.Helper()
 	e := newEnv(t)
@@ -47,6 +49,15 @@ func (e *env) installedBinary() string {
 	return string(data)
 }
 
+// publishNewer publishes 0.2.0 as a real build, the only kind of
+// release an upgrade installs, and returns its bytes.
+func publishNewer(t *testing.T, releases *fakereleases.Server) string {
+	t.Helper()
+	binary := fakereleases.BuildRelease(t, "0.2.0")
+	releases.Publish(t, "0.2.0", binary)
+	return string(binary)
+}
+
 // unreachableSource points this device at a release source that answers
 // nothing, so a command that reports success has provably not consulted
 // one.
@@ -56,14 +67,14 @@ func (e *env) unreachableSource() {
 
 func TestUpgradeReplacesThisBinaryWithTheNewestRelease(t *testing.T) {
 	e, releases := newUpgradeEnv(t)
-	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
+	release := publishNewer(t, releases)
 
 	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
 
-	if got := e.installedBinary(); got != "the 0.2.0 binary" {
-		t.Errorf("installed binary is %q", got)
+	if e.installedBinary() != release {
+		t.Error("the installed binary is not the 0.2.0 release")
 	}
 	out := e.stdout.String()
 	if !strings.Contains(out, "Upgraded trajector 0.1.0 -> 0.2.0.") {
@@ -170,7 +181,7 @@ func TestUpgradeOfABuildThatIsNotAPublishedRelease(t *testing.T) {
 
 func TestUpgradeUnderARedactionDriftPauseNamesTheSecondStep(t *testing.T) {
 	e, releases := newUpgradeEnv(t)
-	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
+	publishNewer(t, releases)
 	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
 
 	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
@@ -193,7 +204,7 @@ func TestUpgradeUnderARedactionDriftPauseNamesTheSecondStep(t *testing.T) {
 
 func TestUpgradeWithRecordingNotPausedNamesNoFurtherStep(t *testing.T) {
 	e, releases := newUpgradeEnv(t)
-	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
+	publishNewer(t, releases)
 
 	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
 		t.Fatalf("Upgrade: %v", err)
@@ -236,7 +247,7 @@ func commandTheUpgradeHintNames(t *testing.T, out string) string {
 
 func TestUpgradeAndStatusNameOneRemedyForARedactionDriftPause(t *testing.T) {
 	e, releases := newUpgradeEnv(t)
-	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
+	publishNewer(t, releases)
 	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
 
 	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
@@ -250,5 +261,49 @@ func TestUpgradeAndStatusNameOneRemedyForARedactionDriftPause(t *testing.T) {
 	// a sentence, not to a line of its own.
 	if out := e.statusOutput(); !strings.Contains(out, "fix:  ") || !strings.Contains(out, step) {
 		t.Errorf("upgrade sends the user to %q; status explains the pause as %q", step, out)
+	}
+}
+
+func TestUpgradeToAReleaseThatDoesNotStartHereKeepsThisOne(t *testing.T) {
+	e, releases := newUpgradeEnv(t)
+	releases.Publish(t, "0.2.0", []byte("these bytes are not a program"))
+
+	err := e.machine().Upgrade(t.Context(), e.io())
+	if err == nil || !strings.Contains(err.Error(), "version 0.2.0 was not installed: it cannot be run") {
+		t.Fatalf("Upgrade = %v, want the release named with what running it did", err)
+	}
+	if got := e.installedBinary(); got != "the 0.1.0 binary" {
+		t.Errorf("installed binary is %q", got)
+	}
+	if out := e.stdout.String(); !strings.Contains(out, "trajector 0.2.0 does not start on this machine, so 0.1.0 was kept.\n") {
+		t.Errorf("upgrade did not say which version was kept:\n%s", out)
+	}
+}
+
+func TestUpgradeWhileAnotherUpgradeRunsSaysSo(t *testing.T) {
+	e, releases := newUpgradeEnv(t)
+	publishNewer(t, releases)
+	lock := e.layout().UpgradeLock()
+	if err := os.MkdirAll(filepath.Dir(lock), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := fsatomic.Lock(lock, time.Hour, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	start := time.Now()
+	err = e.machine().Upgrade(t.Context(), e.io())
+	if err == nil || err.Error() != "another upgrade is running on this machine; try again in a minute" {
+		t.Fatalf("Upgrade = %v, want the other upgrade named", err)
+	}
+	// A manual upgrade gives the other one a moment rather than none,
+	// and not the minutes a download can take.
+	if waited := time.Since(start); waited < 2*time.Second || waited > 10*time.Second {
+		t.Errorf("upgrade waited %s for the other one, want about 2s", waited)
+	}
+	if got := e.installedBinary(); got != "the 0.1.0 binary" {
+		t.Errorf("installed binary is %q", got)
 	}
 }

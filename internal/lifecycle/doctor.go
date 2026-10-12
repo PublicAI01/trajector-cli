@@ -29,8 +29,10 @@ func (m *Machine) Doctor(ctx context.Context, dir string, streams IO) (problems 
 	// An upgrade that could not delete the binary it replaced — on
 	// Windows the previous one is still the running image — leaves a
 	// file beside this one. It is housekeeping, not a diagnosis: the
-	// user never had to know, so it is swept without a finding.
-	selfupdate.SweepResidue(m.deps.ExecPath)
+	// user never had to know, so it is swept without a finding. While an
+	// upgrade is running the files beside the binary are its own, and
+	// the sweep leaves them to it.
+	selfupdate.SweepResidue(m.installation())
 
 	// A pause that waits for a build other than the one that set it is
 	// lifted here: doctor is the command the user is told to run once
