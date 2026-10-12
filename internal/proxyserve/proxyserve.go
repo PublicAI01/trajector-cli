@@ -80,6 +80,14 @@ type Assembly struct {
 	ExecPath string
 	// Addr is the loopback address the proxy listens on.
 	Addr string
+	// Listener, when set, is a socket already bound to Addr for the
+	// proxy to serve on, and Serve closes it whatever happens; Serve
+	// refuses a socket bound to any other address. It is for
+	// a proxy started on a port the system picks — a new build checking
+	// that it can serve, which has to know the port before it probes
+	// it — and is nil for the proxy every session reaches, which binds
+	// Addr itself so that losing the bind can be judged.
+	Listener net.Listener
 	// Home is the user's home directory, which reading holds a field
 	// naming a path against.
 	Home string
@@ -110,13 +118,25 @@ func Supervise(ctx context.Context, a Assembly, idle time.Duration, stdout, stde
 // failure — never a fallback to another port, which would strand every
 // injected base URL.
 func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr io.Writer) error {
+	if a.Listener != nil {
+		// Serving closes it too; a second close only reports that it
+		// is closed already.
+		defer a.Listener.Close()
+	}
 	// The bind is the invariant: enabled projects route API credentials
 	// at this address, so it must name this machine and nothing else.
 	// Checked here as well as where the address was resolved, because
 	// this is the line that actually makes the proxy reachable — every
-	// other caller only passes the address along. 2026-08-15.
+	// other caller only passes the address along. 2026-08-15. A socket
+	// handed over was bound by someone else, so the address it is bound
+	// to must be the one checked.
 	if err := apiproxy.ValidateAddr(a.Addr); err != nil {
 		return err
+	}
+	if a.Listener != nil {
+		if bound := a.Listener.Addr().String(); bound != a.Addr {
+			return fmt.Errorf("serving on a socket bound to %s: the proxy address is %s", bound, a.Addr)
+		}
 	}
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(stderr, format+"\n", args...)
@@ -240,24 +260,11 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		return err
 	}
 
-	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", a.Addr)
-	if err != nil {
-		// Losing the bind says nothing about who won it: a sibling that
-		// won a moment ago may not have published its admin token yet, so
-		// this verdict gets the same settled grace Ensure acts on. And
-		// when nothing is listening at all, the port was never contested —
-		// the bind failed for its own reason (permissions, a broken
-		// network stack) and that error is the report, not an occupancy
-		// verdict. A stop signal inside the grace must not end the probes
-		// early: a cancelled probe reads as nothing listening.
-		switch v := a.proxy().Settled(context.WithoutCancel(ctx)); v.Holder {
-		case proxylife.HolderOurs:
-			fmt.Fprintf(stdout, "proxy already running at %s (version %s)\n", a.Addr, v.Health.Version)
-			return nil
-		case proxylife.HolderForeign:
-			return v.Reason
-		default:
-			return fmt.Errorf("binding %s: %w", a.Addr, err)
+	l := a.Listener
+	if l == nil {
+		var bindErr error
+		if l, bindErr = (&net.ListenConfig{}).Listen(ctx, "tcp", a.Addr); bindErr != nil {
+			return lostBind(ctx, a, bindErr, stdout)
 		}
 	}
 
@@ -275,6 +282,26 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 	err = server.Serve(ctx, l)
 	close(served)
 	return err
+}
+
+// lostBind answers a bind of a.Addr that failed. Losing the bind says
+// nothing about who won it: a sibling that won a moment ago may not
+// have published its admin token yet, so this verdict gets the same
+// settled grace Ensure acts on. And when nothing is listening at all,
+// the port was never contested — the bind failed for its own reason
+// (permissions, a broken network stack) and that error is the report,
+// not an occupancy verdict. A stop signal inside the grace must not end
+// the probes early: a cancelled probe reads as nothing listening.
+func lostBind(ctx context.Context, a Assembly, bindErr error, stdout io.Writer) error {
+	switch v := a.proxy().Settled(context.WithoutCancel(ctx)); v.Holder {
+	case proxylife.HolderOurs:
+		fmt.Fprintf(stdout, "proxy already running at %s (version %s)\n", a.Addr, v.Health.Version)
+		return nil
+	case proxylife.HolderForeign:
+		return v.Reason
+	default:
+		return fmt.Errorf("binding %s: %w", a.Addr, bindErr)
+	}
 }
 
 // flushNudge is how a reader that may not upload asks the flush

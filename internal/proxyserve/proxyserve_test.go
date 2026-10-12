@@ -361,3 +361,25 @@ func TestSuperviseReturnsWhenTheContextIsAlreadyDone(t *testing.T) {
 		t.Fatal("Supervise did not return on a dead context")
 	}
 }
+
+func TestServeRefusesASocketBoundToAnotherAddress(t *testing.T) {
+	e := newEnv(t)
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.assembly.Listener = l
+
+	served := make(chan error, 1)
+	go func() {
+		served <- proxyserve.Serve(t.Context(), e.assembly, time.Hour, io.Discard, io.Discard)
+	}()
+	select {
+	case err := <-served:
+		if err == nil || !strings.Contains(err.Error(), l.Addr().String()) {
+			t.Errorf("Serve = %v, want a refusal that names the address the socket is bound to", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Serve served on a socket bound to %s while its address is %s", l.Addr(), e.assembly.Addr)
+	}
+}
