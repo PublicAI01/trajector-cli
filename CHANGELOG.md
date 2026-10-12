@@ -6,6 +6,49 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- trajector now keeps itself up to date: the session hooks ask GitHub for
+  a newer release at most once a day, or once an hour while the trajector
+  service says this version is too old, and install it in the background
+  only if its checksum matches; PRIVACY.md says what the request carries
+  under "What leaves your machine". This starts only after you run
+  `trajector enable` to accept the current data agreement, which
+  describes the check (see Changed).
+- An installation Homebrew owns is never replaced: you are told once
+  per release which command upgrades it.
+- Setting `"auto_upgrade": false` in `config.json` turns the automatic
+  check off, so nothing goes to GitHub unless you run `trajector upgrade`.
+- After trajector upgrades itself, your next trajector command says so,
+  and the session hooks of every enabled project are completed with any
+  hook the new release adds.
+- `status` and `doctor` show when the last automatic check ran and what
+  it found, or why automatic upgrades are off.
+- `trajector doctor --all` checks this device and then every enabled
+  project in one run.
+
+### Changed
+
+- The data agreement has a new section 6, Updates, which describes the
+  automatic check, and section 2 now says that the branch name is masked;
+  recording pauses until you run `trajector enable` once to accept it
+  (with --no-proxy if you use it).
+- `trajector upgrade` now ends by saying that trajector also checks on
+  its own and how to stop that, when it does: the binary in place is a
+  published release, `auto_upgrade` is not false, and the data agreement
+  you accepted describes the check.
+- `trajector upgrade` now runs the new release once, and then has it
+  start a proxy of its own, before it keeps it. If either fails, the
+  previous binary is put back in place, the command says that the new
+  version was not installed and why, and it exits with status 1. If the
+  previous binary cannot be put back, the error says where it is.
+- When another upgrade is running on this device, `trajector upgrade`
+  waits two seconds, then says so and exits with status 1.
+- When an upgrade was interrupted before the new build accepted it,
+  `trajector doctor` and the next upgrade put the previous binary back
+  in place. A `trajector upgrade` that does this stops there, says which
+  version it put back, and exits with status 1; run it again.
+
 ### Fixed
 
 - When `status`, `doctor`, `enable` or the session hooks tell you to run
@@ -32,6 +75,13 @@ All notable changes to trajector are documented here. The format follows
   nothing said so.
 - A reply still streaming when a newer build takes over now finishes on
   the old proxy, up to 10 minutes.
+- When a newer build has taken over the proxy and then cannot start its
+  own, the session hooks, `status` and `doctor` now say that this
+  version cannot start its proxy and that trajector does not work until
+  it is reinstalled. The session hooks say it as their first line.
+- A proxy that is still exiting after `trajector uninstall
+  --delete-data` stopped it no longer creates the data directories that
+  uninstall deleted.
 
 ## [0.3.7] - 2026-10-12
 
