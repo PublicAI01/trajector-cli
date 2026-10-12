@@ -1470,6 +1470,52 @@ func TestRawLine_JSONEscapeSequences(t *testing.T) {
 	})
 }
 
+// toolUseID has the shape of a Claude Code tool-use id: "toolu_01" and
+// 22 base62 characters. Its entropy is above the layer's threshold, which
+// TestEntropyLayer_ToolUseIDExemptionIsExact confirms through the
+// "toolu_02" spelling being masked.
+const toolUseID = "toolu_01Xk9mQ2vL8nR5tW1yB4cF7d"
+
+func TestEntropyLayer_KeepsToolUseIDInFreeText(t *testing.T) {
+	t.Parallel()
+	notice := "<task-notification>\n<tool-use-id>" + toolUseID + "</tool-use-id>\n<status>completed</status>\n</task-notification>"
+	if got := redactedField(t, notice); got != notice {
+		t.Errorf("as a string value: got %q, want it unchanged", got)
+	}
+	// Not JSON, so the line is scanned as raw text; the `\n` before the
+	// id is an escape the entropy match starts inside of.
+	raw := `notification:\n` + toolUseID + ` done`
+	if got := redactedString(t, raw); got != raw {
+		t.Errorf("as a raw line: got %q, want it unchanged", got)
+	}
+}
+
+func TestEntropyLayer_ToolUseIDExemptionIsExact(t *testing.T) {
+	t.Parallel()
+	const tail = "Zp3Hq8Ws2Kd6Nj0Vb7Gm"
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"one character more", toolUseID + "Q"},
+		{"secret appended", toolUseID + tail},
+		{"secret appended after a dash", toolUseID + "-" + tail},
+		{"secret appended after an underscore", toolUseID + "_" + tail},
+		{"secret prepended", tail + toolUseID},
+		{"other version prefix", strings.Replace(toolUseID, "toolu_01", "toolu_02", 1)},
+		{"dash in the body", strings.Replace(toolUseID, "Q2v", "Q-v", 1)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := redactedField(t, "value: "+tt.input+" end")
+			if strings.Contains(got, tt.input) || !strings.Contains(got, "REDACTED") {
+				t.Errorf("got %q, want %q masked", got, tt.input)
+			}
+		})
+	}
+}
+
 func TestRealSecretsStillCaught(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

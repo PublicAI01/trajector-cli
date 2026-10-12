@@ -13,6 +13,12 @@ All notable changes to trajector are documented here. The format follows
   `.gitignore`, for example because of its permissions. It now reports
   "rollback incomplete" with the reason, because the line it added can
   still be in the file.
+- A Claude Code tool-use id (`toolu_01` and 22 letters or digits) in
+  message text, such as the one a task notification carries, is kept
+  as it is. It was masked as a random-looking secret before, which
+  cut the link between the notification and the tool call it reports
+  on. A longer string that only starts with such an id is still
+  masked.
 
 ### Security
 
