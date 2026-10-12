@@ -107,6 +107,61 @@ rewrite of the file does not change that. Reading resumes after the
 session comes back. Enabling the project again does not read the file
 from its start, so its lines are never stored and sent a second time.
 
+## Upgrading itself
+
+`selfupdate` is the one module that moves an installation to a newer
+published release, and the release index is the only thing that names
+which. `trajector upgrade` runs it when the user asks; the background
+check runs it on its own.
+
+- **Background check.** `trajector hook ensure-proxy` starts it after
+  the proxy is settled, and only when four gates pass: the user config
+  leaves `auto_upgrade` on (a file that cannot be read turns it off),
+  the release pipeline built this binary (a build from source never
+  checks), the agreement the device accepted tells the user about the
+  check, and one is due — 24 hours since the last, or one hour while
+  the service refuses this version as too old. A gate that fails
+  starts nothing. Due-ness compares the clock with the time the last
+  check recorded; nothing waits in a process. The hook starts
+  `trajector hook upgrade-check`, which starts `trajector hook
+  upgrade-check --detached` and exits at once: a hook's timeout stops
+  the hook's own children, and a grandchild whose parent is gone
+  outlives it. Neither process holds the hook's streams.
+- **One at a time.** An upgrade lock in the state directory covers
+  every run, manual or background; a background check that finds it
+  held exits, a manual upgrade waits two seconds and says so. Under the
+  lock the check judges again whether it is due, then comes to one of
+  four results: newest; managed (a package manager owns the binary,
+  which is never replaced; the user is told once per release to run
+  the manager's command); upgraded; or failed (silent, recorded,
+  retried in the next window). A release found not to start on this
+  machine is not tried in the background until a newer one is
+  published; `trajector upgrade` tries it again.
+- **The install transaction.** Fetch the archive and the checksum file,
+  verify, stage the binary beside the installed one, and run it once
+  as `version` — it must name the release. Then swap it in, keeping
+  the previous binary beside it, and have the new build accept the
+  install by serving a proxy in a directory and on a port of its own
+  (`trajector hook upgrade-verify`). If it does not, the previous
+  binary goes back and the release is recorded as unusable here. If it
+  does, the install is committed and the new build runs `trajector
+  hook upgrade-finish`, which leaves the user's next command its lines
+  and never takes over the proxy: the next session's `ensure-proxy`
+  does that, as for any older proxy. An interrupted transaction is
+  undone by the next run that takes the lock. The build being
+  installed is the one that accepts it, so these three
+  `hook upgrade-*` command lines are a contract between builds and
+  never change.
+- **The state file** (`upgrade.json` in the state directory), written
+  only under the lock: when the background check last ran and its
+  result, the error of the last failure on one line with no URL query,
+  the version installed, the releases that do not start here and why,
+  the release a managed installation was last told about, and a
+  committed version whose finish has not succeeded — the new build runs
+  it again on its next check, and after a second failure in a row stops
+  and points the user at `trajector doctor --all`. `status` and
+  `doctor` render it as one line about automatic upgrades.
+
 ## Capture
 
 Only `POST /v1/messages` with a 2xx response is eligible. SSE responses are
@@ -189,7 +244,11 @@ single pass; they differ only in what they do with it.
 
 - `trajector status` is the read-only dashboard: pairing, project consent,
   proxy health, capture counters, spool watermark, uploads, quarantine, and
-  service notices.
+  service notices. A service notice is the service's own standing words,
+  shown on stdout until the service withdraws it. It is not the
+  one-time line a build leaves for the user's next command (package
+  `notice`: an upgrade done in the background, a release that does not
+  start here), which every user command prints on stderr and clears.
 - `trajector doctor` diagnoses and repairs what is safely trajector's own:
   injected settings, session hooks, the discovery hint, a moved upstream.
   Consent disagreements and foreign port holders are reported with the
