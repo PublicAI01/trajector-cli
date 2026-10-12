@@ -68,7 +68,7 @@ const (
 	// on, what left the field empty is not readable on this machine,
 	// and the fact stands with no next step beside it.
 	emptyReasoningWayOut = claudesettings.KeyShowThinkingSummaries +
-		" is off for this project; run `trajector enable` to turn it on."
+		" is off for this project; run `trajector enable` " + routing.NoProxyCaveat + " to turn it on."
 
 	// earlierSessionsFix is what doctor says under its count of the
 	// session files a project had before it was enabled: the one way

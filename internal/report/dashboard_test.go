@@ -286,7 +286,7 @@ func TestStatusEndsTheProjectSectionWithTheOptionalSetting(t *testing.T) {
 	const key = claudesettings.KeyShowThinkingSummaries
 	recommendation := "One optional setting is off: " + key + ". " +
 		"Turning it on costs you nothing and makes your records more complete. " +
-		"Run `trajector enable` to see what it changes."
+		"Run `trajector enable` (with --no-proxy if you use it) to see what it changes."
 	for _, tc := range []struct {
 		name    string
 		setting report.OptionalSettingStatus
@@ -308,7 +308,7 @@ func TestStatusEndsTheProjectSectionWithTheOptionalSetting(t *testing.T) {
 		{
 			name:    "declined",
 			setting: report.OptionalSettingStatus{Key: key, State: claudesettings.Unset, Declined: true},
-			want:    "Optional settings: 1 declined. Run `trajector enable` to review.",
+			want:    "Optional settings: 1 declined. Run `trajector enable` (with --no-proxy if you use it) to review.",
 			reject:  []string{"costs you nothing", "set by trajector"},
 		},
 		{

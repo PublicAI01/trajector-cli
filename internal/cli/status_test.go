@@ -177,7 +177,7 @@ func TestAnUnreadableRoutingTableIsNamedAndLeftAlone(t *testing.T) {
 			tt.spoil(e.Sandbox())
 			table := e.Sandbox().RoutingTablePath()
 			spoiled := tableState(t, table)
-			named := []string{table, tt.cause, "Move that file aside", "`trajector enable` in each project you enabled"}
+			named := []string{table, tt.cause, "Move that file aside", "`trajector enable` (with --no-proxy if you use it) in each project you enabled"}
 
 			status := e.InProject("status")
 			if status.Exit != 1 {

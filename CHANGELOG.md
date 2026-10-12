@@ -4,6 +4,22 @@ All notable changes to trajector are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- When `status`, `doctor`, `enable` or the session hooks tell you to run
+  `trajector enable` again in a project that is already enabled, they
+  now add "(with --no-proxy if you use it)". This includes the command
+  that ends a recording pause after the data agreement changed or the
+  consent record could not be read, the optional-settings lines of
+  `status`, the last step every command gives when the routing table
+  cannot be read, and the fixes `doctor` gives when a project's
+  settings or its consent record and the
+  routing table disagree. `trajector enable` without the flag sets up
+  the proxy, so before this a project enabled with `--no-proxy` that
+  followed such a line was changed to record through the proxy.
+
 ## [0.3.7] - 2026-10-12
 
 ### Fixed
@@ -861,6 +877,7 @@ Hardened ahead of the tag:
 - State files are replaced and read atomically on every platform,
   Windows rename collisions included.
 
+[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.7...HEAD
 [0.3.7]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.4...v0.3.5

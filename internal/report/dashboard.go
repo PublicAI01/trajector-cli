@@ -454,12 +454,12 @@ func optionalSettingLines(settings []OptionalSettingStatus) []string {
 		}
 	}
 	if declined > 0 {
-		lines = append(lines, fmt.Sprintf("Optional settings: %d declined. Run `trajector enable` to review.", declined))
+		lines = append(lines, fmt.Sprintf("Optional settings: %d declined. Run `trajector enable` %s to review.", declined, routing.NoProxyCaveat))
 	}
 	for _, key := range off {
 		lines = append(lines, fmt.Sprintf("One optional setting is off: %s. "+
 			"Turning it on costs you nothing and makes your records more complete. "+
-			"Run `trajector enable` to see what it changes.", key))
+			"Run `trajector enable` %s to see what it changes.", key, routing.NoProxyCaveat))
 	}
 	return lines
 }

@@ -396,6 +396,34 @@ func TestNoSurfaceSendsAnEnabledProjectToEnableWithoutNamingTheShapeFlag(t *test
 				return out
 			},
 		},
+		{
+			name:    "status under a routing table it cannot read",
+			surface: "status",
+			render: func() string {
+				d := enabledDevice()
+				d.Project.TableUnreadable = unreadableTable(errors.New("unexpected end of JSON input"))
+				return dashboard(d)
+			},
+		},
+		{
+			name:    "doctor under a routing table it cannot read",
+			surface: "doctor",
+			render: func() string {
+				d := enabledDevice()
+				d.Project.TableUnreadable = unreadableTable(errors.New("unexpected end of JSON input"))
+				_, out := doctorText(d)
+				return out
+			},
+		},
+		{
+			name:    "a command refused because the routing table cannot be read",
+			surface: "the refusal",
+			render: func() string {
+				var out bytes.Buffer
+				report.TableUnreadable(&out, report.Style{}, unreadableTable(errors.New("unexpected end of JSON input")))
+				return out.String()
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lines := strings.Split(tc.render(), "\n")
@@ -651,7 +679,7 @@ func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
 
 func TestStatusPairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.T) {
 	const key = claudesettings.KeyShowThinkingSummaries
-	const wayOut = key + " is off for this project; run `trajector enable` to turn it on."
+	const wayOut = key + " is off for this project; run `trajector enable` (with --no-proxy if you use it) to turn it on."
 	for _, tc := range []struct {
 		name     string
 		settings []report.OptionalSettingStatus
@@ -703,7 +731,7 @@ func TestStatusStatesNoEmptyReasoningCountWhereNoLineCarriesOne(t *testing.T) {
 	}
 	d.SessionFiles.Signals = drift.Signals{AssistantLines: 9}
 
-	rejects(t, "status", dashboard(d), "carry no reasoning", "run `trajector enable` to turn it on")
+	rejects(t, "status", dashboard(d), "carry no reasoning", "to turn it on")
 }
 
 func TestTheBundleCarriesWhatReadingNoticedWithoutValues(t *testing.T) {

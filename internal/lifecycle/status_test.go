@@ -72,7 +72,7 @@ func TestStatusCarriesTheOptionalSettingAnswerEnableRecorded(t *testing.T) {
 		{
 			name:   "declined once",
 			stdin:  "yes\nn\n",
-			want:   "Optional settings: 1 declined. Run `trajector enable` to review.",
+			want:   "Optional settings: 1 declined. Run `trajector enable` (with --no-proxy if you use it) to review.",
 			reject: "costs you nothing",
 		},
 		{
@@ -91,7 +91,7 @@ func TestStatusCarriesTheOptionalSettingAnswerEnableRecorded(t *testing.T) {
 			name:  "left off with no answer recorded",
 			stdin: "yes\n",
 			want: "One optional setting is off: " + optionalKey + ". Turning it on costs " +
-				"you nothing and makes your records more complete. Run `trajector enable` " +
+				"you nothing and makes your records more complete. Run `trajector enable` (with --no-proxy if you use it) " +
 				"to see what it changes.",
 		},
 	} {
