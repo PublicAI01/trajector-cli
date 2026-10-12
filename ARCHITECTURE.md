@@ -26,10 +26,11 @@ valid token — disabled projects, revoked tokens, bare paths — is forwarded
 untouched and never recorded. Privacy does not depend on a filter being
 correct; unauthorized capture has no code path.
 
-Reading a project's session files asks the routing table the same question
-before it stores anything, so both recording paths pass one gate: a
-device-wide pause — a withdrawn agreement, a line shape this build cannot
-mask — stops the reader as well as the proxy. Forwarding is never gated.
+Reading a project's session files and observing its git repository ask the
+routing table the same question before they store anything, so every
+recording path passes one gate: a device-wide pause — a withdrawn
+agreement, a line shape this build cannot mask — stops both readers as well
+as the proxy. Forwarding is never gated.
 
 Enable is transactional: settings injection, routing grant, consent record,
 and a `.gitignore` check either all land, verified by an end-to-end
