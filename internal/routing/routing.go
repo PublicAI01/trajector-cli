@@ -7,6 +7,7 @@ package routing
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +108,13 @@ const (
 	driftSecondStep = DoctorCommand
 )
 
+// NoProxyCaveat is the one spelling of the clause a sentence carries
+// when it sends an already enabled project back to `trajector enable`.
+// A bare run declares the shape with a proxy, so a project in the shape
+// without one is converted by following such a sentence unless the
+// sentence tells the user to name the flag again.
+const NoProxyCaveat = "(with --no-proxy if you use it)"
+
 // AllPauseReasons returns every pause value this build knows, in the
 // order a surface that answers for all of them should read. It is what
 // makes "the legal values" countable: a new reason is one constant, one
@@ -166,23 +174,38 @@ func (r PauseReason) Fix() []string {
 	}
 }
 
+// FixCaveat returns what the user must know about the commands Fix
+// names that a command line they copy whole cannot carry, and empty
+// when there is nothing. Every surface that names those commands
+// states it next to them.
+func (r PauseReason) FixCaveat() string {
+	if slices.Contains(r.Fix(), consentWayOut) {
+		return NoProxyCaveat
+	}
+	return ""
+}
+
 // Explain returns the pause as one user-readable sentence naming the
 // commands that lift it: what a surface with room for a single line
-// prints. It is Why and Fix joined, so the one-line form and the
-// three-line form cannot come to say different things.
-func (r PauseReason) Explain() string { return explain(r.Why(), r.Fix()) }
+// prints. It is Why, Fix and FixCaveat joined, so the one-line form and
+// the three-line form cannot come to say different things.
+func (r PauseReason) Explain() string { return explain(r.Why(), r.Fix(), r.FixCaveat()) }
 
 // ExplainAt is Explain for a surface that read the consent record
 // itself, in the sentence Explain uses.
 func (r PauseReason) ExplainAt(path string, err error) string {
-	return explain(r.WhyAt(path, err), r.Fix())
+	return explain(r.WhyAt(path, err), r.Fix(), r.FixCaveat())
 }
 
-func explain(why string, fix []string) string {
+func explain(why string, fix []string, caveat string) string {
 	if len(fix) == 0 {
 		return why
 	}
-	return why + "; run `" + strings.Join(fix, "`, then `") + "`"
+	sentence := why + "; run `" + strings.Join(fix, "`, then `") + "`"
+	if caveat != "" {
+		sentence += " " + caveat
+	}
+	return sentence
 }
 
 // ExplainAfterUpgrade returns what this pause still owes the user once

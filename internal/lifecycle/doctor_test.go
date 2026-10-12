@@ -11,6 +11,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 func (e *env) doctor() (int, string) {
@@ -90,6 +91,98 @@ func TestDoctorFlagsALiveProxyThatWillNotRecord(t *testing.T) {
 	if !strings.Contains(out, "live proxy will not record") {
 		t.Errorf("doctor = %q, want the live proxy's refusal reported", out)
 	}
+}
+
+const noProxyCaveat = "(with --no-proxy if you use it)"
+
+func TestDoctorFlagsALiveProxyThatRefusesTheRecordedUpstream(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.enable(proxytest.WithProxy)
+	grant, ok := e.sandbox.ActiveGrant(e.canonicalRoot())
+	if !ok {
+		t.Fatal("no grant after enable")
+	}
+	grant.Upstream = "not a url at all"
+	e.sandbox.GrantProject(grant)
+
+	e.stdout.Reset()
+	problems, out := e.doctor()
+	if problems == 0 {
+		t.Fatalf("problems = 0 while the live proxy refuses this project's upstream, output:\n%s", out)
+	}
+	for _, want := range []string{
+		"live proxy will not record",
+		"recorded base URL is not a usable http(s) URL",
+		"`trajector enable` " + noProxyCaveat + " in the project",
+		"`trajector disable`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor = %q, want %q", out, want)
+		}
+	}
+}
+
+func TestDoctorSendsAnIdentityDisagreementBackToEnableInItsOwnShape(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.enable(proxytest.WithoutProxy)
+	grant, ok := e.sandbox.ActiveGrant(e.canonicalRoot())
+	if !ok {
+		t.Fatal("no grant after enable")
+	}
+	grant.ProjectIDHash = "hash-of-somewhere-else"
+	e.sandbox.GrantProject(grant)
+
+	e.stdout.Reset()
+	_, out := e.doctor()
+	if want := "`trajector enable` " + noProxyCaveat + " to record both afresh"; !strings.Contains(out, want) {
+		t.Errorf("doctor = %q, want %q", out, want)
+	}
+}
+
+func TestDoctorSendsARevokedTokenBackToEnableInItsOwnShape(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.enable(proxytest.WithoutProxy)
+	grant, ok := e.sandbox.ActiveGrant(e.canonicalRoot())
+	if !ok {
+		t.Fatal("no grant after enable")
+	}
+	proxyTable := e.startProxyOnItsOwnTable()
+	proxyTable.GrantProject(grant)
+	proxyTable.RevokeProject(grant.RootPath, "")
+
+	e.stdout.Reset()
+	problems, out := e.doctor()
+	if problems == 0 {
+		t.Fatalf("problems = 0 while the live proxy holds this token revoked, output:\n%s", out)
+	}
+	if want := "token is revoked; run `trajector enable` again " + noProxyCaveat + " to re-grant it"; !strings.Contains(out, want) {
+		t.Errorf("doctor = %q, want %q", out, want)
+	}
+}
+
+// startProxyOnItsOwnTable replaces the running proxy with one that
+// shares this device's spool and proxy state but reads a routing table
+// of its own, so what it answers for a token can differ from what the
+// project's files say. It returns that table's sandbox.
+func (e *env) startProxyOnItsOwnTable() *proxytest.Sandbox {
+	e.t.Helper()
+	xdg := map[string]string{
+		"XDG_CONFIG_HOME": e.t.TempDir(),
+		"XDG_DATA_HOME":   filepath.Dir(filepath.Dir(e.layout().SpoolDir())),
+		"XDG_STATE_HOME":  filepath.Dir(filepath.Dir(e.layout().ProxyLog())),
+	}
+	layout, err := userdirs.Resolve(userdirs.Env{GOOS: runtime.GOOS, Getenv: func(key string) string { return xdg[key] }})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if layout.SpoolDir() != e.layout().SpoolDir() || layout.ProxyLog() != e.layout().ProxyLog() {
+		e.t.Fatalf("the proxy's layout does not share this device's spool and state: %s, %s", layout.SpoolDir(), layout.ProxyLog())
+	}
+	e.startProxy(proxytest.WithLayout(layout))
+	return proxytest.Open(e.t, layout)
 }
 
 func TestDoctorSurfacesAStoredTokenThatCannotBeRead(t *testing.T) {

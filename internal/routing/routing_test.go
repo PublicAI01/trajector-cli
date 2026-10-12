@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -282,6 +283,19 @@ func TestEveryPauseNamesAStopAndTheCommandsThatEndIt(t *testing.T) {
 			if !strings.Contains(explained, command) {
 				t.Errorf("%s: explained as %q, want it to name %q", reason, explained, command)
 			}
+		}
+	}
+}
+
+func TestAPauseLiftedByEnableNamesTheShapeFlagBesideTheCommand(t *testing.T) {
+	for _, reason := range routing.AllPauseReasons() {
+		liftedByEnable := slices.Contains(reason.Fix(), "trajector enable")
+		caveat := reason.FixCaveat()
+		if liftedByEnable != (caveat != "") || (caveat != "" && !strings.Contains(caveat, "--no-proxy")) {
+			t.Errorf("%s: fix %q, caveat %q, want --no-proxy named exactly when enable lifts the pause", reason, reason.Fix(), caveat)
+		}
+		if explained := reason.Explain(); caveat != "" && !strings.HasSuffix(explained, "`trajector enable` "+caveat) {
+			t.Errorf("%s: explained as %q, want the caveat directly after the command", reason, explained)
 		}
 	}
 }

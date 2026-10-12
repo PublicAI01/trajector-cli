@@ -70,14 +70,6 @@ const (
 	emptyReasoningWayOut = claudesettings.KeyShowThinkingSummaries +
 		" is off for this project; run `trajector enable` to turn it on."
 
-	// noProxyCaveat is the one spelling of the clause a sentence
-	// carries when it sends an already enabled project back to
-	// `trajector enable`. A bare run re-declares the shape with a
-	// proxy, so a project that records from its session files only is
-	// converted by following such a sentence unless the sentence tells
-	// it to name the flag again.
-	noProxyCaveat = "(with --no-proxy if you use it)"
-
 	// earlierSessionsFix is what doctor says under its count of the
 	// session files a project had before it was enabled: the one way
 	// those files are registered. status states the same way back in
@@ -85,14 +77,14 @@ const (
 	// surfaces count different projects — doctor counts files older
 	// than the grant, status the files a user asked enable to leave
 	// alone.
-	earlierSessionsFix = "Run `trajector enable` in this project " + noProxyCaveat + " to register them."
+	earlierSessionsFix = "Run `trajector enable` in this project " + routing.NoProxyCaveat + " to register them."
 
 	// earlierSessionsSkippedWayBack is what status says under a project
 	// enabled with its earlier session files left alone. It names the
 	// way back and says that the way back re-declares the whole
 	// install: enable writes the shape as well as this choice, so a
 	// run that omits the shape flag changes the shape too.
-	earlierSessionsSkippedWayBack = "Earlier sessions were skipped at enable; run `trajector enable` again " + noProxyCaveat + " to collect them."
+	earlierSessionsSkippedWayBack = "Earlier sessions were skipped at enable; run `trajector enable` again " + routing.NoProxyCaveat + " to collect them."
 
 	// spellingVariantsNotice is the standing disclosure of what the
 	// search for a project's session files cannot find by design.
@@ -213,17 +205,19 @@ func pauseWhyFixFor(st ProjectStatus) (why, fix string) {
 	return why, fix
 }
 
-// pauseNextSteps is what the fix line leaves out: every command after
-// the first, each on a line of its own and in the order they run. A
-// pause with a single command has none.
+// pauseNextSteps is what the fix line leaves out: the caveat on the
+// commands, directly under the fix line, then every command after the
+// first, each on a line of its own and in the order they run. A pause
+// with a single command and no caveat has none.
 func pauseNextSteps(r routing.PauseReason) []string {
-	steps := r.Fix()
-	if len(steps) < 2 {
-		return nil
+	var next []string
+	if caveat := r.FixCaveat(); caveat != "" {
+		next = append(next, caveat)
 	}
-	next := make([]string, 0, len(steps)-1)
-	for _, command := range steps[1:] {
-		next = append(next, "then run `"+command+"`")
+	if steps := r.Fix(); len(steps) > 1 {
+		for _, command := range steps[1:] {
+			next = append(next, "then run `"+command+"`")
+		}
 	}
 	return next
 }

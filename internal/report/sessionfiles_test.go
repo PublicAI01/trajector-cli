@@ -377,12 +377,38 @@ func TestNoSurfaceSendsAnEnabledProjectToEnableWithoutNamingTheShapeFlag(t *test
 				return dashboard(d)
 			},
 		},
+		{
+			name:    "status under a pause the agreement lifts",
+			surface: "status",
+			render: func() string {
+				d := enabledDevice()
+				d.Project.PauseReason = routing.PauseConsentReconfirm
+				return dashboard(d)
+			},
+		},
+		{
+			name:    "doctor under a consent record it cannot read",
+			surface: "doctor",
+			render: func() string {
+				d := enabledDevice()
+				d.Project.PauseReason = routing.PauseConsentUnreadable
+				_, out := doctorText(d)
+				return out
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for line := range strings.SplitSeq(tc.render(), "\n") {
-				if strings.Contains(line, "trajector enable") && !strings.Contains(line, "--no-proxy") {
-					t.Errorf("%s says %q, want the shape flag named so a project that records without a proxy is not converted by following it", tc.surface, strings.TrimSpace(line))
+			lines := strings.Split(tc.render(), "\n")
+			for i, line := range lines {
+				if !strings.Contains(line, "trajector enable") || strings.Contains(line, "--no-proxy") {
+					continue
 				}
+				// A fix line holds the command alone; its caveat is
+				// the line directly under it.
+				if i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == routing.NoProxyCaveat {
+					continue
+				}
+				t.Errorf("%s says %q, want the shape flag named so a project that records without a proxy is not converted by following it", tc.surface, strings.TrimSpace(line))
 			}
 		})
 	}

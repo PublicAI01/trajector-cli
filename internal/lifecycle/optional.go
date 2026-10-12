@@ -9,6 +9,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/report"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
 // offerOptionalSettings puts each optional Claude Code setting to the
@@ -238,7 +239,7 @@ func reportRestoredSettings(streams IO, indent string, undone []string, failures
 // conditions can be met when nobody is reading.
 func printNeedsInteractive(streams IO) {
 	fmt.Fprintln(streams.Out, "Optional settings were not changed: they need an interactive session.")
-	fmt.Fprintln(streams.Out, "Run `trajector enable` "+noProxyCaveat+" from a terminal to review them.")
+	fmt.Fprintln(streams.Out, "Run `trajector enable` "+routing.NoProxyCaveat+" from a terminal to review them.")
 }
 
 // Rendering re-wraps the finalized disclosure wording; it never rewrites

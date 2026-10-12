@@ -65,6 +65,9 @@ func TestPauseFixIsTheCommandTheReasonNames(t *testing.T) {
 			t.Fatalf("%s: why = %q, fix = %q, want both stated", reason, why, fix)
 		}
 		want := why + "; run `" + strings.Join(fix, "`, then `") + "`"
+		if caveat := reason.FixCaveat(); caveat != "" {
+			want += " " + caveat
+		}
 		if explained := reason.Explain(); explained != want {
 			t.Errorf("%s: explained as %q, want %q", reason, explained, want)
 		}
