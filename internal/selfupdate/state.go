@@ -22,7 +22,9 @@ import (
 type State struct {
 	// CheckedAt is when the background check last asked for the newest
 	// release, and Result what it came to. The background check writes
-	// both; a manual upgrade leaves them as they are.
+	// both. A manual upgrade writes neither, but drops a Result it made
+	// untrue: any, once it installed a release, and a failure, once it
+	// ended without one.
 	CheckedAt time.Time `json:"checked_at,omitzero"`
 	Result    Result    `json:"result,omitempty"`
 	// Installed is the version the last upgrade installed. It is written
@@ -42,6 +44,11 @@ type State struct {
 	// that failed, or a machine that stopped before it ran, leaves it
 	// here for that build to run again.
 	FinishPending string `json:"finish_pending,omitempty"`
+	// ToldManaged is the newest release the background check has
+	// reported for an installation a package manager owns. That
+	// release is not reported again: the user was told once how to
+	// install it.
+	ToldManaged string `json:"told_managed,omitempty"`
 }
 
 // Result is what the last background check came to.
@@ -88,32 +95,50 @@ func LoadState(path string) (State, error) {
 	return s, nil
 }
 
-// record writes how one run under the lock ended: the version it
-// installed, a release that did not start, and its error or none.
+// record writes how one manual run under the lock ended: the version
+// it installed, a release that did not start, and its error or none.
 // Entries at or below the version installed when the run ends are
-// dropped from Unusable.
+// dropped from Unusable, and so is a background result the run made
+// untrue (State.Result).
 func record(in Installation, out Outcome, runErr error) error {
+	installed := ""
+	if out.Kind == Upgraded {
+		installed = out.To
+	}
 	return updateState(in.State, func(s *State) {
-		current := in.Version
-		if out.Kind == Upgraded {
-			s.Installed = out.To
-			current = out.To
-		}
-		if unusable, ok := errors.AsType[*UnusableError](runErr); ok {
-			if s.Unusable == nil {
-				s.Unusable = map[string]string{}
-			}
-			s.Unusable[unusable.Version] = unusable.Reason
-		}
-		maps.DeleteFunc(s.Unusable, func(version, _ string) bool {
-			order, ok := semver.Compare(version, current)
-			return ok && order <= 0
-		})
-		s.Error = ""
-		if runErr != nil {
-			s.Error = errorLine(runErr)
+		s.noteRun(in, installed, runErr)
+		if installed != "" || (runErr == nil && s.Result == ResultFailed) {
+			s.Result = ""
 		}
 	})
+}
+
+// noteRun is how one run under the lock ended, as record writes it:
+// installed is the version it installed, or empty when it installed
+// none, and runErr its error or nil.
+func (s *State) noteRun(in Installation, installed string, runErr error) {
+	current := in.Version
+	if putBack, ok := errors.AsType[*PutBackError](runErr); ok {
+		current = putBack.Version
+	}
+	if installed != "" {
+		s.Installed = installed
+		current = installed
+	}
+	if unusable, ok := errors.AsType[*UnusableError](runErr); ok {
+		if s.Unusable == nil {
+			s.Unusable = map[string]string{}
+		}
+		s.Unusable[unusable.Version] = unusable.Reason
+	}
+	maps.DeleteFunc(s.Unusable, func(version, _ string) bool {
+		order, ok := semver.Compare(version, current)
+		return ok && order <= 0
+	})
+	s.Error = ""
+	if runErr != nil {
+		s.Error = errorLine(runErr)
+	}
 }
 
 // updateState rewrites the state file through change.

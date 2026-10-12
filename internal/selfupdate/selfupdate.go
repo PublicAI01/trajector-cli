@@ -10,6 +10,12 @@
 // start or serve here, is never left installed, and every exit that
 // installs nothing leaves the previous binary in place and runnable.
 //
+// Upgrade is the run a user asks for; Check is the one a session hook
+// starts on its own, at most once a day (State.Due), which also
+// reports a newer release to an installation a package manager owns,
+// skips a release this machine already found does not start, and
+// finishes this build's own install when that was left unfinished.
+//
 // One upgrade at a time runs on a machine, under a lock in the user's
 // state directory, and only the holder of that lock writes the upgrade
 // state file (State, LoadState).
@@ -185,19 +191,29 @@ func upgrade(ctx context.Context, in Installation, indexURL string) (Outcome, er
 	if err != nil {
 		return Outcome{}, err
 	}
-	// A release that is not strictly newer is not an upgrade: a
-	// withdrawn release, or a machine built from a tag ahead of the
-	// source, must not be moved backwards.
-	if order, ok := semver.Compare(rel.version, in.Version); !ok || order <= 0 {
+	if !newer(rel.version, in.Version) {
 		return Outcome{Kind: AlreadyNewest, From: in.Version}, nil
 	}
-
-	binary, err := src.download(ctx, rel, goos)
-	if err != nil {
-		return Outcome{}, err
-	}
-	if err := install(ctx, in, rel.version, binary); err != nil {
+	if err := installRelease(ctx, in, src, rel, goos); err != nil {
 		return Outcome{}, err
 	}
 	return Outcome{Kind: Upgraded, From: in.Version, To: rel.version}, nil
+}
+
+// newer reports whether release is strictly newer than version. One
+// that is not is no upgrade: a withdrawn release, or a machine built
+// from a tag ahead of the source, must not be moved backwards.
+func newer(release, version string) bool {
+	order, ok := semver.Compare(release, version)
+	return ok && order > 0
+}
+
+// installRelease fetches rel from src, checks it, and installs it over
+// in, for goos.
+func installRelease(ctx context.Context, in Installation, src *source, rel release, goos string) error {
+	binary, err := src.download(ctx, rel, goos)
+	if err != nil {
+		return err
+	}
+	return install(ctx, in, rel.version, binary)
 }
