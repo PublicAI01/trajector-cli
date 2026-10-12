@@ -195,3 +195,25 @@ func TestDoctorRemovesTheHookLeftInTheDirectoryClaudeCodeNoLongerReads(t *testin
 		t.Errorf("second run = %q, want nothing left to say about the file", again.Stdout)
 	}
 }
+
+func TestDoctorAllRunsInPlaceOfTheCurrentProject(t *testing.T) {
+	e := clitest.New(t)
+	got := e.InProject("doctor", "--all")
+	if got.Exit != 0 {
+		t.Fatalf("exit = %d, want 0 (stdout: %q, stderr: %q)", got.Exit, got.Stdout, got.Stderr)
+	}
+	if !strings.Contains(got.Stdout, "\nDevice\n") || !strings.Contains(got.Stdout, "Everything checks out") {
+		t.Errorf("stdout = %q, want the device section and a clean summary", got.Stdout)
+	}
+
+	quarantineBatch(t, e, "b-held-back", "req-1")
+	if got := e.InProject("doctor", "--all"); got.Exit != 1 {
+		t.Errorf("exit = %d, want 1 with a quarantined batch (stdout: %q)", got.Exit, got.Stdout)
+	}
+	if got := e.Run("doctor", "--all", "extra"); got.Exit != 2 || !strings.Contains(got.Stderr, "usage: trajector doctor [--all") {
+		t.Errorf("got %+v, want a usage error", got)
+	}
+	if got := e.Run("doctor", "--help"); !strings.Contains(got.Stdout, "--all    check every project enabled on this device") {
+		t.Errorf("doctor --help = %q, want the --all line", got.Stdout)
+	}
+}

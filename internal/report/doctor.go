@@ -426,3 +426,30 @@ func isWSL() bool {
 	}
 	return strings.Contains(strings.ToLower(string(data)), "microsoft")
 }
+
+// DoctorDeviceHeading heads the device's part of a doctor run that
+// covers every project; each project's part is headed by its root.
+const DoctorDeviceHeading = "Device"
+
+// RenderSection writes heading and the findings under it, set off by a
+// blank line: the shape of each part of a doctor run that covers every
+// project.
+func (f *Findings) RenderSection(out io.Writer, style Style, heading string) {
+	fmt.Fprintf(out, "\n%s\n", heading)
+	f.Render(out, style)
+}
+
+// DoctorProjectGone states that a project's root is no longer there. It
+// is not a problem: the grant stands, nothing there can be checked or
+// repaired, and the user may have moved or deleted the directory on
+// purpose.
+func DoctorProjectGone(f *Findings) {
+	f.notef("this directory is not there any more, so it was skipped")
+}
+
+// DoctorProjectFailed states that a project's part of a doctor run
+// stopped at err, so that one project that cannot be checked does not
+// keep the rest of the run from checking the others.
+func DoctorProjectFailed(f *Findings, err error) {
+	f.Problemf("this project could not be checked: %v", err)
+}

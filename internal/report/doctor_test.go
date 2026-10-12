@@ -337,3 +337,25 @@ func TestEveryFixLineIsACommandAUserCanCopyWhole(t *testing.T) {
 		}
 	}
 }
+
+// A part of a doctor run that covers every project is its heading and
+// the findings under it; a root that is gone is one line that counts
+// for nothing, and one that could not be checked is a problem.
+func TestDoctorSectionsHeadTheirFindings(t *testing.T) {
+	var b bytes.Buffer
+	gone := &report.Findings{}
+	report.DoctorProjectGone(gone)
+	gone.RenderSection(&b, report.Style{}, "/work/gone")
+	failed := &report.Findings{}
+	report.DoctorProjectFailed(failed, errors.New("permission denied"))
+	failed.RenderSection(&b, report.Style{}, "/work/locked")
+
+	want := "\n/work/gone\n  note: this directory is not there any more, so it was skipped\n" +
+		"\n/work/locked\n  error: this project could not be checked: permission denied\n"
+	if b.String() != want {
+		t.Errorf("sections = %q, want %q", b.String(), want)
+	}
+	if gone.Problems() != 0 || failed.Problems() != 1 {
+		t.Errorf("problems = %d and %d, want a gone root not counted and a failed one counted", gone.Problems(), failed.Problems())
+	}
+}

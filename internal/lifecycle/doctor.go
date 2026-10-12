@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"maps"
+	"os"
+	"slices"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -25,13 +29,88 @@ import (
 // running doctor twice is always safe.
 func (m *Machine) Doctor(ctx context.Context, dir string, streams IO) (problems int, err error) {
 	fmt.Fprintf(streams.Out, "trajector %s doctor\n\n", m.deps.Version)
+	f := &report.Findings{}
+	// Doctor is the one command that pays for the second reading: it
+	// acts on the session files no hook reported, and it repairs from
+	// the same value it reports.
+	d, err := m.doctorOpen(ctx, dir, fromTree, f)
+	if err != nil {
+		return 0, err
+	}
+	run := doctorRun{f: f, d: &d, startProxy: d.Project.Enabled}
+	if err := m.runDoctorChecks(ctx, run, devicePart, projectPart); err != nil {
+		return 0, err
+	}
+	f.Render(streams.Out, streams.OutStyle)
+	return doctorVerdict(streams, f.Problems()), nil
+}
 
-	// An upgrade that could not delete the binary it replaced — on
-	// Windows the previous one is still the running image — leaves a
-	// file beside this one. It is housekeeping, not a diagnosis: the
-	// user never had to know, so it is swept without a finding. While an
-	// upgrade is running the files beside the binary are its own, and
-	// the sweep leaves them to it.
+// DoctorAll is Doctor for every project this device records: the
+// device's part once, then for each project a standing grant covers the
+// whole of the project's part — injection, .gitignore, upstream, the
+// session files and the live self-check — under the project's root. A
+// root that is gone is one line saying so, never a problem: the grant
+// stands, and nothing there can be checked or repaired. It is the
+// command a notice sends the user to when something on the device
+// needs more than the session hooks repair.
+func (m *Machine) DoctorAll(ctx context.Context, dir string, streams IO) (problems int, err error) {
+	fmt.Fprintf(streams.Out, "trajector %s doctor\n", m.deps.Version)
+	device := &report.Findings{}
+	// The device's part reads no project's tree: what it reports about
+	// the current directory is device-wide, and each project's own
+	// reading is paid for in its own part.
+	d, err := m.doctorOpen(ctx, dir, fromRegistry, device)
+	if err != nil {
+		return 0, err
+	}
+	roots, err := m.grantedRoots()
+	if err != nil {
+		return 0, err
+	}
+	// Only a project still there has sessions that need the proxy.
+	wanted := slices.ContainsFunc(roots, func(root string) bool { return !rootGone(root) })
+	if err := m.doctorDevice(ctx, doctorRun{f: device, d: &d, startProxy: wanted}); err != nil {
+		return 0, err
+	}
+	device.RenderSection(streams.Out, streams.OutStyle, report.DoctorDeviceHeading)
+	problems = device.Problems()
+	for _, root := range roots {
+		f := &report.Findings{}
+		if err := m.doctorProject(ctx, f, root); err != nil {
+			report.DoctorProjectFailed(f, err)
+		}
+		f.RenderSection(streams.Out, streams.OutStyle, root)
+		problems += f.Problems()
+	}
+	return doctorVerdict(streams, problems), nil
+}
+
+// doctorVerdict closes a doctor run with the one line a user reads
+// first, and returns the count it states.
+func doctorVerdict(streams IO, problems int) int {
+	fmt.Fprintln(streams.Out)
+	if problems == 0 {
+		fmt.Fprintln(streams.Out, "Everything checks out.")
+	} else {
+		fmt.Fprintf(streams.Out, "%d problem(s) need attention.\n", problems)
+	}
+	return problems
+}
+
+// doctorOpen does what a doctor run does before any check, once per
+// run however many projects it covers, and returns the diagnosis of dir
+// the device's checks repair from.
+func (m *Machine) doctorOpen(ctx context.Context, dir string, reading sessionFileReading, f *report.Findings) (report.Diagnosis, error) {
+	// An upgrade leaves files beside this binary when it cannot finish
+	// cleaning up: on Windows the binary it replaced, which is still the
+	// running image, and anywhere the binary it kept while the build it
+	// put in place had not yet accepted the install. The sweep removes
+	// the first and puts the second back in place of the unaccepted
+	// build, so after it this process may no longer be the installed
+	// build; the diagnosis below is still this process's own. It is
+	// housekeeping, not a diagnosis, so it is swept without a finding.
+	// While an upgrade is running the files beside the binary are its
+	// own, and the sweep leaves them to it.
 	selfupdate.SweepResidue(m.installation())
 
 	// A pause that waits for a build other than the one that set it is
@@ -46,7 +125,7 @@ func (m *Machine) Doctor(ctx context.Context, dir string, streams IO) (problems 
 	resumed, pausedBy, err := m.routes.ResumeOtherBuild(routing.PauseRedactionDrift, m.deps.Version)
 	_, tableUnreadable := errors.AsType[*routing.UnreadableError](err)
 	if err != nil && !tableUnreadable {
-		return 0, err
+		return report.Diagnosis{}, err
 	}
 	// A pause this build set over a line read without its newline is
 	// lifted here too, without waiting for another build, when this
@@ -57,20 +136,16 @@ func (m *Machine) Doctor(ctx context.Context, dir string, streams IO) (problems 
 	if !resumed && !tableUnreadable {
 		rescanned, err = m.resumeAfterCleanRescan()
 		if err != nil {
-			return 0, err
+			return report.Diagnosis{}, err
 		}
 	}
-	// Doctor is the one command that pays for the second reading: it
-	// acts on the session files no hook reported, and it repairs from
-	// the same value it reports.
-	d, err := m.diagnose(ctx, dir, fromTree)
+	d, err := m.diagnose(ctx, dir, reading)
 	if err != nil {
-		return 0, err
+		return d, err
 	}
 	// The findings a diagnosis alone establishes are the renderer's; the
 	// ones between them are this machine's repairs, and the order they
 	// are written in is the order the user reads them.
-	f := &report.Findings{}
 	if rescanned {
 		f.Fixedf("recording resumed: this build read the session files again and every line it read ended in a newline")
 		f.Detailf("Session files are read again from where reading stopped.")
@@ -82,27 +157,152 @@ func (m *Machine) Doctor(ctx context.Context, dir string, streams IO) (problems 
 	// Before anything is rendered, so the count the data section
 	// prints is what is still held after this run.
 	d.Spool.Held = m.releaseHeldSegments(f)
-	report.DoctorDevice(f, d)
-	m.doctorProxy(ctx, f, d)
-	if err := m.doctorInjection(ctx, f, d.Project); err != nil {
-		return 0, err
-	}
-	m.doctorDiscoveryHint(f, d.TokenStore)
-	m.doctorStaleDiscoveryHook(f, d)
-	m.doctorEarlierSessions(ctx, f, &d)
-	report.DoctorProject(f, d)
-	report.DoctorData(f, d)
-	report.DoctorEnvironment(f)
-	m.doctorSelfcheck(f, d)
+	return d, nil
+}
 
-	f.Render(streams.Out, streams.OutStyle)
-	fmt.Fprintln(streams.Out)
-	if f.Problems() == 0 {
-		fmt.Fprintln(streams.Out, "Everything checks out.")
-	} else {
-		fmt.Fprintf(streams.Out, "%d problem(s) need attention.\n", f.Problems())
+// doctorPart is which part of a doctor run a check belongs to: the
+// device's, said once a run, or a project's, said once for each project
+// the run covers.
+type doctorPart int
+
+const (
+	devicePart doctorPart = iota
+	projectPart
+)
+
+// doctorRun is what one part of a doctor run checks and writes to: the
+// findings it adds to, the diagnosis it repairs from, and whether the
+// proxy is wanted running now because a project the run covers is
+// enabled. A proxy no covered project wants is left to start on
+// demand.
+type doctorRun struct {
+	f          *report.Findings
+	d          *report.Diagnosis
+	startProxy bool
+}
+
+// doctorCheck is one step of a doctor run.
+type doctorCheck struct {
+	part doctorPart
+	run  func(ctx context.Context, m *Machine, r doctorRun) error
+}
+
+// doctorChecks is every step of a doctor run, in the order a run about
+// one project says them. The device's steps and the project's
+// alternate because that is the order the plain report is read in; a
+// run about every project says the device's steps once, in this order,
+// and then each project's.
+var doctorChecks = []doctorCheck{
+	{devicePart, func(_ context.Context, _ *Machine, r doctorRun) error {
+		report.DoctorDevice(r.f, *r.d)
+		return nil
+	}},
+	{devicePart, func(ctx context.Context, m *Machine, r doctorRun) error {
+		m.doctorProxy(ctx, r.f, *r.d, r.startProxy)
+		return nil
+	}},
+	{projectPart, func(ctx context.Context, m *Machine, r doctorRun) error {
+		return m.doctorInjection(ctx, r.f, r.d.Project)
+	}},
+	{devicePart, func(_ context.Context, m *Machine, r doctorRun) error {
+		m.doctorDiscoveryHint(r.f, r.d.TokenStore)
+		return nil
+	}},
+	{devicePart, func(_ context.Context, m *Machine, r doctorRun) error {
+		m.doctorStaleDiscoveryHook(r.f, *r.d)
+		return nil
+	}},
+	{projectPart, func(ctx context.Context, m *Machine, r doctorRun) error {
+		m.doctorEarlierSessions(ctx, r.f, r.d)
+		return nil
+	}},
+	{projectPart, func(_ context.Context, _ *Machine, r doctorRun) error {
+		report.DoctorProject(r.f, *r.d)
+		return nil
+	}},
+	{devicePart, func(_ context.Context, _ *Machine, r doctorRun) error {
+		report.DoctorData(r.f, *r.d)
+		return nil
+	}},
+	{devicePart, func(_ context.Context, _ *Machine, r doctorRun) error {
+		report.DoctorEnvironment(r.f)
+		return nil
+	}},
+	{projectPart, func(_ context.Context, m *Machine, r doctorRun) error {
+		m.doctorSelfcheck(r.f, *r.d)
+		return nil
+	}},
+}
+
+// runDoctorChecks runs the steps of the parts named, in doctorChecks
+// order, and stops at the first that fails.
+func (m *Machine) runDoctorChecks(ctx context.Context, r doctorRun, parts ...doctorPart) error {
+	for _, c := range doctorChecks {
+		if !slices.Contains(parts, c.part) {
+			continue
+		}
+		if err := c.run(ctx, m, r); err != nil {
+			return err
+		}
 	}
-	return f.Problems(), nil
+	return nil
+}
+
+// doctorDevice is the device's part of a doctor run: pairing, the
+// routing table, a pause, automatic upgrades, the proxy, the discovery
+// hooks, the captured data and the platform.
+func (m *Machine) doctorDevice(ctx context.Context, r doctorRun) error {
+	return m.runDoctorChecks(ctx, r, devicePart)
+}
+
+// doctorProject is one project's part of a doctor run, over a
+// diagnosis of dir of its own, read in full. A root that is no longer
+// there is said in one line and checked no further.
+func (m *Machine) doctorProject(ctx context.Context, f *report.Findings, dir string) error {
+	if rootGone(dir) {
+		report.DoctorProjectGone(f)
+		return nil
+	}
+	d, err := m.diagnose(ctx, dir, fromTree)
+	if err != nil {
+		return err
+	}
+	return m.runDoctorChecks(ctx, doctorRun{f: f, d: &d}, projectPart)
+}
+
+// grantedRoots is every project root a standing grant covers, each
+// once, sorted, as Uninstall lists them. A routing table that cannot
+// be read lists none: the device's part already reports the table, and
+// no project's part could be checked against it.
+func (m *Machine) grantedRoots() ([]string, error) {
+	grants, err := m.routes.All()
+	if _, ok := errors.AsType[*routing.UnreadableError](err); ok {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	roots := map[string]bool{}
+	for _, g := range grants {
+		if !g.Revoked && g.RootPath != "" {
+			roots[g.RootPath] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(roots)), nil
+}
+
+// rootGone reports that a granted project root is no longer a
+// directory: nothing is there, or something that is not a directory
+// is. Such a root has no settings file to complete or check, and the
+// grant on it still stands. A root that cannot be looked at for any
+// other reason is still there, and the step that reads it says what
+// fails.
+func rootGone(root string) bool {
+	info, err := os.Stat(root)
+	if err != nil {
+		return errors.Is(err, fs.ErrNotExist)
+	}
+	return !info.IsDir()
 }
 
 // resumeAfterCleanRescan lifts a redaction pause this build itself
@@ -301,8 +501,10 @@ func (m *Machine) earlierSessionsRepair(s report.SessionFilesState, st report.Pr
 // decides the advice — only a proven stranger earns the stop-the-process
 // remedy; an authentication failure may be the user's own proxy. Which
 // of our own proxies doctor replaces and which it leaves alone is the
-// verdict's own answer, never a version comparison made here.
-func (m *Machine) doctorProxy(ctx context.Context, f *report.Findings, d report.Diagnosis) {
+// verdict's own answer, never a version comparison made here. A proxy
+// that is down is started only when wanted: a project the run covers
+// is enabled.
+func (m *Machine) doctorProxy(ctx context.Context, f *report.Findings, d report.Diagnosis, wanted bool) {
 	h := d.Proxy.Health
 	up := time.Duration(h.UptimeSeconds) * time.Second
 	switch {
@@ -321,7 +523,7 @@ func (m *Machine) doctorProxy(ctx context.Context, f *report.Findings, d report.
 	case d.Proxy.Holder == proxylife.HolderForeign:
 		f.ProxyProblem(d.Proxy.Reason, d.ProxyHolder)
 	default:
-		if !d.Project.Enabled {
+		if !wanted {
 			f.OKf("proxy not running; it starts on demand with the next session")
 			return
 		}

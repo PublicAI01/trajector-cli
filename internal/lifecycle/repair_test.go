@@ -330,3 +330,50 @@ func TestDoctorCompletesAnInjectionShortOfAnEventWithoutRewritingIt(t *testing.T
 		})
 	}
 }
+
+// A grant whose root is now a file has no project directory to hold
+// a settings file: finishing an upgrade and doctor --all both treat it
+// as a root that is gone, so neither fails on it nor counts it.
+func TestFinishAndDoctorAllTreatARootThatIsAFileAsGone(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	fileRoot, _ := e.enabledElsewhere("tok-file", proxytest.WithProxy)
+	if err := os.RemoveAll(fileRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fileRoot, []byte("not a project\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.machine().FinishUpgrade(t.Context()); err != nil {
+		t.Fatalf("FinishUpgrade: %v", err)
+	}
+	if got := e.notices(); !slices.Equal(got, []string{upgradedTestv}) {
+		t.Errorf("notices = %q, want only %q", got, upgradedTestv)
+	}
+
+	problems, out := e.doctorAll(t.TempDir())
+	if problems != 0 {
+		t.Fatalf("problems = %d, want a root that is a file not counted, output:\n%s", problems, out)
+	}
+	_, body := sectionsOf(out)
+	if got := strings.TrimSpace(body[fileRoot]); got != "note: this directory is not there any more, so it was skipped" {
+		t.Errorf("section %s = %q, want the one skip line\n%s", fileRoot, got, out)
+	}
+	if data, err := os.ReadFile(fileRoot); err != nil || string(data) != "not a project\n" {
+		t.Errorf("ReadFile(%s) = %q, %v; want the file left as it was", fileRoot, data, err)
+	}
+}
+
+func TestDoctorAllLeavesTheProxyToStartOnDemandWhenEveryRootIsGone(t *testing.T) {
+	e := newEnv(t)
+	goneRoot, _ := e.enabledElsewhere("tok-gone", proxytest.WithProxy)
+	if err := os.RemoveAll(goneRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	problems, out := e.doctorAll(t.TempDir())
+	if problems != 0 || !strings.Contains(out, "proxy not running; it starts on demand with the next session") {
+		t.Errorf("doctor --all = %d problems, output:\n%s\nwant the proxy left to start on demand", problems, out)
+	}
+}

@@ -3,8 +3,6 @@ package lifecycle
 import (
 	"errors"
 	"fmt"
-	"os"
-	"slices"
 	"strconv"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -21,24 +19,20 @@ import (
 // is its one write, so the base URL, the token, the optional settings
 // and .gitignore stay as enable or the user left them.
 //
+// The projects are the ones doctor --all checks, and a root is gone by
+// the same test, so the two never disagree about which projects stand.
 // A routing table this build cannot read leaves nothing to complete:
 // the next command says what it found. A settings file that cannot be
 // completed is named in the error after the other projects are done.
 func (m *Machine) completeEnabledProjects() (completed int, err error) {
-	// An unreadable table reads as no grant: nothing is completed.
-	grants, _ := m.routes.All()
-	var roots []string
-	for _, g := range grants {
-		if g.Revoked || g.RootPath == "" || slices.Contains(roots, g.RootPath) {
-			continue
-		}
-		roots = append(roots, g.RootPath)
+	roots, err := m.grantedRoots()
+	if err != nil {
+		return 0, err
 	}
-	slices.Sort(roots)
 	hooks := projectHooks(m.deps.ExecPath)
 	var errs []error
 	for _, root := range roots {
-		if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		if rootGone(root) {
 			continue
 		}
 		path := claudesettings.ProjectLocalPath(root)

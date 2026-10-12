@@ -65,12 +65,21 @@ func (a *app) statusCmd(ctx context.Context, args []string) int {
 	return exit
 }
 
+// doctorAllFlag asks doctor for every project this device records, not
+// only the current one. It is read only in the first slot: in a
+// subcommand's slot the same word names every quarantined batch.
+const doctorAllFlag = "--all"
+
 func (a *app) doctorCmd(ctx context.Context, args []string) int {
-	if len(args) == 0 {
+	if len(args) == 0 || args[0] == doctorAllFlag {
+		run, usage := (*lifecycle.Machine).Doctor, "usage: trajector doctor"
+		if len(args) > 0 {
+			run, usage, args = (*lifecycle.Machine).DoctorAll, doctorUsage, args[1:]
+		}
 		problems := 0
-		exit := a.with("usage: trajector doctor", args, 0, func(m *lifecycle.Machine, cwd string) error {
+		exit := a.with(usage, args, 0, func(m *lifecycle.Machine, cwd string) error {
 			var err error
-			problems, err = m.Doctor(ctx, cwd, a.io())
+			problems, err = run(m, ctx, cwd, a.io())
 			return err
 		})
 		if exit == 0 && problems > 0 {
@@ -98,8 +107,10 @@ func (a *app) doctorCmd(ctx context.Context, args []string) int {
 
 // doctorUsage spells out the two exits a quarantined batch has, because
 // choosing between them is the whole question a user arrives with.
-const doctorUsage = `usage: trajector doctor [bundle | requeue <batch-id>|--all | discard <batch-id>|--all]
+const doctorUsage = `usage: trajector doctor [--all | bundle | requeue <batch-id>|--all | discard <batch-id>|--all]
 
+  --all    check every project enabled on this device, not only this one,
+           each under its own heading
   requeue  put a quarantined batch back in the spool to upload again;
            use it once whatever stopped the batch is fixed
   discard  delete a quarantined batch and its rawcalls from this machine
