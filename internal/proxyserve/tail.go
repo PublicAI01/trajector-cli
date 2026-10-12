@@ -1,7 +1,6 @@
 package proxyserve
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/sessionread"
-	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 // sweepInterval is how often a served proxy looks at the hot files on
@@ -40,11 +38,9 @@ const maxProgressBody = 1 << 16
 // rule for what a read stores is sessionread's, shared with the
 // one-shot reader a hook starts when no proxy is up.
 type tailer struct {
-	reader   sessionread.Reader
-	routes   *routing.Store
-	uploader *upload.Uploader
-	alive    func(pid int) bool
-	logf     func(string, ...any)
+	reader sessionread.Reader
+	routes *routing.Store
+	alive  func(pid int) bool
 	// nudge hands the flush cadence a flush a hook's read made due.
 	// Reading on a hook's word may not upload on the hook's clock, so
 	// what the hook path asks for it asks here.
@@ -141,32 +137,20 @@ func (t *tailer) progress(ev apiproxy.Progress) bool {
 
 // sweep looks at every hot file once: one that grew is read, one whose
 // process is gone and that has not grown for coolGrace is read to its
-// end, flushed, and cooled. Cold files are not looked at. What the
-// sweep learned about running processes is what idle exit reads until
-// the next sweep or the next report. It runs on a goroutine of its
-// own, which no hook waits on, so its flush is taken here and not
-// handed to the flush cadence.
+// end and cooled. Cold files are not looked at. What the sweep learned
+// about running processes is what idle exit reads until the next sweep
+// or the next report. It reports whether it read any file and whether
+// it cooled any; the flush that makes due is the caller's.
 //
-// What a sweep reads leaves at once rather than on the thresholds for
-// records read from session files: a file the sweep found grown is a
-// file whose hook never reported it, so its lines already missed the
-// read that would have sent them on time, and a threshold of their
-// own would only hold them longer.
-//
-// onStart marks the sweep a proxy runs on its way in, where that does
-// not hold: a proxy that has just bound the port must not open an
-// upload before it can be drained — the takeover of its port waits on
-// the exit flush, which waits on that upload's lock. That sweep also
-// reads the cold entries that readLeftBehind picks out.
-func (t *tailer) sweep(ctx context.Context, onStart bool) {
+// onStart marks the sweep a proxy runs on its way in, which also reads
+// the cold entries that readLeftBehind picks out.
+func (t *tailer) sweep(onStart bool) (read, cooled bool) {
 	now := t.reader.Now()
 	projects, err := t.reader.Registry.Projects()
 	if err != nil {
-		return
+		return false, false
 	}
 	attended := false
-	cooled := false
-	read := false
 	for _, hash := range projects {
 		project, ok := t.project(hash)
 		if !ok {
@@ -207,14 +191,7 @@ func (t *tailer) sweep(ctx context.Context, onStart bool) {
 		}
 	}
 	t.setAttended(attended)
-	// A sweep that read nothing flushes nothing: the flush cadence
-	// owns the thresholds, and nothing new is waiting on them.
-	switch {
-	case cooled, read && !onStart:
-		t.flushRecords(ctx)
-	case read:
-		t.flushDue(ctx)
-	}
+	return read, cooled
 }
 
 // readLeftBehind reads the cold entries kept from earlier builds that
@@ -252,21 +229,4 @@ func (t *tailer) project(hash string) (sessionread.Project, bool) {
 		}
 	}
 	return sessionread.Project{}, false
-}
-
-// flushRecords sends what the spool holds now that a session is over
-// or has gone quiet: the records just read are the last of it.
-func (t *tailer) flushRecords(ctx context.Context) {
-	if _, err := t.uploader.FlushRecords(ctx); err != nil {
-		t.logf("flush: %v", err)
-	}
-}
-
-// flushDue is one threshold check, the same one the flush cadence
-// runs: a read that just landed enough to pass a threshold should not
-// wait for the next tick.
-func (t *tailer) flushDue(ctx context.Context) {
-	if _, err := t.uploader.Flush(ctx, false); err != nil {
-		t.logf("flush: %v", err)
-	}
 }

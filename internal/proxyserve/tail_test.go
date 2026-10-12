@@ -233,13 +233,12 @@ func TestProgressReportOfASessionEndReadsFlushesAndCools(t *testing.T) {
 	}
 }
 
-func TestSweepReadsHotFilesAndNeverColdOnes(t *testing.T) {
+func TestStartSweepReadsHotFilesAndNeverColdOnes(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
-	e.assembly.SweepInterval = 50 * time.Millisecond
 	hash := e.enabledProject()
-	hot := e.sessionFile(hash, "hot.jsonl", "")
-	cold := e.sessionFile(hash, "cold.jsonl", "")
+	hot := e.sessionFile(hash, "hot.jsonl", sessionLine)
+	cold := e.sessionFile(hash, "cold.jsonl", sessionLine)
 	if err := e.registry().Warm(hash, hot, 0, time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -248,26 +247,14 @@ func TestSweepReadsHotFilesAndNeverColdOnes(t *testing.T) {
 	e.waitHealthy()
 	defer e.stopServed(served)
 
-	for _, path := range []string{hot, cold} {
-		if err := os.WriteFile(path, []byte(sessionLine), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if !eventually(t, 5*time.Second, func() bool { return e.entry(hash, hot).Offset > 0 }) {
+		t.Fatalf("hot file = %+v, want read by the sweep on the way in", e.entry(hash, hot))
 	}
-	if !eventually(t, 5*time.Second, func() bool { return len(e.sandbox.Records()) == 1 }) {
-		t.Fatalf("records = %d, want the hot file's one segment read by the sweep", len(e.sandbox.Records()))
-	}
-	time.Sleep(200 * time.Millisecond)
 	if n := len(e.sandbox.Records()); n != 1 {
-		t.Errorf("records = %d after more sweeps, want still 1: the cold file is never read", n)
+		t.Errorf("records = %d, want the hot file's one segment", n)
 	}
-	files, err := e.registry().Files(hash)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range files {
-		if f.Path == cold && (f.Offset != 0 || f.ReadAt != "") {
-			t.Errorf("cold file = %+v, want never read", f)
-		}
+	if f := e.entry(hash, cold); f.Offset != 0 || f.ReadAt != "" {
+		t.Errorf("cold file = %+v, want never read", f)
 	}
 }
 
@@ -382,29 +369,38 @@ func TestProgressReportAnswersBeforeTheFlushRuns(t *testing.T) {
 	release()
 }
 
-func TestSweepSendsTheRecordsItReadsAtOnce(t *testing.T) {
+func TestStartSweepCoolsAQuietFileAndSendsTheSpoolAtOnce(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
-	e.assembly.SweepInterval = 50 * time.Millisecond
 	hash := e.enabledProject()
-	hot := e.sessionFile(hash, "hot.jsonl", "")
-	if err := e.registry().Warm(hash, hot, 0, time.Now()); err != nil {
+	quiet := e.sessionFile(hash, "quiet.jsonl", sessionLine)
+	from := e.entry(hash, quiet)
+	st, err := follow.StatFile(quiet)
+	if err != nil {
 		t.Fatal(err)
 	}
+	to := follow.File{Path: quiet, Inode: st.Inode, Size: st.Size, Offset: st.Size, NextSegment: 1, ReadAt: "2026-01-01T00:00:00Z"}
+	if err := e.registry().Update(hash, from, to); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.registry().Warm(hash, quiet, 0, time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	e.sandbox.SeedSegment("quiet", hash, time.Now())
 
 	served := e.serve(io.Discard, io.Discard)
 	e.waitHealthy()
 	defer e.stopServed(served)
 
-	if err := os.WriteFile(hot, []byte(sessionLine), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if !eventually(t, 10*time.Second, func() bool { return len(e.service.Requests()) > 0 }) {
-		t.Fatal("the service never saw what a sweep read, and no threshold of the records' own was near")
+		t.Fatal("the service never saw the records of a session the sweep on the way in found quiet, and no threshold of the records' own was near")
 	}
 	if !eventually(t, 10*time.Second, func() bool { return len(e.sandbox.Records()) == 0 }) {
 		t.Errorf("spool holds %d records after the sweep's flush, want 0", len(e.sandbox.Records()))
+	}
+	if f := e.entry(hash, quiet); f.LastEvent != "" {
+		t.Errorf("quiet file = %+v, want cooled", f)
 	}
 }
 

@@ -8,7 +8,6 @@
 package proxyserve
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -84,10 +83,6 @@ type Assembly struct {
 	// Home is the user's home directory, which reading holds a field
 	// naming a path against.
 	Home string
-	// SweepInterval is how often the served proxy looks at the hot
-	// session files on its own. Zero selects sweepInterval; a test
-	// shortens it.
-	SweepInterval time.Duration
 }
 
 func (a Assembly) proxy() *proxylife.Proxy {
@@ -210,11 +205,9 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 			Home:      a.Home,
 			Now:       time.Now,
 		},
-		routes:   a.Routes,
-		uploader: uploader,
-		alive:    follow.ProcessAlive,
-		logf:     logf,
-		nudge:    newFlushNudge(),
+		routes: a.Routes,
+		alive:  follow.ProcessAlive,
+		nudge:  newFlushNudge(),
 	}
 	internal := http.NewServeMux()
 	internal.Handle(upload.FlushPath, uploader.Handler(apiproxy.ServiceName))
@@ -268,9 +261,17 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		}
 	}
 
+	flush := func(atOnce bool) error {
+		if atOnce {
+			_, err := uploader.FlushRecords(uploads)
+			return err
+		}
+		_, err := uploader.Flush(uploads, false)
+		return err
+	}
 	served := make(chan struct{})
-	go periodicFlush(ctx, uploads, served, uploader, tail.nudge, logf)
-	go periodicSweep(ctx, uploads, served, tail, cmp.Or(a.SweepInterval, sweepInterval))
+	go periodicFlush(ctx, served, tail.nudge, flush, logf)
+	go periodicSweep(ctx, served, tail.sweep, flush, logf)
 	err = server.Serve(ctx, l)
 	close(served)
 	return err
@@ -306,11 +307,11 @@ func (n *flushNudge) ask(atOnce bool) {
 // record, and clears the ask.
 func (n *flushNudge) takeAtOnce() bool { return n.atOnce.Swap(false) }
 
-// periodicFlush checks the upload thresholds on a cadence while the
+// periodicFlush checks the upload thresholds every flushInterval while the
 // proxy serves, and on the nudges the reading of session files leaves
 // for it. Failures are logged and retried on the next tick; the spool
 // keeps everything until a batch is acknowledged.
-func periodicFlush(ctx, uploads context.Context, served chan struct{}, uploader *upload.Uploader, nudge *flushNudge, logf func(string, ...any)) {
+func periodicFlush(ctx context.Context, served <-chan struct{}, nudge *flushNudge, flush func(atOnce bool) error, logf func(string, ...any)) {
 	ticker := time.NewTicker(flushInterval)
 	defer ticker.Stop()
 	for {
@@ -329,13 +330,7 @@ func periodicFlush(ctx, uploads context.Context, served chan struct{}, uploader 
 			}
 			atOnce = nudge.takeAtOnce()
 		}
-		var err error
-		if atOnce {
-			_, err = uploader.FlushRecords(uploads)
-		} else {
-			_, err = uploader.Flush(uploads, false)
-		}
-		if err != nil {
+		if err := flush(atOnce); err != nil {
 			if errors.Is(err, upload.ErrClosed) {
 				// The exit flush already ran; the cadence is done.
 				return
@@ -345,12 +340,38 @@ func periodicFlush(ctx, uploads context.Context, served chan struct{}, uploader 
 	}
 }
 
-// periodicSweep looks at the hot session files on a cadence while the
-// proxy serves, and once on the way in: a proxy that starts after a
-// session did meets the file the session's earlier hooks left hot.
-func periodicSweep(ctx, uploads context.Context, served chan struct{}, tail *tailer, every time.Duration) {
-	tail.sweep(uploads, true)
-	ticker := time.NewTicker(every)
+// periodicSweep looks at the hot session files every sweepInterval while
+// the proxy serves, and once on the way in: a proxy that starts after
+// a session did meets the file the session's earlier hooks left hot.
+// It runs on a goroutine of its own, which no hook waits on, so the
+// flush a sweep makes due is taken here and not handed to the flush
+// cadence.
+//
+// A sweep that read nothing flushes nothing: the flush cadence owns
+// the thresholds, and nothing new is waiting on them. What a sweep
+// cooled or read leaves at once rather than on the thresholds for
+// records read from session files: a file the sweep found grown is a
+// file whose hook never reported it, so its lines already missed the
+// read that would have sent them on time, and a threshold of their
+// own would only hold them longer.
+//
+// The sweep on the way in is the exception for what it read: a proxy
+// that has just bound the port must not open an upload before it can
+// be drained — the takeover of its port waits on the exit flush, which
+// waits on that upload's lock — so what it read gets one threshold
+// check instead.
+func periodicSweep(ctx context.Context, served <-chan struct{}, sweep func(onStart bool) (read, cooled bool), flush func(atOnce bool) error, logf func(string, ...any)) {
+	sweepAndFlush := func(onStart bool) {
+		read, cooled := sweep(onStart)
+		if !read && !cooled {
+			return
+		}
+		if err := flush(cooled || !onStart); err != nil {
+			logf("flush: %v", err)
+		}
+	}
+	sweepAndFlush(true)
+	ticker := time.NewTicker(sweepInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -359,7 +380,7 @@ func periodicSweep(ctx, uploads context.Context, served chan struct{}, tail *tai
 		case <-served:
 			return
 		case <-ticker.C:
-			tail.sweep(uploads, false)
+			sweepAndFlush(false)
 		}
 	}
 }
