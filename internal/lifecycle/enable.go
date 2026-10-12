@@ -36,6 +36,13 @@ const (
 	noProxyRecordsNothing = "Judged from configuration readable on this machine, Claude Code will not run trajector's hooks here, so --no-proxy would record nothing from this project. Either accept that nothing is recorded for now, or run trajector enable without --no-proxy (the proxy records; /remote-control inside this project becomes unavailable, claude remote-control still works)."
 
 	contributesNow = "This project now contributes data. Run `trajector disable` here to stop."
+
+	// noProxyCaveat is the clause a sentence carries when it sends an
+	// already enabled project back to `trajector enable`. A bare run
+	// declares the shape with a proxy, so a project that records from
+	// its session files only is converted by following such a sentence
+	// unless the sentence tells it to name the flag again.
+	noProxyCaveat = "(with --no-proxy if you use it)"
 )
 
 // projectIgnoreRules are the .gitignore lines an enabled project
@@ -631,7 +638,7 @@ func notRecordingReason(reply proxylife.Selfcheck) string {
 		return "nothing is recorded: " + routing.PauseReason(reply.PauseReason).Explain()
 	}
 	if reply.Decision == string(routing.ForwardOnlyRevoked) {
-		return "this project's token is revoked; run `trajector enable` again to re-grant it"
+		return "this project's token is revoked; run `trajector enable` again " + noProxyCaveat + " to re-grant it"
 	}
 	return "the proxy would not record this project"
 }

@@ -294,7 +294,7 @@ func TestDoctorReportsAnOrphanedGrant(t *testing.T) {
 	if problems == 0 {
 		t.Fatalf("problems = 0 for a grant with no injection, output:\n%s", out)
 	}
-	if !strings.Contains(out, "`trajector enable`") || !strings.Contains(out, "`trajector disable`") {
+	if !strings.Contains(out, "`trajector enable` (with --no-proxy if you use it)") || !strings.Contains(out, "`trajector disable`") {
 		t.Errorf("doctor = %q, want both ways out offered", out)
 	}
 }
