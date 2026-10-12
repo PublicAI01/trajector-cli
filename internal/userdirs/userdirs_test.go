@@ -310,3 +310,19 @@ func TestReaderLogSitsBesideTheProxyLog(t *testing.T) {
 		t.Errorf("ReaderLog() = %q, want it in the directory of ProxyLog() %q", l.ReaderLog(), l.ProxyLog())
 	}
 }
+
+func TestUpgradeBookkeepingSitsInTheStateDirectoryUnderTwoNames(t *testing.T) {
+	l, err := userdirs.Resolve(env("linux", map[string]string{"HOME": "/home/u"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := slash(l.UpgradeState()); got != "/home/u/.local/state/trajector/upgrade.json" {
+		t.Errorf("UpgradeState() = %q", got)
+	}
+	// The state file is rewritten while the upgrade lock is held, and
+	// rewriting it takes a lock named after it: one path for both would
+	// have an upgrade wait on itself.
+	if got := slash(l.UpgradeLock()); got != "/home/u/.local/state/trajector/upgrade" {
+		t.Errorf("UpgradeLock() = %q", got)
+	}
+}

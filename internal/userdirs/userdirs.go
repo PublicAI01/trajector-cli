@@ -28,6 +28,8 @@ const (
 	uploadDirName    = "upload"
 	followDirName    = "follow"
 	gitHeadsName     = "git-heads.json"
+	upgradeStateName = "upgrade.json"
+	upgradeLockName  = "upgrade"
 )
 
 // Env is the machine a Layout is resolved against.
@@ -113,6 +115,18 @@ func (l Layout) ProxyLog() string { return filepath.Join(l.state, proxyLogName) 
 // ReaderLog is where the session file reader appends what it noticed
 // about the shape of the lines it read, one JSON object per line.
 func (l Layout) ReaderLog() string { return filepath.Join(l.state, readerLogName) }
+
+// UpgradeState is this machine's upgrade bookkeeping: what the last
+// upgrade installed, which releases do not start here and why, and how
+// the last attempt ended.
+func (l Layout) UpgradeState() string { return filepath.Join(l.state, upgradeStateName) }
+
+// UpgradeLock is the path whose fsatomic lock lets one upgrade at a time
+// run on this machine; the lock file is this path with fsatomic's lock
+// suffix. It is not UpgradeState: the state file is rewritten through
+// fsatomic.Update, which takes that file's own lock, while the upgrade
+// lock is held.
+func (l Layout) UpgradeLock() string { return filepath.Join(l.state, upgradeLockName) }
 
 // AdminTokenFile is where one serving proxy instance publishes the
 // token that authorizes its reserved endpoints. Readable only by the
