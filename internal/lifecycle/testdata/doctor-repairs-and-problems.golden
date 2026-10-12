@@ -1,0 +1,13 @@
+trajector testv doctor
+
+  note: automatic upgrades: off (not a release build)
+  ok: proxy running at <proxy> (version testv, up <uptime>)
+  fixed: completed the session hooks in <project>/.claude/settings.local.json (1 added)
+  fixed: re-added the project-discovery hint to <home>/.claude/settings.json
+  ok: Judged from configuration readable on this machine, Claude Code will load trajector's hooks in this project
+  ok: every session file of this project is registered (0 session(s))
+  ok: capture spool writable (0 B of 2.0 GiB used)
+  ok: no rejected batches quarantined
+  error: the files agree, but the live proxy will not record this project: this project's recorded base URL is not a usable http(s) URL, so nothing is forwarded; run `trajector enable` (with --no-proxy if you use it) in the project to set it again, or `trajector disable` to take trajector out of the way
+
+1 problem(s) need attention.

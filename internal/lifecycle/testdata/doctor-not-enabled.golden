@@ -1,0 +1,10 @@
+trajector testv doctor
+
+  note: automatic upgrades: off (not a release build)
+  ok: proxy not running; it starts on demand with the next session
+  ok: this project is not enabled; nothing to reconcile
+  fixed: re-added the project-discovery hint to <home>/.claude/settings.json
+  ok: capture spool writable (0 B of 2.0 GiB used)
+  ok: no rejected batches quarantined
+
+Everything checks out.
