@@ -23,8 +23,8 @@ const agreementVersionFloor = "2026-09-21"
 // three without the other two fails the test.
 const (
 	pinnedAgreementVersionSHA256 = "a0a764f496b11bbb3022c173ff5a4e9c638e30325954dcb66bfd955780d89939"
-	pinnedAgreementTextSHA256    = "55c4a486a20ef88d8fe726933781f0f1ccd1fb1b3bf2d243bc882597dc576861"
-	pinnedPrivacyMarkdownSHA256  = "da298c0b43baf94d5f7112dba61ee2575dbbb7d84188f80e3b8018458ed67155"
+	pinnedAgreementTextSHA256    = "c2cd9a97549f6738eb5983f1cd9d77b157e6afbcb19b087e31e101bb0c37adb0"
+	pinnedPrivacyMarkdownSHA256  = "7dcfd2ef6602db668589730c7d72bca53ed7589a79b6ebec14b7b05a6fcba089"
 )
 
 const privacyMarkdownPath = "../../PRIVACY.md"
@@ -68,10 +68,11 @@ func TestAgreementVersion_IsAReleaseDaySaidInAllThreePlaces(t *testing.T) {
 var updatesSection = regexp.MustCompile(`(?m)^[1-9][0-9]*\. Updates\. `)
 
 // UpdatesSince names the release day the agreement first told the user
-// about the automatic upgrade check. A day that is not a release day,
-// or one later than the agreement shown, would let an acceptance cover
-// a section the user was never shown; and an acceptance of the current
-// agreement covers it.
+// about the automatic upgrade check. A day later than the agreement
+// shown would keep every device from checking although the agreement it
+// accepted says it does, so an acceptance of the current agreement must
+// cover it. A day too early is the other failure, and the worse one: it
+// lets an acceptance of terms without the section cover the check.
 func TestUpdatesSince_IsNoLaterThanTheAgreementThatCarriesTheSection(t *testing.T) {
 	s := consent.Open(filepath.Join(t.TempDir(), "consent.json"))
 	if err := s.AcceptAgreement(consent.AgreementVersion, "2026-10-12T10:00:00Z"); err != nil {
@@ -80,12 +81,6 @@ func TestUpdatesSince_IsNoLaterThanTheAgreementThatCarriesTheSection(t *testing.
 	covers, err := s.CoversUpdates()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if consent.UpdatesSince == "" {
-		if covers {
-			t.Error("an acceptance covers updates although no agreement carries the section")
-		}
-		return
 	}
 	since, err := time.Parse(time.DateOnly, consent.UpdatesSince)
 	if err != nil {
@@ -103,6 +98,35 @@ func TestUpdatesSince_IsNoLaterThanTheAgreementThatCarriesTheSection(t *testing.
 	}
 	if !covers {
 		t.Error("an acceptance of the current agreement does not cover updates")
+	}
+}
+
+// lastAgreementWithoutUpdates is the last agreement version published
+// without the section on updates. An UpdatesSince of that day or earlier
+// lets every acceptance of those terms cover a check the user was never
+// told about. Once AgreementVersion passes it, UpdatesSince must pass it
+// too; it need not follow AgreementVersion further, because a revision
+// that leaves the section alone keeps covering the devices that already
+// accepted it.
+const lastAgreementWithoutUpdates = "2026-09-29"
+
+func TestUpdatesSince_PassesTheLastAgreementWithoutTheSectionOnceTheVersionDoes(t *testing.T) {
+	version, err := time.Parse(time.DateOnly, consent.AgreementVersion)
+	if err != nil {
+		t.Fatalf("AgreementVersion %q is not an ISO date: %v", consent.AgreementVersion, err)
+	}
+	since, err := time.Parse(time.DateOnly, consent.UpdatesSince)
+	if err != nil {
+		t.Fatalf("UpdatesSince %q is not an ISO date: %v", consent.UpdatesSince, err)
+	}
+	last, err := time.Parse(time.DateOnly, lastAgreementWithoutUpdates)
+	if err != nil {
+		t.Fatalf("lastAgreementWithoutUpdates %q is not an ISO date: %v", lastAgreementWithoutUpdates, err)
+	}
+	if version.After(last) && !since.After(last) {
+		t.Errorf("AgreementVersion %q is past %q, the last agreement without the Updates section, "+
+			"but UpdatesSince %q is not: an acceptance of those terms would cover the automatic upgrade check",
+			consent.AgreementVersion, lastAgreementWithoutUpdates, consent.UpdatesSince)
 	}
 }
 
@@ -154,6 +178,9 @@ func TestAgreementText_KeepsTheWordingsThatMustNotWeaken(t *testing.T) {
 		"it cannot see\n   what an image or a PDF shows",
 		"for a PNG, JPEG or GIF image, its\n   width and height",
 		"Images that older versions of Claude Code keep\n   from a notebook's cell outputs are uploaded whatever this setting\n   says",
+		"The branch name read from git passes the same\n   masking",
+		"The request\n   carries the trajector version and nothing else",
+		"To stop these\n   checks, set auto_upgrade to false in config.json",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("agreement text lost the wording %q", want)

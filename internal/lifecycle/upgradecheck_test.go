@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/cli"
+	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
@@ -76,7 +77,6 @@ func newCheckingEnv(t *testing.T) *env {
 	e.deps.ReleaseBuild = true
 	e.deps.AutoUpgrade = true
 	e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
-	lifecycle.CoverUpdatesSince(t, proxytest.AgreementVersion)
 	e.startProxy()
 	return e
 }
@@ -137,7 +137,8 @@ func TestSessionStarting_StartsTheUpgradeCheckOnlyWhenEveryGatePasses(t *testing
 			arrange: func(e *env) { e.deps.ReleaseBuild = false },
 		},
 		"an agreement accepted before the check was in it": {
-			arrange: func(e *env) { lifecycle.CoverUpdatesSince(e.t, "2099-01-01") },
+			// The day before the Updates section first went out.
+			arrange: func(e *env) { e.sandbox.AcceptAgreement(dayBefore(e.t, consent.UpdatesSince), "2026-08-01T00:00:00Z") },
 		},
 		"an accepted agreement that is not a release day": {
 			arrange: func(e *env) { e.sandbox.AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z") },
@@ -168,21 +169,14 @@ func TestSessionStarting_StartsTheUpgradeCheckOnlyWhenEveryGatePasses(t *testing
 	}
 }
 
-// The agreement as this build ships it does not tell the user about
-// the check yet, so no device passes that gate.
-func TestSessionStarting_StartsNoUpgradeCheckUnderThisBuildsAgreement(t *testing.T) {
-	e := newEnv(t)
-	e.deps.Version, e.deps.ReleaseBuild, e.deps.AutoUpgrade = "0.1.0", true, true
-	e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
-	e.startProxy()
-	started := e.recordStarts()
-
-	if _, err := e.machine().SessionStarting(t.Context(), e.project, lifecycle.HookInput{}, e.io()); err != nil {
-		t.Fatalf("SessionStarting: %v", err)
+// dayBefore is the release day before day.
+func dayBefore(t *testing.T, day string) string {
+	t.Helper()
+	d, err := time.Parse(time.DateOnly, day)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := started.upgradeChecks(); len(got) != 0 {
-		t.Errorf("upgrade checks started = %q, want none", got)
-	}
+	return d.AddDate(0, 0, -1).Format(time.DateOnly)
 }
 
 func TestSessionStarting_StartsTheUpgradeCheckOnADeviceThatSignedOut(t *testing.T) {
@@ -501,7 +495,6 @@ func TestUpgradeCheck_EndToEnd_InstallsInTheBackgroundAndTellsTheNextCommand(t *
 	// A session starts: its hook starts the check.
 	e.deps.ReleaseBuild, e.deps.AutoUpgrade = true, true
 	e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
-	lifecycle.CoverUpdatesSince(t, proxytest.AgreementVersion)
 	e.startProxy()
 	started := e.recordStarts()
 	if _, err := e.machine().SessionStarting(t.Context(), e.project, lifecycle.HookInput{}, e.io()); err != nil {

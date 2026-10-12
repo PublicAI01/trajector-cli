@@ -10,10 +10,8 @@ const AgreementVersion = "2026-09-29"
 // releases on its own, and how to stop it. An acceptance of that
 // version or a later one covers the automatic upgrade check; a later
 // revision that leaves the section alone does not move it, and one that
-// changes the section moves it to its own day. Empty means no version
-// of the agreement carries the section yet, so no acceptance covers the
-// check.
-const UpdatesSince = ""
+// changes the section moves it to its own day.
+const UpdatesSince = "2026-09-29"
 
 // AgreementText is shown in full before the explicit yes/no prompt.
 // It states the actual client behavior and must be kept truthful to
@@ -59,7 +57,8 @@ machine.
 2. What never leaves your machine. Credential headers (Authorization,
    x-api-key) are never written to disk. Before upload, every record
    is masked locally for secrets such as API keys, tokens, passwords,
-   and personal data. In the records that come from the session
+   and personal data. The branch name read from git passes the same
+   masking. In the records that come from the session
    files, the few fields whose value is, by construction, the
    directory the session ran in are replaced with a placeholder: the
    field stays, its value goes. Tool results, however, are kept as
@@ -105,7 +104,21 @@ machine.
    what was there before, and restores it exactly when you disable
    the project or uninstall. If you decline, nothing else changes.
 
-6. Revocation. Disabling a project stops collection immediately,
+6. Updates. At most once a day, trajector asks GitHub for the list of
+   trajector releases. If the trajector service answers that this
+   version is too old, it asks at most once an hour. The request
+   carries the trajector version and nothing else: no token, no
+   project data, and no identifier of this device. GitHub sees the
+   network address the request comes from. If a newer release exists,
+   trajector downloads it from GitHub, checks it against the
+   published checksum, and replaces itself. If a package manager
+   installed trajector, trajector does not replace itself; it tells
+   you the next time you run a trajector command. To stop these
+   checks, set auto_upgrade to false in config.json in your user
+   config directory. The trajector upgrade command sends the same
+   request when you run it.
+
+7. Revocation. Disabling a project stops collection immediately,
    revokes its token, and deletes its local unuploaded data. You may
    additionally request deletion of uploaded data that has not yet
    been delivered. Data already delivered and rewarded is covered by

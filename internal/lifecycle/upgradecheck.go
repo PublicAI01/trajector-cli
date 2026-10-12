@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 	"github.com/PublicAI01/trajector-cli/internal/semver"
 )
@@ -17,12 +16,6 @@ import (
 // hands another: an older build starts the check on whatever build is
 // installed after it, so it never changes.
 const UpgradeCheckDetached = "--detached"
-
-// updatesCovered is the gate on the agreement: whether the one this
-// device accepted tells the user about the automatic check. The tests
-// stand in for an agreement that carries that section while none does
-// yet (consent.UpdatesSince is empty); nothing else assigns it.
-var updatesCovered = (*consent.Store).CoversUpdates
 
 // upgradeCheckArgs is the argv a session hook starts the background
 // check with, and upgradeCheckDetachedArgs the one that check starts.
@@ -59,7 +52,7 @@ func (m *Machine) upgradeCheckDue() bool {
 	if !m.deps.AutoUpgrade || !m.deps.ReleaseBuild {
 		return false
 	}
-	if covered, err := updatesCovered(m.consent); err != nil || !covered {
+	if covered, err := m.consent.CoversUpdates(); err != nil || !covered {
 		return false
 	}
 	// A state file this build cannot read is due: the check replaces

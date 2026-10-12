@@ -253,6 +253,23 @@ idempotency key, so a retried upload can never be counted twice. Local
 records are deleted **only after** the service acknowledges the batch by
 echoing that key; any other answer leaves your data in place for retry.
 
+trajector also asks GitHub whether a newer release exists. The request is an
+HTTPS GET to
+`https://api.github.com/repos/PublicAI01/trajector-cli/releases`, unless
+`releases_url` in `config.json` names another https source. The only
+header it sets is `User-Agent: trajector/<version>`; it carries no token, no
+project data, and no device identifier. GitHub sees the network address the
+request comes from. The session hooks start this check at most once every 24
+hours, or at most once an hour while the trajector service answers that this
+version is too old. When a newer release exists, trajector downloads its
+archive and `trajector_checksums.txt` from that release, and installs it
+only if the checksum matches. An installation a package manager owns, such
+as Homebrew, is never replaced: you are told once per release to run
+`brew upgrade trajector`. `trajector upgrade` sends the same request when
+you run it. To stop the automatic check, set `"auto_upgrade": false` in
+`config.json`. Then nothing goes to GitHub unless you run
+`trajector upgrade`. A build made from source never checks.
+
 A session often sends the same image again with each later call. When the
 trajector service states that it can restore them, each image or document
 goes up in full at least once in each session — for a call recorded by the

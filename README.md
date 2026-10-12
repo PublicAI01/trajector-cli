@@ -117,6 +117,11 @@ pre-releases and `upgrade` moves to them, which is what a beta wants. An
 installation a package manager owns is handed back to that manager rather
 than overwritten.
 
+trajector also checks for a newer release on its own. What that check
+sends, and how to turn it off, is in
+[PRIVACY.md](PRIVACY.md#what-leaves-your-machine) under "What leaves your
+machine".
+
 ## Releases and verification
 
 Every release is built by GitHub Actions from this repository and ships with

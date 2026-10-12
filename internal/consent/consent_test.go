@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 )
@@ -42,15 +43,14 @@ func TestAcceptAgreementRoundTrips(t *testing.T) {
 }
 
 func TestAnAcceptanceCoversUpdatesFromTheDayTheSectionArrived(t *testing.T) {
-	const since = "2026-10-20"
 	cases := map[string]struct {
 		accepted string
 		covers   bool
 	}{
 		"never accepted":          {"", false},
-		"accepted the day before": {"2026-10-19", false},
-		"accepted that day":       {since, true},
-		"accepted a later day":    {"2026-11-02", true},
+		"accepted the day before": {daysFrom(t, consent.UpdatesSince, -1), false},
+		"accepted that day":       {consent.UpdatesSince, true},
+		"accepted the day after":  {daysFrom(t, consent.UpdatesSince, 1), true},
 		"accepted no release day": {"v2", false},
 	}
 	for name, tc := range cases {
@@ -61,22 +61,22 @@ func TestAnAcceptanceCoversUpdatesFromTheDayTheSectionArrived(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			covers, err := s.CoversSince(since)
+			covers, err := s.CoversUpdates()
 			if err != nil || covers != tc.covers {
-				t.Errorf("CoversSince(%q) after accepting %q = %v, %v; want %v", since, tc.accepted, covers, err, tc.covers)
+				t.Errorf("CoversUpdates after accepting %q (UpdatesSince %q) = %v, %v; want %v",
+					tc.accepted, consent.UpdatesSince, covers, err, tc.covers)
 			}
 		})
 	}
 }
 
-func TestNoAcceptanceCoversUpdatesBeforeAnAgreementCarriesTheSection(t *testing.T) {
-	s := open(t)
-	if err := s.AcceptAgreement("2026-11-02", "2026-11-02T10:00:00Z"); err != nil {
-		t.Fatal(err)
+func daysFrom(t *testing.T, day string, n int) string {
+	t.Helper()
+	d, err := time.Parse(time.DateOnly, day)
+	if err != nil {
+		t.Fatalf("%q is not an ISO date: %v", day, err)
 	}
-	if covers, err := s.CoversSince(""); err != nil || covers {
-		t.Errorf("CoversSince(\"\") = %v, %v; want false", covers, err)
-	}
+	return d.AddDate(0, 0, n).Format(time.DateOnly)
 }
 
 func TestCoversUpdatesSurfacesAnUnreadableStore(t *testing.T) {
@@ -84,8 +84,8 @@ func TestCoversUpdatesSurfacesAnUnreadableStore(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if covers, err := consent.Open(path).CoversSince("2026-10-20"); !errors.Is(err, consent.ErrUnreadable) || covers {
-		t.Errorf("CoversSince on an unreadable store = %v, %v; want false and ErrUnreadable", covers, err)
+	if covers, err := consent.Open(path).CoversUpdates(); !errors.Is(err, consent.ErrUnreadable) || covers {
+		t.Errorf("CoversUpdates on an unreadable store = %v, %v; want false and ErrUnreadable", covers, err)
 	}
 }
 

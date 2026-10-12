@@ -77,27 +77,20 @@ func (s *Store) AcceptedVersion() (version, acceptedAt string, err error) {
 
 // CoversUpdates reports whether the agreement this device accepted
 // tells the user about the automatic upgrade check: whether the
-// accepted version is UpdatesSince or later. It reads the acceptance
-// record and nothing else, so a device that signed out still answers
-// by the agreement it accepted; signing out does not take it back.
+// accepted version is UpdatesSince or later. A store with no
+// acceptance, and an accepted version that is not a release day, both
+// answer false: neither shows the user was told. It reads the
+// acceptance record and nothing else, so a device that signed out
+// still answers by the agreement it accepted; signing out does not
+// take it back.
 func (s *Store) CoversUpdates() (bool, error) {
-	return s.coversSince(UpdatesSince)
-}
-
-// coversSince is CoversUpdates for the version since. An empty since,
-// a store with no acceptance, and an accepted version that is not a
-// release day all answer false: none of them shows the user was told.
-func (s *Store) coversSince(since string) (bool, error) {
-	if since == "" {
-		return false, nil
-	}
 	accepted, _, err := s.AcceptedVersion()
 	if err != nil {
 		return false, err
 	}
-	sinceDay, err := time.Parse(time.DateOnly, since)
+	sinceDay, err := time.Parse(time.DateOnly, UpdatesSince)
 	if err != nil {
-		return false, fmt.Errorf("consent: updates section version %q is not a release day: %w", since, err)
+		return false, fmt.Errorf("consent: updates section version %q is not a release day: %w", UpdatesSince, err)
 	}
 	acceptedDay, notADay := time.Parse(time.DateOnly, accepted)
 	return notADay == nil && !acceptedDay.Before(sinceDay), nil

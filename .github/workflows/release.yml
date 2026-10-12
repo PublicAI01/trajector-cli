@@ -28,6 +28,16 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Every agreement published before the one that carries the Updates
+      # section is dated 2026-09-29 or earlier. A release still naming that
+      # day as UpdatesSince would let those acceptances cover the
+      # automatic upgrade check.
+      - name: Refuse an UpdatesSince that predates the Updates section
+        run: |
+          if grep -q 'UpdatesSince = "2026-09-29"' internal/consent/agreement.go; then
+            echo "::error file=internal/consent/agreement.go::UpdatesSince still names 2026-09-29, an agreement without the Updates section; set it to this release's AgreementVersion"
+            exit 1
+          fi
       # No build cache in the job that publishes: a cache written by any
       # other run could put its objects into the release binaries.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
