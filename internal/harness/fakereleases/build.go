@@ -18,9 +18,16 @@ import (
 // (.goreleaser.yaml). A rename of either leaves a build that reports
 // the wrong version, which the version check in any test installing
 // one reports.
+//
+// releaseBuildSymbol is the variable the same ldflags stamp "true"
+// into: only a build carrying it counts as a release build, so a build
+// made here carries it too. The linker ignores -X for a variable the
+// package does not declare, so a build of a tree without it still
+// links.
 const (
-	mainPackage   = "github.com/PublicAI01/trajector-cli/cmd/trajector"
-	versionSymbol = "github.com/PublicAI01/trajector-cli/internal/cli.version"
+	mainPackage        = "github.com/PublicAI01/trajector-cli/cmd/trajector"
+	versionSymbol      = "github.com/PublicAI01/trajector-cli/internal/cli.version"
+	releaseBuildSymbol = "github.com/PublicAI01/trajector-cli/internal/cli.releaseBuild"
 )
 
 // builds holds one build per version for the life of the test process.
@@ -34,7 +41,8 @@ var (
 // BuildRelease is a real trajector binary for this machine's platform
 // that reports version, built the way the release pipeline builds one:
 // -X stamps the version into the variable the version command reads,
-// with the pipeline's -trimpath, -s -w and CGO_ENABLED=0. Publish it to
+// and marks the build as a release, with the pipeline's -trimpath,
+// -s -w and CGO_ENABLED=0. Publish it to
 // make it a release an upgrade picks and installs, or write it where a
 // machine's binary lives to make it the installation an upgrade starts
 // from.
@@ -84,7 +92,7 @@ func buildRelease(version string) ([]byte, error) {
 	cmd := exec.CommandContext(context.Background(), "go", "build",
 		"-trimpath",
 		"-buildvcs=false",
-		"-ldflags", "-s -w -X "+versionSymbol+"="+version,
+		"-ldflags", "-s -w -X "+versionSymbol+"="+version+" -X "+releaseBuildSymbol+"=true",
 		"-o", out,
 		mainPackage,
 	)
