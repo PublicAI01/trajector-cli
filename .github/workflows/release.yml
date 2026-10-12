@@ -51,8 +51,9 @@ jobs:
         if: ${{ !cancelled() && hashFiles('dist/trajector_checksums.txt') != '' }}
         with:
           # No dist/*.zip: Windows is not published (see .goreleaser.yaml),
-          # and a pattern matching nothing fails this step. Restore it
-          # together with the platform.
+          # and a pattern matching nothing fails this step. Restoring the
+          # platform there must also add a zip format override for
+          # windows under archives; only then add dist/*.zip back here.
           subject-path: |
             dist/*.tar.gz
             dist/trajector_checksums.txt
