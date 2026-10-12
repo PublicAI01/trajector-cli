@@ -9,10 +9,10 @@ CORE_MIN=85
 # image and document blocks, routing, spool, batches, upload, consent
 # lifecycle, session-file following, observing a git repository, the
 # reading of one session line and the shape checks on what it reads,
-# and what the surfaces render) are added here as they land. A package
-# joins once its own tests hold it above the floor without a knob that
-# exists only for the tests.
-CORE_PACKAGES="internal/apiproxy internal/batch internal/capture internal/mediablock internal/claudesettings internal/drift internal/envelope internal/follow internal/follow/discover internal/gitsnapshot internal/routing internal/sessionline internal/spool internal/lifecycle internal/redact internal/report internal/upload"
+# what the surfaces render, the served proxy, and atomic file writes and
+# locks) are added here as they land. A package joins once its own tests
+# hold it above the floor without a knob that exists only for the tests.
+CORE_PACKAGES="internal/apiproxy internal/batch internal/capture internal/mediablock internal/claudesettings internal/drift internal/envelope internal/follow internal/follow/discover internal/fsatomic internal/gitsnapshot internal/proxyserve internal/routing internal/sessionline internal/spool internal/lifecycle internal/redact internal/report internal/upload"
 
 go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 
@@ -31,7 +31,7 @@ fi
 # produce, without the serial rebuilds.
 set --
 for pkg in $CORE_PACKAGES; do set -- "$@" "./$pkg"; done
-go test -covermode=atomic -coverprofile=coverage.pkg.out "$@" >/dev/null
+go test -covermode=atomic -coverprofile=coverage.pkg.out "$@"
 
 module=$(go list -m)
 for pkg in $CORE_PACKAGES; do
