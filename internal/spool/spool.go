@@ -38,8 +38,8 @@ import (
 )
 
 // DefaultQuota bounds total spool size. When the quota is reached the
-// spool stops accepting writes but never evicts: captured rawcalls may
-// correspond to compensation and must not be dropped silently.
+// spool stops accepting writes but never evicts: a captured rawcall
+// must not be dropped silently.
 const DefaultQuota = 2 << 30
 
 // ErrQuotaExceeded reports a write refused because it would push the
@@ -189,16 +189,16 @@ func Open(dir string, quota int64) (*Spool, error) {
 // died between WriteFile's create and its rename — an OOM kill, a power
 // loss, a pulled plug. Such a file holds a full unredacted rawcall.
 //
-// Until 2026-09-04 nothing ever removed one. fsatomic.Update's own sweep
-// reaches only the paths this package rewrites under a lock, which means
-// index.jsonl and never a rawcall; and every reader here filters on a
-// ".json" extension that "<id>.json.tmp-NNN" does not have, since
-// filepath.Ext returns ".tmp-NNN". walkUsage filters nothing, so the
-// bytes were charged all the same. That split cost twice over: the
-// strand was invisible to DeleteProject, leaving a withdrawn project's
-// rawcall on disk after the user was told it was deleted, and it was
-// charged against the quota forever, eventually refusing all recording
-// while Summary reported bytes with no records to explain them.
+// Nothing else removes one. fsatomic.Update's own sweep reaches only the
+// paths this package rewrites under a lock, which means index.jsonl and
+// never a rawcall; and every reader here filters on a ".json" extension
+// that "<id>.json.tmp-NNN" does not have, since filepath.Ext returns
+// ".tmp-NNN". walkUsage filters nothing, so the bytes are charged all the
+// same. Without this sweep a strand is invisible to DeleteProject, which
+// leaves a withdrawn project's rawcall on disk after the user is told it
+// was deleted, and it is charged against the quota forever, until the
+// quota refuses all recording while Summary reports bytes with no
+// records to explain them.
 //
 // Only aged temps are taken, so a live writer's transient — which
 // exists for milliseconds — is never in reach. And only names no reader

@@ -209,12 +209,11 @@ func ProjectLocalPath(projectRoot string) string {
 //
 // The host alternatives must cover every address apiproxy.ValidateAddr
 // lets the proxy bind, because injection spells this URL from whatever
-// address the proxy is serving. Recognizing 127.0.0.1 alone left an
-// injection on any other address in the 127/8 block unrecognized — so
-// disable and uninstall walked past it, and the user's own sessions
-// kept pointing at a port that would soon be dead, with no command able
-// to clear it. The whole block is matched here for that reason; it is
-// still narrower than "any host". 2026-08-15.
+// address the proxy is serving. An injection this pattern does not
+// recognize is one that disable and uninstall walk past, and the user's
+// sessions then keep pointing at a dead port that no command can clear.
+// So the whole 127/8 block is matched; that is still narrower than "any
+// host".
 var proxyBaseURL = regexp.MustCompile(`^http://(127(?:\.[0-9]{1,3}){3}|localhost|\[::1\]):[0-9]+/t/([A-Za-z0-9._-]+)$`)
 
 // isProxyBaseURL reports whether value is a trajector-injected base

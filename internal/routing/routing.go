@@ -221,8 +221,7 @@ func (v Verdict) Forwards() bool { return v.Decision != NeverRead }
 type tableFile struct {
 	// PausedReason, when set, suspends recording for every project at
 	// once while forwarding continues unchanged. It backs device-wide
-	// stops (signed out, consent needs reconfirmation) that must not
-	// destroy per-project grants.
+	// stops that must not destroy per-project grants.
 	PausedReason PauseReason `json:"paused_reason,omitempty"`
 	// PausedByVersion names the build that set PausedReason, when the
 	// pause is one that a different build is expected to lift.
