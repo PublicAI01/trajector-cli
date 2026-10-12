@@ -461,13 +461,15 @@ func (e *env) awaitBackgroundCheck(result selfupdate.Result, within time.Duratio
 	}
 }
 
-// run runs the binary installed on this device with args, as a user or
-// a session hook would, and returns what it printed.
+// run runs the binary installed on this device with args in its
+// project, as a user or a session hook would, and returns what it
+// printed.
 func (e *env) run(args ...string) (stdout, stderr string, exit int) {
 	e.t.Helper()
 	ctx, cancel := context.WithTimeout(e.t.Context(), time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, e.deps.ExecPath, args...)
+	cmd.Dir = e.project
 	var out, errs bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errs
 	// A process that leaves a child holding these streams keeps the
@@ -482,6 +484,10 @@ func (e *env) run(args ...string) (stdout, stderr string, exit int) {
 	return out.String(), errs.String(), 0
 }
 
+// A session starts on a device running a real release build: the
+// build's own session hook, with nothing standing in for any gate on
+// the check, starts it, and the check upgrades the device in the
+// background.
 func TestUpgradeCheck_EndToEnd_InstallsInTheBackgroundAndTellsTheNextCommand(t *testing.T) {
 	e, releases := newUpgradeEnv(t)
 	e.installBinary(string(fakereleases.BuildRelease(t, "0.1.0")))
@@ -490,28 +496,21 @@ func TestUpgradeCheck_EndToEnd_InstallsInTheBackgroundAndTellsTheNextCommand(t *
 	index := holdIndex(t, releases.IndexURL())
 	// The installed build reads where it uploads to and where releases
 	// are listed from the user config, as every trajector command does.
+	// The config leaves auto_upgrade unset, which is on.
 	e.sandbox.WriteUserConfig(`{"platform_url": "` + e.service.URL() + `", "releases_url": "` + index.URL + `"}`)
-	t.Setenv(cli.ProxyAddrEnv, e.deps.ProxyAddr)
-
-	// A session starts: its hook starts the check.
-	e.deps.ReleaseBuild, e.deps.AutoUpgrade = true, true
+	// The device accepted the agreement this build shows, which tells
+	// the user about the check, and its proxy is the installed build's
+	// version, so the hook has no proxy to start.
 	e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
 	e.startProxy()
-	started := e.recordStarts()
-	if _, err := e.machine().SessionStarting(t.Context(), e.project, lifecycle.HookInput{}, e.io()); err != nil {
-		t.Fatalf("SessionStarting: %v", err)
-	}
-	checks := started.upgradeChecks()
-	if len(checks) != 1 {
-		t.Fatalf("upgrade checks started = %q, want one", checks)
-	}
+	t.Setenv(cli.ProxyAddrEnv, e.deps.ProxyAddr)
 
-	// What the hook started returns at once, with nothing printed and
-	// no stream left open, while the check it started is still waiting
-	// for the release index.
-	stdout, stderr, exit := e.run(checks[0]...)
+	// The session's hook returns at once, with nothing printed and no
+	// stream left open, while the check it started is still waiting for
+	// the release index.
+	stdout, stderr, exit := e.run("hook", "ensure-proxy")
 	if exit != 0 || stdout != "" || stderr != "" {
-		t.Fatalf("%q = exit %d, stdout %q, stderr %q; want a silent success", checks[0], exit, stdout, stderr)
+		t.Fatalf("hook ensure-proxy = exit %d, stdout %q, stderr %q; want a silent success", exit, stdout, stderr)
 	}
 	var asked http.Header
 	select {
