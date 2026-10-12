@@ -93,8 +93,8 @@ func TestLocalCorpus(t *testing.T) {
 	}
 
 	t.Logf("files %d, segments %d, unreadable %d, segments ending without a newline %d", files, segments, unreadable, total.IncompleteSegments)
-	t.Logf("assistant lines %d, without message id %d, missing a response field %d; messages with a block index gap %d",
-		total.AssistantLines, total.AssistantLinesWithoutMessageID, total.AssistantLinesMissingResponseFields, total.MessagesWithBlockIndexGap)
+	t.Logf("assistant lines %d, without message id %d; messages with a block index gap %d",
+		total.AssistantLines, total.AssistantLinesWithoutMessageID, total.MessagesWithBlockIndexGap)
 	t.Logf("agent lines %d, without a parent field %d", total.AgentLines, total.AgentLinesWithoutParent)
 	for kind, values := range map[string][]string{
 		"launch surface":  total.NewLaunchSurfaces,

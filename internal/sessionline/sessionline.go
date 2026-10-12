@@ -167,16 +167,3 @@ func (n *wholeNumber) UnmarshalJSON(b []byte) error {
 	}
 	return nil
 }
-
-// MessageHas reports whether the line's message carries key, whatever
-// value stands under it. The keys asked for are named by the reader
-// that asks, so the message is read again here instead of being
-// carried on every line that has no such reader.
-func (l Line) MessageHas(key string) bool {
-	var doc struct {
-		Message map[string]json.RawMessage `json:"message"`
-	}
-	_ = json.Unmarshal(l.raw, &doc)
-	_, ok := doc.Message[key]
-	return ok
-}

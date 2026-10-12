@@ -143,37 +143,6 @@ func TestFieldsReportsNoBlockIndexWhereTheLineCarriesNoWholeNumber(t *testing.T)
 	}
 }
 
-func TestMessageHasReportsAKeyWhateverStandsUnderIt(t *testing.T) {
-	t.Parallel()
-	parsed, ok := sessionline.Parse([]byte(`{"type":"assistant","message":{"id":"msg_1","model":"a-model","usage":{"input_tokens":1},"stop_reason":null}}`))
-	if !ok {
-		t.Fatal("not a session line")
-	}
-	for _, key := range []string{"id", "model", "usage", "stop_reason"} {
-		if !parsed.MessageHas(key) {
-			t.Errorf("MessageHas(%q) = false, want true", key)
-		}
-	}
-	for _, key := range []string{"role", "content", ""} {
-		if parsed.MessageHas(key) {
-			t.Errorf("MessageHas(%q) = true, want false", key)
-		}
-	}
-}
-
-func TestMessageHasReportsNothingWhereThereIsNoMessageObject(t *testing.T) {
-	t.Parallel()
-	for _, line := range []string{`{"type":"user"}`, `{"type":"user","message":"hello"}`, `{"type":"user","message":[1]}`} {
-		parsed, ok := sessionline.Parse([]byte(line))
-		if !ok {
-			t.Fatalf("not a session line: %s", line)
-		}
-		if parsed.MessageHas("id") {
-			t.Errorf("%s: MessageHas = true, want false", line)
-		}
-	}
-}
-
 func TestParseKeepsALineOfAnySizeAsOneValue(t *testing.T) {
 	t.Parallel()
 	line := `{"type":"user","message":{"content":"` + strings.Repeat("a", 4096) + `"}}`

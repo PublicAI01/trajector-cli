@@ -43,12 +43,6 @@ type Signals struct {
 	// from them counts: a run that starts above zero or ends early is
 	// not a gap here.
 	MessagesWithBlockIndexGap int `json:"messages_with_block_index_gap,omitempty"`
-	// AssistantLinesMissingResponseFields counts the assistant lines
-	// that lack a field the record is later read by. Which fields those
-	// are is not settled, so requiredResponseFields is empty and no
-	// line lacks one yet; the count belongs to the alert group, where a
-	// line is stored as it was and the count is shown and logged.
-	AssistantLinesMissingResponseFields int `json:"assistant_lines_missing_response_fields,omitempty"`
 
 	AgentLines int `json:"agent_lines,omitempty"`
 	// AgentLinesWithoutParent counts the agent lines that carry none of
@@ -80,7 +74,6 @@ func (s Signals) Quarantine() bool { return len(s.UnanchoredPathFields) > 0 }
 func (s Signals) Alerts() bool {
 	return s.AssistantLinesWithoutMessageID > 0 ||
 		s.MessagesWithBlockIndexGap > 0 ||
-		s.AssistantLinesMissingResponseFields > 0 ||
 		s.AgentLinesWithoutParent > 0
 }
 
@@ -121,7 +114,6 @@ func (s Signals) Add(more Signals) Signals {
 	s.AssistantLinesWithoutMessageID += more.AssistantLinesWithoutMessageID
 	s.AssistantLinesWithEmptyReasoning += more.AssistantLinesWithEmptyReasoning
 	s.MessagesWithBlockIndexGap += more.MessagesWithBlockIndexGap
-	s.AssistantLinesMissingResponseFields += more.AssistantLinesMissingResponseFields
 	s.AgentLines += more.AgentLines
 	s.AgentLinesWithoutParent += more.AgentLinesWithoutParent
 	s.NewLaunchSurfaces = union(s.NewLaunchSurfaces, more.NewLaunchSurfaces)

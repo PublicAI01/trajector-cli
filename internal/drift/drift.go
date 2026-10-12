@@ -87,11 +87,6 @@ func parented(f sessionline.Fields) bool {
 	return f.AgentID != "" || f.ToolUseID != "" || f.ParentAgentID != "" || f.ParentSessionID != ""
 }
 
-// requiredResponseFields lists the fields every assistant line must
-// carry under message for the record to stand on its own. The list is
-// not settled; while it is empty the check never reports.
-var requiredResponseFields []string
-
 // Scan reads the structured fields of the complete lines in lines and
 // reports what does not match the shape this build expects. It never
 // reads free text. A line that is not one of a session file is an
@@ -167,7 +162,7 @@ func (s *scanner) line(r *Signals, raw []byte) error {
 	}
 	switch f.Type {
 	case typeAssistant:
-		s.assistant(r, line, f)
+		s.assistant(r, f)
 	case typeSystem:
 		if f.Subtype != "" && !knownSystemSubtypes[f.Subtype] {
 			s.subtypes[f.Subtype] = true
@@ -187,19 +182,13 @@ func (s *scanner) line(r *Signals, raw []byte) error {
 	return nil
 }
 
-func (s *scanner) assistant(r *Signals, line sessionline.Line, f sessionline.Fields) {
+func (s *scanner) assistant(r *Signals, f sessionline.Fields) {
 	r.AssistantLines++
 	if f.MessageID == "" {
 		r.AssistantLinesWithoutMessageID++
 	}
 	if f.EmptyReasoning {
 		r.AssistantLinesWithEmptyReasoning++
-	}
-	for _, key := range requiredResponseFields {
-		if !line.MessageHas(key) {
-			r.AssistantLinesMissingResponseFields++
-			break
-		}
 	}
 	if f.MessageID == "" {
 		return

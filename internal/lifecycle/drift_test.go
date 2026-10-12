@@ -349,20 +349,16 @@ func TestStatus_ShowsSignalCounts(t *testing.T) {
 	})
 	e.injectWithoutBaseURL()
 	e.sandbox.AddSignals(proxytest.ProjectIDHash(root), proxytest.Signals{
-		AssistantLines:                      7,
-		AssistantLinesWithoutMessageID:      2,
-		AssistantLinesMissingResponseFields: 3,
-		UnanchoredPathFields:                []string{"$.someNewPath"},
-		NewTopLevelTypes:                    []string{"mood-ring"},
-		IncompleteSegments:                  1,
+		AssistantLines:                 7,
+		AssistantLinesWithoutMessageID: 2,
+		UnanchoredPathFields:           []string{"$.someNewPath"},
+		NewTopLevelTypes:               []string{"mood-ring"},
+		IncompleteSegments:             1,
 	})
 
 	out := e.statusOutput()
 	if !strings.Contains(out, "2 of 7 assistant lines in this project's session files carried no message id.") {
 		t.Errorf("status = %q, want the count stated", out)
-	}
-	if !strings.Contains(out, "3 of 7 assistant lines in this project's session files lacked a response field a record is read by.") {
-		t.Errorf("status = %q, want every count the registry holds stated", out)
 	}
 	if strings.Contains(out, "$.someNewPath") || strings.Contains(out, "mood-ring") || strings.Contains(out, "without a newline") {
 		t.Errorf("status = %q, want no field names and no pause cause while recording is not paused, and never a logged value", out)

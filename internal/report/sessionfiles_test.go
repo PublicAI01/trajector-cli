@@ -559,12 +559,11 @@ func TestTheBundleCarriesShapeAndSessionCountsWithoutIdsOrPaths(t *testing.T) {
 
 func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
 	alerts := drift.Signals{
-		AssistantLines:                      12,
-		AssistantLinesWithoutMessageID:      3,
-		AssistantLinesMissingResponseFields: 4,
-		MessagesWithBlockIndexGap:           2,
-		AgentLines:                          5,
-		AgentLinesWithoutParent:             1,
+		AssistantLines:                 12,
+		AssistantLinesWithoutMessageID: 3,
+		MessagesWithBlockIndexGap:      2,
+		AgentLines:                     5,
+		AgentLinesWithoutParent:        1,
 	}
 	stopped := drift.Signals{
 		UnanchoredPathFields: []string{"$.attachment.snapshot.newDir", "$.someNewPath"},
@@ -589,7 +588,6 @@ func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
 			signals: alerts,
 			want: []string{
 				"3 of 12 assistant lines in this project's session files carried no message id.",
-				"4 of 12 assistant lines in this project's session files lacked a response field a record is read by.",
 				"2 message(s) in this project's session files had block indexes that repeat or skip a number.",
 				"1 of 5 agent lines in this project's session files named nothing they were started by.",
 			},
