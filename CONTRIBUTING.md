@@ -89,10 +89,10 @@ updates both.
 ## Vocabulary and comments
 
 The client's domain language is deliberately small: rawcall, capture,
-spool, batch, consent, redaction, envelope. Service-side business concepts
-do not belong in this codebase — in identifiers, comments, strings, or
-logs — and the vocabulary check enforces a denylist. Prefer neutral wording
-(integrity, observed-truth).
+spool, batch, consent, redaction, envelope, authorization. Service-side
+business concepts do not belong in this codebase — in identifiers,
+comments, strings, or logs — and the vocabulary check enforces a
+denylist. Prefer neutral wording (integrity, observed-truth).
 
 Comments state constraints and invariants the code cannot express ("recording
 failures must never interrupt forwarding"), not narration. Keep them

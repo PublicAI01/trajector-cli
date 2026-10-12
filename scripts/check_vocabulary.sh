@@ -1,9 +1,8 @@
 #!/bin/sh
-# Vocabulary boundary check. The client's domain language is limited to
-# rawcall / capture / spool / batch / consent / redaction / envelope;
-# terms from outside that boundary must not appear anywhere in Go
-# sources — comments, identifiers, strings, or test names. Use neutral
-# wording (integrity, observed-truth) instead.
+# Vocabulary boundary check. The server-side terms in the pattern below
+# must not appear anywhere in Go sources — comments, identifiers,
+# strings, or test names. Use neutral wording (integrity,
+# observed-truth) instead.
 set -eu
 
 pattern='buyer|purchaser|settlement|payout|monetiz|revenue|fraud|cheat'
