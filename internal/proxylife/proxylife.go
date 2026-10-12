@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
@@ -118,6 +119,26 @@ func HeldPort(err error) (string, bool) {
 // problem, never advice to hunt the process down. The holder stays
 // untrusted either way: no credential is routed at it.
 var ErrProxyUnverified = errors.New("could not verify the proxy")
+
+// CannotStartError reports that this build could not bring its own
+// proxy up after it had sent an older one away, or that it is already
+// on record as unable to. The older proxy is gone by then, so nothing
+// serves the port until the build is reinstalled: a build that passed
+// its sandboxed self-check and breaks only on this machine's real
+// state ends up exactly here. Surfaces say one sentence about it,
+// naming Version; Cause is what the last start attempt observed.
+type CannotStartError struct {
+	// Version is the build that could not start its proxy.
+	Version string
+	// Cause is why the last start attempt did not come up.
+	Cause error
+}
+
+func (e *CannotStartError) Error() string {
+	return fmt.Sprintf("this build (%s) cannot start its proxy: %v", e.Version, e.Cause)
+}
+
+func (e *CannotStartError) Unwrap() error { return e.Cause }
 
 // Timeouts for the lazy lifecycle.
 const (
@@ -257,8 +278,14 @@ func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/"
 // differing-version reuse is noted in the proxy log. Concurrent
 // callers converge because the port bind is the single-instance lock
 // and losers defer to the winner.
+//
+// A takeover whose new proxy never comes up is a *CannotStartError,
+// and so is every later start of a build on record for one: the older
+// proxy is gone, and each session of every project is failing until
+// the build is reinstalled. Every other failure keeps its own words.
 func (p *Proxy) Ensure(ctx context.Context) error {
 	v := p.Settled(ctx)
+	tookOver := false
 	switch {
 	case v.Holder == HolderForeign:
 		// A holder that answers nothing may be a proxy of ours that
@@ -272,7 +299,9 @@ func (p *Proxy) Ensure(ctx context.Context) error {
 	case v.Serving(p.version):
 		if v.Health.Version != p.version {
 			p.noteReuse(v.Health.Version)
+			return nil
 		}
+		p.clearCannotStart()
 		return nil
 	case v.Replaceable(p.version):
 		// A strictly older release holds the port. Left alone it could
@@ -289,6 +318,7 @@ func (p *Proxy) Ensure(ctx context.Context) error {
 		if err := p.waitPortFree(ctx, drainTimeout); err != nil {
 			return err
 		}
+		tookOver = true
 	}
 
 	argv := []string{Command, Supervise, addrFlag, p.addr}
@@ -302,7 +332,39 @@ func (p *Proxy) Ensure(ctx context.Context) error {
 		// only spend the whole startup budget before failing.
 		return nil
 	}
-	return p.waitHealthy(ctx)
+	if err := p.waitHealthy(ctx); err != nil {
+		if tookOver || p.CannotStart() {
+			p.recordCannotStart()
+			return &CannotStartError{Version: p.version, Cause: err}
+		}
+		return err
+	}
+	p.clearCannotStart()
+	return nil
+}
+
+// CannotStart reports that this build is on record as unable to start
+// its proxy: a takeover by it ended without a healthy proxy, and no
+// proxy of its version has been seen serving since. The record holds
+// the version that wrote it, so a record a build of another version
+// left says nothing about this one. It reads one small file and
+// nothing else, so a report-only surface may ask it.
+func (p *Proxy) CannotStart() bool {
+	recorded, err := fsatomic.ReadFile(p.layout.ProxyCannotStart())
+	return err == nil && string(recorded) == p.version
+}
+
+// recordCannotStart puts this build on record as unable to start its
+// proxy. Best-effort: the failure is reported either way, and a record
+// that could not be written costs only the later surfaces' sentence.
+func (p *Proxy) recordCannotStart() {
+	_ = fsatomic.WriteFile(p.layout.ProxyCannotStart(), []byte(p.version), 0o600)
+}
+
+// clearCannotStart withdraws the record once a proxy of this build's
+// version is serving. Best-effort, like the record itself.
+func (p *Proxy) clearCannotStart() {
+	_ = os.Remove(p.layout.ProxyCannotStart())
 }
 
 // replaceHungProxy stops a silent holder that is provably a proxy of

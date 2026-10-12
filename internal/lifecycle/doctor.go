@@ -510,6 +510,10 @@ func (m *Machine) doctorProxy(ctx context.Context, f *report.Findings, d report.
 	switch {
 	case d.Proxy.Replaceable(m.deps.Version):
 		if err := m.proxy.Ensure(ctx); err != nil {
+			if cannot, ok := errors.AsType[*proxylife.CannotStartError](err); ok {
+				f.ProxyCannotStart(cannot.Version, cannot.Cause)
+				return
+			}
 			f.Problemf("a trajector proxy version %s holds %s and could not be replaced: %v", h.Version, d.Proxy.Addr, err)
 			return
 		}
@@ -523,6 +527,12 @@ func (m *Machine) doctorProxy(ctx context.Context, f *report.Findings, d report.
 	case d.Proxy.Holder == proxylife.HolderForeign:
 		f.ProxyProblem(d.Proxy.Reason, d.ProxyHolder)
 	default:
+		if d.ProxyCannotStart && (!wanted || d.ProxyIdleBetweenSessions) {
+			// Nothing below starts the proxy for this run, so a build on
+			// record as unable to is reported as it stands.
+			f.ProxyCannotStart(m.deps.Version, nil)
+			return
+		}
 		if !wanted {
 			f.OKf("proxy not running; it starts on demand with the next session")
 			return
@@ -535,6 +545,10 @@ func (m *Machine) doctorProxy(ctx context.Context, f *report.Findings, d report.
 			return
 		}
 		if err := m.proxy.Ensure(ctx); err != nil {
+			if cannot, ok := errors.AsType[*proxylife.CannotStartError](err); ok {
+				f.ProxyCannotStart(cannot.Version, cannot.Cause)
+				return
+			}
 			f.Problemf("the proxy is down and could not be started: %v", err)
 			return
 		}

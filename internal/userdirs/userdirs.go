@@ -23,6 +23,7 @@ const (
 	rejectedDirName  = "rawcalls-rejected"
 	secretsDirName   = "secrets"
 	proxyLogName     = "proxy.log"
+	cannotStartName  = "proxy-cannot-start"
 	readerLogName    = "reader.log"
 	adminTokenName   = "admin_token"
 	uploadDirName    = "upload"
@@ -119,6 +120,11 @@ func (l Layout) SecretsDir() string { return filepath.Join(l.config, secretsDirN
 
 // ProxyLog is where a supervised proxy's output is appended.
 func (l Layout) ProxyLog() string { return filepath.Join(l.state, proxyLogName) }
+
+// ProxyCannotStart is where a build that could not start its proxy
+// puts its version on record. It sits beside the proxy log: a
+// reinstall leaves it in place and uninstall --delete-data removes it.
+func (l Layout) ProxyCannotStart() string { return filepath.Join(l.state, cannotStartName) }
 
 // ReaderLog is where the session file reader appends what it noticed
 // about the shape of the lines it read, one JSON object per line.

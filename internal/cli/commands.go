@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
@@ -180,7 +184,7 @@ func (a *app) hookCmd(ctx context.Context, args []string) int {
 		// proxy is brought up either way: with no route to serve it is
 		// still the resident process that uploads what this machine
 		// records.
-		rest, _ = takeFlag(rest, claudesettings.NoProxyMarker)
+		rest, noProxy := takeFlag(rest, claudesettings.NoProxyMarker)
 		if len(rest) != 0 {
 			fmt.Fprintln(a.stderr, hookUsage)
 			return 2
@@ -190,7 +194,20 @@ func (a *app) hookCmd(ctx context.Context, args []string) int {
 		if err != nil {
 			return a.fail(err)
 		}
-		tell, err := m.SessionStarting(ctx, cwd, hook, a.io())
+		// Starting a session may say other things on stderr first — a
+		// stale agreement, a moved upstream — and they are held back:
+		// a build that cannot start its proxy must have its sentence
+		// on the first line, the one Claude Code shows.
+		var said bytes.Buffer
+		streams := a.io()
+		streams.Err = &said
+		tell, err := m.SessionStarting(ctx, cwd, hook, streams)
+		if cannot, ok := errors.AsType[*proxylife.CannotStartError](err); ok {
+			exit := a.cannotStart(cannot, !noProxy)
+			fmt.Fprint(a.stderr, said.String())
+			return exit
+		}
+		fmt.Fprint(a.stderr, said.String())
 		if exit := a.exit(err); exit != 0 {
 			return exit
 		}
@@ -324,6 +341,22 @@ func (a *app) tellSession(stopped bool) int {
 		return 0
 	}
 	fmt.Fprintln(a.stderr, nothingRecordedNotice)
+	return 1
+}
+
+// cannotStart tells a session that this build cannot start its proxy.
+// The sentence is the first line on stderr because that line is what
+// Claude Code shows of a hook that exits non-zero; the exit is 1, never
+// 2, so the session goes on. A session whose requests are routed
+// through the proxy is told next that they fail too. What the last
+// start observed follows on a line of its own, for whoever reads the
+// whole of it.
+func (a *app) cannotStart(cannot *proxylife.CannotStartError, routed bool) int {
+	fmt.Fprintln(a.stderr, report.CannotStart(cannot.Version))
+	if routed {
+		fmt.Fprintln(a.stderr, report.CannotStartRouted)
+	}
+	fmt.Fprintf(a.stderr, "trajector: %v\n", cannot.Cause)
 	return 1
 }
 

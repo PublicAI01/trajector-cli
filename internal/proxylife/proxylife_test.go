@@ -319,6 +319,46 @@ func TestStopCutsAReplyStreamingPastTheDrainBudget(t *testing.T) {
 	}
 }
 
+// A build that passed its sandboxed self-check can still break on this
+// machine's real state. When it takes over and its own proxy never
+// comes up, the older proxy is already gone, so the failure is the
+// build's to name — on that takeover and on every later start of the
+// same build — until a proxy of its version serves again.
+func TestATakeoverWhoseProxyNeverComesUpPutsTheBuildOnRecord(t *testing.T) {
+	addr := freeAddr(t)
+	healthy, layout := supervised(t, addr, "1.0.0")
+	older := proxytest.New(t, proxytest.WithAddr(addr), proxytest.WithVersion("0.0.9"), proxytest.WithLayout(layout))
+	broken := proxylife.For(layout, "1.0.0", procbin.Self(t, "always-crash"), addr, nil)
+
+	cannot, ok := errors.AsType[*proxylife.CannotStartError](broken.Ensure(t.Context()))
+	if !ok || cannot.Version != "1.0.0" {
+		t.Fatalf("Ensure after the takeover = %v, want a CannotStartError naming 1.0.0", cannot)
+	}
+	if err := older.WaitStopped(5 * time.Second); err != nil {
+		t.Errorf("older proxy Serve returned %v on takeover, want nil", err)
+	}
+	if !broken.CannotStart() {
+		t.Error("CannotStart = false after the failed takeover, want the build on record")
+	}
+	if proxylife.For(layout, "1.0.1", "unspawnable", addr, nil).CannotStart() {
+		t.Error("a build of another version reads the record as its own")
+	}
+
+	// Nothing is left to take over, and the same build still fails
+	// the way the takeover did.
+	if _, ok := errors.AsType[*proxylife.CannotStartError](broken.Ensure(t.Context())); !ok {
+		t.Fatal("a later start of the build on record is not a CannotStartError")
+	}
+
+	procbin.Self(t, "proxy")
+	if err := healthy.Ensure(t.Context()); err != nil {
+		t.Fatalf("Ensure with a build that serves: %v", err)
+	}
+	if healthy.CannotStart() {
+		t.Error("CannotStart = true while a proxy of the version serves, want the record withdrawn")
+	}
+}
+
 // servingHolder runs a real proxy announcing version on a fresh
 // sandbox. Callers probe it with an unspawnable exec path, so Ensure
 // returning nil proves it neither drained the holder nor tried to

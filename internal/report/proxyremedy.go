@@ -129,3 +129,36 @@ func ProxyProblem(w io.Writer, style Style, why error) {
 func (f *Findings) ProxyProblem(why error, holder HolderProcess) {
 	f.take(proxyProblem(why, holder))
 }
+
+// CannotStart is the sentence every surface says about a build that
+// cannot start its proxy: a session hook as its first line on stderr,
+// status and doctor as a problem. The older proxy that build took over
+// from is gone, and nothing of trajector's works without one, whichever
+// way a project records; the sentence names the way out and nothing
+// else.
+func CannotStart(version string) string {
+	return "trajector " + version + " cannot start its proxy, so trajector does not work until it is reinstalled: see Installation in README."
+}
+
+// CannotStartRouted is what a session whose requests go through the
+// proxy is told after CannotStart: those requests fail as well, not
+// only the recording.
+const CannotStartRouted = "Requests from this project fail until then."
+
+// cannotStartProblem is that sentence as the problem status and doctor
+// state. It names no fix command: no command of this build's brings
+// its own proxy up, and the reinstall is in the sentence. cause, where
+// a surface has one, is what the last start attempt observed.
+func cannotStartProblem(version string, cause error) line {
+	one := line{severity: severityError, text: CannotStart(version)}
+	if cause != nil {
+		one.details = []string{fmt.Sprintf("The last start: %v.", trimPeriod(cause.Error()))}
+	}
+	return one
+}
+
+// ProxyCannotStart records that problem among a doctor run's findings,
+// with what the start this run attempted observed.
+func (f *Findings) ProxyCannotStart(version string, cause error) {
+	f.take(cannotStartProblem(version, cause))
+}

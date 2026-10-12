@@ -171,6 +171,35 @@ func TestStatusPresentsAnUnverifiableProxyAsAuthentication(t *testing.T) {
 	rejects(t, "status", out, "find and stop the process")
 }
 
+// A build on record as unable to start its proxy is a problem status
+// and doctor state in one sentence, and doctor adds what its own start
+// attempt saw. The sentence carries the way out, so no fix line is
+// offered beside it.
+func TestStatusAndDoctorSayOneSentenceAboutABuildThatCannotStartItsProxy(t *testing.T) {
+	d := device()
+	d.Proxy = proxylife.Verdict{Addr: "127.0.0.1:41100"}
+	d.ProxyCannotStart = true
+	const want = "trajector testv cannot start its proxy, so trajector does not work until it is reinstalled: see Installation in README."
+
+	var status strings.Builder
+	if problems := report.Dashboard(&status, report.Style{}, d); problems == 0 {
+		t.Errorf("status problems = 0, want the proxy that cannot start counted:\n%s", status.String())
+	}
+	f := &report.Findings{}
+	f.ProxyCannotStart(d.Version, errors.New("proxy did not become healthy at 127.0.0.1:41100 within 10s"))
+	var doctor strings.Builder
+	f.Render(&doctor, report.Style{})
+	if f.Problems() != 1 {
+		t.Errorf("doctor problems = %d, want 1", f.Problems())
+	}
+
+	for surface, out := range map[string]string{"status": status.String(), "doctor": doctor.String()} {
+		wants(t, surface, out, want)
+		rejects(t, surface, out, "fix:  ", "Not running", report.CannotStartRouted)
+	}
+	wants(t, "doctor", doctor.String(), "The last start: proxy did not become healthy at 127.0.0.1:41100 within 10s.")
+}
+
 func TestStatusShowsSpoolUsageAndLastUpload(t *testing.T) {
 	d := device()
 	d.Spool.Usage = 4096

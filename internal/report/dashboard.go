@@ -159,6 +159,10 @@ func proxySection(d Diagnosis) *section {
 	case proxylife.HolderForeign:
 		s.take(proxyProblem(d.Proxy.Reason, d.ProxyHolder))
 	default:
+		if d.ProxyCannotStart {
+			s.take(cannotStartProblem(d.Version, nil))
+			return s
+		}
 		if d.ProxyIdleBetweenSessions {
 			s.linef("Not running; on this device it runs only while a session is open, because every enabled project records without it.")
 		} else {

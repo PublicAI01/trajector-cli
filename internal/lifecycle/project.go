@@ -256,8 +256,13 @@ func (m *Machine) EnsureProxy(ctx context.Context, projectDir string, streams IO
 	if err := m.proxy.Ensure(ctx); err != nil {
 		// Every port-holder verdict is passed through with its own
 		// words: each of them has a remedy of its own that a command
-		// states, and a sentence wrapped around one would bury it.
+		// states, and a sentence wrapped around one would bury it. A
+		// build that cannot start its proxy is passed through for the
+		// same reason: its remedy is a reinstall, not a retry.
 		if errors.Is(err, ErrPortOccupied) || errors.Is(err, ErrPortSilent) || errors.Is(err, ErrProxyUnverified) {
+			return err
+		}
+		if _, ok := errors.AsType[*proxylife.CannotStartError](err); ok {
 			return err
 		}
 		return fmt.Errorf("could not start the capture proxy: %w", err)

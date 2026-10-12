@@ -196,6 +196,9 @@ type proxyWire struct {
 	// Without it a reader cannot tell that holder apart from a proxy
 	// that should be running and is not.
 	IdleBetweenSessions bool `json:"idle_between_sessions"`
+	// CannotStart says this build is on record as unable to start its
+	// proxy, which is why nothing holds the port.
+	CannotStart bool `json:"cannot_start,omitzero"`
 	// HolderPID and HolderName are what this device could read about a
 	// holder of the port that this build may not use, as the operating
 	// system reports them. They are absent where nothing could be
@@ -269,6 +272,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 		Holder:              d.Proxy.Holder.String(),
 		Reason:              errString(d.Proxy.Reason),
 		IdleBetweenSessions: d.ProxyIdleBetweenSessions,
+		CannotStart:         d.ProxyCannotStart,
 	}
 	if proxylife.PortIsHeld(d.Proxy.Reason) {
 		proxy.HolderPID = d.ProxyHolder.PID

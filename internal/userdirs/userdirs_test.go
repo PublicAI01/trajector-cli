@@ -166,6 +166,15 @@ func TestFilesShareTheDirectoryTheyBelongIn(t *testing.T) {
 			t.Errorf("%s() = %q, want it under %q", name, got, data)
 		}
 	}
+	state := "/home/u/.local/state/trajector"
+	for name, got := range map[string]string{
+		"ProxyLog":         l.ProxyLog(),
+		"ProxyCannotStart": l.ProxyCannotStart(),
+	} {
+		if slash(filepath.Dir(got)) != state {
+			t.Errorf("%s() = %q, want it under %q", name, got, state)
+		}
+	}
 }
 
 func TestRootsCollapseWhenThePlatformSharesOneDirectory(t *testing.T) {

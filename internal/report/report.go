@@ -225,9 +225,14 @@ type Diagnosis struct {
 	// which is what a surface states then: this device does not know
 	// who holds the port.
 	ProxyHolder HolderProcess
-	Spool       SpoolState
-	Uploads     upload.State
-	Rejected    []upload.RejectedBatch
+	// ProxyCannotStart reports that this build is on record as unable
+	// to start its proxy: a takeover by it ended without a healthy
+	// proxy, and none of its version has served since. It is stated
+	// only while nothing holds the port.
+	ProxyCannotStart bool
+	Spool            SpoolState
+	Uploads          upload.State
+	Rejected         []upload.RejectedBatch
 	// RejectedErr, when non-nil, means the quarantined batches could not
 	// be read; Rejected is then empty, which must never present as an
 	// empty quarantine.

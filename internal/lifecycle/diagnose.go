@@ -92,6 +92,7 @@ func (m *Machine) diagnose(ctx context.Context, dir string, reading sessionFileR
 	// to wait out a sibling's startup. A diagnosis reports the port as
 	// it stands and must answer at once.
 	d.Proxy = m.proxy.Observe(ctx)
+	d.ProxyCannotStart = d.Proxy.Holder == proxylife.HolderNone && m.proxy.CannotStart()
 	if proxylife.PortIsHeld(d.Proxy.Reason) {
 		// Only a holder this device may not use is looked into, and
 		// only for what the operating system says about it: a surface

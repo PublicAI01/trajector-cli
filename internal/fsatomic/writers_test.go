@@ -25,6 +25,11 @@ var plainWriteFiles = map[string]bool{
 	// The other half of the same rollback, restoring content, goes
 	// through fsatomic.
 	"internal/lifecycle/snapshot.go": true,
+	// The record that a build cannot start its proxy is named by this
+	// file alone. It is written through fsatomic and withdrawn by an
+	// unlink: its absence is the state "nothing on record", which its
+	// reader already reads.
+	"internal/proxylife/proxylife.go": true,
 	// Installing a binary is the rename of a staged sibling this package
 	// created and fsatomic wrote, and on Windows the running image must
 	// be renamed aside first. Both steps move a whole file that only

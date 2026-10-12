@@ -20,12 +20,13 @@ import (
 
 // TestMain lets a spawned process be this binary's CLI entry point, so
 // a process tree started by one command prints exactly what production
-// prints.
+// prints, or a build that exits before it serves anything.
 func TestMain(m *testing.M) {
 	os.Exit(procbin.Main(m, map[string]func(args []string) int{
 		"cli": func(args []string) int {
 			return cli.Run(context.Background(), args, strings.NewReader(""), os.Stdout, os.Stderr)
 		},
+		exitsAtOnce: func([]string) int { return 1 },
 	}))
 }
 
