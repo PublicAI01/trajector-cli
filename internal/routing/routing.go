@@ -341,15 +341,6 @@ func verdictFor(known, revoked bool, paused PauseReason) Verdict {
 	}
 }
 
-// Err reports the most recent load failure. A missing file is one, as
-// the Table type states.
-func (t *Table) Err() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.refreshLocked()
-	return t.loadErr
-}
-
 func (t *Table) refreshLocked() {
 	now := time.Now()
 	if !t.checkedAt.IsZero() && now.Sub(t.checkedAt) < t.ttl {

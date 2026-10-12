@@ -2,7 +2,6 @@ package routing_test
 
 import (
 	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,9 +79,6 @@ func TestLookupResolvesActiveAndRevokedRoutes(t *testing.T) {
 	if _, verdict := table.Lookup("tok-unknown"); verdict.Decision != routing.Unknown {
 		t.Errorf("unknown token verdict = %+v", verdict)
 	}
-	if err := table.Err(); err != nil {
-		t.Errorf("Err = %v, want nil", err)
-	}
 }
 
 func TestLookupServesCachedTableWithinTTL(t *testing.T) {
@@ -124,16 +120,13 @@ func TestLookupPicksUpChangesAfterTTL(t *testing.T) {
 	}
 }
 
-func TestMalformedTableResolvesNothingAndReportsError(t *testing.T) {
+func TestMalformedTableResolvesNothingUntilItIsFixed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects": {`)
 	table := routing.New(path, time.Millisecond)
 
 	if _, verdict := table.Lookup("tok"); verdict.Resolves() {
 		t.Error("token resolved from a malformed table")
-	}
-	if err := table.Err(); err == nil {
-		t.Error("Err = nil, want the parse failure")
 	}
 
 	writeTable(t, path, `{"projects":{"tok":{"project_id_hash":"h","upstream":"https://api.anthropic.com"}}}`)
@@ -146,9 +139,6 @@ func TestMalformedTableResolvesNothingAndReportsError(t *testing.T) {
 			t.Fatal("table did not recover after the file was fixed")
 		}
 		time.Sleep(5 * time.Millisecond)
-	}
-	if err := table.Err(); err != nil {
-		t.Errorf("Err = %v after recovery, want nil", err)
 	}
 }
 
@@ -198,9 +188,6 @@ func TestATableMissingSinceItWasOpenedPlacesNoToken(t *testing.T) {
 	if route != (routing.Route{}) {
 		t.Errorf("route = %+v, want none", route)
 	}
-	if err := table.Err(); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("Err = %v, want the missing file", err)
-	}
 
 	writeTable(t, path, `{"projects": {`)
 	if _, verdict := table.Lookup("tok"); verdict.Decision != routing.NeverRead {
@@ -234,9 +221,6 @@ func TestATableMovedAsideKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T)
 	}
 	if _, verdict := table.Lookup("other"); verdict.Decision != routing.Unknown {
 		t.Errorf("verdict for a token the last table did not name = %+v, want unknown", verdict)
-	}
-	if unreadable, ok := errors.AsType[*routing.UnreadableError](table.Err()); !ok || unreadable.Path != path {
-		t.Errorf("Err = %v, want the table at %s unreadable", table.Err(), path)
 	}
 
 	if err := os.Rename(aside, path); err != nil {

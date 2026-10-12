@@ -492,8 +492,8 @@ func TestStoreStartsFromMissingFile(t *testing.T) {
 }
 
 // A table that exists and cannot be read is a different fact from a
-// missing one, and every reader of it says so in one error that names
-// the file: the reads the CLI makes and the proxy's cached view.
+// missing one: every read the CLI makes says so in one error that names
+// the file, and the proxy's cached view places no token.
 func TestATableThatExistsButCannotBeReadIsNamedByEveryReader(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -515,6 +515,9 @@ func TestATableThatExistsButCannotBeReadIsNamedByEveryReader(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "routes-under-test.json")
 			tt.spoil(t, path)
 			store, table := routing.OpenStore(path), routing.New(path, time.Nanosecond)
+			if _, verdict := table.Lookup("tok"); verdict.Decision != routing.NeverRead {
+				t.Errorf("Lookup verdict = %+v, want no token placed", verdict)
+			}
 
 			_, all := store.All()
 			_, paused := store.PausedReason()
@@ -523,7 +526,6 @@ func TestATableThatExistsButCannotBeReadIsNamedByEveryReader(t *testing.T) {
 				"All":          all,
 				"PausedReason": paused,
 				"Resolve":      resolve,
-				"Table.Err":    table.Err(),
 			} {
 				unreadable, ok := errors.AsType[*routing.UnreadableError](err)
 				if !ok || unreadable.Path != path {
