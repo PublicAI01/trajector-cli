@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
+	"github.com/PublicAI01/trajector-cli/internal/semver"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -19,6 +21,7 @@ import (
 const (
 	incomingMarker = ".incoming-"
 	oldMarker      = ".old-"
+	retiredMarker  = ".retired-"
 )
 
 // executablePerm is what an installed binary is left readable and
@@ -114,6 +117,28 @@ func keptName(execPath, version string) string {
 	return execPath + oldMarker + version + filepath.Ext(execPath)
 }
 
+// execPathRetired is where a kept binary that could not be deleted when
+// its successor's install was committed waits for a sweep to delete it.
+func execPathRetired(execPath, version string) string {
+	return execPath + retiredMarker + version + filepath.Ext(execPath)
+}
+
+// keptVersion is the version a kept binary named name announces, for a
+// name keptName gives the binary called base. Anything else beginning
+// with the kept marker is not one: on Windows, the builds before this
+// transaction stepped the running binary aside under a random name
+// after base+oldMarker, and that binary's install was committed.
+func keptVersion(base, name string) (string, bool) {
+	rest, ok := strings.CutPrefix(name, base+oldMarker)
+	if !ok {
+		return "", false
+	}
+	if rest, ok = strings.CutSuffix(rest, filepath.Ext(base)); !ok || !semver.Comparable(rest) {
+		return "", false
+	}
+	return rest, true
+}
+
 // replaceKeeping moves staged onto execPath and keeps what was there
 // as kept. If the move fails, the binary is at execPath and nothing is
 // at kept.
@@ -136,34 +161,44 @@ func replaceKeeping(staged, execPath, kept string) error {
 // commit makes the install of version final, in an order that leaves
 // a trace wherever it stops. The state file first names version as
 // still to be finished; then the kept binary goes, and from that moment
-// the new build is the installation; then the new build finishes its
-// own install, and only when it says it has does the state file stop
-// naming version as unfinished. A finish that fails, or a machine that
-// stops before it ran, leaves the name there for the new build to
-// finish later.
+// the new build is the installation, which the state file then names
+// as installed; then the new build finishes its own install, and only
+// when it says it has does the state file stop naming version as
+// unfinished. A finish that fails, or a machine that stops before it
+// ran, leaves the name there for the new build to finish later.
 //
 // A state file that cannot be written does not stop the commit: the
 // new build has already accepted the install, and refusing it over a
 // note would put back a binary nothing is wrong with.
 func commit(ctx context.Context, in Installation, version, kept string) {
 	_ = updateState(in.State, func(s *State) { s.FinishPending = version })
-	// On Windows this fails while the kept binary is still the image of
-	// a running process — the one running this upgrade, at least — and
-	// the next upgrade's sweep removes it.
-	os.Remove(kept)
+	// A kept binary is what a sweep puts back, so it must not outlive
+	// the commit under its kept name. On Windows it cannot be deleted
+	// while it is still the image of a running process — the one running
+	// this upgrade, at least — but it can be renamed, as it was a moment
+	// ago, to a name the next upgrade's sweep only deletes.
+	if os.Remove(kept) != nil {
+		_ = os.Rename(kept, execPathRetired(in.ExecPath, in.Version))
+	}
+	_ = updateState(in.State, func(s *State) { s.Installed = version })
 	if finish(ctx, in.ExecPath) == nil {
 		_ = updateState(in.State, func(s *State) { s.FinishPending = "" })
 	}
 }
 
-// SweepResidue removes what an earlier upgrade left behind: beside in's
-// binary, a staged binary that never landed and a kept one — kept by
-// an upgrade that stopped before it was committed or undone, or, on
-// Windows, by a committed one that could not delete it while it was
-// still a running process's image; beside the state file, a directory
-// a new build's check of itself was stopped in. Anything still held
-// open is left for the next sweep. This is housekeeping, not a
-// diagnosis: it reports nothing and fails at nothing.
+// SweepResidue undoes or removes what an earlier upgrade left behind.
+// A kept binary means that upgrade died between putting the new build
+// in place and committing it — the commit deletes the kept binary
+// before anything else can stop it — so the build at in's path never
+// accepted its own install, and a build that has not accepted its own
+// install must not stay in place: the kept binary goes back under its
+// own name. Nothing is recorded against the build it
+// replaces, which was never judged, and the next upgrade tries it
+// again. Beside the binary, a staged binary that never landed and one
+// retired by a committed upgrade are removed; beside the state file, a
+// directory a new build's check of itself was stopped in. Anything
+// still held open is left for the next sweep. This is housekeeping, not
+// a diagnosis: it reports nothing and fails at nothing.
 //
 // It runs only under the upgrade lock, and does not wait for it: what
 // sits beside the binary while another upgrade holds the lock is that
@@ -181,20 +216,77 @@ func SweepResidue(in Installation) {
 	sweepResidue(in)
 }
 
-// sweepResidue is SweepResidue for a caller already holding the lock.
-// Beside the binary it removes staged and kept binaries; beside the
-// state file, the directories a new build's check of itself was
-// stopped before it could remove.
-func sweepResidue(in Installation) {
+// sweepResidue is SweepResidue for a caller already holding the lock,
+// which is what proves the upgrade that left the residue is dead. It
+// returns the version of the binary it put back, or empty when it put
+// none back: after a put back, the binary at in's path no longer
+// announces in.Version.
+func sweepResidue(in Installation) (putBack string) {
 	base := filepath.Base(in.ExecPath)
+	spare, putBack := putBackKept(in)
 	removeEntries(filepath.Dir(in.ExecPath), os.Remove, func(name string) bool {
-		return strings.HasPrefix(name, base+incomingMarker) || strings.HasPrefix(name, base+oldMarker)
+		if name == spare {
+			return false
+		}
+		for _, marker := range []string{incomingMarker, oldMarker, retiredMarker} {
+			if strings.HasPrefix(name, base+marker) {
+				return true
+			}
+		}
+		return false
 	})
 	// A check's directory holds the directories its proxy made, so it
 	// goes with everything in it.
 	removeEntries(filepath.Dir(in.State), os.RemoveAll, func(name string) bool {
 		return strings.HasPrefix(name, userdirs.UpgradeVerifyPrefix)
 	})
+	return putBack
+}
+
+// putBackKept puts the binary an interrupted upgrade kept back at in's
+// path. There is only ever one, as one upgrade at a time keeps one;
+// should there be more, the one written last goes back and the rest
+// are left to be removed as residue. When it cannot be put back — on
+// Windows, while the build in its place is a running image — its name
+// is returned as spare, so the sweep spares it for the next one:
+// removing it would leave the unaccepted build installed for good. When
+// it is put back, putBack is the version it announces.
+func putBackKept(in Installation) (spare, putBack string) {
+	dir, base := filepath.Dir(in.ExecPath), filepath.Base(in.ExecPath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", ""
+	}
+	var latest, version string
+	var latestTime time.Time
+	for _, e := range entries {
+		v, ok := keptVersion(base, e.Name())
+		if !ok {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if latest == "" || info.ModTime().After(latestTime) {
+			latest, version, latestTime = e.Name(), v, info.ModTime()
+		}
+	}
+	if latest == "" {
+		return "", ""
+	}
+	if os.Rename(filepath.Join(dir, latest), in.ExecPath) != nil {
+		return latest, ""
+	}
+	// The interrupted upgrade may have named its build as still to be
+	// finished, after that build accepted the install and before the
+	// kept binary went; the build put back is not that one.
+	_ = updateState(in.State, func(s *State) {
+		if s.FinishPending != version {
+			s.FinishPending = ""
+		}
+	})
+	return "", version
 }
 
 // removeEntries removes, with remove, every entry of dir whose name is

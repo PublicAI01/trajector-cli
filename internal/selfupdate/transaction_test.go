@@ -214,3 +214,108 @@ func TestUpgradeThatCannotKeepThePreviousBinaryChangesNothing(t *testing.T) {
 		t.Errorf("the install directory holds %v, want the binary and what was already there", got)
 	}
 }
+
+// kept is the name an upgrade keeps this machine's binary under while
+// the build replacing it, which announces version, checks itself.
+func (m installed) kept(version string) string {
+	return m.path + ".old-" + version + filepath.Ext(m.path)
+}
+
+// plant writes content at path, last modified at modified.
+func plant(t *testing.T, path, content string, modified time.Time) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSweepPutsBackTheBinaryAnInterruptedUpgradeKept(t *testing.T) {
+	// The disk as an upgrade leaves it when it dies after putting the
+	// 0.2.0 build in place and before that build accepted the install:
+	// the build at the binary's path, the 0.1.0 binary kept beside it,
+	// and no lock held.
+	m := install(t, "the 0.2.0 build, never checked")
+	plant(t, m.kept("0.1.0"), "the 0.1.0 binary", time.Now())
+
+	selfupdate.SweepResidue(m.at("0.2.0"))
+
+	if got := m.content(); got != "the 0.1.0 binary" {
+		t.Errorf("the binary is %q, want the kept 0.1.0 binary put back", got)
+	}
+	if got := m.siblings(); len(got) != 1 {
+		t.Errorf("the sweep left %v in the install directory", got)
+	}
+	// The build it replaced was never judged, so nothing is held
+	// against it: the next upgrade tries it again.
+	if s := loadState(t, m.at("0.1.0")); len(s.Unusable) != 0 {
+		t.Errorf("unusable versions are %v after putting back an interrupted upgrade", s.Unusable)
+	}
+}
+
+func TestSweepPutsBackTheLatestOfSeveralKeptBinaries(t *testing.T) {
+	m := install(t, "the 0.3.0 build, never checked")
+	now := time.Now()
+	plant(t, m.kept("0.2.0"), "the 0.2.0 binary", now)
+	plant(t, m.kept("0.1.0"), "the 0.1.0 binary", now.Add(-time.Hour))
+
+	selfupdate.SweepResidue(m.at("0.3.0"))
+
+	if got := m.content(); got != "the 0.2.0 binary" {
+		t.Errorf("the binary is %q, want the one written last put back", got)
+	}
+	if got := m.siblings(); len(got) != 1 {
+		t.Errorf("the sweep left %v in the install directory", got)
+	}
+}
+
+func TestSweepAfterAnInterruptedCommitNamesNothingUnfinished(t *testing.T) {
+	// The upgrade died after its 0.2.0 build accepted the install and
+	// the state file named 0.2.0 unfinished, before the kept binary
+	// went. That build is no longer the one installed once 0.1.0 is
+	// back, so there is nothing of its install to finish.
+	m := install(t, "the 0.2.0 build")
+	plant(t, m.kept("0.1.0"), "the 0.1.0 binary", time.Now())
+	writeState(t, m.at("0.1.0"), `{"finish_pending": "0.2.0", "installed": "0.1.0"}`)
+
+	selfupdate.SweepResidue(m.at("0.2.0"))
+
+	if s := loadState(t, m.at("0.1.0")); s.FinishPending != "" || s.Installed != "0.1.0" {
+		t.Errorf("state is %+v, want nothing left to finish", s)
+	}
+}
+
+func TestSweepKeepsWhatTheBinaryPutBackStillHasToFinish(t *testing.T) {
+	// 0.1.0 was installed but did not finish; an upgrade from it then
+	// died before its new build was checked. 0.1.0 still has to finish.
+	m := install(t, "the 0.2.0 build, never checked")
+	plant(t, m.kept("0.1.0"), "the 0.1.0 binary", time.Now())
+	writeState(t, m.at("0.1.0"), `{"finish_pending": "0.1.0", "installed": "0.1.0"}`)
+
+	selfupdate.SweepResidue(m.at("0.2.0"))
+
+	if s := loadState(t, m.at("0.1.0")); s.FinishPending != "0.1.0" {
+		t.Errorf("finish_pending is %q, want 0.1.0 still to be finished", s.FinishPending)
+	}
+}
+
+func TestUpgrade_CommitNamesTheNewBuildInstalledBeforeItFinishes(t *testing.T) {
+	m := install(t, "the 0.1.0 binary")
+	record := filepath.Join(t.TempDir(), "record")
+	release := scriptRelease(t, "exit 0", "cat '"+m.at("0.1.0").State+"' > '"+record+"'; exit 1")
+	releases := fakereleases.New(t)
+	releases.Publish(t, "0.2.0", release)
+
+	if _, err := selfupdate.Upgrade(t.Context(), m.at("0.1.0"), releases.IndexURL(), 0); err != nil {
+		t.Fatalf("Upgrade = %v; want 0.2.0 installed", err)
+	}
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"installed": "0.2.0"`) {
+		t.Errorf("while the new build finished, the state file was:\n%s\nwant 0.2.0 named installed", data)
+	}
+}

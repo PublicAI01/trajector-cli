@@ -620,8 +620,9 @@ func TestSweepResidueRemovesWhatAnEarlierUpgradeLeftBehind(t *testing.T) {
 	exec := filepath.Join(dir, "trajector")
 	files := map[string]string{
 		"trajector":                    "the binary",
-		"trajector.old-9f2c":           "a previous binary that could not be deleted while running",
+		"trajector.old-9f2c":           "an older build's stepped-aside binary, under a name it chose at random",
 		"trajector.incoming-4a1b":      "a staged binary that never landed",
+		"trajector.retired-0.0.9":      "a binary a committed upgrade could not delete while it ran",
 		"trajector.exe":                "another platform's binary, not this one's residue",
 		"trajector-config-backup.json": "somebody else's file",
 	}
@@ -665,7 +666,7 @@ func TestSweepResidueRemovesWhatAnEarlierUpgradeLeftBehind(t *testing.T) {
 			t.Errorf("%s was swept away", name)
 		}
 	}
-	for _, name := range []string{"trajector.old-9f2c", "trajector.incoming-4a1b"} {
+	for _, name := range []string{"trajector.old-9f2c", "trajector.incoming-4a1b", "trajector.retired-0.0.9"} {
 		if left[name] {
 			t.Errorf("%s was left behind", name)
 		}

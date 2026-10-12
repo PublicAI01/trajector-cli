@@ -10,7 +10,8 @@ import "os"
 // stepped aside rather than linked, and execPath is empty for the
 // moment until the new binary takes its name. The stepped-aside file
 // cannot be deleted while it is still a running process's image: when
-// the install is committed it is left for the next upgrade's sweep.
+// the install is committed it is renamed once more, to a name the next
+// upgrade's sweep deletes rather than puts back.
 func keepAside(execPath, kept string) (stillInPlace bool, err error) {
 	return false, os.Rename(execPath, kept)
 }

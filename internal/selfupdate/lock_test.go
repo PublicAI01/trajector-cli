@@ -151,17 +151,28 @@ func TestSweepResidueLeavesAnUpgradeInProgressAlone(t *testing.T) {
 	if err := os.WriteFile(staged, []byte("the 0.2.0 binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	kept := m.kept("0.0.9")
+	if err := os.WriteFile(kept, []byte("the 0.0.9 binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	release := holdLock(t, m.at("0.1.0"))
 
 	selfupdate.SweepResidue(m.at("0.1.0"))
 	if _, err := os.Stat(staged); err != nil {
 		t.Fatalf("a sweep during an upgrade removed its staged binary: %v", err)
 	}
+	if _, err := os.Stat(kept); err != nil || m.content() != "the 0.1.0 binary" {
+		t.Fatalf("a sweep during an upgrade touched the binary it may put back (%v)", err)
+	}
 
-	// Once that upgrade is over, what it left is residue like any other.
+	// Once that upgrade is over, what it left is residue like any other,
+	// and the binary it kept goes back.
 	release()
 	selfupdate.SweepResidue(m.at("0.1.0"))
 	if _, err := os.Stat(staged); !os.IsNotExist(err) {
 		t.Errorf("residue survived a sweep with no upgrade running (%v)", err)
+	}
+	if got := m.content(); got != "the 0.0.9 binary" {
+		t.Errorf("the binary is %q after the sweep, want the kept one put back", got)
 	}
 }

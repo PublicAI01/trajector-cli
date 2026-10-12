@@ -102,6 +102,22 @@ func (e *UnusableError) Error() string {
 	return fmt.Sprintf("selfupdate: trajector %s does not start on this machine (%s); nothing was installed", e.Version, e.Reason)
 }
 
+// PutBackError reports a run that found an earlier upgrade interrupted
+// before the build it put in place accepted the install, and put the
+// binary that upgrade kept back in its place. The binary at ExecPath
+// then announces Version, not the version of the process running the
+// upgrade, so the run did nothing else: anything it went on to decide
+// would be decided for a build that is no longer installed. Nothing is
+// recorded as installed, and nothing against the build taken out.
+type PutBackError struct {
+	// Version is the release the binary put back announces.
+	Version string
+}
+
+func (e *PutBackError) Error() string {
+	return fmt.Sprintf("an earlier upgrade stopped before the build it put in place accepted the install, so trajector %s was put back and nothing else was done", e.Version)
+}
+
 // Upgrade moves in to the newest release published at indexURL. It
 // waits up to wait for another upgrade on this machine to finish, and
 // returns ErrBusy when that one still holds the lock: a manual upgrade
@@ -121,6 +137,10 @@ func (e *UnusableError) Error() string {
 // install whose new build then fails to finish it still returns
 // Upgraded: the state file names the version as unfinished
 // (State.FinishPending) for the new build to finish later.
+//
+// A run that finds an earlier upgrade interrupted before its new build
+// accepted the install puts back the binary that upgrade kept, and
+// returns a *PutBackError having done nothing else.
 //
 // Every run that takes the lock records how it ended in the state file
 // before letting go of it.
@@ -148,7 +168,9 @@ func upgrade(ctx context.Context, in Installation, indexURL string) (Outcome, er
 	// Housekeeping comes first, whether or not this run installs
 	// anything: on Windows the binary an earlier upgrade stepped aside
 	// could not be deleted while it was still the running image.
-	sweepResidue(in)
+	if putBack := sweepResidue(in); putBack != "" {
+		return Outcome{}, &PutBackError{Version: putBack}
+	}
 
 	if manager := packageManager(in.ExecPath); manager != "" {
 		return Outcome{Kind: Managed, Manager: manager, From: in.Version}, nil
