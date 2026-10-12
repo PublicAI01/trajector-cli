@@ -32,12 +32,18 @@ import (
 // session nothing the second time; the event named in the input is what
 // decides whether this moment is observed at all.
 //
+// It is also the one moment that starts the background check for a
+// newer release, once the proxy is settled and whether or not it came
+// up: a build whose proxy fails is one a newer release may fix. The
+// check runs on its own and says nothing here.
+//
 // The error returned is the proxy's alone. A session whose proxy could
 // not be brought up hears that instead, and stays untold about the
 // device: one hook writes one line, and the failure the user can act on
 // now is the one worth that line.
 func (m *Machine) SessionStarting(ctx context.Context, cwd string, hook HookInput, streams IO) (tell bool, err error) {
 	err = m.EnsureProxy(ctx, cwd, streams)
+	m.startUpgradeCheck(ctx)
 	m.followAndObserve(ctx, cwd, hook, false)
 	if err != nil {
 		return false, err

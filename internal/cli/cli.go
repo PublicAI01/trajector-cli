@@ -91,20 +91,21 @@ func resolveVersion(stamp, releaseStamp string, readBuildInfo func() (*debug.Bui
 const ProxyAddrEnv = "TRAJECTOR_PROXY_ADDR"
 
 // NowEnv pins the machine's clock to a fixed RFC3339 instant, for
-// tests. Production leaves it unset.
+// tests. A release build does not read it, so a repository's committed
+// settings, which reach the session hooks' environment, cannot reach it.
 const NowEnv = "TRAJECTOR_NOW"
 
 // RecordProxyStartEnv makes every process this binary would leave
-// running — the proxy, and the reader a session hook hands its work to
-// — be recorded in the proxy log instead of started, for a test suite
-// that drives Run in its own process: the session hooks still reach
-// the start, and nothing is left running that the suite would have to
-// stop. Production leaves it unset and each start spawns its process.
+// running — the proxy, the reader a session hook hands its work to,
+// and the background upgrade check — be recorded in the proxy log
+// instead of started, for a test suite that drives Run in its own
+// process: the session hooks still reach the start, and nothing is
+// left running that the suite would have to stop.
 //
-// It is read from the environment, which a repository's committed
-// settings reach through the session hooks, for the one reason the
-// endpoint overrides are not: all it can do is stop this machine from
-// recording, which sends nothing anywhere and reads nothing new.
+// A release build does not read it, so a repository's committed
+// settings, which reach the session hooks' environment, cannot reach
+// it: set there, it would stop every session in that repository from
+// starting the proxy and the upgrade check.
 const RecordProxyStartEnv = "TRAJECTOR_RECORD_PROXY_START"
 
 type app struct {
@@ -339,15 +340,17 @@ func openMachine(addr string, showsConfigErr bool) (*lifecycle.Machine, error) {
 		Home:         env.home,
 		Getenv:       os.Getenv,
 	}
-	if os.Getenv(RecordProxyStartEnv) != "" {
-		deps.Spawn = proxylife.RecordStartsIn(deps.Layout.ProxyLog())
-	}
-	if v := os.Getenv(NowEnv); v != "" {
-		at, err := time.Parse(time.RFC3339, v)
-		if err != nil {
-			return nil, fmt.Errorf("parsing %s: %w", NowEnv, err)
+	if !release {
+		if os.Getenv(RecordProxyStartEnv) != "" {
+			deps.Spawn = proxylife.RecordStartsIn(deps.Layout.ProxyLog())
 		}
-		deps.Now = func() time.Time { return at }
+		if v := os.Getenv(NowEnv); v != "" {
+			at, err := time.Parse(time.RFC3339, v)
+			if err != nil {
+				return nil, fmt.Errorf("parsing %s: %w", NowEnv, err)
+			}
+			deps.Now = func() time.Time { return at }
+		}
 	}
 	return lifecycle.Open(deps), nil
 }

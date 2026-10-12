@@ -61,10 +61,11 @@ type Deps struct {
 	AutoUpgrade bool
 	ProxyAddr   string
 	// Spawn starts every process this machine leaves running behind a
-	// command: the proxy, and the reader a session hook hands its work
-	// to. Nil detaches them, which is what production does. A test suite
-	// that drives the CLI in its own process supplies a starter that
-	// starts nothing, so neither process outlives it.
+	// command: the proxy, the reader a session hook hands its work to,
+	// and the background upgrade check. Nil detaches them, which is what
+	// production does. A test suite that drives the CLI in its own
+	// process supplies a starter that starts nothing, so none of them
+	// outlives it.
 	Spawn proxylife.Starter
 	// Home is the user's home directory. Claude Code's own directories
 	// are resolved from it, and from the environment that moves them.

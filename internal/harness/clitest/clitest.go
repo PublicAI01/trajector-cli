@@ -79,14 +79,14 @@ func New(t *testing.T) *Env {
 	e.proxyAddr = proxytest.IdleAddr(t)
 	t.Setenv(cli.ProxyAddrEnv, e.proxyAddr)
 	// Nothing this environment runs may start a process of its own. A
-	// session hook starts the proxy, and a reader for the files it
-	// registered, in processes that outlive the command, and a suite
-	// that drives the CLI in its own process has no way to stop what it
-	// left behind: the proxies accumulate until each one exits on idle.
-	// Each start is recorded here instead, and Spawns reads back what
-	// was recorded. The variable is passed on to every process a test
-	// spawns, so a hook running in one of those leaves nothing behind
-	// either.
+	// session hook starts the proxy, a reader for the files it
+	// registered, and the background upgrade check, in processes that
+	// outlive the command, and a suite that drives the CLI in its own
+	// process has no way to stop what it left behind: the proxies
+	// accumulate until each one exits on idle. Each start is recorded
+	// here instead, and Spawns reads back what was recorded. The
+	// variable is passed on to every process a test spawns, so a hook
+	// running in one of those leaves nothing behind either.
 	t.Setenv(cli.RecordProxyStartEnv, "1")
 	e.SetPlatformURL(e.service.URL())
 	return e

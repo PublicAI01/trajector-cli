@@ -45,9 +45,10 @@ type State struct {
 	// here for that build to run again.
 	FinishPending string `json:"finish_pending,omitempty"`
 	// FinishFailures is how many times in a row finishing FinishPending
-	// has failed. At finishGiveUp the version stops being named: the
-	// user is told to run doctor --all, which repairs what a finish
-	// would, rather than every later check running it again.
+	// has failed. At finishGiveUp the user is told to run doctor --all,
+	// which repairs what a finish would, and once told the version
+	// stops being named, rather than every later check running it
+	// again.
 	FinishFailures int `json:"finish_failures,omitzero"`
 	// ToldManaged is the newest release the background check has
 	// reported for an installation a package manager owns. That
@@ -85,15 +86,11 @@ func (s *State) setFinishPending(version string) {
 }
 
 // finishFailed counts one more failure of finishing FinishPending. It
-// reports whether that was the last one tried: the version is then no
-// longer named.
+// reports whether that was the last one tried; the version stays named
+// until the user is told so (Installation.Tell).
 func (s *State) finishFailed() (gaveUp bool) {
 	s.FinishFailures++
-	if s.FinishFailures < finishGiveUp {
-		return false
-	}
-	s.setFinishPending("")
-	return true
+	return s.FinishFailures >= finishGiveUp
 }
 
 // ManagerOf names the package manager that owns the binary at

@@ -52,7 +52,7 @@ func hookCommand(execPath, subcommand string) string {
 	if strings.ContainsAny(execPath, " \t") {
 		execPath = `"` + execPath + `"`
 	}
-	return execPath + " hook " + subcommand
+	return execPath + " " + strings.Join(claudesettings.HookArgv(subcommand), " ")
 }
 
 // projectHooks renders one command per hook a project injection

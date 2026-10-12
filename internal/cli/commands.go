@@ -155,7 +155,7 @@ func (a *app) hookCmd(ctx context.Context, args []string) int {
 	// A hook runs where nobody is watching, so a mistyped flag must be
 	// refused before the hook name is read as an event and before any
 	// session file is looked for.
-	if code, answered := a.preparse(hookUsage, args, []string{claudesettings.NoProxyMarker}); answered {
+	if code, answered := a.preparse(hookUsage, args, []string{claudesettings.NoProxyMarker, lifecycle.UpgradeCheckDetached}); answered {
 		return code
 	}
 	if len(args) == 0 {
@@ -237,13 +237,29 @@ func (a *app) hookCmd(ctx context.Context, args []string) int {
 		m.ReadSessionFiles(ctx, rest[0], a.io())
 		return 0
 	case claudesettings.HookUpgradeCheck:
-		// The name is held for the background check for a newer
-		// release; until a build runs that check, asking for it does
-		// nothing.
+		// The background check for a newer release, which the session
+		// hook starts. The process the hook starts only starts the one
+		// that checks, marked as such, and returns at once: the hook's
+		// own child is stopped with the hook, and the check is not.
+		// Neither says anything: what the check found is in the upgrade
+		// state file, and what the user must hear waits for their next
+		// command.
+		rest, detached := takeFlag(rest, lifecycle.UpgradeCheckDetached)
 		if len(rest) != 0 {
 			fmt.Fprintln(a.stderr, hookUsage)
 			return 2
 		}
+		m, err := a.machine()
+		if err != nil {
+			return a.fail(err)
+		}
+		if !detached {
+			if err := m.DetachUpgradeCheck(ctx); err != nil {
+				return a.fail(err)
+			}
+			return 0
+		}
+		m.CheckForUpgrade(ctx)
 		return 0
 	case claudesettings.HookUpgradeVerify:
 		if len(rest) != 0 {

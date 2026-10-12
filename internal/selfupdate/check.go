@@ -62,13 +62,23 @@ type Checked struct {
 	// ResultManaged.
 	Manager Manager
 	// TellManaged reports that Release was not reported for this
-	// managed installation before. The state file now records it as
-	// reported, so no later check reports it again.
+	// managed installation before. Once the user is told
+	// (Installation.Tell), the state file records it as reported, so no
+	// later check reports it again.
 	TellManaged bool
 	// FinishFailed reports that finishing this build's own install has
-	// now failed twice in a row, the last time in this check, and that
-	// it is no longer tried: the state file stops naming it unfinished.
+	// now failed twice in a row, the last time in this check. Once the
+	// user is told (Installation.Tell), it is no longer tried: the state
+	// file stops naming it unfinished.
 	FinishFailed bool
+}
+
+// tells reports whether c, which came with err, has something the user
+// has to hear: a release a package manager has to install, a finish no
+// longer tried, or a release this check found does not start here.
+func (c Checked) tells(err error) bool {
+	_, unusable := errors.AsType[*UnusableError](err)
+	return c.TellManaged || c.FinishFailed || unusable
 }
 
 // errNotARelease is a background check on a build no release order
@@ -96,8 +106,9 @@ var errNotARelease = errors.New("this build reports a version that is not a publ
 // its version as State.FinishPending, because its finish failed or the
 // machine stopped before it ran — runs finish again first, in this
 // process; finish is this build's own. A second failure in a row is the
-// last: the version stops being named unfinished, and Checked says so
-// for the caller to send the user to what repairs it by hand.
+// last: Checked says so for the caller to send the user to what repairs
+// it by hand, and once the user is told the version stops being named
+// unfinished.
 //
 // The check then asks the release index at indexURL for the newest
 // release and does one of four things, which the state file records
@@ -173,14 +184,26 @@ func Check(ctx context.Context, in Installation, indexURL string, w Window, fini
 	if c.Result == ResultUpgraded {
 		installed = c.Release
 	}
+	told := true
+	if in.Tell != nil && c.tells(err) {
+		told = in.Tell(c, err) == nil
+	}
 	// For the reason Upgrade gives: the record is a note, not the
 	// installation, and the next check that takes the lock writes it
 	// afresh.
 	_ = updateState(in.State, func(s *State) {
 		s.CheckedAt, s.Result = w.Now, c.Result
 		s.noteRun(in, installed, err)
+		if !told {
+			return
+		}
 		if c.TellManaged {
 			s.ToldManaged = c.Release
+		}
+		// An install committed in this check names a version of its
+		// own, which is not the one given up on.
+		if c.FinishFailed && s.FinishPending == in.Version {
+			s.setFinishPending("")
 		}
 	})
 	return c, err

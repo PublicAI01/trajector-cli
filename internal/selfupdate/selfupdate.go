@@ -87,6 +87,16 @@ type Installation struct {
 	// Layout.UpgradeLock). It must not be State: the state file is
 	// rewritten under a lock of its own while this one is held.
 	Lock string
+	// Tell, when not nil, is how a background check leaves the user
+	// what it found for them: a release a package manager has to
+	// install, a finish no longer tried, a release that does not start
+	// here. It is given what the check came to and the check's error,
+	// while the check still holds the lock, and returns nil once the
+	// user will hear of it. What the state file keeps as told is
+	// written only then, so a Tell that fails leaves the next check to
+	// tell it again; with no Tell, it is written as told. Upgrade does
+	// not use it: whoever runs one is there to be told.
+	Tell func(Checked, error) error
 }
 
 // ErrBusy reports that another upgrade on this machine held the upgrade

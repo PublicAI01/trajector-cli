@@ -58,7 +58,7 @@ func (m *Machine) Upgrade(ctx context.Context, streams IO) error {
 		return errors.New("another upgrade is running on this machine; try again in a minute")
 	}
 	if unusable, ok := errors.AsType[*selfupdate.UnusableError](err); ok {
-		fmt.Fprintf(streams.Out, "trajector %s does not start on this machine, so %s was kept.\n", unusable.Version, m.deps.Version)
+		fmt.Fprintln(streams.Out, doesNotStart(unusable.Version, m.deps.Version))
 		return fmt.Errorf("version %s was not installed: %s", unusable.Version, unusable.Reason)
 	}
 	if err != nil {

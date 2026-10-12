@@ -34,7 +34,7 @@ func (m *Machine) reader(sp *spool.Spool) sessionread.Reader {
 // goes through the same starter the proxy does, so one suite-wide
 // choice covers both processes a hook can leave behind.
 func (m *Machine) spawnReader(ctx context.Context, projectDir string) error {
-	_, err := m.deps.Spawn(ctx, m.deps.ExecPath, []string{"hook", claudesettings.HookRead, projectDir}, "")
+	_, err := m.deps.Spawn(ctx, m.deps.ExecPath, claudesettings.HookArgv(claudesettings.HookRead, projectDir), "")
 	return err
 }
 

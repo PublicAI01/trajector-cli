@@ -3,6 +3,7 @@ package cli_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 )
 
 func TestUpgradeTakesNoArguments(t *testing.T) {
@@ -214,5 +216,67 @@ func TestTheNewBuildsCheckOfItselfSaysWhyItFailed(t *testing.T) {
 	got := e.Run("hook", "upgrade-verify")
 	if got.Exit != 1 || !strings.HasPrefix(got.Stderr, "trajector: creating a directory to start the proxy in: ") {
 		t.Errorf("hook upgrade-verify = exit %d, stderr %q; want why, on one line", got.Exit, got.Stderr)
+	}
+}
+
+func TestHookUpgradeCheckStartsTheCheckInAProcessOfItsOwnAndSaysNothing(t *testing.T) {
+	e := clitest.New(t)
+
+	got := e.Run("hook", "upgrade-check")
+	if got.Exit != 0 || got.Stdout != "" || got.Stderr != "" {
+		t.Errorf("hook upgrade-check = exit %d, stdout %q, stderr %q; want a silent success", got.Exit, got.Stdout, got.Stderr)
+	}
+	// The marker is part of the command line one build hands another,
+	// which an older build must still be able to write, so it is
+	// spelled out here rather than through the constant.
+	want := []proxylife.LoggedStart{{Command: "hook", Target: "--detached"}}
+	if starts := e.Spawns(); !slices.Equal(starts, want) {
+		t.Errorf("recorded starts = %v, want %v", starts, want)
+	}
+}
+
+func TestHookUpgradeCheckDetachedRecordsWhatItFoundAndSaysNothing(t *testing.T) {
+	e := clitest.New(t)
+	e.SetReleasesURL("http://releases.invalid/releases")
+
+	// A build of the test suite announces no release, so the check
+	// fails before it asks anything, and says so only in the state file.
+	got := e.Run("hook", "upgrade-check", "--detached")
+	if got.Exit != 0 || got.Stdout != "" || got.Stderr != "" {
+		t.Errorf("hook upgrade-check --detached = exit %d, stdout %q, stderr %q; want a silent success", got.Exit, got.Stdout, got.Stderr)
+	}
+	if starts := e.Spawns(); len(starts) != 0 {
+		t.Errorf("recorded starts = %v, want none", starts)
+	}
+	if checkedAt, result := e.UpgradeState(); result != "failed" || checkedAt.IsZero() {
+		t.Errorf("upgrade state = %s at %s; want a failed check recorded", result, checkedAt)
+	}
+}
+
+func TestHookUpgradeCheckRefusesWhatItDoesNotTake(t *testing.T) {
+	e := clitest.New(t)
+	for _, args := range [][]string{
+		{"hook", "upgrade-check", "--detached", "extra"},
+		{"hook", "upgrade-check", "--no-proxy"},
+		{"hook", "ensure-proxy", "--detached"},
+	} {
+		if got := e.Run(args...); got.Exit != 2 {
+			t.Errorf("%q = exit %d, stderr %q; want the usage line", args, got.Exit, got.Stderr)
+		}
+	}
+	if starts := e.Spawns(); len(starts) != 0 {
+		t.Errorf("recorded starts = %v, want none", starts)
+	}
+}
+
+func TestHookUpgradeCheckOnAConfigFileItCannotReadStartsNothing(t *testing.T) {
+	e := clitest.New(t)
+	e.WriteConfig("{not json")
+
+	if got := e.Run("hook", "upgrade-check"); got.Exit == 0 {
+		t.Errorf("hook upgrade-check = exit 0 on a config file it cannot read")
+	}
+	if starts := e.Spawns(); len(starts) != 0 {
+		t.Errorf("recorded starts = %v, want none", starts)
 	}
 }

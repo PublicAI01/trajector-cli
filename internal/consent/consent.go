@@ -80,8 +80,6 @@ func (s *Store) AcceptedVersion() (version, acceptedAt string, err error) {
 // accepted version is UpdatesSince or later. It reads the acceptance
 // record and nothing else, so a device that signed out still answers
 // by the agreement it accepted; signing out does not take it back.
-//
-//exportsurface:keep its caller, the gate that starts the automatic upgrade check, is not built yet
 func (s *Store) CoversUpdates() (bool, error) {
 	return s.coversSince(UpdatesSince)
 }
@@ -89,8 +87,6 @@ func (s *Store) CoversUpdates() (bool, error) {
 // coversSince is CoversUpdates for the version since. An empty since,
 // a store with no acceptance, and an accepted version that is not a
 // release day all answer false: none of them shows the user was told.
-//
-//exportsurface:keep reached through CoversUpdates, whose caller is not built yet
 func (s *Store) coversSince(since string) (bool, error) {
 	if since == "" {
 		return false, nil

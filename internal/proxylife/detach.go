@@ -52,8 +52,9 @@ func startDetached(ctx context.Context, path string, args []string, logPath stri
 }
 
 // Starter starts a process this binary is asked to leave running —
-// the proxy, and the one-shot reader a session hook hands its work to
-// — given the same arguments startDetached takes, and reports its pid.
+// the proxy, the one-shot reader a session hook hands its work to, and
+// the background upgrade check — given the same arguments startDetached
+// takes, and reports its pid.
 // startDetached is the one production uses. A starter that
 // deliberately starts no process reports the pid noProcess, and the
 // caller then has nothing to wait for.
