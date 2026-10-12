@@ -287,15 +287,6 @@ type Table struct {
 	loadErr      error
 }
 
-// New returns a table backed by the file at path. A cacheTTL of zero
-// selects one second.
-func New(path string, cacheTTL time.Duration) *Table {
-	if cacheTTL == 0 {
-		cacheTTL = defaultCacheTTL
-	}
-	return &Table{path: path, ttl: cacheTTL}
-}
-
 // Lookup resolves a token to where its traffic goes and whether this
 // exchange may be recorded.
 func (t *Table) Lookup(token string) (Route, Verdict) {

@@ -18,6 +18,8 @@ func (m *Machine) assembly() proxyserve.Assembly {
 		Tokens:   m.tokens,
 		Service:  m.service,
 		Consent:  m.consent,
+		Routes:   m.routes,
+		Registry: m.registry,
 		Version:  m.deps.Version,
 		ExecPath: m.deps.ExecPath,
 		Home:     m.deps.Home,

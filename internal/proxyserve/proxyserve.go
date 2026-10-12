@@ -54,7 +54,9 @@ const exitFlushBudget = 15 * time.Second
 // Assembly is everything a served proxy is built from. It is stated as
 // values and stores rather than as the machine that happens to hold
 // them: what the serving process needs is then visible in one struct,
-// and nothing else can travel along with it.
+// and nothing else can travel along with it. Every store a command also
+// holds arrives here already open, and Serve opens none of them again;
+// the spool is the one store Serve opens, through OpenSpool.
 type Assembly struct {
 	Layout userdirs.Layout
 	// Tokens holds the device token every upload authenticates with.
@@ -64,6 +66,13 @@ type Assembly struct {
 	// Consent is the durable record of withdrawal the uploader consults
 	// before it sends a project's rawcalls.
 	Consent *consent.Store
+	// Routes is the routing table: where a pause is written, which
+	// grants the session files are read for, and the source of the
+	// cached view the proxy looks every token up in.
+	Routes *routing.Store
+	// Registry holds which session files each enabled project reads and
+	// how far each is read.
+	Registry *follow.Registry
 	// Version is this build's identity, announced on the proxy's health
 	// endpoint and reported to the service on every upload.
 	Version string
@@ -167,7 +176,7 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		// is the one place a pause is written, and the proxy re-reads
 		// it on its next lookup.
 		OnUnmaskableRecord: func() {
-			if err := routing.OpenStore(layout.RoutingTable()).PauseByBuild(routing.PauseRedactionDrift, a.Version); err != nil {
+			if err := a.Routes.PauseByBuild(routing.PauseRedactionDrift, a.Version); err != nil {
 				logf("upload: warning: a record could not be masked and recording could not be paused: %v", err)
 			}
 		},
@@ -193,15 +202,15 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 	// path, so what a read stores is flushed by the one flusher.
 	tail := &tailer{
 		reader: sessionread.Reader{
-			Registry:  follow.Open(layout.FollowDir()),
-			Routes:    routing.OpenStore(layout.RoutingTable()),
+			Registry:  a.Registry,
+			Routes:    a.Routes,
 			Spool:     sp,
 			Version:   a.Version,
 			ReaderLog: layout.ReaderLog(),
 			Home:      a.Home,
 			Now:       time.Now,
 		},
-		routes:   routing.OpenStore(layout.RoutingTable()),
+		routes:   a.Routes,
 		uploader: uploader,
 		alive:    follow.ProcessAlive,
 		logf:     logf,
@@ -213,7 +222,7 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 
 	server, err = apiproxy.New(apiproxy.Config{
 		Version:         a.Version,
-		Table:           routing.New(layout.RoutingTable(), 0),
+		Table:           a.Routes.Table(0),
 		Dialect:         capture.Anthropic,
 		DefaultUpstream: capture.Anthropic.OfficialUpstream,
 		Spool:           sp,

@@ -56,6 +56,8 @@ linters:
     - thelper
     - unparam
     - whitespace
+    # repository rules
+    - forbidigo
   settings:
     depguard:
       rules:
@@ -72,6 +74,15 @@ linters:
       errorf: false
     exhaustive:
       default-signifies-exhaustive: true
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^routing\.OpenStore$
+          pkg: ^github\.com/PublicAI01/trajector-cli/internal/routing$
+          msg: the served proxy takes the routing table the Assembly holds; it does not open one
+        - pattern: ^follow\.Open$
+          pkg: ^github\.com/PublicAI01/trajector-cli/internal/follow$
+          msg: the served proxy takes the session-file registry the Assembly holds; it does not open one
     gocritic:
       enabled-checks: # in addition to the default set
         - badLock
@@ -159,6 +170,10 @@ linters:
         linters: [errcheck, gosec]
       - path: internal/harness/
         linters: [errcheck, gosec]
+      - path-except: ^internal/proxyserve/
+        linters: [forbidigo]
+      - path: _test\.go
+        linters: [forbidigo]
 
 formatters:
   enable:

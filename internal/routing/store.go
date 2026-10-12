@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,16 +14,23 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
-// Store is the CLI-side writer for the routing table. The proxy only
-// ever reads the table (through Table); every mutation goes through a
-// Store method so the file is always rewritten atomically and stays
-// loadable by a concurrently running proxy.
+// Store is the routing table's file. Every mutation goes through a
+// Store method, so the file is always rewritten atomically under a
+// cross-process lock and stays loadable by a process that reads it
+// concurrently. Commands and the proxy both write: the proxy looks
+// every token up through Table and writes only pauses, through Store.
 type Store struct {
 	path string
 }
 
 // OpenStore returns a writer for the table at path.
 func OpenStore(path string) *Store { return &Store{path: path} }
+
+// Table returns the cached view of this store's file that the proxy
+// looks every token up in. A cacheTTL of zero selects one second.
+func (s *Store) Table(cacheTTL time.Duration) *Table {
+	return &Table{path: s.path, ttl: cmp.Or(cacheTTL, defaultCacheTTL)}
+}
 
 // Shape is the form of a project's injection: whether the project's
 // traffic goes through the proxy, or the session hooks stand alone and

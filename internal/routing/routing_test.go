@@ -54,7 +54,7 @@ func TestLookupResolvesActiveAndRevokedRoutes(t *testing.T) {
 			}
 		}
 	}`)
-	table := routing.New(path, 0)
+	table := routing.OpenStore(path).Table(0)
 
 	active, verdict := table.Lookup("tok-active")
 	if verdict.Decision != routing.Record {
@@ -84,7 +84,7 @@ func TestLookupResolvesActiveAndRevokedRoutes(t *testing.T) {
 func TestLookupServesCachedTableWithinTTL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects":{"tok":{"project_id_hash":"h1","upstream":"https://api.anthropic.com"}}}`)
-	table := routing.New(path, time.Hour)
+	table := routing.OpenStore(path).Table(time.Hour)
 
 	if _, verdict := table.Lookup("tok"); !verdict.Resolves() {
 		t.Fatal("token not found before rewrite")
@@ -98,7 +98,7 @@ func TestLookupServesCachedTableWithinTTL(t *testing.T) {
 func TestLookupPicksUpChangesAfterTTL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects":{"tok-old":{"project_id_hash":"h1","upstream":"https://api.anthropic.com"}}}`)
-	table := routing.New(path, time.Millisecond)
+	table := routing.OpenStore(path).Table(time.Millisecond)
 
 	if _, verdict := table.Lookup("tok-old"); !verdict.Resolves() {
 		t.Fatal("initial token not found")
@@ -123,7 +123,7 @@ func TestLookupPicksUpChangesAfterTTL(t *testing.T) {
 func TestMalformedTableResolvesNothingUntilItIsFixed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects": {`)
-	table := routing.New(path, time.Millisecond)
+	table := routing.OpenStore(path).Table(time.Millisecond)
 
 	if _, verdict := table.Lookup("tok"); verdict.Resolves() {
 		t.Error("token resolved from a malformed table")
@@ -145,7 +145,7 @@ func TestMalformedTableResolvesNothingUntilItIsFixed(t *testing.T) {
 func TestATableThatBreaksKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects":{"tok":{"project_id_hash":"h","upstream":"https://relay.example.com"}}}`)
-	table := routing.New(path, time.Nanosecond)
+	table := routing.OpenStore(path).Table(time.Nanosecond)
 	if _, verdict := table.Lookup("tok"); !verdict.Records() {
 		t.Fatalf("verdict = %+v, want the readable grant recorded", verdict)
 	}
@@ -166,7 +166,7 @@ func TestATableThatBreaksKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T)
 func TestATableUnreadableSinceItWasOpenedPlacesNoToken(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects": {`)
-	table := routing.New(path, time.Nanosecond)
+	table := routing.OpenStore(path).Table(time.Nanosecond)
 
 	route, verdict := table.Lookup("tok")
 	if verdict.Decision != routing.NeverRead || verdict.Forwards() || verdict.Resolves() || verdict.Records() {
@@ -179,7 +179,7 @@ func TestATableUnreadableSinceItWasOpenedPlacesNoToken(t *testing.T) {
 
 func TestATableMissingSinceItWasOpenedPlacesNoToken(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
-	table := routing.New(path, time.Nanosecond)
+	table := routing.OpenStore(path).Table(time.Nanosecond)
 
 	route, verdict := table.Lookup("tok")
 	if verdict.Decision != routing.NeverRead || verdict.Forwards() || verdict.Resolves() || verdict.Records() {
@@ -203,7 +203,7 @@ func TestATableMissingSinceItWasOpenedPlacesNoToken(t *testing.T) {
 func TestATableMovedAsideKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects":{"tok":{"project_id_hash":"h","upstream":"https://relay.example.com"}}}`)
-	table := routing.New(path, time.Nanosecond)
+	table := routing.OpenStore(path).Table(time.Nanosecond)
 	if _, verdict := table.Lookup("tok"); !verdict.Records() {
 		t.Fatalf("verdict = %+v, want the readable grant recorded", verdict)
 	}
@@ -245,7 +245,7 @@ func TestDeviceWidePauseKeepsGrantsButStopsRecording(t *testing.T) {
 		}
 	}`)
 
-	route, verdict := routing.New(path, 0).Lookup("tok")
+	route, verdict := routing.OpenStore(path).Table(0).Lookup("tok")
 	if verdict.Decision != routing.ForwardOnlyPaused {
 		t.Fatalf("verdict = %+v, want ForwardOnlyPaused", verdict)
 	}

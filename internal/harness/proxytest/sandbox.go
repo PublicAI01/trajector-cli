@@ -189,7 +189,7 @@ func (s *Sandbox) MoveRoutingTableAside() string {
 // same way the proxy reads it.
 func (s *Sandbox) Recording(token string) (known, recording bool) {
 	s.t.Helper()
-	_, verdict := routing.New(s.layout.RoutingTable(), time.Nanosecond).Lookup(token)
+	_, verdict := routing.OpenStore(s.layout.RoutingTable()).Table(time.Nanosecond).Lookup(token)
 	return verdict.Resolves(), verdict.Records()
 }
 

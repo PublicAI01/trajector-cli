@@ -23,11 +23,13 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/proxyserve"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
@@ -58,6 +60,8 @@ func serveProxy(args []string) int {
 		Tokens:   tokenstore.Files(layout.SecretsDir()),
 		Service:  platform.New("http://127.0.0.1:1", version),
 		Consent:  consent.Open(layout.ConsentFile()),
+		Routes:   routing.OpenStore(layout.RoutingTable()),
+		Registry: follow.Open(layout.FollowDir()),
 		Version:  version,
 		ExecPath: exe,
 		Addr:     args[3],
