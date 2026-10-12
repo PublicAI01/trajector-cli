@@ -32,6 +32,13 @@ const (
 	upgradeLockName  = "upgrade"
 )
 
+// UpgradeVerifyPrefix begins the name of every directory a newly
+// installed build makes in the state directory to start a proxy in
+// while it checks itself (NewUpgradeVerifyDir). The build removes it
+// when the check ends; one left behind belongs to a check that was
+// stopped, and the next upgrade's sweep removes it by this prefix.
+const UpgradeVerifyPrefix = "upgrade-verify-"
+
 // Env is the machine a Layout is resolved against.
 type Env struct {
 	GOOS   string
@@ -128,6 +135,16 @@ func (l Layout) UpgradeState() string { return filepath.Join(l.state, upgradeSta
 // lock is held.
 func (l Layout) UpgradeLock() string { return filepath.Join(l.state, upgradeLockName) }
 
+// NewUpgradeVerifyDir creates a fresh, empty directory beside the
+// upgrade state file for a newly installed build to start a proxy in
+// while it checks itself, and returns its path. The caller removes it.
+func (l Layout) NewUpgradeVerifyDir() (string, error) {
+	if err := EnsureOwnerDir(l.state); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(l.state, UpgradeVerifyPrefix+"*")
+}
+
 // AdminTokenFile is where one serving proxy instance publishes the
 // token that authorizes its reserved endpoints. Readable only by the
 // owning user, so possession of the token proves the caller is that
@@ -196,11 +213,11 @@ func (l Layout) adminTokenPublications(addr string) []string {
 func addrFileName(addr string) string { return strings.ReplaceAll(addr, ":", "_") }
 
 // Isolate points every environment variable a Layout resolution reads
-// at paths inside home, through setenv. It lives beside the resolvers
-// so a new platform variable cannot be added without the harness pin
-// list growing in the same place.
-//
-//exportsurface:keep test support: the harness pins every variable a Layout resolution reads, listed beside the resolvers
+// at paths inside home, through setenv. A newly installed build checks
+// itself on a layout resolved this way, and the test harness homes
+// every process it starts the same way. It lives beside the resolvers
+// so a new platform variable cannot be added without both growing in
+// the same place.
 func Isolate(setenv func(key, value string), home string) {
 	setenv("HOME", home)
 	setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))

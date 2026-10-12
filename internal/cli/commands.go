@@ -236,6 +236,44 @@ func (a *app) hookCmd(ctx context.Context, args []string) int {
 		}
 		m.ReadSessionFiles(ctx, rest[0], a.io())
 		return 0
+	case claudesettings.HookUpgradeCheck:
+		// The name is held for the background check for a newer
+		// release; until a build runs that check, asking for it does
+		// nothing.
+		if len(rest) != 0 {
+			fmt.Fprintln(a.stderr, hookUsage)
+			return 2
+		}
+		return 0
+	case claudesettings.HookUpgradeVerify:
+		if len(rest) != 0 {
+			fmt.Fprintln(a.stderr, hookUsage)
+			return 2
+		}
+		// The check starts a proxy on directories of its own and reads
+		// nothing the user config names, so a config file this build
+		// cannot read is no reason to refuse the build being installed.
+		m, err := a.surfaceMachine()
+		if err != nil {
+			return a.fail(err)
+		}
+		if err := m.VerifyUpgrade(ctx); err != nil {
+			return a.fail(err)
+		}
+		return 0
+	case claudesettings.HookUpgradeFinish:
+		if len(rest) != 0 {
+			fmt.Fprintln(a.stderr, hookUsage)
+			return 2
+		}
+		m, err := a.machine()
+		if err != nil {
+			return a.fail(err)
+		}
+		if err := m.FinishUpgrade(ctx); err != nil {
+			return a.fail(err)
+		}
+		return 0
 	default:
 		fmt.Fprintf(a.stderr, "trajector: unknown hook %q\n", name)
 		fmt.Fprintln(a.stderr, hookUsage)
@@ -271,7 +309,10 @@ const hookUsage = "usage: trajector hook <" +
 	claudesettings.HookGitSnapshot + "|" +
 	claudesettings.HookProgress + "|" +
 	claudesettings.HookDiscovery + "|" +
-	claudesettings.HookRead + ">"
+	claudesettings.HookRead + "|" +
+	claudesettings.HookUpgradeCheck + "|" +
+	claudesettings.HookUpgradeVerify + "|" +
+	claudesettings.HookUpgradeFinish + ">"
 
 // hookInput decodes what the session wrote on stdin. A terminal is not
 // read: a person running the hook by hand would otherwise wait on it

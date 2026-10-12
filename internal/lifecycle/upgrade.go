@@ -4,9 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"os"
+	"runtime"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
+	"github.com/PublicAI01/trajector-cli/internal/proxyserve"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
+	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // managerHandback is how to move an installation its package manager
@@ -93,4 +101,86 @@ func (m *Machine) sayPauseStands(streams IO) {
 	if next := paused.ExplainAfterUpgrade(); next != "" {
 		fmt.Fprintln(streams.Out, next)
 	}
+}
+
+// verifyAddr is where a newly installed build starts the proxy it
+// checks itself with: loopback, on a port the system picks. The port
+// every session reaches belongs to the proxy already serving there,
+// which an upgrade does not touch.
+const verifyAddr = "127.0.0.1:0"
+
+// VerifyUpgrade is this build showing, right after an older build put
+// it in place, that it can serve on this machine. It starts its proxy
+// in this process, in a directory of its own with every trajector
+// directory inside it and on a port of its own, asks it for its health
+// the way a session's hook does, stops it, and removes the directory.
+// An error is why it could not; the older build then puts itself back.
+//
+// Beyond making that directory in the state directory, nothing here
+// reads or writes this device's own state, and nothing can leave the
+// machine: the device token is not where this proxy looks for it, so
+// it uploads nothing, and the OS keyring is never opened, so the check
+// cannot stop to ask the user anything.
+func (m *Machine) VerifyUpgrade(ctx context.Context) error {
+	dir, err := m.deps.Layout.NewUpgradeVerifyDir()
+	if err != nil {
+		return fmt.Errorf("creating a directory to start the proxy in: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	env := map[string]string{}
+	userdirs.Isolate(func(key, value string) { env[key] = value }, dir)
+	layout, err := userdirs.Resolve(userdirs.Env{GOOS: runtime.GOOS, Getenv: func(key string) string { return env[key] }})
+	if err != nil {
+		return err
+	}
+
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", verifyAddr)
+	if err != nil {
+		return fmt.Errorf("binding %s: %w", verifyAddr, err)
+	}
+	// The same assembly a session's proxy is built from, on the
+	// directories inside dir, except for where the device token is
+	// looked for: a store that may consult the OS keyring would find this
+	// device's real token there.
+	a := Open(Deps{
+		Layout:      layout,
+		PlatformURL: m.deps.PlatformURL,
+		Version:     m.deps.Version,
+		ExecPath:    m.deps.ExecPath,
+		ProxyAddr:   l.Addr().String(),
+		Home:        dir,
+	}).assembly()
+	a.Tokens = tokenstore.Files(layout.SecretsDir())
+	a.Listener = l
+	serveCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	served := make(chan error, 1)
+	go func() { served <- proxyserve.Serve(serveCtx, a, 0, io.Discard, io.Discard) }()
+
+	v := proxylife.For(layout, m.deps.Version, m.deps.ExecPath, a.Addr, nil).Settled(ctx)
+	stop()
+	serveErr := <-served
+	if errors.Is(serveErr, context.Canceled) {
+		serveErr = nil
+	}
+	switch {
+	case v.Holder != proxylife.HolderOurs && serveErr != nil:
+		return fmt.Errorf("the proxy did not start: %w", serveErr)
+	case v.Holder == proxylife.HolderNone:
+		return fmt.Errorf("nothing answered at %s", a.Addr)
+	case v.Holder != proxylife.HolderOurs:
+		return fmt.Errorf("the proxy at %s did not prove itself trajector's: %w", a.Addr, v.Reason)
+	case v.Health.Version != m.deps.Version:
+		return fmt.Errorf("the proxy reports version %s, not %s", v.Health.Version, m.deps.Version)
+	case serveErr != nil:
+		return fmt.Errorf("the proxy did not stop cleanly: %w", serveErr)
+	}
+	return nil
+}
+
+// FinishUpgrade is what this build does once an older build has
+// committed the install of it. It has nothing to do yet, so it
+// succeeds at once, and running it again changes nothing.
+func (*Machine) FinishUpgrade(context.Context) error {
+	return nil
 }

@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -165,5 +167,52 @@ func TestWhatTheServiceSaysAboutTheVersionReachesTheUser(t *testing.T) {
 				t.Errorf("%s stdout = %q, want the forged line disarmed", surface, out)
 			}
 		})
+	}
+}
+
+// The steps an upgrade asks of the build it installs are spelled out
+// here rather than through the constants that name them: an older
+// build runs them on a newer one, so their spelling must never change,
+// and a rename of a constant would otherwise pass.
+func TestTheUpgradeStepsAnswerUnderTheirPermanentNames(t *testing.T) {
+	for _, step := range []string{"upgrade-check", "upgrade-verify", "upgrade-finish"} {
+		t.Run(step, func(t *testing.T) {
+			e := clitest.New(t)
+			got := e.Run("hook", step)
+			if got.Exit != 0 || got.Stdout != "" || got.Stderr != "" {
+				t.Errorf("hook %s = exit %d, stdout %q, stderr %q; want a silent success", step, got.Exit, got.Stdout, got.Stderr)
+			}
+			if got := e.Run("hook", step, "extra"); got.Exit != 2 || !strings.Contains(got.Stderr, step) {
+				t.Errorf("hook %s extra = exit %d, stderr %q; want the usage line naming it", step, got.Exit, got.Stderr)
+			}
+		})
+	}
+}
+
+func TestTheNewBuildsCheckOfItselfDoesNotDependOnTheConfigFile(t *testing.T) {
+	e := clitest.New(t)
+	e.WriteConfig("{not json")
+
+	// Nothing the check does goes where the file could point, and a
+	// refusal here would have the build being installed called one that
+	// does not start on this machine.
+	if got := e.Run("hook", "upgrade-verify"); got.Exit != 0 {
+		t.Errorf("hook upgrade-verify = exit %d, stderr %q; want it to run", got.Exit, got.Stderr)
+	}
+}
+
+func TestTheNewBuildsCheckOfItselfSaysWhyItFailed(t *testing.T) {
+	e := clitest.New(t)
+	// The check starts its proxy under the state directory, which here
+	// is a file.
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_STATE_HOME", blocked)
+
+	got := e.Run("hook", "upgrade-verify")
+	if got.Exit != 1 || !strings.HasPrefix(got.Stderr, "trajector: creating a directory to start the proxy in: ") {
+		t.Errorf("hook upgrade-verify = exit %d, stderr %q; want why, on one line", got.Exit, got.Stderr)
 	}
 }

@@ -1,8 +1,10 @@
 package lifecycle_test
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // newUpgradeEnv is a device on a published release, with an installed
@@ -25,7 +28,26 @@ func newUpgradeEnv(t *testing.T) (*env, *fakereleases.Server) {
 	releases := fakereleases.New(t)
 	e.deps.Releases = releases.IndexURL()
 	e.installBinary("the 0.1.0 binary")
+	e.environmentNamesThisDevice()
 	return e, releases
+}
+
+// environmentNamesThisDevice points this test process's environment at
+// the device's directories. A release an upgrade installs checks
+// itself and finishes its install as a process of its own, which finds
+// the device's directories from the environment it inherits, as every
+// trajector command does; left alone it would find the developer's.
+// The sandbox layout puts every directory under one root, which the
+// three variables then name.
+func (e *env) environmentNamesThisDevice() {
+	e.t.Helper()
+	root := filepath.Dir(filepath.Dir(e.layout().UpgradeState()))
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"} {
+		e.t.Setenv(name, root)
+	}
+	if got, err := userdirs.Resolve(userdirs.Host()); err != nil || got != e.layout() {
+		e.t.Fatalf("the environment names %+v (%v), not this device's %+v", got, err, e.layout())
+	}
 }
 
 // installBinary puts content at this device's executable path.
@@ -305,5 +327,94 @@ func TestUpgradeWhileAnotherUpgradeRunsSaysSo(t *testing.T) {
 	}
 	if got := e.installedBinary(); got != "the 0.1.0 binary" {
 		t.Errorf("installed binary is %q", got)
+	}
+}
+
+// stateEntries is every name in the directory the upgrade state file
+// is in.
+func (e *env) stateEntries() []string {
+	e.t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(e.layout().UpgradeState()))
+	if err != nil && !os.IsNotExist(err) {
+		e.t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+func TestVerifyUpgradeServesOnItsOwnAndLeavesThisDeviceAsItWas(t *testing.T) {
+	e := newEnv(t)
+	before := e.stateEntries()
+
+	if err := e.machine().VerifyUpgrade(t.Context()); err != nil {
+		t.Fatalf("VerifyUpgrade: %v", err)
+	}
+
+	// The proxy it started was on a port and in a directory of its own:
+	// the directory is gone, nothing listens where this device's
+	// sessions reach their proxy, and the paired device's token, which
+	// that proxy never looked for, sent nothing to the service.
+	if after := e.stateEntries(); !slices.Equal(after, before) {
+		t.Errorf("the state directory holds %v after the check, %v before", after, before)
+	}
+	if conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", e.deps.ProxyAddr); err == nil {
+		conn.Close()
+		t.Errorf("something listens at %s, this device's proxy address", e.deps.ProxyAddr)
+	}
+	if got := e.service.Requests(); len(got) != 0 {
+		t.Errorf("the check sent %d requests to the service", len(got))
+	}
+}
+
+func TestVerifyUpgradeThatCannotMakeItsDirectorySaysSo(t *testing.T) {
+	e := newEnv(t)
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.deps.Layout = proxytest.SandboxLayout(t, blocked)
+
+	err := e.machine().VerifyUpgrade(t.Context())
+	if err == nil || !strings.HasPrefix(err.Error(), "creating a directory to start the proxy in: ") {
+		t.Errorf("VerifyUpgrade = %v, want the directory it could not make", err)
+	}
+}
+
+func TestFinishUpgradeHasNothingToDoAndRunsAgainAlike(t *testing.T) {
+	e := newEnv(t)
+	before := e.stateEntries()
+	for range 2 {
+		if err := e.machine().FinishUpgrade(t.Context()); err != nil {
+			t.Fatalf("FinishUpgrade: %v", err)
+		}
+	}
+	if after := e.stateEntries(); !slices.Equal(after, before) {
+		t.Errorf("the state directory holds %v after finishing, %v before", after, before)
+	}
+}
+
+func TestUpgradeToAReleaseWhoseProxyDoesNotStartHereKeepsThisOne(t *testing.T) {
+	e, releases := newUpgradeEnv(t)
+	publishNewer(t, releases)
+	// The 0.2.0 build runs, but the state directory it starts its proxy
+	// under is, as that build finds it, a file.
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_STATE_HOME", blocked)
+
+	err := e.machine().Upgrade(t.Context(), e.io())
+	if err == nil || !strings.HasPrefix(err.Error(), "version 0.2.0 was not installed: its proxy does not start here: ") {
+		t.Fatalf("Upgrade = %v, want the release named with what its proxy did", err)
+	}
+	if got := e.installedBinary(); got != "the 0.1.0 binary" {
+		t.Errorf("installed binary is %q, want the previous one put back", got)
+	}
+	if out := e.stdout.String(); out != "trajector 0.2.0 does not start on this machine, so 0.1.0 was kept.\n" {
+		t.Errorf("upgrade printed %q, want only which version was kept", out)
 	}
 }

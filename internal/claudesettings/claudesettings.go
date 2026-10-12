@@ -55,10 +55,38 @@ const (
 	HookRead        = "read"
 )
 
+// Hook subcommands an upgrade runs. They are never injected into a
+// settings file: an installed build runs them on the build it is
+// installing, which is why their spelling is a contract across
+// versions — an older build calls them on a newer one without knowing
+// anything else about it, so a rename breaks every upgrade into the
+// release that makes it.
+const (
+	// HookUpgradeCheck is the background check for a newer release.
+	HookUpgradeCheck = "upgrade-check"
+	// HookUpgradeVerify is a newly installed build showing that it can
+	// serve on this machine, before the install is committed.
+	HookUpgradeVerify = "upgrade-verify"
+	// HookUpgradeFinish is what a newly installed build does once its
+	// install is committed.
+	HookUpgradeFinish = "upgrade-finish"
+)
+
+// hookCommand is the command every hook subcommand belongs to.
 // hookPrefix precedes the subcommand in every hook command trajector
 // installs, which is what makes the subcommand recognizable in a file
 // full of commands the user wrote.
-const hookPrefix = "hook "
+const (
+	hookCommand = "hook"
+	hookPrefix  = hookCommand + " "
+)
+
+// HookArgv is the argument list that runs the hook subcommand sub with
+// args after it, as one build runs it on another. Like the subcommand
+// names, it is a contract across versions.
+func HookArgv(sub string, args ...string) []string {
+	return append([]string{hookCommand, sub}, args...)
+}
 
 // Marker substrings identifying trajector-injected hook commands, so
 // removal never touches a hook the user wrote themselves.

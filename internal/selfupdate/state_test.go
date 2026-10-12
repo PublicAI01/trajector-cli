@@ -94,7 +94,8 @@ func TestAFailedUpgradeRecordsItsErrorWithoutTheURLQuery(t *testing.T) {
 func TestRecordingKeepsFieldsANewerBuildWroteAndDropsPassedVersions(t *testing.T) {
 	m := install(t, "the 0.1.0 binary")
 	writeState(t, m.at("0.1.0"), `{
-		"finish_pending": "0.3.0",
+		"checked_at": "2026-10-12T08:00:00Z",
+		"finish_pending": "0.1.0",
 		"installed": "0.1.0",
 		"unusable": {"0.0.5": "it cannot be run: exec format error", "0.1.0": "x", "0.4.0": "it exited with exit status 1"},
 		"error": "an earlier failure"
@@ -110,8 +111,8 @@ func TestRecordingKeepsFieldsANewerBuildWroteAndDropsPassedVersions(t *testing.T
 	// A build that runs after a newer one has used the file — the one
 	// still running while it installs its successor — must not erase
 	// what it does not know about.
-	if got := string(fields["finish_pending"]); got != `"0.3.0"` {
-		t.Errorf("finish_pending is %s, want the newer build's field carried over", got)
+	if got := string(fields["checked_at"]); got != `"2026-10-12T08:00:00Z"` {
+		t.Errorf("checked_at is %s, want the newer build's field carried over", got)
 	}
 	if _, ok := fields["error"]; ok {
 		t.Errorf("error is %s after a run that did not fail", fields["error"])
@@ -120,6 +121,11 @@ func TestRecordingKeepsFieldsANewerBuildWroteAndDropsPassedVersions(t *testing.T
 	want := map[string]string{"0.4.0": "it exited with exit status 1"}
 	if !reflect.DeepEqual(s.Unusable, want) || s.Installed != "0.1.0" {
 		t.Errorf("state is %+v, want only the version ahead of 0.1.0 left unusable", s)
+	}
+	// A run that commits nothing leaves an unfinished install named for
+	// the build that has to finish it.
+	if s.FinishPending != "0.1.0" {
+		t.Errorf("finish_pending is %q after a run that installed nothing, want 0.1.0 kept", s.FinishPending)
 	}
 }
 

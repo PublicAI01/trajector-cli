@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -324,5 +325,38 @@ func TestUpgradeBookkeepingSitsInTheStateDirectoryUnderTwoNames(t *testing.T) {
 	// have an upgrade wait on itself.
 	if got := slash(l.UpgradeLock()); got != "/home/u/.local/state/trajector/upgrade" {
 		t.Errorf("UpgradeLock() = %q", got)
+	}
+}
+
+func TestUpgradeVerifyDirectoriesAreFreshAndSitBesideTheUpgradeState(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	l, err := userdirs.Resolve(env(runtime.GOOS, map[string]string{
+		"XDG_CONFIG_HOME": t.TempDir(),
+		"XDG_DATA_HOME":   t.TempDir(),
+		"XDG_STATE_HOME":  state,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := l.NewUpgradeVerifyDir()
+	if err != nil {
+		t.Fatalf("NewUpgradeVerifyDir on a machine with no state directory yet: %v", err)
+	}
+	second, err := l.NewUpgradeVerifyDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two checks never share a directory, and the sweep that removes an
+	// abandoned one finds it beside the state file by its prefix.
+	if first == second {
+		t.Errorf("two checks were given one directory, %q", first)
+	}
+	for _, dir := range []string{first, second} {
+		if filepath.Dir(dir) != filepath.Dir(l.UpgradeState()) || !strings.HasPrefix(filepath.Base(dir), userdirs.UpgradeVerifyPrefix) {
+			t.Errorf("verify directory %q is not %s* beside %q", dir, userdirs.UpgradeVerifyPrefix, l.UpgradeState())
+		}
+		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+			t.Errorf("verify directory %q holds %v (%v), want it empty", dir, entries, err)
+		}
 	}
 }

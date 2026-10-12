@@ -30,6 +30,12 @@ type State struct {
 	// Error is how the last run failed, on one line with no URL query,
 	// or empty when it did not fail.
 	Error string `json:"error,omitempty"`
+	// FinishPending is a version whose install was committed but whose
+	// build has not yet said it finished it. It is written before the
+	// commit and cleared once that build's finish succeeds, so a finish
+	// that failed, or a machine that stopped before it ran, leaves it
+	// here for that build to run again.
+	FinishPending string `json:"finish_pending,omitempty"`
 }
 
 // stateMode keeps the state file private to the user, like everything

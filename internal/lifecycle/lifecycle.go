@@ -136,7 +136,9 @@ func (m *Machine) claude() claudesettings.Host {
 // Open assembles the machine. It is the only place these collaborators
 // are wired together, so a caller cannot hand the machine a store or a
 // client of its own — and nothing it assembles can fail, which is why
-// there is nothing to report back.
+// there is nothing to report back. The one exception is inside this
+// package: VerifyUpgrade replaces the token store of the proxy it
+// assembles, so that proxy can never find this device's real token.
 func Open(deps Deps) *Machine {
 	if deps.PlatformURL == "" {
 		deps.PlatformURL = platform.DefaultBaseURL

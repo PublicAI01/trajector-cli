@@ -3,10 +3,11 @@
 // manager owns the binary, whether this build has a place in the
 // release order at all, which release is the newest published one, and
 // — when there is one to move to — fetching it, checking it against
-// its published checksum, running it once, and swapping it in. It
-// decides nothing the user reads: the Outcome carries the facts and the
-// caller writes every sentence. A binary it has not verified, or one
-// that does not start here, is never installed, and every exit that
+// its published checksum, running it once, swapping it in, and having
+// the new build accept the install by serving here. It decides nothing
+// the user reads: the Outcome carries the facts and the caller writes
+// every sentence. A binary it has not verified, or one that does not
+// start or serve here, is never left installed, and every exit that
 // installs nothing leaves the previous binary in place and runnable.
 //
 // One upgrade at a time runs on a machine, under a lock in the user's
@@ -72,6 +73,9 @@ type Installation struct {
 	// Version is what the binary at ExecPath announces.
 	Version string
 	// State is the upgrade state file (userdirs Layout.UpgradeState).
+	// The build being installed checks itself in a directory it makes
+	// beside it (userdirs Layout.NewUpgradeVerifyDir), and the sweep
+	// looks there for any it left.
 	State string
 	// Lock is the path whose lock one upgrade at a time holds (userdirs
 	// Layout.UpgradeLock). It must not be State: the state file is
@@ -107,9 +111,16 @@ func (e *UnusableError) Error() string {
 // else — no service, no argument — names what a machine upgrades to.
 // The archive is checked against the release's published checksum, and
 // the binary inside it has to answer `version` with the release's own
-// version, before anything is replaced; so a run that returns an error
-// has left the machine exactly as it found it, minus whatever residue
-// an interrupted earlier upgrade had left beside the binary.
+// version, before anything is replaced; once it is in place, the new
+// build itself has to accept the install by serving on this machine,
+// or the previous binary goes back. So a run that returns an error has
+// left the machine exactly as it found it, minus whatever residue an
+// interrupted earlier upgrade had left behind — unless the previous
+// binary could not be put back, which the error says, with where that
+// binary is. A committed
+// install whose new build then fails to finish it still returns
+// Upgraded: the state file names the version as unfinished
+// (State.FinishPending) for the new build to finish later.
 //
 // Every run that takes the lock records how it ended in the state file
 // before letting go of it.
@@ -137,7 +148,7 @@ func upgrade(ctx context.Context, in Installation, indexURL string) (Outcome, er
 	// Housekeeping comes first, whether or not this run installs
 	// anything: on Windows the binary an earlier upgrade stepped aside
 	// could not be deleted while it was still the running image.
-	sweepResidue(in.ExecPath)
+	sweepResidue(in)
 
 	if manager := packageManager(in.ExecPath); manager != "" {
 		return Outcome{Kind: Managed, Manager: manager, From: in.Version}, nil
@@ -163,7 +174,7 @@ func upgrade(ctx context.Context, in Installation, indexURL string) (Outcome, er
 	if err != nil {
 		return Outcome{}, err
 	}
-	if err := install(ctx, in.ExecPath, rel.version, binary); err != nil {
+	if err := install(ctx, in, rel.version, binary); err != nil {
 		return Outcome{}, err
 	}
 	return Outcome{Kind: Upgraded, From: in.Version, To: rel.version}, nil

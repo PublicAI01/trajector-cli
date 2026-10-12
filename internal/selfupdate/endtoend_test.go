@@ -3,14 +3,17 @@ package selfupdate_test
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // installBuild puts a real release build of version where this
@@ -179,5 +182,97 @@ func TestUpgrade_ManualUpgradeRetriesAReleaseRecordedAsUnusable(t *testing.T) {
 	// version it has passed.
 	if state.Installed != "0.2.0" || len(state.Unusable) != 0 || state.Error != "" {
 		t.Errorf("state is %+v, want 0.2.0 installed and nothing unusable or failed", state)
+	}
+}
+
+// verifyResidue is every directory a new build's check of itself left
+// beside the state file.
+func (m installed) verifyResidue() []string {
+	m.t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(m.layout.UpgradeState()))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		m.t.Fatal(err)
+	}
+	var left []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), userdirs.UpgradeVerifyPrefix) {
+			left = append(left, e.Name())
+		}
+	}
+	return left
+}
+
+func TestUpgrade_ReleaseThatServesIsCommittedAndFinished(t *testing.T) {
+	m := installBuild(t, "0.1.5")
+	releases := fakereleases.New(t)
+	releases.Publish(t, "0.2.0", fakereleases.BuildRelease(t, "0.2.0"))
+
+	out, err := selfupdate.Upgrade(t.Context(), m.at("0.1.5"), releases.IndexURL(), 0)
+	if err != nil || out.Kind != selfupdate.Upgraded {
+		t.Fatalf("Upgrade = %+v, %v; want 0.2.0 installed", out, err)
+	}
+	if got := reportedVersion(t, m.path); got != "trajector 0.2.0\n" {
+		t.Errorf("after the upgrade the installation reports %q, want trajector 0.2.0", got)
+	}
+	state, err := selfupdate.LoadState(m.at("0.2.0").State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The new build finished its own install, so nothing is left for it
+	// to finish later.
+	if state.Installed != "0.2.0" || state.FinishPending != "" || len(state.Unusable) != 0 {
+		t.Errorf("state is %+v, want 0.2.0 installed and nothing pending or unusable", state)
+	}
+	// The 0.1.5 binary, kept beside the new one until the commit, is
+	// gone, and so is the directory the new build started its proxy in.
+	if got := m.siblings(); len(got) != 1 {
+		t.Errorf("a committed upgrade left %v in the install directory", got)
+	}
+	if left := m.verifyResidue(); len(left) != 0 {
+		t.Errorf("the new build's check left %v beside the state file", left)
+	}
+}
+
+func TestUpgrade_ReleaseWhoseProxyDoesNotStartIsPutBack(t *testing.T) {
+	m := installBuild(t, "0.1.0")
+	before := m.bytesOf()
+	releases := fakereleases.New(t)
+	releases.Publish(t, "0.2.0", fakereleases.BuildRelease(t, "0.2.0"))
+	in := m.at("0.1.0")
+	// A real 0.2.0 build that answers `version` but cannot start a
+	// proxy here: the state directory it resolves for itself — the one
+	// it starts its proxy under — is a file. The upgrade's own
+	// bookkeeping was resolved before, and stays where it was.
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_STATE_HOME", blocked)
+
+	_, err := selfupdate.Upgrade(t.Context(), in, releases.IndexURL(), 0)
+	unusable, ok := errors.AsType[*selfupdate.UnusableError](err)
+	if !ok || unusable.Version != "0.2.0" {
+		t.Fatalf("Upgrade = %v, want 0.2.0 refused as not starting here", err)
+	}
+	if !strings.HasPrefix(unusable.Reason, "its proxy does not start here: creating a directory to start the proxy in: ") {
+		t.Errorf("reason = %q, want what the new build said", unusable.Reason)
+	}
+	// The 0.1.0 build is back under its own name, byte for byte, and
+	// nothing it was kept as is left beside it.
+	if !bytes.Equal(m.bytesOf(), before) {
+		t.Error("the previous binary was not put back")
+	}
+	if got := reportedVersion(t, m.path); got != "trajector 0.1.0\n" {
+		t.Errorf("after the refused upgrade the installation reports %q, want trajector 0.1.0", got)
+	}
+	if got := m.siblings(); len(got) != 1 {
+		t.Errorf("a refused upgrade left %v in the install directory", got)
+	}
+	state, err := selfupdate.LoadState(in.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Unusable["0.2.0"] != unusable.Reason || state.Installed != "" || state.FinishPending != "" {
+		t.Errorf("state is %+v, want 0.2.0 recorded as unusable and nothing installed or pending", state)
 	}
 }

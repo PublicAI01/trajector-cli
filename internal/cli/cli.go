@@ -264,7 +264,10 @@ func (*app) machine() (*lifecycle.Machine, error) {
 // config file that cannot be read, with the options userconfig gives a
 // failed read, because showing why the file cannot be read is part of
 // its job, and neither command sends anything to a place the file
-// names; every other command refuses.
+// names. The check a newly installed build makes of itself runs on it
+// too: it sends nothing anywhere either, and refusing it would turn an
+// unreadable file into a release that "does not start here". Every
+// other command refuses.
 func (*app) surfaceMachine() (*lifecycle.Machine, error) {
 	return openMachine("", true)
 }

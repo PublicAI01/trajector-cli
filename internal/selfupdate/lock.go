@@ -13,9 +13,10 @@ import (
 
 // lockStale is how old the upgrade lock has to be before it is taken to
 // belong to an upgrade that died holding it. A live holder finishes well
-// inside it: the archive download is bounded by downloadTimeout and the
-// run of the staged binary by smokeTimeout, and nothing else in a run
-// waits on anything slower than the release index.
+// inside it: the archive download is bounded by downloadTimeout, the
+// run of the staged binary by smokeTimeout, and the new build's check
+// and finish by verifyTimeout and finishTimeout, and nothing else in a
+// run waits on anything slower than the release index.
 const lockStale = 15 * time.Minute
 
 // takeLock takes the upgrade lock at path, waiting up to wait for an

@@ -11,16 +11,17 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // installed is one machine's binary: a file standing in for the running
-// program, at a path an upgrade may replace, and the directory that
-// machine keeps its upgrade bookkeeping in.
+// program, at a path an upgrade may replace, and the directories that
+// machine keeps its trajector files in.
 type installed struct {
-	t     *testing.T
-	dir   string
-	path  string
-	state string
+	t      *testing.T
+	dir    string
+	path   string
+	layout userdirs.Layout
 }
 
 // install puts content where this machine's binary lives.
@@ -33,7 +34,7 @@ func install(t *testing.T, content string) installed {
 func installBytes(t *testing.T, binary []byte) installed {
 	t.Helper()
 	dir := t.TempDir()
-	m := installed{t: t, dir: dir, path: filepath.Join(dir, "trajector"), state: t.TempDir()}
+	m := installed{t: t, dir: dir, path: filepath.Join(dir, "trajector"), layout: isolatedLayout(t)}
 	if runtime.GOOS == "windows" {
 		m.path += ".exe"
 	}
@@ -43,6 +44,29 @@ func installBytes(t *testing.T, binary []byte) installed {
 	return m
 }
 
+// isolatedLayout points this test's process, and every build an
+// upgrade runs from it, at trajector directories of the test's own, and
+// returns them. The build being installed checks itself in the state
+// directory it resolves from the environment it inherits, as every
+// trajector command does; a test that let it inherit the developer's
+// would run that check in the developer's own state directory.
+//
+// Only the variables that relocate trajector's directories are set,
+// and HOME is left alone: the go command that links release builds
+// keeps its module and build caches under it.
+func isolatedLayout(t *testing.T) userdirs.Layout {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"} {
+		t.Setenv(name, filepath.Join(dir, name))
+	}
+	layout, err := userdirs.Resolve(userdirs.Host())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return layout
+}
+
 // at is this machine's installation announcing version. Every call on
 // one machine names the same bookkeeping, as every run on one machine
 // does.
@@ -50,8 +74,8 @@ func (m installed) at(version string) selfupdate.Installation {
 	return selfupdate.Installation{
 		ExecPath: m.path,
 		Version:  version,
-		State:    filepath.Join(m.state, "upgrade.json"),
-		Lock:     filepath.Join(m.state, "upgrade"),
+		State:    m.layout.UpgradeState(),
+		Lock:     m.layout.UpgradeLock(),
 	}
 }
 
@@ -59,12 +83,12 @@ func (m installed) at(version string) selfupdate.Installation {
 // announcing 0.1.0, with bookkeeping in a directory of its own.
 func installationAt(t *testing.T, path string) selfupdate.Installation {
 	t.Helper()
-	state := t.TempDir()
+	layout := isolatedLayout(t)
 	return selfupdate.Installation{
 		ExecPath: path,
 		Version:  "0.1.0",
-		State:    filepath.Join(state, "upgrade.json"),
-		Lock:     filepath.Join(state, "upgrade"),
+		State:    layout.UpgradeState(),
+		Lock:     layout.UpgradeLock(),
 	}
 }
 
@@ -607,8 +631,27 @@ func TestSweepResidueRemovesWhatAnEarlierUpgradeLeftBehind(t *testing.T) {
 		}
 	}
 
-	selfupdate.SweepResidue(installationAt(t, exec))
+	in := installationAt(t, exec)
+	// Beside the state file: a directory a new build's check of itself
+	// was stopped in, with what that check had made inside it, and the
+	// state file itself.
+	stateDir := filepath.Dir(in.State)
+	abandoned := filepath.Join(stateDir, userdirs.UpgradeVerifyPrefix+"77e1", ".local", "state")
+	if err := os.MkdirAll(abandoned, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(in.State, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
+	selfupdate.SweepResidue(in)
+
+	if _, err := os.Stat(filepath.Join(stateDir, userdirs.UpgradeVerifyPrefix+"77e1")); !os.IsNotExist(err) {
+		t.Errorf("the abandoned check's directory is still there (%v)", err)
+	}
+	if _, err := os.Stat(in.State); err != nil {
+		t.Errorf("the state file was swept away: %v", err)
+	}
 	left := map[string]bool{}
 	entries, err := os.ReadDir(dir)
 	if err != nil {

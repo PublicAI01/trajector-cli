@@ -2,12 +2,14 @@ package selfupdate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // Sibling-name markers. Every transient file this package creates next
@@ -23,14 +25,18 @@ const (
 // runnable as: everyone may run it, only its owner may rewrite it.
 const executablePerm = 0o755
 
-// install puts binary, the release of version, at execPath, which is
+// install puts binary, the release of version, at in.ExecPath, which is
 // normally the running program's own path. The new content is staged
-// as a sibling of execPath — same directory, so the move into place is
-// a rename within one filesystem — run once to check it starts as that
-// version, and only then swapped in. Every failure leaves the previous
-// binary in place and runnable: a machine that cannot be upgraded must
-// still be a machine that works.
-func install(ctx context.Context, execPath, version string, binary []byte) error {
+// as a sibling of the binary — same directory, so the move into place
+// is a rename within one filesystem — run once to check it starts as
+// that version, and only then swapped in, with the binary it replaces
+// kept beside it. The build now in place is then asked to accept the
+// install (verify): if it does, the install is committed (commit); if
+// not, the kept binary goes back to its own name. Every failure leaves
+// the previous binary in place and runnable: a machine that cannot be
+// upgraded must still be a machine that works.
+func install(ctx context.Context, in Installation, version string, binary []byte) error {
+	execPath := in.ExecPath
 	// Whatever occupies execPath must be a file before anything is
 	// staged over it. What a rename does when a directory stands there
 	// is not the same everywhere — POSIX refuses it, Windows can move
@@ -51,8 +57,8 @@ func install(ctx context.Context, execPath, version string, binary []byte) error
 	}
 	// CreateTemp only reserves the name here; the content goes through
 	// fsatomic below. Reserving by creating rather than by checking
-	// whether a name is free is the same rule reserveAside states: two
-	// upgrades running at once must not pick one name between them.
+	// whether a name is free means no leftover that a sweep could not
+	// remove is ever written over.
 	staged := f.Name()
 	err = f.Close()
 	if err == nil {
@@ -73,20 +79,91 @@ func install(ctx context.Context, execPath, version string, binary []byte) error
 		os.Remove(staged)
 		return err
 	}
-	if err := replaceExecutable(staged, execPath); err != nil {
+	kept := keptName(execPath, in.Version)
+	if err := replaceKeeping(staged, execPath, kept); err != nil {
 		os.Remove(staged)
 		return err
+	}
+	// From here until the install is committed or undone, a supervisor
+	// that restarts a crashed proxy starts it from the new build. If
+	// that build cannot serve, the restarted proxy fails until the kept
+	// binary is back, a matter of seconds; nothing guards against it.
+	if err := verify(ctx, execPath, version); err != nil {
+		if back := os.Rename(kept, execPath); back != nil {
+			// Not an *UnusableError: that one says the previous binary
+			// is in place, and here the build that refused itself is.
+			// So nothing is recorded against the release either, and
+			// its reason is quoted without the claim that nothing was
+			// installed.
+			why := err.Error()
+			if unusable, ok := errors.AsType[*UnusableError](err); ok {
+				why = unusable.Reason
+			}
+			return fmt.Errorf("selfupdate: trajector %s was put in place and did not accept it (%s), and the previous binary could not be put back: %w; it is at %s", version, why, back, kept)
+		}
+		return err
+	}
+	commit(ctx, in, version, kept)
+	return nil
+}
+
+// keptName is where the binary at execPath, which announces version,
+// is kept while the build replacing it is checked. The name ends as the
+// binary's own does, so a Windows user who finds it can still run it.
+func keptName(execPath, version string) string {
+	return execPath + oldMarker + version + filepath.Ext(execPath)
+}
+
+// replaceKeeping moves staged onto execPath and keeps what was there
+// as kept. If the move fails, the binary is at execPath and nothing is
+// at kept.
+func replaceKeeping(staged, execPath, kept string) error {
+	inPlace, err := keepAside(execPath, kept)
+	if err != nil {
+		return fmt.Errorf("selfupdate: keeping the previous binary beside %s: %w", execPath, err)
+	}
+	if err := os.Rename(staged, execPath); err != nil {
+		if inPlace {
+			os.Remove(kept)
+		} else if back := os.Rename(kept, execPath); back != nil {
+			return fmt.Errorf("selfupdate: installing over %s failed (%w) and the previous binary is at %s", execPath, err, kept)
+		}
+		return fmt.Errorf("selfupdate: installing over %s: %w", execPath, err)
 	}
 	return nil
 }
 
-// SweepResidue removes what an earlier upgrade left beside in's
-// binary: a staged binary that never landed, and — on Windows, where
-// the running executable can only be renamed aside rather than
-// overwritten — the previous binary under its stepped-aside name, which
-// could not be deleted while it was still the running process. Anything
-// still held open is left for the next sweep. This is housekeeping, not
-// a diagnosis: it reports nothing and fails at nothing.
+// commit makes the install of version final, in an order that leaves
+// a trace wherever it stops. The state file first names version as
+// still to be finished; then the kept binary goes, and from that moment
+// the new build is the installation; then the new build finishes its
+// own install, and only when it says it has does the state file stop
+// naming version as unfinished. A finish that fails, or a machine that
+// stops before it ran, leaves the name there for the new build to
+// finish later.
+//
+// A state file that cannot be written does not stop the commit: the
+// new build has already accepted the install, and refusing it over a
+// note would put back a binary nothing is wrong with.
+func commit(ctx context.Context, in Installation, version, kept string) {
+	_ = updateState(in.State, func(s *State) { s.FinishPending = version })
+	// On Windows this fails while the kept binary is still the image of
+	// a running process — the one running this upgrade, at least — and
+	// the next upgrade's sweep removes it.
+	os.Remove(kept)
+	if finish(ctx, in.ExecPath) == nil {
+		_ = updateState(in.State, func(s *State) { s.FinishPending = "" })
+	}
+}
+
+// SweepResidue removes what an earlier upgrade left behind: beside in's
+// binary, a staged binary that never landed and a kept one — kept by
+// an upgrade that stopped before it was committed or undone, or, on
+// Windows, by a committed one that could not delete it while it was
+// still a running process's image; beside the state file, a directory
+// a new build's check of itself was stopped in. Anything still held
+// open is left for the next sweep. This is housekeeping, not a
+// diagnosis: it reports nothing and fails at nothing.
 //
 // It runs only under the upgrade lock, and does not wait for it: what
 // sits beside the binary while another upgrade holds the lock is that
@@ -101,23 +178,36 @@ func SweepResidue(in Installation) {
 		return
 	}
 	defer unlock()
-	sweepResidue(in.ExecPath)
+	sweepResidue(in)
 }
 
 // sweepResidue is SweepResidue for a caller already holding the lock.
-func sweepResidue(execPath string) {
-	dir := filepath.Dir(execPath)
+// Beside the binary it removes staged and kept binaries; beside the
+// state file, the directories a new build's check of itself was
+// stopped before it could remove.
+func sweepResidue(in Installation) {
+	base := filepath.Base(in.ExecPath)
+	removeEntries(filepath.Dir(in.ExecPath), os.Remove, func(name string) bool {
+		return strings.HasPrefix(name, base+incomingMarker) || strings.HasPrefix(name, base+oldMarker)
+	})
+	// A check's directory holds the directories its proxy made, so it
+	// goes with everything in it.
+	removeEntries(filepath.Dir(in.State), os.RemoveAll, func(name string) bool {
+		return strings.HasPrefix(name, userdirs.UpgradeVerifyPrefix)
+	})
+}
+
+// removeEntries removes, with remove, every entry of dir whose name is
+// residue.
+func removeEntries(dir string, remove func(string) error, residue func(name string) bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
-	base := filepath.Base(execPath)
 	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasPrefix(name, base+incomingMarker) &&
-			!strings.HasPrefix(name, base+oldMarker) {
-			continue
+		// One still held open stays for the next sweep.
+		if residue(e.Name()) {
+			_ = remove(filepath.Join(dir, e.Name()))
 		}
-		os.Remove(filepath.Join(dir, name))
 	}
 }
