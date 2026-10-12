@@ -17,5 +17,5 @@ func SpliceJSON(s string) (string, error) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(s)), &parsed); err != nil {
 		return "", err
 	}
-	return applyJSONReplacements(s, collectJSONLReplacements(parsed))
+	return spliceFieldAware(s, parsed)
 }

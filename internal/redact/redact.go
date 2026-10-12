@@ -755,11 +755,7 @@ func jsonlContent(content string) (string, error) {
 				return redactString(content), nil
 			}
 			// Content is a single JSON value (object/array) — redact field-aware.
-			result, err := applyJSONReplacements(content, collectJSONLReplacements(parsed))
-			if err != nil {
-				return "", err
-			}
-			return result, nil
+			return spliceFieldAware(content, parsed)
 		}
 	}
 
@@ -780,13 +776,20 @@ func jsonlContent(content string) (string, error) {
 			b.WriteString(redactString(line))
 			continue
 		}
-		result, err := applyJSONReplacements(line, collectJSONLReplacements(parsed))
+		result, err := spliceFieldAware(line, parsed)
 		if err != nil {
 			return "", err
 		}
 		b.WriteString(result)
 	}
 	return b.String(), nil
+}
+
+// spliceFieldAware is the field-aware pass: the replacements collected
+// from parsed, the decoded form of content, are applied to the raw text
+// of content.
+func spliceFieldAware(content string, parsed any) (string, error) {
+	return applyJSONReplacements(content, collectJSONLReplacements(parsed))
 }
 
 // applyJSONReplacements applies collected (original, redacted) string pairs
@@ -1226,7 +1229,7 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 			// string as it arrived, which the text layers still scan.
 			text := val
 			if document, ok := embeddedJSONDocument(val); ok {
-				if masked, err := applyJSONReplacements(val, collectJSONLReplacements(document)); err == nil {
+				if masked, err := spliceFieldAware(val, document); err == nil {
 					text = masked
 				}
 			}
