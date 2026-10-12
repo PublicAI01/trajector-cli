@@ -194,9 +194,26 @@ const ServiceName = "trajector-proxy"
 // a connection that never finishes its headers must not stay open. The
 // clock starts when a connection opens, or at the first byte of the
 // next request on a kept-alive one, and stops once the headers are
-// read. Request bodies, streamed responses and idle kept-alive
-// connections are not limited by it.
+// read. Request bodies and streamed responses are not limited by it;
+// a kept-alive connection waiting for its next request is limited by
+// Config.ConnIdleTimeout (defaultConnIdleTimeout unless set) instead.
 const readHeaderTimeout = 30 * time.Second
+
+// defaultConnIdleTimeout bounds how long a kept-alive connection may
+// wait between requests: the clock starts when a response is finished
+// and stops when the first bytes of the next request arrive, and a
+// connection that stays quiet longer is closed. Like readHeaderTimeout,
+// it keeps connections that any account on the machine can open from
+// staying open forever. It is longer than the idle limit of the fetch
+// connection pool in the Bun runtime that Claude Code ships with (300
+// seconds, up to about 7 minutes once its timer rounds), so the client
+// closes an idle connection first and never sends a request on one the
+// proxy is closing at the same moment: Bun does not retry a POST that
+// meets a closed connection. It does not run while a request is in
+// flight. No ReadTimeout or WriteTimeout is set beside it: a deadline
+// on a request body or a streamed response would cut a slow exchange,
+// and forwarding must not fail because of the proxy.
+const defaultConnIdleTimeout = 10 * time.Minute
 
 // Defaults for the lazy lifecycle.
 const (
@@ -240,6 +257,11 @@ type Config struct {
 	// DrainTimeout bounds how long shutdown waits for in-flight
 	// requests. Zero selects a default.
 	DrainTimeout time.Duration
+	// ConnIdleTimeout is how long a single kept-alive connection may
+	// wait between requests before the proxy closes it. It is unrelated
+	// to IdleTimeout, which ends the whole proxy when nothing is
+	// forwarded. Zero selects defaultConnIdleTimeout.
+	ConnIdleTimeout time.Duration
 	// MaxRecordBytes bounds how much of one exchange the recorder holds
 	// in memory. Zero selects defaultMaxRecordBytes.
 	MaxRecordBytes int64
@@ -336,6 +358,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.DrainTimeout == 0 {
 		cfg.DrainTimeout = defaultDrainTimeout
+	}
+	if cfg.ConnIdleTimeout == 0 {
+		cfg.ConnIdleTimeout = defaultConnIdleTimeout
 	}
 	if cfg.MaxRecordBytes == 0 {
 		cfg.MaxRecordBytes = defaultMaxRecordBytes
@@ -453,6 +478,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	httpSrv := &http.Server{
 		Handler:           hostLimited(s.handler, l.Addr().String()),
 		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       s.cfg.ConnIdleTimeout,
 	}
 
 	shutdownDone := make(chan struct{})

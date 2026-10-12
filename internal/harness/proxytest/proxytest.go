@@ -48,6 +48,7 @@ type options struct {
 	quota      int64
 	idle       time.Duration
 	drain      time.Duration
+	connIdle   time.Duration
 	maxRecord  int64
 	logf       func(format string, args ...any)
 	internal   http.Handler
@@ -89,6 +90,10 @@ func WithFullSpool() Option { return func(o *options) { o.quota = 1 } }
 // WithIdleTimeout sets how long authorized traffic may be silent before
 // the proxy exits on its own.
 func WithIdleTimeout(d time.Duration) Option { return func(o *options) { o.idle = d } }
+
+// WithConnIdleTimeout sets how long a kept-alive connection may wait
+// between requests before the proxy closes it.
+func WithConnIdleTimeout(d time.Duration) Option { return func(o *options) { o.connIdle = d } }
 
 // WithMaxRecordBytes caps how much of one exchange the recorder holds.
 func WithMaxRecordBytes(n int64) Option { return func(o *options) { o.maxRecord = n } }
@@ -181,6 +186,7 @@ func New(t *testing.T, opts ...Option) *Env {
 		Spool:           sp,
 		IdleTimeout:     o.idle,
 		DrainTimeout:    o.drain,
+		ConnIdleTimeout: o.connIdle,
 		MaxRecordBytes:  o.maxRecord,
 		Logf:            o.logf,
 		Internal:        o.internal,

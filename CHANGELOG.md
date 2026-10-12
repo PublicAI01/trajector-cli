@@ -17,11 +17,11 @@ All notable changes to trajector are documented here. The format follows
 ### Security
 
 - The proxy closes a connection that does not send the headers of a
-  request within 30 seconds. Any account on the machine can connect to
-  the proxy's port, and before this a connection that never sent its
-  headers stayed open. Idle kept-alive connections, request bodies
-  and streamed responses have no such limit, so long responses are not
-  cut off.
+  request within 30 seconds, and a kept-alive connection that sends no
+  new request for 10 minutes. Any account on the machine can connect
+  to the proxy's port, and before this such connections stayed open.
+  Request bodies and streamed responses have no time limit, so long
+  requests and responses are not cut off.
 
 ## [0.3.6] - 2026-10-10
 
