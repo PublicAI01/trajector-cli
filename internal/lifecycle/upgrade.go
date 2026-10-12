@@ -8,10 +8,13 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"slices"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/proxyserve"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
@@ -76,7 +79,13 @@ func (m *Machine) Upgrade(ctx context.Context, streams IO) error {
 		// The proxy this build started keeps serving until something
 		// replaces it; the takeover rule then prefers the newer release.
 		fmt.Fprintln(streams.Out, "A proxy from the previous build may still be running; the next session replaces it.")
-		m.sayPauseStands(streams)
+		said := m.sayPauseStands(streams)
+		// The build just installed has left its lines for the next
+		// command; this one is that command, and the user is here. What
+		// it already said above is not said twice: that it upgraded,
+		// which the new build words as having happened in the
+		// background, and the step a pause still asks for.
+		m.tellNotices(streams, upgradedNotice(out.To), said)
 	default:
 		// Every outcome owes the user a sentence. An outcome no case
 		// above answers is a gap in this switch, and saying nothing at
@@ -92,15 +101,46 @@ func (m *Machine) Upgrade(ctx context.Context, streams IO) error {
 // by itself. The pause is read here, never lifted. A routing table this
 // build cannot read leaves the line out: the upgrade is already done,
 // and a failure to add a hint to it must not report the upgrade as
-// failed.
-func (m *Machine) sayPauseStands(streams IO) {
+// failed. It returns the line it said, empty when it said none.
+func (m *Machine) sayPauseStands(streams IO) string {
 	paused, err := m.routes.PausedReason()
 	if err != nil {
-		return
+		return ""
 	}
-	if next := paused.ExplainAfterUpgrade(); next != "" {
+	next := paused.ExplainAfterUpgrade()
+	if next != "" {
 		fmt.Fprintln(streams.Out, next)
 	}
+	return next
+}
+
+// TakeNotices returns the lines this device has waiting for its user,
+// oldest first, and removes them: each is shown by one command. A store
+// that cannot be read gives none. The lines are hints after the fact,
+// and a command the user ran for another reason must not fail over one.
+func (m *Machine) TakeNotices() []string {
+	lines, err := m.notices.Take()
+	if err != nil {
+		return nil
+	}
+	return lines
+}
+
+// tellNotices takes the waiting lines and says each on stderr, except
+// the ones in said, which this command has already put in its own
+// words.
+func (m *Machine) tellNotices(streams IO, said ...string) {
+	for _, line := range m.TakeNotices() {
+		if !slices.Contains(said, line) {
+			fmt.Fprintln(streams.Err, line)
+		}
+	}
+}
+
+// upgradedNotice is the line an installed build leaves for the next
+// command, naming itself.
+func upgradedNotice(version string) string {
+	return "trajector upgraded itself to " + version + " in the background."
 }
 
 // verifyAddr is where a newly installed build starts the proxy it
@@ -179,8 +219,26 @@ func (m *Machine) VerifyUpgrade(ctx context.Context) error {
 }
 
 // FinishUpgrade is what this build does once an older build has
-// committed the install of it. It has nothing to do yet, so it
-// succeeds at once, and running it again changes nothing.
-func (*Machine) FinishUpgrade(context.Context) error {
-	return nil
+// committed the install of it: it leaves the user's next command the
+// lines that say what happened and what it asks of them. Those are
+// that this build is installed; that the data agreement changed with
+// it, when this device accepted an earlier one; and what a pause still
+// asks once the build is replaced, when one stands.
+//
+// The agreement pause itself is not set here: the next session sets
+// it, as it does for any build that finds the agreement changed. A
+// consent record or routing table this build cannot read leaves its
+// line out, and that session says what it found instead. Running it
+// again adds nothing that still waits.
+func (m *Machine) FinishUpgrade(context.Context) error {
+	lines := []string{upgradedNotice(m.deps.Version)}
+	if accepted, _, err := m.consent.AcceptedVersion(); err == nil && accepted != "" && accepted != consent.AgreementVersion {
+		lines = append(lines, "trajector: "+routing.PauseConsentReconfirm.Explain())
+	}
+	if paused, err := m.routes.PausedReason(); err == nil {
+		if next := paused.ExplainAfterUpgrade(); next != "" {
+			lines = append(lines, next)
+		}
+	}
+	return m.notices.Add(lines...)
 }

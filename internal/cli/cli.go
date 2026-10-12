@@ -435,7 +435,19 @@ func (a *app) withMachine(open func() (*lifecycle.Machine, error), usage string,
 	if err != nil {
 		return a.fail(err)
 	}
+	a.tellNotices(m)
 	return a.exit(do(m, cwd))
+}
+
+// tellNotices says, on stderr, what this device left for the next
+// command the user runs, before the command itself says anything. Only
+// a command a person types tells them: what a session hook writes is
+// read by Claude Code, the proxy writes to a log, and `version` and
+// `--help` print exactly their answer, which scripts rely on.
+func (a *app) tellNotices(m *lifecycle.Machine) {
+	for _, line := range m.TakeNotices() {
+		fmt.Fprintln(a.stderr, line)
+	}
 }
 
 // exit maps one command's error to the process exit code. The errors

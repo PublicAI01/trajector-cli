@@ -24,6 +24,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/gitsnapshot"
+	"github.com/PublicAI01/trajector-cli/internal/notice"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
@@ -123,6 +124,9 @@ type Machine struct {
 	// project, which is what a session-scoped observation compares
 	// against. It is local state of the same kind as a reading cursor.
 	heads *gitsnapshot.Heads
+	// notices holds the lines this device has to tell its user at the
+	// next command they run.
+	notices *notice.Store
 }
 
 // claude is where Claude Code keeps its files for this process. It is
@@ -160,6 +164,7 @@ func Open(deps Deps) *Machine {
 
 		registry: follow.Open(deps.Layout.FollowDir()),
 		heads:    gitsnapshot.OpenHeads(deps.Layout.GitHeadsFile()),
+		notices:  notice.Open(deps.Layout.Notices()),
 	}
 }
 

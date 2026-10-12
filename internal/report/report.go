@@ -188,7 +188,10 @@ type Diagnosis struct {
 	// ImageUpload is what goes up of image and document content, read
 	// from the user config file for this diagnosis.
 	ImageUpload ImageUploadState
-	Project     ProjectStatus
+	// AutoUpgrades is whether this device upgrades trajector on its own,
+	// and what the last background check found.
+	AutoUpgrades AutoUpgradeState
+	Project      ProjectStatus
 	// EnabledProjects counts the projects contributing from this
 	// device, which is what the verdict line states when recording is
 	// on. It is the whole device's count and not this project's, so a

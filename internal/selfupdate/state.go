@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/semver"
@@ -19,6 +20,11 @@ import (
 // held the lock left it. Only a lock holder writes it; anyone may read
 // it with LoadState.
 type State struct {
+	// CheckedAt is when the background check last asked for the newest
+	// release, and Result what it came to. The background check writes
+	// both; a manual upgrade leaves them as they are.
+	CheckedAt time.Time `json:"checked_at,omitzero"`
+	Result    Result    `json:"result,omitempty"`
 	// Installed is the version the last upgrade installed. It is written
 	// when the install is committed, so it names what is on disk rather
 	// than what some running process announces.
@@ -38,14 +44,35 @@ type State struct {
 	FinishPending string `json:"finish_pending,omitempty"`
 }
 
+// Result is what the last background check came to.
+type Result string
+
+// The results the background check records. A build may read one it
+// does not know, written by a newer build, and must still say when the
+// check ran.
+const (
+	// ResultUpgraded installed a newer release; Installed names it.
+	ResultUpgraded Result = "upgraded"
+	// ResultNewest found this build already the newest release.
+	ResultNewest Result = "newest"
+	// ResultManaged found a newer release for an installation a package
+	// manager owns, which trajector does not replace.
+	ResultManaged Result = "managed"
+	// ResultFailed could not finish; Error says why.
+	ResultFailed Result = "failed"
+)
+
+// ManagerOf names the package manager that owns the binary at
+// execPath, or empty when none does. It is what a surface names as the
+// one that upgrades a managed installation.
+func ManagerOf(execPath string) Manager { return packageManager(execPath) }
+
 // stateMode keeps the state file private to the user, like everything
 // else trajector stores.
 const stateMode = 0o600
 
 // LoadState reads the state file at path. A file that is not there is a
 // machine that has not upgraded yet, which is the zero State.
-//
-//exportsurface:keep test support: tests read the state file back with the reader that sits beside the writer
 func LoadState(path string) (State, error) {
 	data, err := fsatomic.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {

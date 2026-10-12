@@ -13,10 +13,29 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 	"github.com/PublicAI01/trajector-cli/internal/spool"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 	"github.com/PublicAI01/trajector-cli/internal/userconfig"
 )
+
+// autoUpgrades is how this device keeps trajector up to date: what the
+// last background check found, read from the upgrade state file.
+// configErr is the user config file's own failure to read, which turns
+// automatic upgrades off.
+func (m *Machine) autoUpgrades(configErr error) report.AutoUpgradeState {
+	st := report.AutoUpgradeState{ConfigErr: configErr}
+	state, err := selfupdate.LoadState(m.deps.Layout.UpgradeState())
+	if err != nil {
+		st.StateErr = err
+		return st
+	}
+	st.CheckedAt, st.Result, st.Installed, st.Error = state.CheckedAt, state.Result, state.Installed, state.Error
+	if state.Result == selfupdate.ResultManaged {
+		st.Manager = managerHandback[selfupdate.ManagerOf(m.deps.ExecPath)].name
+	}
+	return st
+}
 
 // sessionFileReading says how much a diagnosis pays to learn about the
 // current project's session files.
@@ -45,6 +64,7 @@ func (m *Machine) diagnose(ctx context.Context, dir string, reading sessionFileR
 	d := report.Diagnosis{Version: m.deps.Version}
 	cfg, err := userconfig.Read(m.deps.Layout.ConfigFile())
 	d.ImageUpload = report.ImageUploadState{Placeholders: cfg.OmitsImagesAndDocuments(), ConfigErr: err}
+	d.AutoUpgrades = m.autoUpgrades(err)
 	st, err := m.observeProject(dir)
 	if err != nil {
 		return d, err

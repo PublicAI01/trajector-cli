@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
@@ -95,6 +96,8 @@ func TestRecordingKeepsFieldsANewerBuildWroteAndDropsPassedVersions(t *testing.T
 	m := install(t, "the 0.1.0 binary")
 	writeState(t, m.at("0.1.0"), `{
 		"checked_at": "2026-10-12T08:00:00Z",
+		"result": "newest",
+		"told_managed": "0.3.0",
 		"finish_pending": "0.1.0",
 		"installed": "0.1.0",
 		"unusable": {"0.0.5": "it cannot be run: exec format error", "0.1.0": "x", "0.4.0": "it exited with exit status 1"},
@@ -111,8 +114,8 @@ func TestRecordingKeepsFieldsANewerBuildWroteAndDropsPassedVersions(t *testing.T
 	// A build that runs after a newer one has used the file — the one
 	// still running while it installs its successor — must not erase
 	// what it does not know about.
-	if got := string(fields["checked_at"]); got != `"2026-10-12T08:00:00Z"` {
-		t.Errorf("checked_at is %s, want the newer build's field carried over", got)
+	if got := string(fields["told_managed"]); got != `"0.3.0"` {
+		t.Errorf("told_managed is %s, want the newer build's field carried over", got)
 	}
 	if _, ok := fields["error"]; ok {
 		t.Errorf("error is %s after a run that did not fail", fields["error"])
@@ -121,6 +124,11 @@ func TestRecordingKeepsFieldsANewerBuildWroteAndDropsPassedVersions(t *testing.T
 	want := map[string]string{"0.4.0": "it exited with exit status 1"}
 	if !reflect.DeepEqual(s.Unusable, want) || s.Installed != "0.1.0" {
 		t.Errorf("state is %+v, want only the version ahead of 0.1.0 left unusable", s)
+	}
+	// What the background check found is its own to rewrite: a manual
+	// run leaves it as the check left it.
+	if !s.CheckedAt.Equal(time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)) || s.Result != selfupdate.ResultNewest {
+		t.Errorf("state is %+v, want the last check's time and result kept", s)
 	}
 	// A run that commits nothing leaves an unfinished install named for
 	// the build that has to finish it.
@@ -159,5 +167,18 @@ func TestTheStateFileIsPrivateToTheUser(t *testing.T) {
 	}
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Errorf("state file mode is %v, want 0600", perm)
+	}
+}
+
+func TestManagerOfNamesWhoOwnsAnInstallation(t *testing.T) {
+	cases := map[string]selfupdate.Manager{
+		"/opt/homebrew/Cellar/trajector/0.3.7/bin/trajector":    selfupdate.Homebrew,
+		`C:\Users\u\scoop\apps\trajector\current\trajector.exe`: selfupdate.Scoop,
+		"/usr/local/bin/trajector":                              "",
+	}
+	for path, want := range cases {
+		if got := selfupdate.ManagerOf(path); got != want {
+			t.Errorf("ManagerOf(%q) = %q, want %q", path, got, want)
+		}
 	}
 }

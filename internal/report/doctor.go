@@ -66,11 +66,13 @@ func (f *Findings) Render(out io.Writer, style Style) {
 
 // DoctorDevice reports the device-wide facts a doctor run opens with:
 // whether the pairing state could be read at all, whether the routing
-// table could, and whether a device-wide pause stands.
+// table could, whether a device-wide pause stands, and how trajector
+// keeps itself up to date.
 func DoctorDevice(f *Findings, d Diagnosis) {
 	doctorTokenStore(f, d.TokenStore)
 	doctorTable(f, d.Project)
 	doctorPause(f, d.Project)
+	doctorAutoUpgrades(f, d.AutoUpgrades)
 }
 
 // DoctorStaleDiscoveryHook states what a doctor run did about a hook

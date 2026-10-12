@@ -67,6 +67,20 @@ type diagnosisWire struct {
 	// only placeholders for it, and why the user config file could not
 	// be read when it could not.
 	ImageUpload imageUploadWire `json:"image_upload"`
+	// AutoUpgrades says whether this device upgrades trajector on its
+	// own and what its last background check found.
+	AutoUpgrades autoUpgradesWire `json:"auto_upgrades"`
+}
+
+type autoUpgradesWire struct {
+	Off       bool      `json:"off"`
+	ConfigErr string    `json:"config_err,omitempty"`
+	StateErr  string    `json:"state_err,omitempty"`
+	CheckedAt time.Time `json:"checked_at,omitzero"`
+	Result    string    `json:"result,omitempty"`
+	Installed string    `json:"installed,omitempty"`
+	Manager   string    `json:"manager,omitempty"`
+	Error     string    `json:"error,omitempty"`
 }
 
 type imageUploadWire struct {
@@ -265,6 +279,16 @@ func DiagnosisJSON(d Diagnosis) []byte {
 	return mustJSON(diagnosisWire{
 		EnabledProjects: d.EnabledProjects,
 		ImageUpload:     imageUploadWire{Placeholders: d.ImageUpload.Placeholders, ConfigErr: errString(d.ImageUpload.ConfigErr)},
+		AutoUpgrades: autoUpgradesWire{
+			Off:       d.AutoUpgrades.Off,
+			ConfigErr: errString(d.AutoUpgrades.ConfigErr),
+			StateErr:  errString(d.AutoUpgrades.StateErr),
+			CheckedAt: d.AutoUpgrades.CheckedAt,
+			Result:    string(d.AutoUpgrades.Result),
+			Installed: d.AutoUpgrades.Installed,
+			Manager:   d.AutoUpgrades.Manager,
+			Error:     d.AutoUpgrades.Error,
+		},
 		Project: projectWire{
 			Root:                   d.Project.Root,
 			ProjectIDHash:          d.Project.Hash,

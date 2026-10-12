@@ -51,8 +51,8 @@ func Dashboard(w io.Writer, style Style, d Diagnosis) int {
 
 // deviceSection states what holds for every project on this machine:
 // whether the device is paired, whether an unreadable routing table or
-// a pause stops all of them, and a hook of trajector's that is left
-// where nothing reads it.
+// a pause stops all of them, a hook of trajector's that is left where
+// nothing reads it, and how trajector keeps itself up to date.
 func deviceSection(d Diagnosis) *section {
 	s := &section{name: "Device"}
 	switch {
@@ -77,6 +77,7 @@ func deviceSection(d Diagnosis) *section {
 		s.warnFix(staleDiscoveryHookFact, staleDiscoveryHookWhy, fixDoctor)
 	}
 	imageUploadLine(s, d.ImageUpload)
+	autoUpgradesLine(s, d.AutoUpgrades)
 	return s
 }
 

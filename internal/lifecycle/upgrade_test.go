@@ -383,16 +383,119 @@ func TestVerifyUpgradeThatCannotMakeItsDirectorySaysSo(t *testing.T) {
 	}
 }
 
-func TestFinishUpgradeHasNothingToDoAndRunsAgainAlike(t *testing.T) {
+// notices is what this device has waiting for the user's next command,
+// taken the way that command takes it.
+func (e *env) notices() []string {
+	e.t.Helper()
+	return e.machine().TakeNotices()
+}
+
+const upgradedTestv = "trajector upgraded itself to testv in the background."
+
+func TestFinishUpgradeTellsTheNextCommandOnceThatThisBuildIsInstalled(t *testing.T) {
 	e := newEnv(t)
-	before := e.stateEntries()
 	for range 2 {
 		if err := e.machine().FinishUpgrade(t.Context()); err != nil {
 			t.Fatalf("FinishUpgrade: %v", err)
 		}
 	}
-	if after := e.stateEntries(); !slices.Equal(after, before) {
-		t.Errorf("the state directory holds %v after finishing, %v before", after, before)
+
+	// Run twice, it still leaves the line once.
+	if got := e.notices(); !slices.Equal(got, []string{upgradedTestv}) {
+		t.Errorf("notices = %q, want only %q", got, upgradedTestv)
+	}
+	if got := e.notices(); len(got) != 0 {
+		t.Errorf("notices = %q after they were taken, want none", got)
+	}
+}
+
+func TestFinishUpgradeUnderAnAgreementThisDeviceHasNotAcceptedSaysTheAgreementChanged(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.AcceptAgreement("2026-01-01", "2026-01-01T00:00:00Z")
+
+	if err := e.machine().FinishUpgrade(t.Context()); err != nil {
+		t.Fatalf("FinishUpgrade: %v", err)
+	}
+
+	want := []string{upgradedTestv, "trajector: " + proxytest.PauseConsentReconfirm.Explain()}
+	if got := e.notices(); !slices.Equal(got, want) {
+		t.Errorf("notices = %q, want %q", got, want)
+	}
+	// Recording is paused by the next session, which every build does
+	// on finding the agreement changed; finishing an install only says
+	// so.
+	if got := e.sandbox.PausedReason(); got != "" {
+		t.Errorf("PausedReason = %q, want no pause set by finishing", got)
+	}
+}
+
+func TestFinishUpgradeUnderTheCurrentAgreementOrNoneSaysNothingOfIt(t *testing.T) {
+	for name, accepted := range map[string]string{"current": proxytest.AgreementVersion, "none": ""} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			if accepted != "" {
+				e.sandbox.AcceptAgreement(accepted, "2026-08-01T00:00:00Z")
+			}
+			if err := e.machine().FinishUpgrade(t.Context()); err != nil {
+				t.Fatalf("FinishUpgrade: %v", err)
+			}
+			if got := e.notices(); !slices.Equal(got, []string{upgradedTestv}) {
+				t.Errorf("notices = %q, want only %q", got, upgradedTestv)
+			}
+		})
+	}
+}
+
+func TestFinishUpgradeUnderARedactionDriftPauseNamesTheStepLeft(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, "0.0.9")
+
+	if err := e.machine().FinishUpgrade(t.Context()); err != nil {
+		t.Fatalf("FinishUpgrade: %v", err)
+	}
+
+	want := []string{upgradedTestv, proxytest.PauseRedactionDrift.ExplainAfterUpgrade()}
+	if got := e.notices(); !slices.Equal(got, want) {
+		t.Errorf("notices = %q, want %q", got, want)
+	}
+}
+
+func TestFinishUpgradeThatCannotLeaveItsLinesFails(t *testing.T) {
+	e := newEnv(t)
+	e.obstruct(filepath.Dir(e.layout().Notices()))
+
+	// The older build keeps the install unfinished, and it is run again.
+	if err := e.machine().FinishUpgrade(t.Context()); err == nil {
+		t.Error("FinishUpgrade succeeded without leaving its lines")
+	}
+}
+
+func TestUpgradeSaysWhatTheInstalledBuildLeftWithoutRepeatingItself(t *testing.T) {
+	e, releases := newUpgradeEnv(t)
+	publishNewer(t, releases)
+	e.sandbox.AcceptAgreement("2026-01-01", "2026-01-01T00:00:00Z")
+	e.sandbox.PauseByBuild(proxytest.PauseRedactionDrift, e.deps.Version)
+
+	if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+
+	out, errOut := e.stdout.String(), e.stderr.String()
+	// The agreement line is the installed build's alone to say.
+	if !strings.Contains(errOut, "trajector: "+proxytest.PauseConsentReconfirm.Explain()+"\n") {
+		t.Errorf("stderr = %q, want the changed agreement named", errOut)
+	}
+	// This command already said it upgraded, in the foreground, and
+	// which step the pause still asks for.
+	if strings.Contains(errOut, "in the background") {
+		t.Errorf("stderr = %q, want no background upgrade announced by the command that ran it", errOut)
+	}
+	next := proxytest.PauseRedactionDrift.ExplainAfterUpgrade()
+	if n := strings.Count(out+errOut, next); n != 1 {
+		t.Errorf("the remaining step is said %d times, want once:\n%s\n%s", n, out, errOut)
+	}
+	if got := e.notices(); len(got) != 0 {
+		t.Errorf("notices = %q after the upgrade said them, want none", got)
 	}
 }
 
@@ -416,5 +519,59 @@ func TestUpgradeToAReleaseWhoseProxyDoesNotStartHereKeepsThisOne(t *testing.T) {
 	}
 	if out := e.stdout.String(); out != "trajector 0.2.0 does not start on this machine, so 0.1.0 was kept.\n" {
 		t.Errorf("upgrade printed %q, want only which version was kept", out)
+	}
+}
+
+// writeUpgradeState puts content where this device's upgrade state file
+// lives, as the background check would have left it.
+func (e *env) writeUpgradeState(content string) {
+	e.t.Helper()
+	path := e.layout().UpgradeState()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func TestStatusSaysWhatTheLastUpgradeCheckFound(t *testing.T) {
+	cases := map[string]struct {
+		execPath func(e *env) string
+		state    string
+		want     string
+	}{
+		"managed by Homebrew": {
+			func(e *env) string {
+				return filepath.Join(e.deps.Home, "Cellar", "trajector", "0.3.7", "bin", "trajector")
+			},
+			`{"checked_at": "2026-10-12T08:30:00Z", "result": "managed"}`,
+			"Automatic upgrades: last checked 2026-10-12T08:30:00Z, managed by Homebrew.",
+		},
+		"upgraded": {
+			nil,
+			`{"checked_at": "2026-10-12T08:30:00Z", "result": "upgraded", "installed": "0.4.0"}`,
+			"Automatic upgrades: last checked 2026-10-12T08:30:00Z, upgraded to 0.4.0.",
+		},
+		"a state file that does not parse": {
+			nil,
+			`{cut`,
+			"Automatic upgrades: on; what the last check found could not be read: selfupdate: reading ",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			if tc.execPath != nil {
+				e.deps.ExecPath = tc.execPath(e)
+			}
+			e.writeUpgradeState(tc.state)
+			if _, err := e.machine().Status(t.Context(), e.project, e.io()); err != nil {
+				t.Fatalf("Status: %v", err)
+			}
+			if out := e.stdout.String(); !strings.Contains(out, tc.want) {
+				t.Errorf("status = %s\nwant it to contain %q", out, tc.want)
+			}
+		})
 	}
 }

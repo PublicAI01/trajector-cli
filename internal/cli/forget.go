@@ -27,6 +27,7 @@ func (a *app) forgetCmd(args []string) int {
 	if err != nil {
 		return a.fail(err)
 	}
+	a.tellNotices(m)
 	sessionID := m.CurrentSessionID()
 	if len(args) == 1 {
 		sessionID = args[0]
