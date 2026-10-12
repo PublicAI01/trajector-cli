@@ -260,10 +260,12 @@ func (m *Machine) readConsent(st *report.ProjectStatus) {
 // injectionAgrees holds the injection read from the settings file
 // against the grant: it is the injection the grant calls for when it
 // stands in the grant's shape and, in the shape that carries a base
-// URL, carries this project's own token. It is decided here because
-// this is the one place that has read both.
+// URL, carries this project's own token. Which hooks stand is not
+// asked: an injection short of a hook is completed in place, and a
+// whole rewrite would respell a base URL that already routes. It is
+// decided here because this is the one place that has read both.
 func injectionAgrees(st report.ProjectStatus, onFile routing.Shape) bool {
-	if !st.Enabled || !st.Hooks.Has(claudesettings.HookEnsureProxy) || onFile != st.Shape {
+	if !st.Enabled || onFile != st.Shape {
 		return false
 	}
 	return st.Shape == routing.WithoutProxy || st.InjectedToken == st.Token

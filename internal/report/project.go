@@ -111,11 +111,12 @@ func (s ProjectStatus) Consistent() bool {
 	return s.InjectionAgrees && s.Hooks.Complete()
 }
 
-// MissingSessionHooks reports an injection that predates a hook this
-// release installs: the rest of it stands, that hook does not. doctor
-// completes such an injection in place.
+// MissingSessionHooks reports an injection the grant calls for that
+// predates a hook, or an event of a hook, this release installs: the
+// rest of it stands, that hook does not. doctor completes such an
+// injection in place.
 func (s ProjectStatus) MissingSessionHooks() bool {
-	return s.Injected && s.Hooks.Has(claudesettings.HookEnsureProxy) && !s.Hooks.Complete()
+	return s.InjectionAgrees && !s.Hooks.Complete()
 }
 
 // IdentityDisagreement reports that the routing table and the consent

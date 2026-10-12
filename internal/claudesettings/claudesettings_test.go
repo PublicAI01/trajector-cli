@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,12 +90,198 @@ func writeInjectionWithoutSubagentStop(t *testing.T, path string) {
 	writeFile(t, path, []byte(older))
 }
 
-func TestInstalledProjectHooksCountsAHookUnderAnyOfItsEventsAsInstalled(t *testing.T) {
+func TestInstalledProjectHooksCountsAHookMissingOneOfItsEventsAsNotInstalled(t *testing.T) {
 	path := ProjectLocalPath(t.TempDir())
 	writeInjectionWithoutSubagentStop(t, path)
 
-	if got := InstalledProjectHooks(path); !got.Complete() || !slices.Equal(got, ProjectHookSubcommands()) {
-		t.Errorf("hooks of an injection whose progress hook stands without %s = %v, want every hook and complete", EventSubagentStop, got)
+	got := InstalledProjectHooks(path)
+	if got.Complete() || got.Has(HookProgress) {
+		t.Errorf("hooks of an injection whose progress hook stands without %s = %v, want progress missing and the file incomplete", EventSubagentStop, got)
+	}
+	for _, kept := range []string{HookEnsureProxy, HookSessionEnd, HookGitSnapshot} {
+		if !got.Has(kept) {
+			t.Errorf("hooks = %v, want the %s hook installed", got, kept)
+		}
+	}
+}
+
+// topLevelExcept is the settings file at path as its top-level keys,
+// each value compacted, without the key named except.
+func topLevelExcept(t *testing.T, path, except string) map[string]string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]string{}
+	for key, value := range raw {
+		if key == except {
+			continue
+		}
+		var b bytes.Buffer
+		if err := json.Compact(&b, value); err != nil {
+			t.Fatal(err)
+		}
+		keys[key] = b.String()
+	}
+	return keys
+}
+
+func TestCompleteProjectHooksAddsTheMissingEventAndChangesNoOtherKey(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	writeInjectionWithoutSubagentStop(t, path)
+	// The user's own keys beside the injection: an env variable, the
+	// permissions Claude Code stores here, and an optional setting.
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(readFile(t, path)), &settings); err != nil {
+		t.Fatal(err)
+	}
+	settings["env"].(map[string]any)["MY_VAR"] = "keep-me"
+	settings["permissions"] = map[string]any{"allow": []any{"Bash(go test:*)"}}
+	settings["includeCoAuthoredBy"] = false
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path, data)
+	before := topLevelExcept(t, path, "hooks")
+
+	added, err := CompleteProjectHooks(path, testHooks)
+	if err != nil || added != 1 {
+		t.Fatalf("CompleteProjectHooks = %d, %v; want 1 added", added, err)
+	}
+
+	if after := topLevelExcept(t, path, "hooks"); !reflect.DeepEqual(after, before) {
+		t.Errorf("keys other than hooks = %v, want them as they were: %v", after, before)
+	}
+	if got, want := hookCommandsByEvent(t, path), map[string][]string{
+		EventSessionStart:     {testHooks[HookEnsureProxy]},
+		EventUserPromptSubmit: {testHooks[HookEnsureProxy]},
+		EventSessionEnd:       {testHooks[HookSessionEnd]},
+		EventPostToolUse:      {testHooks[HookGitSnapshot]},
+		EventStop:             {testHooks[HookProgress]},
+		EventSubagentStop:     {testHooks[HookProgress]},
+		EventPostToolBatch:    {testHooks[HookProgress]},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hooks = %v, want %v", got, want)
+	}
+	if !InstalledProjectHooks(path).Complete() {
+		t.Error("the completed file still reads as incomplete")
+	}
+	if runtime.GOOS != "windows" {
+		if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o644 {
+			t.Errorf("mode after completing = %v, %v; want the user's 0644 kept", info.Mode().Perm(), err)
+		}
+	}
+
+	// Run again, it finds nothing to add and writes nothing.
+	completed := readFile(t, path)
+	if added, err := CompleteProjectHooks(path, testHooks); err != nil || added != 0 {
+		t.Fatalf("CompleteProjectHooks again = %d, %v; want nothing added", added, err)
+	}
+	if got := readFile(t, path); got != completed {
+		t.Errorf("a complete file was rewritten:\n%s\nwant\n%s", got, completed)
+	}
+}
+
+func TestCompleteProjectHooksInstallsInTheShapeWithoutBaseURLWhenTheFileHasIt(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	if err := InjectProject(path, "", testHooks); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeInjection(path, false, SessionEndMarker); err != nil {
+		t.Fatal(err)
+	}
+	// An ensure-proxy hook left under one of its two events, as a hand
+	// edit might leave it.
+	marked := testHooks[HookEnsureProxy] + " " + NoProxyMarker
+	if err := edit(path, func(root map[string]any) error {
+		eachHookEntry(root, func(event string, entry map[string]any) hookAction {
+			if event == EventUserPromptSubmit && entry["command"] == marked {
+				return dropEntry
+			}
+			return keepEntry
+		})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	added, err := CompleteProjectHooks(path, testHooks)
+	if err != nil || added != 2 {
+		t.Fatalf("CompleteProjectHooks = %d, %v; want 2 added", added, err)
+	}
+	got := hookCommandsByEvent(t, path)
+	if want := []string{marked}; !slices.Equal(got[EventUserPromptSubmit], want) {
+		t.Errorf("%s = %v, want %v", EventUserPromptSubmit, got[EventUserPromptSubmit], want)
+	}
+	if want := []string{testHooks[HookSessionEnd]}; !slices.Equal(got[EventSessionEnd], want) {
+		t.Errorf("%s = %v, want %v", EventSessionEnd, got[EventSessionEnd], want)
+	}
+	if _, ok := readJSON(t, path)["env"]; ok {
+		t.Error("completing the shape without a base URL wrote env")
+	}
+	if shape, ok := InjectionShape(path); !ok || shape != routing.WithoutProxy {
+		t.Errorf("InjectionShape = %v, %v; want WithoutProxy kept", shape, ok)
+	}
+}
+
+func TestCompleteProjectHooksLeavesAFileWithoutAnInjectionOfOursAlone(t *testing.T) {
+	unmarked := `{
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": ` + fmt.Sprintf("%q", testHooks[HookEnsureProxy]) + `}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "echo user-hook"}]}]
+  },
+  "env": {"ANTHROPIC_BASE_URL": "https://relay.example.com"}
+}
+`
+	for name, content := range map[string]string{
+		"user settings only": `{"permissions": {"allow": []}}` + "\n",
+		// Hooks of ours with neither a base URL nor the marker: whichever
+		// form put them there has lost what distinguished it, so there is
+		// no injection to complete.
+		"unmarked hooks and a base URL of the user's": unmarked,
+		"empty": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := ProjectLocalPath(t.TempDir())
+			writeFile(t, path, []byte(content))
+			if added, err := CompleteProjectHooks(path, testHooks); err != nil || added != 0 {
+				t.Fatalf("CompleteProjectHooks = %d, %v; want nothing added", added, err)
+			}
+			if got := readFile(t, path); got != content {
+				t.Errorf("file = %q, want it untouched: %q", got, content)
+			}
+		})
+	}
+	t.Run("no file", func(t *testing.T) {
+		root := t.TempDir()
+		path := ProjectLocalPath(root)
+		if added, err := CompleteProjectHooks(path, testHooks); err != nil || added != 0 {
+			t.Fatalf("CompleteProjectHooks = %d, %v; want nothing added", added, err)
+		}
+		if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("Stat(%s) = %v, want nothing created", filepath.Dir(path), err)
+		}
+	})
+}
+
+func TestCompleteProjectHooksRefusesAnIncompleteListOfCommands(t *testing.T) {
+	path := ProjectLocalPath(t.TempDir())
+	writeInjectionWithoutSubagentStop(t, path)
+	before := readFile(t, path)
+	partial := maps.Clone(testHooks)
+	delete(partial, HookSessionEnd)
+
+	if _, err := CompleteProjectHooks(path, partial); err == nil {
+		t.Error("CompleteProjectHooks without a session-end command succeeded")
+	}
+	if got := readFile(t, path); got != before {
+		t.Errorf("file = %s, want it untouched", got)
 	}
 }
 
@@ -1028,6 +1215,15 @@ func hookCommandsByEvent(t *testing.T, path string) map[string][]string {
 		return keepEntry
 	})
 	return got
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func writeFile(t *testing.T, path string, content []byte) {

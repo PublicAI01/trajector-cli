@@ -219,19 +219,28 @@ func (m *Machine) VerifyUpgrade(ctx context.Context) error {
 }
 
 // FinishUpgrade is what this build does once an older build has
-// committed the install of it: it leaves the user's next command the
+// committed the install of it. It first completes the injection of
+// each enabled project that lacks a hook this release installs
+// (completeEnabledProjects), then leaves the user's next command the
 // lines that say what happened and what it asks of them. Those are
-// that this build is installed; that the data agreement changed with
-// it, when this device accepted an earlier one; and what a pause still
+// that this build is installed; in how many projects it completed the
+// hooks, when it did in any; that the data agreement changed with it,
+// when this device accepted an earlier one; and what a pause still
 // asks once the build is replaced, when one stands.
 //
 // The agreement pause itself is not set here: the next session sets
 // it, as it does for any build that finds the agreement changed. A
 // consent record or routing table this build cannot read leaves its
-// line out, and that session says what it found instead. Running it
-// again adds nothing that still waits.
+// line out, and that session says what it found instead. A project it
+// could not complete fails it once the lines are left, so the install
+// stays unfinished and is finished again. Running it again adds
+// nothing that still waits.
 func (m *Machine) FinishUpgrade(context.Context) error {
+	completed, repairErr := m.completeEnabledProjects()
 	lines := []string{upgradedNotice(m.deps.Version)}
+	if completed > 0 {
+		lines = append(lines, completedNotice(completed))
+	}
 	if accepted, _, err := m.consent.AcceptedVersion(); err == nil && accepted != "" && accepted != consent.AgreementVersion {
 		lines = append(lines, "trajector: "+routing.PauseConsentReconfirm.Explain())
 	}
@@ -240,5 +249,8 @@ func (m *Machine) FinishUpgrade(context.Context) error {
 			lines = append(lines, next)
 		}
 	}
-	return m.notices.Add(lines...)
+	if err := m.notices.Add(lines...); err != nil {
+		return errors.Join(err, repairErr)
+	}
+	return repairErr
 }

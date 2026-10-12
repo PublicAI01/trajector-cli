@@ -175,37 +175,120 @@ type HookCommands map[string]string
 // carries.
 type InstalledHooks []string
 
-// Has reports whether the named hook stands in the file that was read.
+// Has reports whether the named hook stands in the file that was read,
+// under every event this release runs it under.
 func (h InstalledHooks) Has(subcommand string) bool { return slices.Contains(h, subcommand) }
 
 // Complete reports that every hook this release installs stands in the
-// file. Anything less is an injection a repair completes. Complete
-// answers which hooks stand, not under which events.
+// file under every event it runs under. Anything less is an injection
+// a repair completes: an event this release adds to a hook an older
+// release installed counts as missing, like a hook it adds does.
 func (h InstalledHooks) Complete() bool { return len(h) == len(projectHooks) }
 
 // InstalledProjectHooks reads the settings file at path once and
 // reports which hooks of a project injection it carries. A hook is
-// carried when its marker stands under any event. An unreadable file
-// carries none.
+// carried when its marker stands under each of its events; one that
+// stands under some of them only is a hook a repair completes. An
+// unreadable file carries none.
 func InstalledProjectHooks(path string) InstalledHooks {
 	root, err := readSettings(path)
 	if err != nil {
 		return nil
 	}
-	var commands []string
-	eachHookEntry(root, func(_ string, entry map[string]any) hookAction {
-		if cmd, _ := entry["command"].(string); cmd != "" {
-			commands = append(commands, cmd)
-		}
-		return keepEntry
-	})
+	missing := missingHookSites(root)
 	var installed InstalledHooks
 	for _, hook := range projectHooks {
-		if slices.ContainsFunc(commands, func(cmd string) bool { return strings.Contains(cmd, hook.marker()) }) {
+		if !slices.ContainsFunc(missing, func(site hookSite) bool { return site.hook.subcommand == hook.subcommand }) {
 			installed = append(installed, hook.subcommand)
 		}
 	}
 	return installed
+}
+
+// hookSite is one place a project injection installs a hook: the hook,
+// and one event it runs under.
+type hookSite struct {
+	hook  projectHook
+	event string
+}
+
+// missingHookSites lists, in the order of the list, each place a hook
+// of this release belongs under an event where no command carrying its
+// marker stands. Which group holds a command, and which executable it
+// names, are not asked: those are the user's file to arrange, and the
+// injection a whole rewrite owns.
+func missingHookSites(root map[string]any) []hookSite {
+	type pair struct{ subcommand, event string }
+	standing := map[pair]bool{}
+	eachHookEntry(root, func(event string, entry map[string]any) hookAction {
+		cmd, _ := entry["command"].(string)
+		for _, hook := range projectHooks {
+			if strings.Contains(cmd, hook.marker()) {
+				standing[pair{hook.subcommand, event}] = true
+			}
+		}
+		return keepEntry
+	})
+	var missing []hookSite
+	for _, hook := range projectHooks {
+		for _, event := range hook.events {
+			if !standing[pair{hook.subcommand, event}] {
+				missing = append(missing, hookSite{hook: hook, event: event})
+			}
+		}
+	}
+	return missing
+}
+
+// CompleteProjectHooks adds to the settings file at path each hook of
+// this release that the file's injection lacks under one of its
+// events, in the shape that injection already has, and reports how
+// many it added. It is the repair of an injection an older release
+// made: it completes what the user's enable wrote and nothing else.
+// A file with no injection of ours — neither an injected base URL nor
+// an ensure-proxy hook marked NoProxyMarker — is left as it is, since
+// installing into it would be granting, which only enable does. Only
+// the hooks section is written: never env, the base URL, an optional
+// setting, or the file's mode, and the token is never touched. A file
+// with nothing to add is not written at all.
+func CompleteProjectHooks(path string, hooks HookCommands) (added int, err error) {
+	for _, hook := range projectHooks {
+		if hooks[hook.subcommand] == "" {
+			return 0, fmt.Errorf("claudesettings: no command to install for the %s hook", hook.subcommand)
+		}
+	}
+	// A look first, so a complete or foreign file is never locked,
+	// re-marshalled, or refused for being a symbolic link.
+	root, err := readSettings(path)
+	if err != nil {
+		return 0, err
+	}
+	if _, ok := injectedShape(root); !ok || len(missingHookSites(root)) == 0 {
+		return 0, nil
+	}
+	err = edit(path, func(root map[string]any) error {
+		added = 0
+		shape, ok := injectedShape(root)
+		missing := missingHookSites(root)
+		if !ok || len(missing) == 0 {
+			return fsatomic.ErrUnchanged
+		}
+		for _, site := range missing {
+			command := hooks[site.hook.subcommand]
+			if site.hook.carriesShape && shape == routing.WithoutProxy {
+				command += " " + NoProxyMarker
+			}
+			if err := addHook(root, site.event, site.hook.matcher, command); err != nil {
+				return err
+			}
+		}
+		added = len(missing)
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return added, nil
 }
 
 // errBaseURLInjected reports an attempt to inject without a base URL
@@ -356,6 +439,11 @@ func InjectionShape(path string) (routing.Shape, bool) {
 	if err != nil {
 		return "", false
 	}
+	return injectedShape(root)
+}
+
+// injectedShape is InjectionShape of a file already read.
+func injectedShape(root map[string]any) (routing.Shape, bool) {
 	if value, _ := envValue(root, envBaseURL); isProxyBaseURL(value) {
 		return routing.WithProxy, true
 	}

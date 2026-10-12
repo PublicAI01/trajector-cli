@@ -409,7 +409,17 @@ func (m *Machine) doctorInjection(ctx context.Context, f *report.Findings, st re
 		f.Detailf("Run `trajector disable` and then `trajector enable` %s to record both afresh.", routing.NoProxyCaveat)
 		return nil
 	}
-	if !st.Consistent() {
+	switch {
+	case st.MissingSessionHooks():
+		// The injection is the one the grant records and lacks only
+		// hooks this release adds: they are added, the way an upgrade
+		// adds them, and nothing else of the file is written.
+		added, err := claudesettings.CompleteProjectHooks(settingsPath, projectHooks(m.deps.ExecPath))
+		if err != nil {
+			return fmt.Errorf("completing the session hooks in %s: %w", settingsPath, err)
+		}
+		f.Fixedf("completed the session hooks in %s (%d added)", settingsPath, added)
+	case !st.Consistent():
 		// The file is rewritten in the shape the grant records: the shape
 		// was the user's choice at enable time, and the grant is where
 		// enable wrote that choice down.
@@ -424,7 +434,7 @@ func (m *Machine) doctorInjection(ctx context.Context, f *report.Findings, st re
 		if unrestored != "" {
 			f.Problemf("%s", unrestoredBaseURLWarning(settingsPath, unrestored))
 		}
-	} else {
+	default:
 		f.OKf("injection and routing agree for this project")
 	}
 

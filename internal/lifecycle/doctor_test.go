@@ -289,7 +289,7 @@ func TestDoctorCompletesAnInjectionMadeBeforeTheSessionEndHook(t *testing.T) {
 	if problems != 0 {
 		t.Fatalf("problems = %d, want the injection completed, output:\n%s", problems, out)
 	}
-	if !strings.Contains(out, "restored") {
+	if !strings.Contains(out, "completed the session hooks in ") {
 		t.Errorf("doctor = %q, want the repair reported", out)
 	}
 	after := e.status()
@@ -318,7 +318,7 @@ func TestDoctorRepairsTheInjectionWithoutBaseURLInItsOwnShape(t *testing.T) {
 
 	e.stdout.Reset()
 	_, out := e.doctor()
-	if !strings.Contains(out, "restored") {
+	if !strings.Contains(out, "completed the session hooks in ") {
 		t.Errorf("doctor = %q, want the repair reported", out)
 	}
 	after := e.status()

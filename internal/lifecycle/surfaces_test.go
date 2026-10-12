@@ -413,7 +413,7 @@ func TestStatusReportsAMissingSessionHookThatDoctorAdds(t *testing.T) {
 	}
 
 	e.stdout.Reset()
-	if _, out := e.doctor(); !strings.Contains(out, "session hooks restored") {
+	if _, out := e.doctor(); !strings.Contains(out, "completed the session hooks in ") {
 		t.Errorf("doctor = %q, want the hook restored", out)
 	}
 	e.stdout.Reset()
@@ -436,11 +436,11 @@ func TestStatusReportsAMissingGitSnapshotHookThatDoctorAdds(t *testing.T) {
 		t.Errorf("status = %q, want the missing hook named", out)
 	}
 	e.stdout.Reset()
-	if _, out := e.doctor(); !strings.Contains(out, "session hooks restored") {
+	if _, out := e.doctor(); !strings.Contains(out, "completed the session hooks in ") {
 		t.Errorf("doctor = %q, want the hook restored", out)
 	}
 	if !e.projectSettings().HasHook(proxytest.GitSnapshotMarker) {
-		t.Error("doctor reported the injection restored without the hook it lacked")
+		t.Error("doctor reported the hooks completed without the hook it lacked")
 	}
 }
 

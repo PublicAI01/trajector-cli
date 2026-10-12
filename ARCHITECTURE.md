@@ -145,13 +145,19 @@ check runs it on its own.
   (`trajector hook upgrade-verify`). If it does not, the previous
   binary goes back and the release is recorded as unusable here. If it
   does, the install is committed and the new build runs `trajector
-  hook upgrade-finish`, which leaves the user's next command its lines
-  and never takes over the proxy: the next session's `ensure-proxy`
-  does that, as for any older proxy. An interrupted transaction is
-  undone by the next run that takes the lock. The build being
-  installed is the one that accepts it, so these three
-  `hook upgrade-*` command lines are a contract between builds and
-  never change.
+  hook upgrade-finish`. Finish adds the session hooks of the new
+  release that an enabled project's injection lacks to that project's
+  `.claude/settings.local.json`, in the shape the injection already
+  has, for each enabled project whose directory is still there. It
+  grants nothing: a settings file with no injection of trajector's is
+  left as it is, and finish writes only the hooks, never `env`, the
+  base URL, an optional setting or `.gitignore`. It then leaves the
+  user's next command its lines, and it never takes over the proxy:
+  the next session's `ensure-proxy` does that, as for any older proxy.
+  An interrupted transaction is undone by the next run that takes the
+  lock. The build being installed is the one that accepts it, so these
+  three `hook upgrade-*` command lines are a contract between builds
+  and never change.
 - **The state file** (`upgrade.json` in the state directory), written
   only under the lock: when the background check last ran and its
   result, the error of the last failure on one line with no URL query,
