@@ -15,10 +15,21 @@ All notable changes to trajector are documented here. The format follows
   consent record could not be read, the optional-settings lines of
   `status`, the last step every command gives when the routing table
   cannot be read, and the fixes `doctor` gives when a project's
-  settings or its consent record and the
-  routing table disagree. `trajector enable` without the flag sets up
-  the proxy, so before this a project enabled with `--no-proxy` that
-  followed such a line was changed to record through the proxy.
+  settings or its consent record and the routing table disagree.
+  `trajector enable` without the flag sets up the proxy, so before this
+  a project enabled with `--no-proxy` that followed such a line was
+  changed to record through the proxy.
+- When the search for a project's session files cannot list a
+  session's `subagents/workflows/` directory or one of its run
+  directories, `doctor` now shows that directory under "Not looked
+  at". `status` shows the directories the last search that registered
+  the project's session files could not list: the search `enable` runs,
+  or the one `doctor` runs when it registers sessions from before the
+  project was enabled. A directory appears there, and goes away after
+  you fix it, only when such a search runs again. In a project enabled
+  with `--no-earlier` neither search runs, so only `doctor` shows it.
+  Before this, the subagent conversations in it were not collected and
+  nothing said so.
 
 ## [0.3.7] - 2026-10-12
 

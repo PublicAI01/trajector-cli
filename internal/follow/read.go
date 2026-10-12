@@ -454,7 +454,7 @@ func agentFileOf(p string) (sessionDir, file string, at place) {
 // file of, as AgentFiles lists them. A session with no agent files,
 // or whose subagents/ directory cannot be listed, has no siblings.
 func Siblings(mainPath string) []string {
-	found, _ := AgentFiles(SessionOf(mainPath))
+	found, _, _ := AgentFiles(SessionOf(mainPath))
 	return found
 }
 
@@ -467,37 +467,42 @@ func Siblings(mainPath string) []string {
 // directory listings this package does. The error is the one from
 // listing subagents/ itself, so a session with no such directory
 // reports fs.ErrNotExist. A workflows/ or run directory that cannot be
-// listed is passed over, and what the other directories hold is still
-// listed.
-func AgentFiles(sessionDir string) ([]string, error) {
+// listed is passed over and returned in unlisted, and what the other
+// directories hold is still listed.
+func AgentFiles(sessionDir string) (found, unlisted []string, err error) {
 	dir := filepath.Join(sessionDir, subagentsDir)
 	found, hasWorkflows, err := listAgentFiles(dir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if hasWorkflows {
-		found = append(found, workflowAgentFiles(filepath.Join(dir, workflowsDir))...)
+	if !hasWorkflows {
+		return found, nil, nil
 	}
-	return found, nil
+	inRuns, unlisted := workflowAgentFiles(filepath.Join(dir, workflowsDir))
+	return append(found, inRuns...), unlisted, nil
 }
 
 // workflowAgentFiles lists the agent files in each run directory under
-// runsDir. A directory that cannot be listed adds nothing.
-func workflowAgentFiles(runsDir string) []string {
+// runsDir, and the directories it could not list: runsDir itself, or
+// each run directory that failed.
+func workflowAgentFiles(runsDir string) (found, unlisted []string) {
 	runs, err := os.ReadDir(runsDir)
 	if err != nil {
-		return nil
+		return nil, []string{runsDir}
 	}
-	var found []string
 	for _, run := range runs {
 		if !run.IsDir() || !runDirName.MatchString(run.Name()) {
 			continue
 		}
-		if inRun, _, err := listAgentFiles(filepath.Join(runsDir, run.Name())); err == nil {
-			found = append(found, inRun...)
+		runDir := filepath.Join(runsDir, run.Name())
+		inRun, _, err := listAgentFiles(runDir)
+		if err != nil {
+			unlisted = append(unlisted, runDir)
+			continue
 		}
+		found = append(found, inRun...)
 	}
-	return found
+	return found, unlisted
 }
 
 // listAgentFiles lists the regular agent files directly in dir, and

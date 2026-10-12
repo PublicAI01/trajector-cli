@@ -230,11 +230,11 @@ func oldestOf(mods map[string]time.Time) time.Time {
 // OnlySessions is this result with only the sessions keep answers for,
 // each with the agent files found under the session's own directory.
 // keep is asked about the path of every main session file found. What
-// the walk could not cover is carried over whole: a gap is a fact
-// about the search, not about one session. An agent file whose
-// session's own file the walk did not find is dropped: keep judges a
-// session, and nothing here can say which session that file's is
-// without the file that names it.
+// the walk could not cover is carried over whole and not filtered by
+// session: a directory under a session that keep drops stays a gap. An
+// agent file whose session's own file the walk did not find is dropped:
+// keep judges a session, and nothing here can say which session that
+// file's is without the file that names it.
 func (r Result) OnlySessions(keep func(session string) bool) Result {
 	out := Result{visited: r.visited, Gaps: r.Gaps, mods: make(map[string]time.Time)}
 	kept := make(map[string]bool, len(r.Sessions))
@@ -286,10 +286,11 @@ func collect(hit string, res *Result) error {
 }
 
 // collectAgents gathers the agent files of the session whose directory
-// is sessionDir. A directory with no agent files is not an error: most
-// directories beside the session files are not sessions at all.
+// is sessionDir, and records as unreadable each directory under it that
+// could not be listed. A directory with no agent files is not an error:
+// most directories beside the session files are not sessions at all.
 func collectAgents(sessionDir string, res *Result) error {
-	files, err := follow.AgentFiles(sessionDir)
+	files, unlisted, err := follow.AgentFiles(sessionDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -297,6 +298,7 @@ func collectAgents(sessionDir string, res *Result) error {
 		return err
 	}
 	res.Files = append(res.Files, files...)
+	res.Gaps.Unreadable = append(res.Gaps.Unreadable, unlisted...)
 	return nil
 }
 

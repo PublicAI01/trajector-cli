@@ -381,28 +381,47 @@ func TestWalk_CollectsWorkflowAgentFilesOneLevelUnderWorkflows(t *testing.T) {
 	}
 }
 
-func TestWalk_AWorkflowDirectoryThatCannotBeListedIsPassedOver(t *testing.T) {
+func TestWalk_AWorkflowDirectoryThatCannotBeListedIsReportedAndPassedOver(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("needs a directory this process cannot list")
 	}
-	tr := newTree(t)
-	main := tr.session(t, tr.root, "sid", time.Now())
-	proj := tr.project(t, tr.root)
-	flat := writeFile(t, filepath.Join(proj, "sid", "subagents", "agent-1.jsonl"))
-	runs := filepath.Join(proj, "sid", "subagents", "workflows")
-	writeFile(t, filepath.Join(runs, "wf_1", "agent-2.jsonl"))
-	if err := os.Chmod(runs, 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(runs, 0o755) })
+	for _, tt := range []struct {
+		name   string
+		locked string
+		found  []string
+	}{
+		{name: "the workflows directory", locked: "workflows", found: []string{"agent-1.jsonl"}},
+		{name: "a run directory", locked: filepath.Join("workflows", "wf_2"), found: []string{"agent-1.jsonl", filepath.Join("workflows", "wf_1", "agent-2.jsonl")}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := newTree(t)
+			main := tr.session(t, tr.root, "sid", time.Now())
+			proj := tr.project(t, tr.root)
+			agents := filepath.Join(proj, "sid", "subagents")
+			writeFile(t, filepath.Join(agents, "agent-1.jsonl"))
+			writeFile(t, filepath.Join(agents, "workflows", "wf_1", "agent-2.jsonl"))
+			writeFile(t, filepath.Join(agents, "workflows", "wf_2", "agent-3.jsonl"))
+			locked := filepath.Join(agents, tt.locked)
+			if err := os.Chmod(locked, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-	res := mustWalk(t, tr)
+			res := mustWalk(t, tr)
 
-	want := []string{main, flat}
-	slices.Sort(want)
-	slices.Sort(res.Files)
-	if !slices.Equal(res.Files, want) || res.Gaps.Any() {
-		t.Errorf("Files = %v, Gaps = %+v; want %v and no gap", res.Files, res.Gaps, want)
+			want := []string{main}
+			for _, f := range tt.found {
+				want = append(want, filepath.Join(agents, f))
+			}
+			slices.Sort(want)
+			slices.Sort(res.Files)
+			if !slices.Equal(res.Files, want) {
+				t.Errorf("Files = %v, want %v", res.Files, want)
+			}
+			if !slices.Equal(res.Gaps.Unreadable, []string{locked}) {
+				t.Errorf("Unreadable = %v, want %v", res.Gaps.Unreadable, []string{locked})
+			}
+		})
 	}
 }
 
