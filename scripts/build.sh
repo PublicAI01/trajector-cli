@@ -17,7 +17,11 @@
 #   ./scripts/build.sh v0.4.1
 #
 # The release pipeline stamps the same variable through goreleaser's
-# ldflags; this script is the same recipe for everyone else.
+# ldflags; this script is the same recipe for everyone else, with one
+# difference on purpose. The pipeline also sets the release build mark
+# (releaseBuild), and this script must not: only a build that carries it
+# checks for a newer release on its own and replaces itself, and a build
+# made from source must never do that.
 set -eu
 
 PKG=github.com/PublicAI01/trajector-cli/internal/cli

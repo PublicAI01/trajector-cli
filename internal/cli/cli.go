@@ -50,20 +50,38 @@ var version = unstampedVersion
 // here would run afterwards and overwrite the stamp.
 const unstampedVersion = "dev"
 
-// buildVersion is the version this build reports: the stamped one, or
-// else the one the toolchain recorded, or else unstampedVersion. It is
-// computed on read so that version itself keeps the constant
-// initializer -X needs.
-func buildVersion() string {
-	if version != unstampedVersion {
-		return version
+// releaseBuild is stamped "true" at link time by the release pipeline,
+// and by nothing else: scripts/build.sh stamps version but not this. It
+// marks a binary the pipeline produced, which is the only kind that
+// upgrades itself on its own. A build made from source — with build.sh,
+// go install, or go build — never checks, whatever version it reports,
+// which is what PRIVACY.md promises. Like version it must keep a
+// constant initializer for -X to patch it.
+var releaseBuild = ""
+
+// buildVersion is the version this build reports, and whether the
+// release pipeline produced it. The version is the stamped one, or else
+// the one the toolchain recorded, or else unstampedVersion. Both are
+// computed on read so that the variables keep the constant initializers
+// -X needs.
+func buildVersion() (string, bool) {
+	return resolveVersion(version, releaseBuild, debug.ReadBuildInfo)
+}
+
+// resolveVersion is buildVersion for a version stamp, a release stamp,
+// and a build info reader. Only a release stamp of exactly "true" makes
+// a release build.
+func resolveVersion(stamp, releaseStamp string, readBuildInfo func() (*debug.BuildInfo, bool)) (string, bool) {
+	release := releaseStamp == "true"
+	if stamp != unstampedVersion {
+		return stamp, release
 	}
-	if info, ok := debug.ReadBuildInfo(); ok {
+	if info, ok := readBuildInfo(); ok {
 		if v := info.Main.Version; v != "" && v != "(devel)" {
-			return v
+			return v, release
 		}
 	}
-	return version
+	return unstampedVersion, release
 }
 
 // ProxyAddrEnv overrides the proxy address, for tests and unusual
@@ -146,7 +164,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if code, answered := a.preparse("usage: trajector version", args[1:], nil); answered {
 			return code
 		}
-		fmt.Fprintf(stdout, "trajector %s\n", buildVersion())
+		v, _ := buildVersion()
+		fmt.Fprintf(stdout, "trajector %s\n", v)
 		return 0
 	case "login":
 		return a.loginCmd(ctx, args[1:])
@@ -214,6 +233,9 @@ type runtimeEnv struct {
 	// that talks to it, not with the command line.
 	platformURL string
 	releasesURL string
+	// autoUpgrade is whether the user config lets this device ask for a
+	// newer release on its own; off when the file cannot be read.
+	autoUpgrade bool
 	// configErr is why the user config file could not be read. The
 	// options then hold what userconfig gives a failed read, and a
 	// command refuses to run on those.
@@ -245,6 +267,7 @@ func resolveEnv() (runtimeEnv, error) {
 	}
 	cfg, err := userconfig.Read(layout.ConfigFile())
 	env.configErr = err
+	env.autoUpgrade = cfg.UpgradesAutomatically()
 	if cfg.PlatformURL != "" {
 		env.platformURL = cfg.PlatformURL
 	}
@@ -303,15 +326,18 @@ func openMachine(addr string, showsConfigErr bool) (*lifecycle.Machine, error) {
 	if err := apiproxy.ValidateAddr(env.proxyAddr); err != nil {
 		return nil, err
 	}
+	reported, release := buildVersion()
 	deps := lifecycle.Deps{
-		Layout:      env.layout,
-		PlatformURL: env.platformURL,
-		Version:     buildVersion(),
-		ExecPath:    env.execPath,
-		Releases:    env.releasesURL,
-		ProxyAddr:   env.proxyAddr,
-		Home:        env.home,
-		Getenv:      os.Getenv,
+		Layout:       env.layout,
+		PlatformURL:  env.platformURL,
+		Version:      reported,
+		ReleaseBuild: release,
+		ExecPath:     env.execPath,
+		Releases:     env.releasesURL,
+		AutoUpgrade:  env.autoUpgrade,
+		ProxyAddr:    env.proxyAddr,
+		Home:         env.home,
+		Getenv:       os.Getenv,
 	}
 	if os.Getenv(RecordProxyStartEnv) != "" {
 		deps.Spawn = proxylife.RecordStartsIn(deps.Layout.ProxyLog())

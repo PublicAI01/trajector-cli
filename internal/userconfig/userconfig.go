@@ -9,16 +9,16 @@
 // JSON, not readable by this user: Read returns the Config a failed
 // read gives, never a part of the file that did read, and the failure
 // beside it as a ReadError. That Config holds every default except
-// one: image and document upload is off (see failedRead). What a
-// caller does with the failure is the caller's to state, and it is
-// never silent: a command refuses to run on it, since the defaults
-// could send data or trust a place the user changed away from; status
-// shows it; the running proxy logs it. The proxy reads the file again
-// for every batch, so while the file cannot be read images and
-// documents go up as placeholders, and they go up as the file says
-// once it reads again. An option the proxy reads once at start, such
-// as platform_url, keeps the value it read: the proxy does not start
-// on a file that cannot be read.
+// two: image and document upload is off, and so is automatic upgrade
+// (see failedRead). What a caller does with the failure is the
+// caller's to state, and it is never silent: a command refuses to run
+// on it, since the defaults could send data or trust a place the user
+// changed away from; status shows it; the running proxy logs it. The
+// proxy reads the file again for every batch, so while the file
+// cannot be read images and documents go up as placeholders, and they
+// go up as the file says once it reads again. An option the proxy
+// reads once at start, such as platform_url, keeps the value it read:
+// the proxy does not start on a file that cannot be read.
 package userconfig
 
 import (
@@ -48,12 +48,22 @@ type Config struct {
 	// image and document with a placeholder before upload. Absent means
 	// true: it is uploaded.
 	UploadImagesAndDocuments *bool `json:"upload_images_and_documents"`
+	// AutoUpgrade set to false stops this device from asking for a newer
+	// release on its own; only an upgrade the user runs asks. Absent
+	// means true.
+	AutoUpgrade *bool `json:"auto_upgrade"`
 }
 
 // OmitsImagesAndDocuments reports whether the user turned image and
 // document upload off.
 func (c Config) OmitsImagesAndDocuments() bool {
 	return c.UploadImagesAndDocuments != nil && !*c.UploadImagesAndDocuments
+}
+
+// UpgradesAutomatically reports whether this device may ask for a
+// newer release, and install it, without the user running upgrade.
+func (c Config) UpgradesAutomatically() bool {
+	return c.AutoUpgrade == nil || *c.AutoUpgrade
 }
 
 // ReadError reports a config file that exists and could not be read.
@@ -88,12 +98,16 @@ func Read(path string) (Config, error) {
 }
 
 // failedRead is the Config of a file that cannot be read: every option
-// at its default, except that image and document upload is off. The
-// two ways to guess wrong do not cost the same: an upload sends what a
-// user who turned upload off refused to send, and it cannot be taken
-// back; a placeholder only withholds content a user who left upload on
-// would have sent. An option added later takes its default here unless
-// the same holds for it.
+// at its default, except image and document upload and automatic
+// upgrade, which are off. For each of the two, the ways to guess wrong
+// do not cost the same. An upload sends what a user who turned upload
+// off refused to send, and it cannot be taken back; a placeholder only
+// withholds content a user who left upload on would have sent. An
+// automatic upgrade sends a request a user who turned it off refused
+// to send, and replaces the binary that user chose to keep; leaving it
+// off only leaves a user who wanted it on on this release until the
+// file reads again or they run upgrade. An option added later takes its
+// default here unless the same holds for it.
 func failedRead() Config {
-	return Config{UploadImagesAndDocuments: new(false)}
+	return Config{UploadImagesAndDocuments: new(false), AutoUpgrade: new(false)}
 }

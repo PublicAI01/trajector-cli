@@ -5,6 +5,16 @@ package consent
 // reconfirms, so recorded consent always matches the current terms.
 const AgreementVersion = "2026-09-29"
 
+// UpdatesSince is the AgreementVersion that first carried the section
+// on updates: the one that tells the user this device asks for newer
+// releases on its own, and how to stop it. An acceptance of that
+// version or a later one covers the automatic upgrade check; a later
+// revision that leaves the section alone does not move it, and one that
+// changes the section moves it to its own day. Empty means no version
+// of the agreement carries the section yet, so no acceptance covers the
+// check.
+const UpdatesSince = ""
+
 // AgreementText is shown in full before the explicit yes/no prompt.
 // It states the actual client behavior and must be kept truthful to
 // it. The text, AgreementVersion, and PRIVACY.md describe the same

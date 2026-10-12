@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +60,49 @@ func TestAgreementVersion_IsAReleaseDaySaidInAllThreePlaces(t *testing.T) {
 	}
 	if !strings.Contains(string(privacy), consent.AgreementVersion) {
 		t.Errorf("PRIVACY.md does not say the version %q it describes", consent.AgreementVersion)
+	}
+}
+
+// updatesSection matches the heading of the agreement's section on
+// updates, in the numbered form every section takes.
+var updatesSection = regexp.MustCompile(`(?m)^[1-9][0-9]*\. Updates\. `)
+
+// UpdatesSince names the release day the agreement first told the user
+// about the automatic upgrade check. A day that is not a release day,
+// or one later than the agreement shown, would let an acceptance cover
+// a section the user was never shown; and an acceptance of the current
+// agreement covers it.
+func TestUpdatesSince_IsNoLaterThanTheAgreementThatCarriesTheSection(t *testing.T) {
+	s := consent.Open(filepath.Join(t.TempDir(), "consent.json"))
+	if err := s.AcceptAgreement(consent.AgreementVersion, "2026-10-12T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	covers, err := s.CoversUpdates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consent.UpdatesSince == "" {
+		if covers {
+			t.Error("an acceptance covers updates although no agreement carries the section")
+		}
+		return
+	}
+	since, err := time.Parse(time.DateOnly, consent.UpdatesSince)
+	if err != nil {
+		t.Fatalf("UpdatesSince %q is not an ISO date (YYYY-MM-DD): %v", consent.UpdatesSince, err)
+	}
+	version, err := time.Parse(time.DateOnly, consent.AgreementVersion)
+	if err != nil {
+		t.Fatalf("AgreementVersion %q is not an ISO date: %v", consent.AgreementVersion, err)
+	}
+	if since.After(version) {
+		t.Errorf("UpdatesSince %q is later than AgreementVersion %q", consent.UpdatesSince, consent.AgreementVersion)
+	}
+	if !updatesSection.MatchString(consent.AgreementText) {
+		t.Error("the agreement text has no Updates section, but UpdatesSince says it carries one")
+	}
+	if !covers {
+		t.Error("an acceptance of the current agreement does not cover updates")
 	}
 }
 

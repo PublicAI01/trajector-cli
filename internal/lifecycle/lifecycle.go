@@ -46,12 +46,20 @@ type Deps struct {
 	// directory.
 	PlatformURL string
 	Version     string
+	// ReleaseBuild is whether the release pipeline produced this binary.
+	// Only such a binary upgrades itself on its own: one built from
+	// source, however it was built and whatever Version it reports, never
+	// checks for a newer release, which is what PRIVACY.md promises.
+	ReleaseBuild bool
 	// ExecPath is this binary, injected into session hooks, used to
 	// spawn the proxy, and replaced in place by upgrade.
 	ExecPath string
 	// Releases is the index of published releases upgrade reads.
-	Releases  string
-	ProxyAddr string
+	Releases string
+	// AutoUpgrade is whether the user config lets this device ask for a
+	// newer release, and install it, without the user running upgrade.
+	AutoUpgrade bool
+	ProxyAddr   string
 	// Spawn starts every process this machine leaves running behind a
 	// command: the proxy, and the reader a session hook hands its work
 	// to. Nil detaches them, which is what production does. A test suite

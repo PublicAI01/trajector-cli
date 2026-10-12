@@ -1,6 +1,7 @@
 package consent_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -37,6 +38,54 @@ func TestAcceptAgreementRoundTrips(t *testing.T) {
 	}
 	if version != consent.AgreementVersion || at != "2026-08-02T10:00:00Z" {
 		t.Errorf("AcceptedVersion = %q, %q", version, at)
+	}
+}
+
+func TestAnAcceptanceCoversUpdatesFromTheDayTheSectionArrived(t *testing.T) {
+	const since = "2026-10-20"
+	cases := map[string]struct {
+		accepted string
+		covers   bool
+	}{
+		"never accepted":          {"", false},
+		"accepted the day before": {"2026-10-19", false},
+		"accepted that day":       {since, true},
+		"accepted a later day":    {"2026-11-02", true},
+		"accepted no release day": {"v2", false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := open(t)
+			if tc.accepted != "" {
+				if err := s.AcceptAgreement(tc.accepted, "2026-10-21T10:00:00Z"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			covers, err := s.CoversSince(since)
+			if err != nil || covers != tc.covers {
+				t.Errorf("CoversSince(%q) after accepting %q = %v, %v; want %v", since, tc.accepted, covers, err, tc.covers)
+			}
+		})
+	}
+}
+
+func TestNoAcceptanceCoversUpdatesBeforeAnAgreementCarriesTheSection(t *testing.T) {
+	s := open(t)
+	if err := s.AcceptAgreement("2026-11-02", "2026-11-02T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if covers, err := s.CoversSince(""); err != nil || covers {
+		t.Errorf("CoversSince(\"\") = %v, %v; want false", covers, err)
+	}
+}
+
+func TestCoversUpdatesSurfacesAnUnreadableStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "consent.json")
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if covers, err := consent.Open(path).CoversSince("2026-10-20"); !errors.Is(err, consent.ErrUnreadable) || covers {
+		t.Errorf("CoversSince on an unreadable store = %v, %v; want false and ErrUnreadable", covers, err)
 	}
 }
 
