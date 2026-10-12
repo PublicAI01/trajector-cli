@@ -18,8 +18,8 @@ import (
 // runs; the sweep covers a session whose hooks are disabled, a proxy
 // that started after the session did, and a session killed before its
 // last hook ran. Cold files are never looked at: a hook naming one is
-// what makes it hot again.
-const sweepInterval = 5 * time.Minute
+// what makes it hot again. Only tests change it.
+var sweepInterval = 5 * time.Minute
 
 // coolGrace is how long a hot file with no running process behind it
 // may stay unchanged before the sweep reads it to its end, flushes,

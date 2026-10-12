@@ -531,6 +531,20 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 		ticker := time.NewTicker(tick)
 		defer ticker.Stop()
 		s.awaitStop(ctx, ticker.C)
+		// Settle the cause before anything acts on it: a drain request
+		// that arrives during BeforeShutdown finds the exit under way.
+		s.drainOnce.Do(func() { close(s.drainCh) })
+		// An exiting proxy goes on writing captures after it releases
+		// the port, whatever made it exit: replies still streaming end
+		// within the drain budget, and the record queue drains behind
+		// them. The data directories may be deleted in that time —
+		// uninstall does so as soon as the port is free, or stops a
+		// successor and then does. A capture landing after the deletion
+		// must not create them again: the user was told the data was
+		// deleted, and nothing on the machine would ever delete it a
+		// second time. So from here the spool writes only into a
+		// directory that still exists.
+		s.cfg.Spool.StopCreatingDir()
 		if s.cfg.BeforeShutdown != nil {
 			s.cfg.BeforeShutdown()
 		}
@@ -653,8 +667,9 @@ func (s *Server) serveInternal(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == DrainPath && r.Method == http.MethodPost:
 		handover := r.URL.Query().Get(DrainCauseParam) == DrainCauseHandover
 		w.WriteHeader(http.StatusAccepted)
-		// The first drain request names the cause; a later one changes
-		// nothing.
+		// The first drain request names the cause; a later one, or one
+		// that arrives once this proxy has begun to exit for another
+		// reason, changes nothing.
 		s.drainOnce.Do(func() {
 			s.handover.Store(handover)
 			close(s.drainCh)

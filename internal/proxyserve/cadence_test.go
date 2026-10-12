@@ -69,7 +69,7 @@ func TestPeriodicSweepSweepsOnTheWayInAndThenEveryInterval(t *testing.T) {
 		var sweeps calls[bool]
 		sweep := func(onStart bool) (bool, bool) { sweeps.add(onStart); return false, false }
 		done := running(func() {
-			periodicSweep(t.Context(), served, sweep, new(flusher).flush, t.Logf)
+			periodicSweep(t.Context(), served, sweepInterval, sweep, new(flusher).flush, t.Logf)
 		})
 
 		synctest.Wait()
@@ -96,7 +96,7 @@ func TestPeriodicSweepEndsWithTheStopSignal(t *testing.T) {
 		var sweeps calls[bool]
 		sweep := func(onStart bool) (bool, bool) { sweeps.add(onStart); return false, false }
 		done := running(func() {
-			periodicSweep(ctx, make(chan struct{}), sweep, new(flusher).flush, t.Logf)
+			periodicSweep(ctx, make(chan struct{}), sweepInterval, sweep, new(flusher).flush, t.Logf)
 		})
 
 		synctest.Wait()
@@ -133,7 +133,7 @@ func TestPeriodicSweepFlushesWhatEachSweepMadeDue(t *testing.T) {
 					return r.read, r.cooled
 				}
 				var flushes flusher
-				done := running(func() { periodicSweep(t.Context(), served, sweep, flushes.flush, t.Logf) })
+				done := running(func() { periodicSweep(t.Context(), served, sweepInterval, sweep, flushes.flush, t.Logf) })
 
 				time.Sleep(sweepInterval)
 				synctest.Wait()
@@ -154,7 +154,7 @@ func TestPeriodicSweepLogsAFailedFlush(t *testing.T) {
 		logf := func(format string, args ...any) { logs.add(fmt.Sprintf(format, args...)) }
 		sweep := func(bool) (bool, bool) { return true, false }
 		failing := flusher{err: errors.New("link down")}
-		done := running(func() { periodicSweep(t.Context(), served, sweep, failing.flush, logf) })
+		done := running(func() { periodicSweep(t.Context(), served, sweepInterval, sweep, failing.flush, logf) })
 
 		synctest.Wait()
 		close(served)

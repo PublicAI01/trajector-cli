@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -597,5 +598,71 @@ func TestUsageSurvivesRecordsDeletedMidWalk(t *testing.T) {
 			t.Fatalf("round %d: Usage() = %d, want at least %d (the keepers, which no one deleted); the walk was cut short by a record that vanished and reported the partial total as the whole spool",
 				round, got, keeperTotal)
 		}
+	}
+}
+
+// spoolUnderDataDir creates a spool inside a data directory of its own,
+// as the user's layout places it, and returns both.
+func spoolUnderDataDir(t *testing.T) (s *spool.Spool, data, dir string) {
+	t.Helper()
+	data = filepath.Join(t.TempDir(), "data")
+	dir = filepath.Join(data, "rawcalls")
+	s, err := spool.Create(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, data, dir
+}
+
+func TestAHandleThatStoppedCreatingItsDirectoryLeavesADeletedOneDeleted(t *testing.T) {
+	s, data, _ := spoolUnderDataDir(t)
+	s.StopCreatingDir()
+	if err := os.RemoveAll(data); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Write(storedRawcall(t, "msg_01", "sess-a", "hash-a", noon)); !errors.Is(err, spool.ErrDirGone) {
+		t.Errorf("Write = %v, want ErrDirGone", err)
+	}
+	if err := s.WriteSegment(segment(sessionA, "hash-a", 0, noon)); !errors.Is(err, spool.ErrDirGone) {
+		t.Errorf("WriteSegment = %v, want ErrDirGone", err)
+	}
+	if _, err := os.Stat(data); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("data directory after the writes: %v, want it still deleted", err)
+	}
+}
+
+func TestAHandleThatStoppedCreatingItsDirectoryStillWritesIntoOneThatExists(t *testing.T) {
+	s, _, dir := spoolUnderDataDir(t)
+	s.StopCreatingDir()
+
+	if err := s.Write(storedRawcall(t, "msg_01", "sess-a", "hash-a", noon)); err != nil {
+		t.Fatalf("Write = %v, want the rawcall stored under a new day directory", err)
+	}
+	seg := segment(sessionA, "hash-a", 0, noon)
+	if err := s.WriteSegment(seg); err != nil {
+		t.Fatalf("WriteSegment = %v, want the segment stored under new slot and day directories", err)
+	}
+	for _, path := range []string{
+		filepath.Join(dir, "20260801", "msg_01.json"),
+		filepath.Join(dir, recordsDir, "20260801", seg.RecordID+".json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s: %v", path, err)
+		}
+	}
+}
+
+func TestASpoolInUseCreatesItsDirectoryAgainForAWrite(t *testing.T) {
+	s, data, dir := spoolUnderDataDir(t)
+	if err := os.RemoveAll(data); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Write(storedRawcall(t, "msg_01", "sess-a", "hash-a", noon)); err != nil {
+		t.Fatalf("Write = %v, want the rawcall stored", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "20260801", "msg_01.json")); err != nil {
+		t.Errorf("rawcall after the write: %v", err)
 	}
 }

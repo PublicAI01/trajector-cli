@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -229,6 +230,10 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		alive:  follow.ProcessAlive,
 		nudge:  newFlushNudge(),
 	}
+	// The sweep ends as soon as this process begins to exit: see
+	// BeforeShutdown below.
+	sweepDone := make(chan struct{})
+	endSweep := sync.OnceFunc(func() { close(sweepDone) })
 	internal := http.NewServeMux()
 	internal.Handle(upload.FlushPath, uploader.Handler(apiproxy.ServiceName))
 	internal.Handle("POST "+apiproxy.ProgressPath, tail.handler())
@@ -250,7 +255,18 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		// proxy's flusher, so no upload of this process may continue past
 		// its release, or the two would drain the same spool records
 		// under different batch ids.
+		//
+		// The sweep ends here, whatever made this process exit. An
+		// exiting process must not create the data directories again:
+		// uninstall deletes them as soon as the port is free, and this
+		// process goes on serving its in-flight replies after that —
+		// for minutes on a handover. A sweep in that time would create
+		// them again, since the follow registry and the reader log make
+		// the directories they write into. The cost is reads this
+		// process no longer makes; the next proxy's sweep on the way in
+		// makes them.
 		BeforeShutdown: func() {
+			endSweep()
 			if ferr := uploader.Close(uploads, exitFlushBudget); ferr != nil {
 				logf("final flush: %v", ferr)
 			}
@@ -278,9 +294,10 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 	}
 	served := make(chan struct{})
 	go periodicFlush(ctx, served, tail.nudge, flush, logf)
-	go periodicSweep(ctx, served, tail.sweep, flush, logf)
+	go periodicSweep(ctx, sweepDone, sweepInterval, tail.sweep, flush, logf)
 	err = server.Serve(ctx, l)
 	close(served)
+	endSweep()
 	return err
 }
 
@@ -367,8 +384,8 @@ func periodicFlush(ctx context.Context, served <-chan struct{}, nudge *flushNudg
 	}
 }
 
-// periodicSweep looks at the hot session files every sweepInterval while
-// the proxy serves, and once on the way in: a proxy that starts after
+// periodicSweep looks at the hot session files every interval until
+// done closes, and once on the way in: a proxy that starts after
 // a session did meets the file the session's earlier hooks left hot.
 // It runs on a goroutine of its own, which no hook waits on, so the
 // flush a sweep makes due is taken here and not handed to the flush
@@ -387,7 +404,7 @@ func periodicFlush(ctx context.Context, served <-chan struct{}, nudge *flushNudg
 // be drained — the takeover of its port waits on the exit flush, which
 // waits on that upload's lock — so what it read gets one threshold
 // check instead.
-func periodicSweep(ctx context.Context, served <-chan struct{}, sweep func(onStart bool) (read, cooled bool), flush func(atOnce bool) error, logf func(string, ...any)) {
+func periodicSweep(ctx context.Context, done <-chan struct{}, interval time.Duration, sweep func(onStart bool) (read, cooled bool), flush func(atOnce bool) error, logf func(string, ...any)) {
 	sweepAndFlush := func(onStart bool) {
 		read, cooled := sweep(onStart)
 		if !read && !cooled {
@@ -398,13 +415,13 @@ func periodicSweep(ctx context.Context, served <-chan struct{}, sweep func(onSta
 		}
 	}
 	sweepAndFlush(true)
-	ticker := time.NewTicker(sweepInterval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-served:
+		case <-done:
 			return
 		case <-ticker.C:
 			sweepAndFlush(false)

@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +54,11 @@ const DefaultQuota = 2 << 30
 // merely late. The spool refuses both all the same; what a caller does
 // next is its own.
 var ErrQuotaExceeded = errors.New("spool: quota exceeded")
+
+// ErrDirGone reports a write refused because the spool directory no
+// longer exists and this handle no longer creates it: see
+// StopCreatingDir. Nothing was written.
+var ErrDirGone = errors.New("spool: the spool directory is gone")
 
 // indexName is the per-day sidecar index file name.
 const indexName = "index.jsonl"
@@ -152,6 +158,9 @@ type Spool struct {
 	// updates its day directory's name set or mtime; a mismatch means
 	// usage must be re-derived before the next quota decision.
 	sig string
+	// existingDirOnly is set by StopCreatingDir: writes then create
+	// directories only inside a spool directory that still exists.
+	existingDirOnly bool
 }
 
 // Create prepares the spool rooted at dir, creating the directory if
@@ -462,7 +471,7 @@ func (s *Spool) Write(env envelope.Envelope) error {
 		return ErrQuotaExceeded
 	}
 
-	if err := os.MkdirAll(dayDir, 0o700); err != nil {
+	if err := s.mkdirLocked(dayDir); err != nil {
 		return err
 	}
 	if err := fsatomic.WriteFile(final, data, 0o600); err != nil {
@@ -484,6 +493,47 @@ func (s *Spool) Write(env envelope.Envelope) error {
 	}
 	s.usage += int64(len(line))
 	s.sig = dirSignature(s.dir)
+	return nil
+}
+
+// StopCreatingDir makes every later write through this handle create
+// directories only inside a spool directory that still exists. A write
+// that finds the spool directory gone fails with ErrDirGone and creates
+// nothing, so neither the spool directory nor any directory above it
+// comes back. Without it a write creates every directory its path
+// needs, which is what a spool in use wants; a process that keeps
+// writing after its data may have been deleted wants this instead.
+func (s *Spool) StopCreatingDir() {
+	s.mu.Lock()
+	s.existingDirOnly = true
+	s.mu.Unlock()
+}
+
+// mkdirLocked creates dir, a directory inside the spool. After
+// StopCreatingDir it creates one level at a time below the spool
+// directory and never the spool directory itself. Whether the parent
+// still exists is then answered by the create itself, which fails when
+// it does not, so no check made earlier can be overtaken by a deletion
+// that lands between it and the create.
+func (s *Spool) mkdirLocked(dir string) error {
+	if !s.existingDirOnly {
+		return os.MkdirAll(dir, 0o700)
+	}
+	rel, err := filepath.Rel(s.dir, dir)
+	if err != nil {
+		return err
+	}
+	path := s.dir
+	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
+		path = filepath.Join(path, part)
+		switch err := os.Mkdir(path, 0o700); {
+		case err == nil, errors.Is(err, fs.ErrExist):
+		case errors.Is(err, fs.ErrNotExist):
+			return ErrDirGone
+		default:
+			return err
+		}
+	}
 	return nil
 }
 

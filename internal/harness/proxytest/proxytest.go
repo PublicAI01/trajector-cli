@@ -567,6 +567,32 @@ func (e *Env) WaitStopped(within time.Duration) error {
 	}
 }
 
+// SeparateDirsLayout resolves a layout with the config, data and state
+// directories apart, as the platform defaults place them on Linux, so
+// a test can delete one of them on its own.
+func SeparateDirsLayout(t *testing.T) userdirs.Layout {
+	t.Helper()
+	root := t.TempDir()
+	layout, err := userdirs.Resolve(userdirs.Env{
+		GOOS: runtime.GOOS,
+		Getenv: func(key string) string {
+			switch key {
+			case "XDG_CONFIG_HOME":
+				return filepath.Join(root, "config")
+			case "XDG_DATA_HOME":
+				return filepath.Join(root, "data")
+			case "XDG_STATE_HOME":
+				return filepath.Join(root, "state")
+			}
+			return ""
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return layout
+}
+
 // SandboxLayout resolves a layout with every trajector directory inside
 // dir, so a test's files land exactly where production would put them.
 func SandboxLayout(t *testing.T, dir string) userdirs.Layout {

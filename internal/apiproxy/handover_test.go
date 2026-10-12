@@ -2,16 +2,23 @@ package apiproxy_test
 
 import (
 	"context"
+	"errors"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeupstream"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 // longReplyBlocks is a well-formed streamed reply delivered in blocks
@@ -40,7 +47,13 @@ const longReplyGap = 400 * time.Millisecond
 // returns everything that arrived.
 func startLongReply(t *testing.T, e *proxytest.Env) func() string {
 	t.Helper()
-	e.Upstream.Enqueue(fakeupstream.Response{SSE: longReplyBlocks, Delay: longReplyGap})
+	return startReply(t, e, longReplyGap)
+}
+
+// startReply is startLongReply with the blocks spaced gap apart.
+func startReply(t *testing.T, e *proxytest.Env, gap time.Duration) func() string {
+	t.Helper()
+	e.Upstream.Enqueue(fakeupstream.Response{SSE: longReplyBlocks, Delay: gap})
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, e.TokenURL("tok1")+"/v1/messages", strings.NewReader(`{"stream":true}`))
 	if err != nil {
 		t.Fatal(err)
@@ -121,6 +134,144 @@ func TestHandoverReleasesThePortAtOnceAndRecordsTheWholeReply(t *testing.T) {
 	}
 	if env := readEnvelope(t, stored[0]); env.Garbled() || stored[0].RequestID != "msg_long" {
 		t.Errorf("rawcall %s garbled=%v, want the whole reply recorded as msg_long", stored[0].RequestID, env.Garbled())
+	}
+}
+
+func TestADrainLeavesADataDirectoryDeletedDuringItDeleted(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		// gap spaces the reply's blocks: past the harness's one-second
+		// drain budget on a handover, which waits for it, and well
+		// inside it otherwise, so the reply ends either way.
+		gap time.Duration
+	}{
+		{name: "a handover drops the capture and creates nothing", query: drainQuery(apiproxy.DrainCauseHandover), gap: longReplyGap},
+		{name: "a drain with no cause drops the capture and creates nothing", query: "", gap: 20 * time.Millisecond},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			layout := proxytest.SeparateDirsLayout(t)
+			e := proxytest.New(t, proxytest.WithLayout(layout))
+			e.WriteTable(activeTable(e.Upstream.URL()))
+			finish := startReply(t, e, tc.gap)
+
+			if resp := e.PostAdmin(apiproxy.DrainPath + tc.query); resp.StatusCode != http.StatusAccepted {
+				t.Fatalf("drain status = %d, want 202", resp.StatusCode)
+			}
+			// What uninstall deletes first. The routing table, in the
+			// config directory, still grants recording, so the consent
+			// check at write time lets the capture through.
+			data := filepath.Dir(layout.SpoolDir())
+			if err := os.RemoveAll(data); err != nil {
+				t.Fatal(err)
+			}
+
+			if got, want := finish(), strings.Join(longReplyBlocks, ""); got != want {
+				t.Fatalf("reply = %d of %d bytes, want the whole reply forwarded", len(got), len(want))
+			}
+			if err := e.WaitStopped(5 * time.Second); err != nil {
+				t.Fatalf("Serve = %v after the drain, want nil", err)
+			}
+			if _, err := os.Stat(data); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("data directory after the drain: %v, want it still deleted", err)
+			}
+		})
+	}
+}
+
+func TestADrainStillRecordsIntoADataDirectoryThatStands(t *testing.T) {
+	e := proxytest.New(t, proxytest.WithLayout(proxytest.SeparateDirsLayout(t)))
+	e.WriteTable(activeTable(e.Upstream.URL()))
+	finish := startReply(t, e, 20*time.Millisecond)
+
+	if resp := e.PostAdmin(apiproxy.DrainPath); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("drain status = %d, want 202", resp.StatusCode)
+	}
+	if got, want := finish(), strings.Join(longReplyBlocks, ""); got != want {
+		t.Fatalf("reply = %d of %d bytes, want the whole reply forwarded", len(got), len(want))
+	}
+	if err := e.WaitStopped(5 * time.Second); err != nil {
+		t.Fatalf("Serve = %v after the drain, want nil", err)
+	}
+	if stored := e.Rawcalls(); len(stored) != 1 {
+		t.Errorf("spool holds %d rawcalls after the drain, want the reply recorded", len(stored))
+	}
+}
+
+func TestAProxyExitingOnItsStopSignalLeavesADataDirectoryDeletedMeanwhileDeleted(t *testing.T) {
+	layout := proxytest.SeparateDirsLayout(t)
+	upstream := fakeupstream.New(t)
+	if err := os.MkdirAll(filepath.Dir(layout.RoutingTable()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.RoutingTable(), []byte(activeTable(upstream.URL())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sp, err := spool.Create(layout.SpoolDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialect := capture.Anthropic
+	dialect.OfficialUpstream = upstream.URL()
+	server, err := apiproxy.New(apiproxy.Config{
+		Version:         "1.2.3",
+		Table:           routing.OpenStore(layout.RoutingTable()).Table(time.Millisecond),
+		Dialect:         dialect,
+		DefaultUpstream: upstream.URL(),
+		Spool:           sp,
+		IdleTimeout:     time.Hour,
+		DrainTimeout:    time.Second,
+		AdminTokens:     layout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, stop := context.WithCancel(context.WithoutCancel(t.Context()))
+	defer stop()
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(ctx, l) }()
+
+	upstream.Enqueue(fakeupstream.Response{SSE: longReplyBlocks, Delay: 20 * time.Millisecond})
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+l.Addr().String()+"/t/tok1/v1/messages", strings.NewReader(`{"stream":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := proxytest.Client(t).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	first := make([]byte, len(longReplyBlocks[0]))
+	if _, err := io.ReadFull(resp.Body, first); err != nil {
+		t.Fatal(err)
+	}
+
+	// The stop signal a reboot or logout sends, then the deletion.
+	stop()
+	data := filepath.Dir(layout.SpoolDir())
+	if err := os.RemoveAll(data); err != nil {
+		t.Fatal(err)
+	}
+
+	rest, _ := io.ReadAll(resp.Body)
+	if got, want := string(first)+string(rest), strings.Join(longReplyBlocks, ""); got != want {
+		t.Fatalf("reply = %d of %d bytes, want the whole reply forwarded", len(got), len(want))
+	}
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("Serve = %v after the stop signal, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("proxy did not exit after the stop signal")
+	}
+	if _, err := os.Stat(data); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("data directory after the exit: %v, want it still deleted", err)
 	}
 }
 

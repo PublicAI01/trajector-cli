@@ -27,7 +27,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	layout := proxytest.SandboxLayout(t, t.TempDir())
+	layout := proxytest.SeparateDirsLayout(t)
 	service := fakeplatform.New(t)
 	a := proxytest.Assembly(layout, "testv", t.TempDir()+"/trajector", freeAddr(t))
 	a.Service = platform.New(service.URL(), a.Version)

@@ -3,6 +3,7 @@ package apiproxy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
+	"github.com/PublicAI01/trajector-cli/internal/spool"
 )
 
 // defaultMaxRecordBytes bounds how much of one exchange the recorder
@@ -239,6 +241,12 @@ func (r *recorder) write(ctx context.Context) {
 			return
 		}
 		if err := r.s.cfg.Spool.Write(env); err != nil {
+			// A spool that no longer creates its directory refuses only
+			// after the user deleted it; dropping is what they asked for.
+			if errors.Is(err, spool.ErrDirGone) {
+				r.drop()
+				return
+			}
 			r.abandonf(abandonSpoolWrite, "spooling rawcall: %v", err)
 			return
 		}

@@ -193,7 +193,7 @@ func (s *Spool) storeRecord(sl slot, data []byte, want envelope.Kind) error {
 	}
 
 	dayDir := filepath.Join(sl.root(s.dir), at.UTC().Format(dayLayout))
-	if err := os.MkdirAll(dayDir, 0o700); err != nil {
+	if err := s.mkdirLocked(dayDir); err != nil {
 		return err
 	}
 	if err := fsatomic.WriteFile(filepath.Join(dayDir, id+".json"), data, 0o600); err != nil {

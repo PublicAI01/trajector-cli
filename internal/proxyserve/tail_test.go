@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -486,5 +487,74 @@ func TestStartSweepLeavesAColdWorkflowAgentFileReadToItsEnd(t *testing.T) {
 	}
 	if n := len(e.sandbox.Records()); n != 1 {
 		t.Errorf("records = %d, want the unread workflow agent file's one segment", n)
+	}
+}
+
+func TestAnExitingProxyDoesNotRecreateADeletedStateDirectoryWhateverMadeItExit(t *testing.T) {
+	proxytest.RequireSessionSources(t)
+	proxyserve.SetSweepInterval(t, 20*time.Millisecond)
+	e := newEnv(t)
+	hash := e.enabledProject()
+	path := e.sessionFile(hash, "s.jsonl", sessionLine)
+	e.warm(hash, path)
+
+	var holdUploads atomic.Bool
+	exitFlushStarted := make(chan struct{}, 1)
+	released := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(released) }) }
+	defer release()
+	e.service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		if holdUploads.Load() {
+			select {
+			case exitFlushStarted <- struct{}{}:
+			default:
+			}
+			<-released
+		}
+		return fakeplatform.Acknowledges(platform.Handshake{})(r)
+	})
+
+	served := e.serve(io.Discard, io.Discard)
+	e.waitHealthy()
+	if !eventually(t, 5*time.Second, func() bool { return e.entry(hash, path).Offset > 0 }) {
+		t.Fatalf("session file = %+v, want read by the sweep on the way in", e.entry(hash, path))
+	}
+	e.sandbox.SeedRawcall("req-exit", "hash-p1", aged())
+
+	holdUploads.Store(true)
+	e.drain()
+	select {
+	case <-exitFlushStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the drain never started an exit flush")
+	}
+
+	stateDir := filepath.Dir(e.assembly.Layout.ReaderLog())
+	if err := os.RemoveAll(stateDir); err != nil {
+		t.Fatal(err)
+	}
+	appendLines(t, path, `{"type":"mood-ring","mood":"calm"}`+"\n")
+
+	recreated := eventually(t, 500*time.Millisecond, func() bool {
+		_, err := os.Stat(stateDir)
+		return err == nil
+	})
+	release()
+	e.waitExit(served, 20*time.Second)
+	if recreated {
+		t.Error("a sweep of the exiting proxy created the deleted state directory again")
+	}
+}
+
+func appendLines(t *testing.T, path, lines string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(lines); err != nil {
+		t.Fatal(err)
 	}
 }
