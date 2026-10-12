@@ -19,6 +19,10 @@ type AutoUpgradeState struct {
 	NotRelease bool
 	// Off says the user config file turns automatic upgrades off.
 	Off bool
+	// NeedsAgreement says the data agreement this device accepted, if
+	// it accepted one, does not tell the user about the check. The
+	// check starts once the user accepts the current one.
+	NeedsAgreement bool
 	// ConfigErr, when non-nil, is why the user config file could not be
 	// read. Automatic upgrades are then off, whatever the file says.
 	ConfigErr error
@@ -49,19 +53,22 @@ const autoUpgradesLabel = "Automatic upgrades: "
 // failed reports a last check that could not finish while automatic
 // upgrades are on: the one state that asks the user for something.
 func (st AutoUpgradeState) failed() bool {
-	return st.on() && st.StateErr == nil && st.Result == selfupdate.ResultFailed
+	return st.On() && st.StateErr == nil && st.Result == selfupdate.ResultFailed
 }
 
-// on reports that this device checks on its own: a release build whose
-// user config can be read and does not turn the check off.
-func (st AutoUpgradeState) on() bool {
-	return !st.NotRelease && st.ConfigErr == nil && !st.Off
+// On reports that this device checks on its own: a release build whose
+// user config can be read and does not turn the check off, on a device
+// whose accepted agreement tells the user about the check. It is the
+// one test of that, for the session hook that starts the check as for
+// every line that says whether it runs.
+func (st AutoUpgradeState) On() bool {
+	return !st.NotRelease && st.ConfigErr == nil && !st.Off && !st.NeedsAgreement
 }
 
 // stateUnreadable reports a state file that could not be read while
 // the check is on, the one case where that file matters.
 func (st AutoUpgradeState) stateUnreadable() bool {
-	return st.on() && st.StateErr != nil
+	return st.On() && st.StateErr != nil
 }
 
 // failedHeadline is what failed: when, and that it did.
@@ -99,6 +106,8 @@ func (st AutoUpgradeState) sentence() string {
 		return autoUpgradesLabel + "off (" + userdirs.ConfigFileName + " could not be read)."
 	case st.Off:
 		return autoUpgradesLabel + "off (" + userdirs.ConfigFileName + ")."
+	case st.NeedsAgreement:
+		return autoUpgradesLabel + "off until you accept the current data agreement (run `trajector enable`)."
 	case st.CheckedAt.IsZero():
 		return autoUpgradesLabel + "on; no check has run yet."
 	}
@@ -120,7 +129,7 @@ func (st AutoUpgradeState) sentence() string {
 // checked reports a state whose last check came to something other
 // than a failure, the one state doctor counts as a check that passed.
 func (st AutoUpgradeState) checked() bool {
-	return st.on() && st.StateErr == nil && !st.CheckedAt.IsZero() && !st.failed()
+	return st.On() && st.StateErr == nil && !st.CheckedAt.IsZero() && !st.failed()
 }
 
 // autoUpgradesLine is the line status keeps in its Device section. A

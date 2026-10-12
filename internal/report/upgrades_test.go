@@ -75,6 +75,19 @@ func TestStatusAlwaysSaysHowTrajectorKeepsItselfUpToDate(t *testing.T) {
 			"Automatic upgrades: the last attempt at 2026-10-12T08:30:00Z failed. Run `trajector upgrade`.",
 		},
 		{
+			// What the last check found is not what happens next: no
+			// check runs until the user accepts the agreement that tells
+			// them about it.
+			"an accepted agreement that does not cover the check",
+			report.AutoUpgradeState{NeedsAgreement: true, CheckedAt: lastCheck, Result: selfupdate.ResultFailed, Error: "x"},
+			"Automatic upgrades: off until you accept the current data agreement (run `trajector enable`).",
+		},
+		{
+			"turned off before any agreement covers the check",
+			report.AutoUpgradeState{Off: true, NeedsAgreement: true},
+			"Automatic upgrades: off (config.json).",
+		},
+		{
 			"config file unreadable",
 			report.AutoUpgradeState{ConfigErr: errors.New("unexpected end of JSON input"), Off: true},
 			"Automatic upgrades: off (config.json could not be read).",
@@ -146,6 +159,7 @@ func TestDoctorStatesEveryOtherUpgradeStateAndCountsNoneOfThem(t *testing.T) {
 		"config file":      {report.AutoUpgradeState{ConfigErr: errors.New("cut")}, "automatic upgrades: off (config.json could not be read)"},
 		"never checked":    {report.AutoUpgradeState{}, "automatic upgrades: on; no check has run yet"},
 		"not a release":    {report.AutoUpgradeState{NotRelease: true, CheckedAt: lastCheck, Result: selfupdate.ResultFailed}, "automatic upgrades: off (not a release build)"},
+		"agreement":        {report.AutoUpgradeState{NeedsAgreement: true, CheckedAt: lastCheck, Result: selfupdate.ResultFailed}, "automatic upgrades: off until you accept the current data agreement (run `trajector enable`)"},
 		"state unreadable": {report.AutoUpgradeState{StateErr: errors.New("cut")}, "automatic upgrades: on; what the last check found could not be read: cut"},
 	}
 	for name, tc := range cases {
@@ -172,4 +186,11 @@ func TestTheBundleCarriesWhatTheLastUpgradeCheckFound(t *testing.T) {
 		`"result": "failed"`,
 		`"error": "timed out"`,
 	)
+}
+
+func TestTheBundleSaysWhenTheAcceptedAgreementDoesNotCoverTheCheck(t *testing.T) {
+	d := device()
+	d.AutoUpgrades = report.AutoUpgradeState{NeedsAgreement: true}
+
+	wants(t, "diagnosis.json", string(report.DiagnosisJSON(d)), `"needs_agreement": true`)
 }

@@ -1,6 +1,7 @@
 package lifecycle_test
 
 import (
+	"cmp"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/userconfig"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
@@ -129,6 +131,97 @@ func TestUpgradeOnTheNewestReleaseChangesNothing(t *testing.T) {
 	}
 }
 
+// checksOnItsOwn is the line a manual upgrade ends with when the build
+// it leaves in place also checks for newer releases by itself.
+const checksOnItsOwn = `trajector also checks for a newer release once a day on its own; set "auto_upgrade": false in config.json to stop that.`
+
+func TestUpgradeSaysTheDeviceAlsoChecksOnItsOwnOnlyWhenItDoes(t *testing.T) {
+	cases := map[string]struct {
+		arrange   func(e *env, releases *fakereleases.Server)
+		release   bool
+		auto      bool
+		agreement string
+		says      bool
+	}{
+		"already the newest release": {
+			arrange: func(_ *env, releases *fakereleases.Server) {
+				releases.Publish(t, "0.1.0", []byte("the 0.1.0 binary"))
+			},
+			release: true, auto: true, says: true,
+		},
+		"already the newest release, on an agreement accepted before the check was in it": {
+			arrange: func(_ *env, releases *fakereleases.Server) {
+				releases.Publish(t, "0.1.0", []byte("the 0.1.0 binary"))
+			},
+			release: true, auto: true, agreement: agreementBeforeTheCheck(t),
+		},
+		"already the newest release, auto_upgrade false": {
+			arrange: func(_ *env, releases *fakereleases.Server) {
+				releases.Publish(t, "0.1.0", []byte("the 0.1.0 binary"))
+			},
+			release: true,
+		},
+		"already the newest release, built from source": {
+			arrange: func(_ *env, releases *fakereleases.Server) {
+				releases.Publish(t, "0.1.0", []byte("the 0.1.0 binary"))
+			},
+			auto: true,
+		},
+		"upgraded": {
+			arrange: func(_ *env, releases *fakereleases.Server) { publishNewer(t, releases) },
+			release: true, auto: true, says: true,
+		},
+		// What is in place afterwards is the published release.
+		"upgraded from a build made from source": {
+			arrange: func(_ *env, releases *fakereleases.Server) { publishNewer(t, releases) },
+			auto:    true, says: true,
+		},
+		// This build's agreement is the one the device has not
+		// accepted; the build installed asks no less of it.
+		"upgraded, on an agreement accepted before the check was in it": {
+			arrange: func(_ *env, releases *fakereleases.Server) { publishNewer(t, releases) },
+			release: true, auto: true, agreement: agreementBeforeTheCheck(t),
+		},
+		"upgraded, auto_upgrade false": {
+			arrange: func(_ *env, releases *fakereleases.Server) { publishNewer(t, releases) },
+			release: true,
+		},
+		"owned by a package manager": {
+			arrange: func(e *env, _ *fakereleases.Server) {
+				e.deps.ExecPath = exeName(filepath.Join(e.deps.Home, "Cellar", "trajector", "0.1.0", "bin", "trajector"))
+				e.installBinary("the binary Homebrew installed")
+				e.unreachableSource()
+			},
+			release: true, auto: true,
+		},
+		"not a published release": {
+			arrange: func(e *env, _ *fakereleases.Server) {
+				e.deps.Version = "dev"
+				e.unreachableSource()
+			},
+			release: true, auto: true,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			e, releases := newUpgradeEnv(t)
+			e.deps.ReleaseBuild, e.deps.AutoUpgrade = tc.release, tc.auto
+			e.sandbox.AcceptAgreement(cmp.Or(tc.agreement, proxytest.AgreementVersion), "2026-08-01T00:00:00Z")
+			tc.arrange(e, releases)
+
+			if err := e.machine().Upgrade(t.Context(), e.io()); err != nil {
+				t.Fatalf("Upgrade: %v", err)
+			}
+			if got := strings.Contains(e.stdout.String(), checksOnItsOwn+"\n"); got != tc.says {
+				t.Errorf("said the device checks on its own = %t, want %t; stdout:\n%s", got, tc.says, e.stdout)
+			}
+			if strings.Contains(e.stderr.String(), "checks for a newer release") {
+				t.Errorf("stderr = %q, want the line on stdout only", e.stderr)
+			}
+		})
+	}
+}
+
 func TestUpgradeReportsAReleaseSourceThatIsRationingRequests(t *testing.T) {
 	e, releases := newUpgradeEnv(t)
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
@@ -158,7 +251,7 @@ func TestUpgradeOfAnInstallationAPackageManagerOwns(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e, _ := newUpgradeEnv(t)
-			e.deps.ExecPath = filepath.Join(append([]string{t.TempDir()}, append(c.tree, "trajector")...)...)
+			e.deps.ExecPath = exeName(filepath.Join(append([]string{t.TempDir()}, append(c.tree, "trajector")...)...))
 			e.installBinary("the binary the manager installed")
 			e.unreachableSource()
 
@@ -535,12 +628,21 @@ func (e *env) writeUpgradeState(content string) {
 	}
 }
 
+// readUserConfig hands the machine what the user config says about
+// automatic upgrades, as the command line does when it opens one.
+func (e *env) readUserConfig() {
+	e.t.Helper()
+	cfg, _ := userconfig.Read(e.layout().ConfigFile())
+	e.deps.AutoUpgrade = cfg.UpgradesAutomatically()
+}
+
 func TestStatusSaysWhatTheLastUpgradeCheckFound(t *testing.T) {
 	cases := map[string]struct {
-		execPath func(e *env) string
-		config   string
-		state    string
-		want     string
+		execPath  func(e *env) string
+		config    string
+		agreement string
+		state     string
+		want      string
 	}{
 		"up to date": {
 			state: `{"checked_at": "2026-10-12T08:30:00Z", "result": "newest"}`,
@@ -565,7 +667,7 @@ func TestStatusSaysWhatTheLastUpgradeCheckFound(t *testing.T) {
 		},
 		"managed by Homebrew": {
 			execPath: func(e *env) string {
-				return filepath.Join(e.deps.Home, "Cellar", "trajector", "0.3.7", "bin", "trajector")
+				return exeName(filepath.Join(e.deps.Home, "Cellar", "trajector", "0.3.7", "bin", "trajector"))
 			},
 			state: `{"checked_at": "2026-10-12T08:30:00Z", "result": "managed"}`,
 			want:  "Automatic upgrades: last checked 2026-10-12T08:30:00Z, managed by Homebrew.",
@@ -582,17 +684,24 @@ func TestStatusSaysWhatTheLastUpgradeCheckFound(t *testing.T) {
 			state: `{"checked_at": "2026-10-12T08:30:00Z", "result": "newest"}`,
 			want:  "Automatic upgrades: off (not a release build).",
 		},
+		"an agreement accepted before the check was in it": {
+			agreement: agreementBeforeTheCheck(t),
+			state:     `{"checked_at": "2026-10-12T08:30:00Z", "result": "failed", "error": "fetching the release index: 503 Service Unavailable"}`,
+			want:      "Automatic upgrades: off until you accept the current data agreement (run `trajector enable`).",
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t)
 			e.deps.ReleaseBuild = name != "not a release build"
+			e.sandbox.AcceptAgreement(cmp.Or(tc.agreement, proxytest.AgreementVersion), "2026-08-01T00:00:00Z")
 			if tc.execPath != nil {
 				e.deps.ExecPath = tc.execPath(e)
 			}
 			if tc.config != "" {
 				e.sandbox.WriteUserConfig(tc.config)
 			}
+			e.readUserConfig()
 			if tc.state != "" {
 				e.writeUpgradeState(tc.state)
 			}

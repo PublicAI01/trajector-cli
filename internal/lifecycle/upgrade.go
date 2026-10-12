@@ -74,12 +74,16 @@ func (m *Machine) Upgrade(ctx context.Context, streams IO) error {
 		fmt.Fprintln(streams.Out, "Nothing was changed.")
 	case selfupdate.AlreadyNewest:
 		fmt.Fprintf(streams.Out, "trajector %s is already the newest release.\n", out.From)
+		m.sayChecksOnItsOwn(streams, m.deps.ReleaseBuild)
 	case selfupdate.Upgraded:
 		fmt.Fprintf(streams.Out, "Upgraded trajector %s -> %s.\n", out.From, out.To)
 		// The proxy this build started keeps serving until something
 		// replaces it; the takeover rule then prefers the newer release.
 		fmt.Fprintln(streams.Out, "A proxy from the previous build may still be running; the next session replaces it.")
 		said := m.sayPauseStands(streams)
+		// What is in place now came from the release index, so it is a
+		// release build whatever this one is.
+		m.sayChecksOnItsOwn(streams, true)
 		// The build just installed has left its lines for the next
 		// command; this one is that command, and the user is here. What
 		// it already said above is not said twice: that it upgraded,
@@ -112,6 +116,27 @@ func (m *Machine) sayPauseStands(streams IO) string {
 		fmt.Fprintln(streams.Out, next)
 	}
 	return next
+}
+
+// checksOnItsOwn is how a manual upgrade tells the user that it is not
+// the only way this device asks for a newer release, and how to stop
+// the other one. The rest of what the check sends is in PRIVACY.md.
+const checksOnItsOwn = `trajector also checks for a newer release once a day on its own; set "auto_upgrade": false in config.json to stop that.`
+
+// sayChecksOnItsOwn ends a manual upgrade that left a published release
+// in place with checksOnItsOwn, when that build checks on its own: by
+// the same gates the session hook starts the check behind, except that
+// releaseBuild says whether the build left in place is a release build.
+// A build from source never checks, and neither does a device whose
+// accepted agreement does not tell the user about the check, so the
+// line would not be true of either. The gate on the agreement is this
+// build's: the one installed can ask no less.
+func (m *Machine) sayChecksOnItsOwn(streams IO, releaseBuild bool) {
+	gates := m.upgradeGates()
+	gates.NotRelease = !releaseBuild
+	if gates.On() {
+		fmt.Fprintln(streams.Out, checksOnItsOwn)
+	}
 }
 
 // TakeNotices returns the lines this device has waiting for its user,

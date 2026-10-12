@@ -138,7 +138,7 @@ func TestSessionStarting_StartsTheUpgradeCheckOnlyWhenEveryGatePasses(t *testing
 		},
 		"an agreement accepted before the check was in it": {
 			// The day before the Updates section first went out.
-			arrange: func(e *env) { e.sandbox.AcceptAgreement(dayBefore(e.t, consent.UpdatesSince), "2026-08-01T00:00:00Z") },
+			arrange: func(e *env) { e.sandbox.AcceptAgreement(agreementBeforeTheCheck(e.t), "2026-08-01T00:00:00Z") },
 		},
 		"an accepted agreement that is not a release day": {
 			arrange: func(e *env) { e.sandbox.AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z") },
@@ -169,10 +169,11 @@ func TestSessionStarting_StartsTheUpgradeCheckOnlyWhenEveryGatePasses(t *testing
 	}
 }
 
-// dayBefore is the release day before day.
-func dayBefore(t *testing.T, day string) string {
+// agreementBeforeTheCheck is the release day before the agreement
+// first told the user about the background check.
+func agreementBeforeTheCheck(t *testing.T) string {
 	t.Helper()
-	d, err := time.Parse(time.DateOnly, day)
+	d, err := time.Parse(time.DateOnly, consent.UpdatesSince)
 	if err != nil {
 		t.Fatal(err)
 	}

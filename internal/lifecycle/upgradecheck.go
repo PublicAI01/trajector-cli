@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 	"github.com/PublicAI01/trajector-cli/internal/semver"
 )
@@ -47,12 +48,9 @@ func (m *Machine) startUpgradeCheck(ctx context.Context) {
 }
 
 // upgradeCheckDue reports whether every gate on the background check
-// passes now.
+// passes now: the device checks on its own, and a check is due.
 func (m *Machine) upgradeCheckDue() bool {
-	if !m.deps.AutoUpgrade || !m.deps.ReleaseBuild {
-		return false
-	}
-	if covered, err := m.consent.CoversUpdates(); err != nil || !covered {
+	if !m.upgradeGates().On() {
 		return false
 	}
 	// A state file this build cannot read is due: the check replaces
@@ -62,6 +60,22 @@ func (m *Machine) upgradeCheckDue() bool {
 		state = selfupdate.State{}
 	}
 	return state.Due(m.upgradeWindow())
+}
+
+// upgradeGates is whether this device checks for a newer release on
+// its own, gate by gate: the user config (auto_upgrade), that the
+// release pipeline built this binary, and that the agreement the device
+// accepted tells the user about the check. The session hook starts the
+// check only when it is On, and every line that says whether the check
+// runs reads the same value. A consent record that cannot be read
+// covers nothing.
+func (m *Machine) upgradeGates() report.AutoUpgradeState {
+	covered, err := m.consent.CoversUpdates()
+	return report.AutoUpgradeState{
+		NotRelease:     !m.deps.ReleaseBuild,
+		Off:            !m.deps.AutoUpgrade,
+		NeedsAgreement: err != nil || !covered,
+	}
 }
 
 // upgradeWindow is the moment a background check would run in. The
