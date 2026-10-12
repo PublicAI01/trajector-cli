@@ -277,10 +277,13 @@ func (p *Proxy) Ensure(ctx context.Context) error {
 	case v.Replaceable(p.version):
 		// A strictly older release holds the port. Left alone it could
 		// live until its next idle exit, so ask it to drain and take
-		// over. A drain that already failed names what stands in the
-		// way; waiting out the port would bury that cause under a
-		// timeout that cannot succeed.
-		if err := p.Stop(ctx); err != nil {
+		// over. The drain says it is a handover, so the older proxy lets
+		// replies still streaming through it finish rather than cutting
+		// them for the client to resend; it still closes its listener at
+		// once, so the wait below is for the port alone. A drain that
+		// already failed names what stands in the way; waiting out the
+		// port would bury that cause under a timeout that cannot succeed.
+		if err := p.drain(ctx, apiproxy.DrainCauseHandover); err != nil {
 			return fmt.Errorf("asking the previous proxy to drain: %w", err)
 		}
 		if err := p.waitPortFree(ctx, drainTimeout); err != nil {
@@ -473,8 +476,16 @@ func (p *Proxy) Selfcheck(ctx context.Context, token string) (Selfcheck, error) 
 // goal state, so that is a nil return. The drain request carries the
 // admin token, so it goes only to a holder that proved it knows that
 // token; an unproven holder is not Stop's to fight — its verdict's
-// reason comes back for the caller to surface.
+// reason comes back for the caller to surface. The drain gives no
+// cause, so the holder waits its ordinary budget for in-flight
+// requests.
 func (p *Proxy) Stop(ctx context.Context) error {
+	return p.drain(ctx, "")
+}
+
+// drain is Stop with a cause for the holder to choose its in-flight
+// budget by; an empty cause sends none.
+func (p *Proxy) drain(ctx context.Context, cause string) error {
 	token, holder, why := p.settledVerify(ctx)
 	switch holder {
 	case HolderNone:
@@ -483,7 +494,11 @@ func (p *Proxy) Stop(ctx context.Context) error {
 		return why
 	case HolderOurs:
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+p.addr+apiproxy.DrainPath, nil)
+	target := "http://" + p.addr + apiproxy.DrainPath
+	if cause != "" {
+		target += "?" + url.Values{apiproxy.DrainCauseParam: {cause}}.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
+	"github.com/PublicAI01/trajector-cli/internal/harness/fakeupstream"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
@@ -289,6 +291,69 @@ func TestEnsureReplacesAStrictlyOlderReleaseViaDrain(t *testing.T) {
 	v := p.Observe(t.Context())
 	if v.Holder != proxylife.HolderOurs || v.Health.Version != "1.0.0" {
 		t.Errorf("after takeover: holder=%v health=%+v, want version 1.0.0", v.Holder, v.Health)
+	}
+}
+
+// streamingThrough sends a request through the proxy at e whose reply
+// streams for about two seconds — longer than the harness's one-second
+// drain budget — and returns once the first block has arrived, so the
+// exchange is in flight. The returned function reads the rest and
+// reports whether the whole reply arrived.
+func streamingThrough(t *testing.T, e *proxytest.Env) func() bool {
+	t.Helper()
+	blocks := []string{"one\n", "two\n", "three\n", "four\n", "five\n", "six\n"}
+	e.Upstream.Enqueue(fakeupstream.Response{SSE: blocks, Delay: 400 * time.Millisecond})
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, e.BaseURL()+"/v1/messages", strings.NewReader(`{"stream":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := e.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	first := make([]byte, len(blocks[0]))
+	if _, err := io.ReadFull(resp.Body, first); err != nil {
+		t.Fatal(err)
+	}
+	return func() bool {
+		rest, _ := io.ReadAll(resp.Body)
+		return string(first)+string(rest) == strings.Join(blocks, "")
+	}
+}
+
+func TestEnsureTakeoverLetsAReplyStreamingOnTheOlderProxyFinish(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	addr := freeAddr(t)
+	older := proxytest.New(t, proxytest.WithAddr(addr), proxytest.WithVersion("0.0.9"), proxytest.WithLayout(layout))
+	finished := streamingThrough(t, older)
+
+	p := proxylife.For(layout, "1.0.0", "/nonexistent/trajector", addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+	if err := p.Ensure(t.Context()); err != nil {
+		t.Fatalf("Ensure = %v, want the older proxy taken over", err)
+	}
+	if !finished() {
+		t.Error("the reply streaming on the older proxy was cut by the takeover, want it delivered whole")
+	}
+	if err := older.WaitStopped(5 * time.Second); err != nil {
+		t.Errorf("older proxy Serve returned %v after the takeover, want nil", err)
+	}
+}
+
+func TestStopCutsAReplyStreamingPastTheDrainBudget(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	live := proxytest.New(t, proxytest.WithLayout(layout))
+	finished := streamingThrough(t, live)
+
+	p := proxylife.For(layout, "1.2.3", "unused", live.Addr(), nil)
+	if err := p.Stop(t.Context()); err != nil {
+		t.Fatalf("Stop = %v", err)
+	}
+	if finished() {
+		t.Error("a reply outlasting the drain budget was delivered whole after Stop, want it cut at the ordinary budget")
+	}
+	if err := live.WaitStopped(5 * time.Second); err != nil {
+		t.Errorf("Serve = %v after Stop, want a clean drained exit", err)
 	}
 }
 

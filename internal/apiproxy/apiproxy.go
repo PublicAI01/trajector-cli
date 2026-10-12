@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/capture"
@@ -81,6 +82,23 @@ const HealthzPath = "/trajector/healthz"
 // DrainPath asks the proxy to drain in-flight requests and exit; a
 // newer binary uses it to take over the port.
 const DrainPath = "/trajector/drain"
+
+// DrainCauseParam is the query parameter on DrainPath that says why the
+// proxy is asked to stop. It names a reason, never a duration: how long
+// in-flight requests are waited for is this proxy's own constant for
+// that reason, so the endpoint cannot be used to tune it. A drain with
+// no cause, or a cause this proxy does not know, waits the ordinary
+// budget — and so does every build that predates the parameter, which
+// ignores the query string.
+const DrainCauseParam = "cause"
+
+// DrainCauseHandover is the cause a newer build gives when it drains
+// this proxy to take over the port. The listener still closes at once,
+// so the successor binds without waiting, but replies still streaming
+// here are left to finish (up to handoverDrainTimeout) instead of being
+// cut at the ordinary budget, after which the client would silently
+// resend the whole request and pay for it twice.
+const DrainCauseHandover = "handover"
 
 // ProgressPath is where a session hook tells the resident process that
 // a session's file just gained lines, so the file is read now rather
@@ -227,6 +245,18 @@ const defaultConnIdleTimeout = 10 * time.Minute
 const (
 	defaultIdleTimeout  = 30 * time.Minute
 	defaultDrainTimeout = 15 * time.Second
+	// handoverDrainTimeout bounds how long a proxy drained by a newer
+	// build waits for in-flight requests (DrainCauseHandover). It has a
+	// bound so that an upstream connection that never ends cannot keep
+	// the replaced process alive; a reply that streams longer is cut and
+	// resent by the client, as at the ordinary budget.
+	handoverDrainTimeout = 10 * time.Minute
+	// recordQueueDrainTimeout bounds how long an exiting proxy waits for
+	// captures already queued to reach the spool once every exchange has
+	// ended. It is fixed whatever the drain's cause: writing finished
+	// captures takes milliseconds, and a longer request drain is no
+	// reason for this wait to grow with it.
+	recordQueueDrainTimeout = 15 * time.Second
 	// attendedIdleFactor stretches the idle timeout while a session
 	// process is still running: an unattended agent can be quiet for
 	// well over half an hour between turns. It is a factor and not
@@ -263,7 +293,8 @@ type Config struct {
 	// leaves forwarding the only sign of life.
 	Liveness func() Liveness
 	// DrainTimeout bounds how long shutdown waits for in-flight
-	// requests. Zero selects a default.
+	// requests, except after a drain whose cause is DrainCauseHandover,
+	// which waits up to handoverDrainTimeout. Zero selects a default.
 	DrainTimeout time.Duration
 	// ConnIdleTimeout is how long a single kept-alive connection may
 	// wait between requests before the proxy closes it. It is unrelated
@@ -342,6 +373,10 @@ type Server struct {
 
 	drainOnce sync.Once
 	drainCh   chan struct{}
+	// handover is set when the drain request that ends this proxy came
+	// from a newer build taking over the port; it selects the in-flight
+	// budget once the exit begins.
+	handover atomic.Bool
 }
 
 // New validates the configuration and builds a server.
@@ -501,7 +536,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 		}
 		// The drain must outlive the cancellation that may have started
 		// it, or Shutdown would give up at once and cut every exchange.
-		drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.DrainTimeout)
+		drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.drainBudget())
 		defer cancel()
 		if err := httpSrv.Shutdown(drainCtx); err != nil {
 			httpSrv.Close()
@@ -512,7 +547,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	<-shutdownDone
 	// Captures queued by requests that already finished get their own
 	// bounded window; none of it held the exchanges open.
-	s.closeRecordQueue(s.cfg.DrainTimeout)
+	s.closeRecordQueue(recordQueueDrainTimeout)
 	if err == http.ErrServerClosed {
 		return nil
 	}
@@ -539,6 +574,16 @@ func hostLimited(next http.Handler, bound string) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// drainBudget is how long shutdown waits for in-flight requests: the
+// handover budget when a newer build asked for the drain, the
+// configured one otherwise.
+func (s *Server) drainBudget() time.Duration {
+	if s.handover.Load() {
+		return handoverDrainTimeout
+	}
+	return s.cfg.DrainTimeout
 }
 
 // awaitStop returns when ctx is canceled, a drain is requested, or a
@@ -606,8 +651,14 @@ func (s *Server) serveInternal(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == HealthzPath && r.Method == http.MethodGet:
 		s.serveHealthz(w)
 	case r.URL.Path == DrainPath && r.Method == http.MethodPost:
+		handover := r.URL.Query().Get(DrainCauseParam) == DrainCauseHandover
 		w.WriteHeader(http.StatusAccepted)
-		s.drainOnce.Do(func() { close(s.drainCh) })
+		// The first drain request names the cause; a later one changes
+		// nothing.
+		s.drainOnce.Do(func() {
+			s.handover.Store(handover)
+			close(s.drainCh)
+		})
 	default:
 		http.NotFound(w, r)
 	}

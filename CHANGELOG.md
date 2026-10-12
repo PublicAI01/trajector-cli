@@ -30,6 +30,8 @@ All notable changes to trajector are documented here. The format follows
   with `--no-earlier` neither search runs, so only `doctor` shows it.
   Before this, the subagent conversations in it were not collected and
   nothing said so.
+- A reply still streaming when a newer build takes over now finishes on
+  the old proxy, up to 10 minutes.
 
 ## [0.3.7] - 2026-10-12
 
