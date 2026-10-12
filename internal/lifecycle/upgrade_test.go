@@ -538,34 +538,64 @@ func (e *env) writeUpgradeState(content string) {
 func TestStatusSaysWhatTheLastUpgradeCheckFound(t *testing.T) {
 	cases := map[string]struct {
 		execPath func(e *env) string
+		config   string
 		state    string
 		want     string
 	}{
+		"up to date": {
+			state: `{"checked_at": "2026-10-12T08:30:00Z", "result": "newest"}`,
+			want:  "Automatic upgrades: last checked 2026-10-12T08:30:00Z, up to date.",
+		},
+		"failed": {
+			state: `{"checked_at": "2026-10-12T08:30:00Z", "result": "failed", "error": "fetching the release index: 503 Service Unavailable"}`,
+			want:  "Automatic upgrades: the last attempt at 2026-10-12T08:30:00Z failed: fetching the release index: 503 Service Unavailable. Run `trajector upgrade`.",
+		},
+		"turned off in the config file": {
+			config: `{"auto_upgrade": false}`,
+			state:  `{"checked_at": "2026-10-12T08:30:00Z", "result": "newest"}`,
+			want:   "Automatic upgrades: off (config.json).",
+		},
+		"config file unreadable": {
+			config: "{not json",
+			state:  `{"checked_at": "2026-10-12T08:30:00Z", "result": "newest"}`,
+			want:   "Automatic upgrades: off (config.json could not be read).",
+		},
+		"never checked": {
+			want: "Automatic upgrades: on; no check has run yet.",
+		},
 		"managed by Homebrew": {
-			func(e *env) string {
+			execPath: func(e *env) string {
 				return filepath.Join(e.deps.Home, "Cellar", "trajector", "0.3.7", "bin", "trajector")
 			},
-			`{"checked_at": "2026-10-12T08:30:00Z", "result": "managed"}`,
-			"Automatic upgrades: last checked 2026-10-12T08:30:00Z, managed by Homebrew.",
+			state: `{"checked_at": "2026-10-12T08:30:00Z", "result": "managed"}`,
+			want:  "Automatic upgrades: last checked 2026-10-12T08:30:00Z, managed by Homebrew.",
 		},
 		"upgraded": {
-			nil,
-			`{"checked_at": "2026-10-12T08:30:00Z", "result": "upgraded", "installed": "0.4.0"}`,
-			"Automatic upgrades: last checked 2026-10-12T08:30:00Z, upgraded to 0.4.0.",
+			state: `{"checked_at": "2026-10-12T08:30:00Z", "result": "upgraded", "installed": "0.4.0"}`,
+			want:  "Automatic upgrades: last checked 2026-10-12T08:30:00Z, upgraded to 0.4.0.",
 		},
 		"a state file that does not parse": {
-			nil,
-			`{cut`,
-			"Automatic upgrades: on; what the last check found could not be read: selfupdate: reading ",
+			state: `{cut`,
+			want:  "Automatic upgrades: on; what the last check found could not be read: selfupdate: reading ",
+		},
+		"not a release build": {
+			state: `{"checked_at": "2026-10-12T08:30:00Z", "result": "newest"}`,
+			want:  "Automatic upgrades: off (not a release build).",
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t)
+			e.deps.ReleaseBuild = name != "not a release build"
 			if tc.execPath != nil {
 				e.deps.ExecPath = tc.execPath(e)
 			}
-			e.writeUpgradeState(tc.state)
+			if tc.config != "" {
+				e.sandbox.WriteUserConfig(tc.config)
+			}
+			if tc.state != "" {
+				e.writeUpgradeState(tc.state)
+			}
 			if _, err := e.machine().Status(t.Context(), e.project, e.io()); err != nil {
 				t.Fatalf("Status: %v", err)
 			}

@@ -73,14 +73,15 @@ type diagnosisWire struct {
 }
 
 type autoUpgradesWire struct {
-	Off       bool      `json:"off"`
-	ConfigErr string    `json:"config_err,omitempty"`
-	StateErr  string    `json:"state_err,omitempty"`
-	CheckedAt time.Time `json:"checked_at,omitzero"`
-	Result    string    `json:"result,omitempty"`
-	Installed string    `json:"installed,omitempty"`
-	Manager   string    `json:"manager,omitempty"`
-	Error     string    `json:"error,omitempty"`
+	NotRelease bool      `json:"not_release"`
+	Off        bool      `json:"off"`
+	ConfigErr  string    `json:"config_err,omitempty"`
+	StateErr   string    `json:"state_err,omitempty"`
+	CheckedAt  time.Time `json:"checked_at,omitzero"`
+	Result     string    `json:"result,omitempty"`
+	Installed  string    `json:"installed,omitempty"`
+	Manager    string    `json:"manager,omitempty"`
+	Error      string    `json:"error,omitempty"`
 }
 
 type imageUploadWire struct {
@@ -280,14 +281,15 @@ func DiagnosisJSON(d Diagnosis) []byte {
 		EnabledProjects: d.EnabledProjects,
 		ImageUpload:     imageUploadWire{Placeholders: d.ImageUpload.Placeholders, ConfigErr: errString(d.ImageUpload.ConfigErr)},
 		AutoUpgrades: autoUpgradesWire{
-			Off:       d.AutoUpgrades.Off,
-			ConfigErr: errString(d.AutoUpgrades.ConfigErr),
-			StateErr:  errString(d.AutoUpgrades.StateErr),
-			CheckedAt: d.AutoUpgrades.CheckedAt,
-			Result:    string(d.AutoUpgrades.Result),
-			Installed: d.AutoUpgrades.Installed,
-			Manager:   d.AutoUpgrades.Manager,
-			Error:     d.AutoUpgrades.Error,
+			NotRelease: d.AutoUpgrades.NotRelease,
+			Off:        d.AutoUpgrades.Off,
+			ConfigErr:  errString(d.AutoUpgrades.ConfigErr),
+			StateErr:   errString(d.AutoUpgrades.StateErr),
+			CheckedAt:  d.AutoUpgrades.CheckedAt,
+			Result:     string(d.AutoUpgrades.Result),
+			Installed:  d.AutoUpgrades.Installed,
+			Manager:    d.AutoUpgrades.Manager,
+			Error:      d.AutoUpgrades.Error,
 		},
 		Project: projectWire{
 			Root:                   d.Project.Root,

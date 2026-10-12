@@ -19,12 +19,16 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/userconfig"
 )
 
-// autoUpgrades is how this device keeps trajector up to date: what the
-// last background check found, read from the upgrade state file.
-// configErr is the user config file's own failure to read, which turns
-// automatic upgrades off.
-func (m *Machine) autoUpgrades(configErr error) report.AutoUpgradeState {
-	st := report.AutoUpgradeState{ConfigErr: configErr}
+// autoUpgrades is how this device keeps trajector up to date: whether
+// it does, and what the last background check found, read from the
+// upgrade state file. cfg is the user config as read, and configErr its
+// own failure to read, which turns automatic upgrades off.
+func (m *Machine) autoUpgrades(cfg userconfig.Config, configErr error) report.AutoUpgradeState {
+	st := report.AutoUpgradeState{
+		NotRelease: !m.deps.ReleaseBuild,
+		Off:        !cfg.UpgradesAutomatically(),
+		ConfigErr:  configErr,
+	}
 	state, err := selfupdate.LoadState(m.deps.Layout.UpgradeState())
 	if err != nil {
 		st.StateErr = err
@@ -64,7 +68,7 @@ func (m *Machine) diagnose(ctx context.Context, dir string, reading sessionFileR
 	d := report.Diagnosis{Version: m.deps.Version}
 	cfg, err := userconfig.Read(m.deps.Layout.ConfigFile())
 	d.ImageUpload = report.ImageUploadState{Placeholders: cfg.OmitsImagesAndDocuments(), ConfigErr: err}
-	d.AutoUpgrades = m.autoUpgrades(err)
+	d.AutoUpgrades = m.autoUpgrades(cfg, err)
 	st, err := m.observeProject(dir)
 	if err != nil {
 		return d, err

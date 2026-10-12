@@ -13,6 +13,10 @@ import (
 // AutoUpgradeState is how this device keeps trajector up to date on its
 // own: whether it does, and what the last background check found.
 type AutoUpgradeState struct {
+	// NotRelease says this binary was not built by the release
+	// pipeline: a build made from source never checks on its own,
+	// whatever the user config says.
+	NotRelease bool
 	// Off says the user config file turns automatic upgrades off.
 	Off bool
 	// ConfigErr, when non-nil, is why the user config file could not be
@@ -45,7 +49,19 @@ const autoUpgradesLabel = "Automatic upgrades: "
 // failed reports a last check that could not finish while automatic
 // upgrades are on: the one state that asks the user for something.
 func (st AutoUpgradeState) failed() bool {
-	return st.ConfigErr == nil && !st.Off && st.StateErr == nil && st.Result == selfupdate.ResultFailed
+	return st.on() && st.StateErr == nil && st.Result == selfupdate.ResultFailed
+}
+
+// on reports that this device checks on its own: a release build whose
+// user config can be read and does not turn the check off.
+func (st AutoUpgradeState) on() bool {
+	return !st.NotRelease && st.ConfigErr == nil && !st.Off
+}
+
+// stateUnreadable reports a state file that could not be read while
+// the check is on, the one case where that file matters.
+func (st AutoUpgradeState) stateUnreadable() bool {
+	return st.on() && st.StateErr != nil
 }
 
 // failedHeadline is what failed: when, and that it did.
@@ -77,6 +93,8 @@ func (st AutoUpgradeState) stateUnreadableSentence() string {
 // as one line.
 func (st AutoUpgradeState) sentence() string {
 	switch {
+	case st.NotRelease:
+		return autoUpgradesLabel + "off (not a release build)."
 	case st.ConfigErr != nil:
 		return autoUpgradesLabel + "off (" + userdirs.ConfigFileName + " could not be read)."
 	case st.Off:
@@ -102,7 +120,7 @@ func (st AutoUpgradeState) sentence() string {
 // checked reports a state whose last check came to something other
 // than a failure, the one state doctor counts as a check that passed.
 func (st AutoUpgradeState) checked() bool {
-	return st.ConfigErr == nil && !st.Off && st.StateErr == nil && !st.CheckedAt.IsZero() && !st.failed()
+	return st.on() && st.StateErr == nil && !st.CheckedAt.IsZero() && !st.failed()
 }
 
 // autoUpgradesLine is the line status keeps in its Device section. A
@@ -112,7 +130,7 @@ func autoUpgradesLine(s *section, st AutoUpgradeState) {
 	switch {
 	case st.failed():
 		s.warnf("%s", st.failedSentence())
-	case st.StateErr != nil && st.ConfigErr == nil && !st.Off:
+	case st.stateUnreadable():
 		s.warnf("%s", st.stateUnreadableSentence())
 	default:
 		s.linef("%s", st.sentence())
@@ -125,7 +143,7 @@ func doctorAutoUpgrades(f *Findings, st AutoUpgradeState) {
 	switch {
 	case st.failed():
 		f.ProblemFix(lowerFirst(st.failedHeadline()), st.failedReason(), upgradeCommand)
-	case st.StateErr != nil && st.ConfigErr == nil && !st.Off:
+	case st.stateUnreadable():
 		f.warnf("%s", lowerFirst(trimPeriod(st.stateUnreadableSentence())))
 	case st.checked():
 		f.OKf("%s", lowerFirst(trimPeriod(st.sentence())))

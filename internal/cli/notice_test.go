@@ -1,11 +1,10 @@
 package cli_test
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
 )
@@ -90,48 +89,14 @@ func TestVersionPrintsOnlyItsAnswerWhateverWaits(t *testing.T) {
 	}
 }
 
-func TestStatusSaysHowTrajectorKeepsItselfUpToDate(t *testing.T) {
-	cases := map[string]struct {
-		state  string
-		config string
-		want   string
-	}{
-		"last checked": {
-			state: `{"checked_at": "2026-10-12T08:30:00Z", "result": "newest"}`,
-			want:  "Automatic upgrades: last checked 2026-10-12T08:30:00Z, up to date.",
-		},
-		"failed": {
-			state: `{"checked_at": "2026-10-12T08:30:00Z", "result": "failed", "error": "fetching the release index: 503 Service Unavailable"}`,
-			want:  "Automatic upgrades: the last attempt at 2026-10-12T08:30:00Z failed: fetching the release index: 503 Service Unavailable. Run `trajector upgrade`.",
-		},
-		"config file unreadable": {
-			state:  `{"checked_at": "2026-10-12T08:30:00Z", "result": "newest"}`,
-			config: "{not json",
-			want:   "Automatic upgrades: off (config.json could not be read).",
-		},
-		"never checked": {
-			want: "Automatic upgrades: on; no check has run yet.",
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			e := clitest.New(t)
-			if tc.state != "" {
-				path := e.Layout().UpgradeState()
-				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, []byte(tc.state), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if tc.config != "" {
-				e.WriteConfig(tc.config)
-			}
-			got := e.InProject("status")
-			if !strings.Contains(got.Stdout, tc.want) {
-				t.Errorf("status = %s\nwant it to contain %q", got.Stdout, tc.want)
-			}
-		})
+func TestStatusOfABuildFromSourceSaysItNeverChecks(t *testing.T) {
+	e := clitest.New(t)
+	// What a release build of this device last found does not make
+	// this one, built from source, check on its own.
+	e.SeedUpgradeState(time.Date(2026, 10, 12, 8, 30, 0, 0, time.UTC), "newest")
+
+	got := e.InProject("status")
+	if want := "Automatic upgrades: off (not a release build)."; !strings.Contains(got.Stdout, want) {
+		t.Errorf("status = %s\nwant it to contain %q", got.Stdout, want)
 	}
 }

@@ -85,6 +85,18 @@ func TestStatusAlwaysSaysHowTrajectorKeepsItselfUpToDate(t *testing.T) {
 			"Automatic upgrades: on; no check has run yet.",
 		},
 		{
+			// A build from source never checks, whatever it last found
+			// when it was a release build and whatever the file says.
+			"not a release build",
+			report.AutoUpgradeState{NotRelease: true, ConfigErr: errors.New("cut"), CheckedAt: lastCheck, Result: selfupdate.ResultFailed, Error: "x"},
+			"Automatic upgrades: off (not a release build).",
+		},
+		{
+			"not a release build with a state file it cannot read",
+			report.AutoUpgradeState{NotRelease: true, StateErr: errors.New("cut")},
+			"Automatic upgrades: off (not a release build).",
+		},
+		{
 			"state file unreadable",
 			report.AutoUpgradeState{StateErr: errors.New("reading upgrade.json: invalid character")},
 			"Automatic upgrades: on; what the last check found could not be read: reading upgrade.json: invalid character.",
@@ -133,6 +145,7 @@ func TestDoctorStatesEveryOtherUpgradeStateAndCountsNoneOfThem(t *testing.T) {
 		"turned off":       {report.AutoUpgradeState{Off: true}, "automatic upgrades: off (config.json)"},
 		"config file":      {report.AutoUpgradeState{ConfigErr: errors.New("cut")}, "automatic upgrades: off (config.json could not be read)"},
 		"never checked":    {report.AutoUpgradeState{}, "automatic upgrades: on; no check has run yet"},
+		"not a release":    {report.AutoUpgradeState{NotRelease: true, CheckedAt: lastCheck, Result: selfupdate.ResultFailed}, "automatic upgrades: off (not a release build)"},
 		"state unreadable": {report.AutoUpgradeState{StateErr: errors.New("cut")}, "automatic upgrades: on; what the last check found could not be read: cut"},
 	}
 	for name, tc := range cases {
