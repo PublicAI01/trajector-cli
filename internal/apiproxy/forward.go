@@ -137,6 +137,16 @@ func (s *Server) refuseTableNeverRead(w http.ResponseWriter) {
 
 const tableNeverReadRemedy = "Run `trajector doctor` to see why."
 
+// parseUpstream returns raw as a URL when it is one this proxy can
+// forward to: it parses, and its scheme is http or https.
+func parseUpstream(raw string) (*url.URL, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil, false
+	}
+	return u, true
+}
+
 func (s *Server) decide(r *http.Request) *decision {
 	// The idle clock is touched here, before anything is asked about this
 	// exchange, because the question it answers — is this proxy still
@@ -188,8 +198,8 @@ func (s *Server) decide(r *http.Request) *decision {
 		}
 	}
 
-	u, err := url.Parse(upstream)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+	u, usable := parseUpstream(upstream)
+	if !usable {
 		s.stats.countUnusableUpstream()
 		record = false
 		if resolved {

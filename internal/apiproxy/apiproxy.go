@@ -166,16 +166,24 @@ type Selfcheck struct {
 	Service    string `json:"service"`
 	Version    string `json:"version"`
 	TokenKnown bool   `json:"token_known"`
-	Recording  bool   `json:"recording"`
+	// Recording is false whenever an exchange for this token would not
+	// be recorded: the verdict records nothing, or the token names a
+	// project whose recorded upstream is not a usable http(s) URL, so
+	// the exchange is refused before anything is captured. Decision
+	// still carries the verdict, so a reply that is not recording under
+	// a record decision names the second case.
+	Recording bool `json:"recording"`
 	// Decision and PauseReason carry the routing verdict verbatim, so a
 	// surface above the proxy can explain why recording is off instead
 	// of only reporting that it is.
 	Decision      string `json:"decision"`
 	PauseReason   string `json:"pause_reason,omitempty"`
 	ProjectIDHash string `json:"project_id_hash"`
-	// UpstreamOrigin is empty when the verdict forwards nothing: an
-	// exchange for this token would be refused, so no upstream would
-	// receive it, and naming the default one would say otherwise.
+	// UpstreamOrigin is empty when an exchange for this token would be
+	// refused: the verdict forwards nothing, or the token names a
+	// project whose recorded upstream is not a usable http(s) URL. No
+	// upstream would receive the exchange, and naming one would say
+	// otherwise.
 	UpstreamOrigin string `json:"upstream_origin"`
 	SpoolWritable  bool   `json:"spool_writable"`
 }
@@ -611,20 +619,21 @@ func (s *Server) serveTokenInternal(w http.ResponseWriter, r *http.Request, toke
 		return
 	}
 	route, verdict := s.cfg.Table.Lookup(token)
-	upstream := s.cfg.DefaultUpstream
-	if verdict.Resolves() {
-		upstream = route.Upstream
-	}
+	_, usable := parseUpstream(route.Upstream)
 	origin := ""
-	if verdict.Forwards() {
-		origin = envelope.Origin(upstream, s.cfg.Dialect.OfficialUpstream)
+	switch {
+	case !verdict.Forwards():
+	case !verdict.Resolves():
+		origin = envelope.Origin(s.cfg.DefaultUpstream, s.cfg.Dialect.OfficialUpstream)
+	case usable:
+		origin = envelope.Origin(route.Upstream, s.cfg.Dialect.OfficialUpstream)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(Selfcheck{
 		Service:        ServiceName,
 		Version:        s.cfg.Version,
 		TokenKnown:     verdict.Resolves(),
-		Recording:      verdict.Records(),
+		Recording:      verdict.Records() && usable,
 		Decision:       string(verdict.Decision),
 		PauseReason:    string(verdict.PauseReason),
 		ProjectIDHash:  route.ProjectIDHash,

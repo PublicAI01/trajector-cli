@@ -67,6 +67,22 @@ func TestSelfcheckMarksThirdPartyUpstream(t *testing.T) {
 	}
 }
 
+func TestSelfcheckOfAnUnusableRouteUpstreamNamesNoOriginAndNoRecording(t *testing.T) {
+	e := proxytest.New(t)
+	e.WriteTable(activeTable("not a url at all"))
+
+	reply := e.Selfcheck("tok1")
+	if !reply.TokenKnown {
+		t.Fatalf("selfcheck = %+v, want a known token", reply)
+	}
+	if reply.UpstreamOrigin != "" {
+		t.Errorf("upstream_origin = %q, want empty: an exchange for this token is refused", reply.UpstreamOrigin)
+	}
+	if reply.Recording {
+		t.Errorf("selfcheck = %+v, want recording false: an exchange for this token is refused and nothing is recorded", reply)
+	}
+}
+
 func TestTokenPrefixedInternalPathsAreNeverForwarded(t *testing.T) {
 	e := proxytest.New(t)
 	upstream := e.Upstream
