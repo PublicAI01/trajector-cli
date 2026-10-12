@@ -8,14 +8,10 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxyserve"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
-	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 )
 
 // env is one isolated device: temp directories standing in for the
@@ -33,26 +29,17 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	layout := proxytest.SandboxLayout(t, t.TempDir())
 	service := fakeplatform.New(t)
-	tokens := tokenstore.Files(layout.SecretsDir())
-	if err := tokens.SetDeviceToken("dev-tok-fake"); err != nil {
+	a := proxytest.Assembly(layout, "testv", t.TempDir()+"/trajector", freeAddr(t))
+	a.Service = platform.New(service.URL(), a.Version)
+	if err := a.Tokens.SetDeviceToken("dev-tok-fake"); err != nil {
 		t.Fatal(err)
 	}
 	return &env{
-		t:       t,
-		service: service,
-		sandbox: proxytest.Open(t, layout),
-		client:  proxytest.Client(t),
-		assembly: proxyserve.Assembly{
-			Layout:   layout,
-			Tokens:   tokens,
-			Service:  platform.New(service.URL(), "testv"),
-			Consent:  consent.Open(layout.ConsentFile()),
-			Routes:   routing.OpenStore(layout.RoutingTable()),
-			Registry: follow.Open(layout.FollowDir()),
-			Version:  "testv",
-			ExecPath: t.TempDir() + "/trajector",
-			Addr:     freeAddr(t),
-		},
+		t:        t,
+		service:  service,
+		sandbox:  proxytest.Open(t, layout),
+		client:   proxytest.Client(t),
+		assembly: a,
 	}
 }
 

@@ -23,61 +23,23 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
-	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeupstream"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
-	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
-	"github.com/PublicAI01/trajector-cli/internal/proxyserve"
-	"github.com/PublicAI01/trajector-cli/internal/routing"
-	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
-// serveProxy is the only behavior the spawned process tree needs: parse
-// the argv proxylife itself constructs, and be the proxy through the
-// same assembly a serving process runs. The service URL is unroutable,
-// so the resident uploader never reaches a network.
+// serveProxy is the only behavior the spawned process tree needs: be
+// the proxy the argv proxylife itself constructs names, through the
+// same assembly a serving process runs.
 func serveProxy(args []string) int {
-	if len(args) < 4 || args[0] != proxylife.Command {
-		return 96
-	}
-	layout, err := userdirs.Resolve(userdirs.Host())
-	if err != nil {
-		return 95
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return 95
-	}
 	version := os.Getenv(versionEnv)
 	if version == "" {
 		version = "dev"
 	}
-	assembly := proxyserve.Assembly{
-		Layout:   layout,
-		Tokens:   tokenstore.Files(layout.SecretsDir()),
-		Service:  platform.New("http://127.0.0.1:1", version),
-		Consent:  consent.Open(layout.ConsentFile()),
-		Routes:   routing.OpenStore(layout.RoutingTable()),
-		Registry: follow.Open(layout.FollowDir()),
-		Version:  version,
-		ExecPath: exe,
-		Addr:     args[3],
-	}
-	ctx := context.Background()
-	if args[1] == proxylife.Supervise {
-		err = proxyserve.Supervise(ctx, assembly, 30*time.Second, os.Stdout, os.Stderr)
-	} else {
-		err = proxyserve.Serve(ctx, assembly, 30*time.Second, os.Stdout, os.Stderr)
-	}
-	if err != nil {
-		return 1
-	}
-	return 0
+	return proxytest.ServeProxy(args, version)
 }
 
 // markerEnv names the file a crash-once child touches, since the

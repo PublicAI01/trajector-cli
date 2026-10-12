@@ -123,10 +123,7 @@ func SpawnDevice(t *testing.T, home, version, service string) *SpawnedDevice {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("XDG_DATA_HOME", dir)
-	t.Setenv("XDG_STATE_HOME", dir)
-	layout := SandboxLayout(t, dir)
+	layout := SpawnedSandboxLayout(t, dir)
 	d := &SpawnedDevice{
 		Sandbox:   Open(t, layout),
 		Layout:    layout,
