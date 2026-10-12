@@ -22,6 +22,13 @@ All notable changes to trajector are documented here. The format follows
   to the proxy's port, and before this such connections stayed open.
   Request bodies and streamed responses have no time limit, so long
   requests and responses are not cut off.
+- Masking rules are updated to betterleaks v1.9.0, which grows the
+  rule set from 417 to 463 rules with keys for services such as
+  fal.ai, Resend, Zoho and Bitbucket Data Center. Its Atlassian rule
+  now matches only current Atlassian API tokens; an old 24-character
+  token next to a word such as `jira` or `confluence` is no longer
+  masked by it, though one under a key such as `JIRA_API_TOKEN` still
+  is. Atlassian expired all such tokens by May 2026.
 
 ## [0.3.6] - 2026-10-10
 
