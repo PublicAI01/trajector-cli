@@ -202,6 +202,22 @@ func TestGroupHoldsASessionsFilesAndNoOthers(t *testing.T) {
 	}
 }
 
+func TestSessionOf_APathThatIsNeitherMainNorAgentFileIsItsOwnSession(t *testing.T) {
+	for _, name := range []string{
+		"s/notes.txt",
+		"s/subagents/x.jsonl.bak",
+		"s/subagents/deeper/agent-x.meta.json",
+		"s/subagents/workflows/run-1/agent-y.meta.json",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := abs(t, name)
+			if got := follow.SessionOf(path); got != path {
+				t.Errorf("SessionOf(%q) = %q, want the path itself", path, got)
+			}
+		})
+	}
+}
+
 func TestRegistry_WarmRefusesAPathThatIsNotRegistered(t *testing.T) {
 	r := follow.Open(t.TempDir())
 	if err := r.Warm(project, abs(t, "a.jsonl"), 1, time.Now()); err == nil {
