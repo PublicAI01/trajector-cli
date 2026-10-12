@@ -35,6 +35,13 @@ All notable changes to trajector are documented here. The format follows
   token next to a word such as `jira` or `confluence` is no longer
   masked by it, though one under a key such as `JIRA_API_TOKEN` still
   is. Atlassian expired all such tokens by May 2026.
+- A JSON line or document in which one object names the same key twice
+  is masked as plain text. Before this, only the last of the two values
+  was checked, because a JSON reader keeps only that one, so a secret
+  in the other was uploaded as it was. As plain text every byte is
+  checked, so an id or signature in such a line can be masked too.
+  Claude Code does not write such lines, and a line without a repeated
+  key is masked exactly as before.
 
 ## [0.3.6] - 2026-10-10
 

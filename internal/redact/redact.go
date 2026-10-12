@@ -14,6 +14,7 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -736,6 +737,10 @@ func JSONLBytes(b []byte) (RedactedBytes, error) {
 // a single JSON value. This ensures field-aware redaction (which skips ID fields)
 // is used instead of falling back to entropy-based detection on raw text lines,
 // which would corrupt high-entropy identifiers.
+//
+// A document or line that names a key twice in one object is scanned as
+// raw text instead, like a line that does not parse; see
+// hasDuplicateJSONKeys.
 func jsonlContent(content string) (string, error) {
 	// Try parsing the entire content as a single JSON value first.
 	// Uses a streaming decoder to avoid copying the full content into []byte.
@@ -746,6 +751,9 @@ func jsonlContent(content string) (string, error) {
 		dec := json.NewDecoder(strings.NewReader(trimmed))
 		var parsed any
 		if err := dec.Decode(&parsed); err == nil && isSingleJSONValue(dec) {
+			if hasDuplicateJSONKeys(trimmed) {
+				return redactString(content), nil
+			}
 			// Content is a single JSON value (object/array) — redact field-aware.
 			result, err := applyJSONReplacements(content, collectJSONLReplacements(parsed))
 			if err != nil {
@@ -768,7 +776,7 @@ func jsonlContent(content string) (string, error) {
 			continue
 		}
 		var parsed any
-		if err := json.Unmarshal([]byte(lineTrimmed), &parsed); err != nil {
+		if err := json.Unmarshal([]byte(lineTrimmed), &parsed); err != nil || hasDuplicateJSONKeys(lineTrimmed) {
 			b.WriteString(redactString(line))
 			continue
 		}
@@ -1044,6 +1052,80 @@ func isJSONWhitespace(c byte) bool {
 func isSingleJSONValue(dec *json.Decoder) bool {
 	var discard json.RawMessage
 	return dec.Decode(&discard) == io.EOF
+}
+
+// hasDuplicateJSONKeys reports whether some object in the JSON value s
+// names the same key twice. encoding/json keeps the last of the two, so
+// the earlier value never reaches collectJSONLReplacements while the raw
+// bytes still carry it: a secret there would leave the machine in a
+// record that reads as masked. Such content is scanned as raw text,
+// which sees every byte.
+//
+// Keys are compared decoded, as the decoder compares them, so "a" and
+// "\u0061" are the same key. s must already have decoded as one value;
+// a token error then cannot occur and reports false.
+func hasDuplicateJSONKeys(s string) bool {
+	return valueHasDuplicateKeys(json.NewDecoder(strings.NewReader(s)))
+}
+
+// duplicateKeyListMax is how many keys of one object are compared by a
+// linear search before they move to a map. Session file objects have a
+// handful of keys, where a map per object is the larger cost; a tool
+// result can hold an object of thousands, where the search is quadratic.
+const duplicateKeyListMax = 16
+
+// valueHasDuplicateKeys reads exactly one JSON value from dec and reports
+// whether an object within it names a key twice.
+func valueHasDuplicateKeys(dec *json.Decoder) bool {
+	tok, err := dec.Token()
+	if err != nil {
+		return false
+	}
+	switch tok {
+	case json.Delim('{'):
+		var (
+			list []string
+			set  map[string]struct{}
+		)
+		for dec.More() {
+			tok, err := dec.Token()
+			if err != nil {
+				return false
+			}
+			key, _ := tok.(string)
+			switch {
+			case set != nil:
+				if _, dup := set[key]; dup {
+					return true
+				}
+				set[key] = struct{}{}
+			case slices.Contains(list, key):
+				return true
+			case len(list) == duplicateKeyListMax:
+				set = make(map[string]struct{}, duplicateKeyListMax+1)
+				for _, k := range list {
+					set[k] = struct{}{}
+				}
+				set[key] = struct{}{}
+				list = nil
+			default:
+				list = append(list, key)
+			}
+			if valueHasDuplicateKeys(dec) {
+				return true
+			}
+		}
+	case json.Delim('['):
+		for dec.More() {
+			if valueHasDuplicateKeys(dec) {
+				return true
+			}
+		}
+	default:
+		return false
+	}
+	_, _ = dec.Token() // the closing delimiter
+	return false
 }
 
 // collectJSONLReplacements walks a parsed JSON value and collects unique
