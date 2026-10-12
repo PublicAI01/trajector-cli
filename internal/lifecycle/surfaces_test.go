@@ -21,15 +21,30 @@ const (
 	sessionMarker      = "sid-MARKER"
 )
 
-// registryBytes is the project's registry file as it stands, so a
-// surface can be shown to have left it alone.
-func (e *env) registryBytes() string {
+// registryFile is the project's registry file as it stands on disk.
+func (e *env) registryFile() string {
 	e.t.Helper()
-	data, err := os.ReadFile(filepath.Join(e.layout().FollowDir(), proxytest.ProjectIDHash(e.canonicalRoot())+".json"))
-	if err != nil {
-		e.t.Fatal(err)
+	return string(e.sandbox.RegistryFile(proxytest.ProjectIDHash(e.canonicalRoot())))
+}
+
+// checkNoCursorMovedAndNothingRegistered fails the test if a surface
+// that may mark the project's sessions hot did more to the registry
+// than that: it registered a path, retired an entry or moved a cursor.
+func (e *env) checkNoCursorMovedAndNothingRegistered(surface string, before []proxytest.RegisteredFile) {
+	e.t.Helper()
+	after := e.registeredFiles(e.canonicalRoot())
+	if len(after) != len(before) {
+		e.t.Fatalf("registered after %s = %+v, want the %d file(s) registered before it", surface, after, len(before))
 	}
-	return string(data)
+	for i, f := range after {
+		was := before[i]
+		if f.Path != was.Path || f.Retired != was.Retired {
+			e.t.Errorf("registry entry after %s = %+v, was %+v", surface, f, was)
+		}
+		if f.NextSegment != was.NextSegment || f.Offset != was.Offset || !slices.Equal(f.MessageIDs, was.MessageIDs) {
+			e.t.Errorf("%s moved a cursor: %+v, was %+v", surface, f, was)
+		}
+	}
 }
 
 // lockedSubdir makes a directory of the project that cannot be listed,
@@ -70,7 +85,7 @@ func (e *env) enabledWithOneSessionAndOneUnreported(opts ...proxytest.Option) (l
 func TestStatusReadsTheRegistryWithoutWalkingOrRegistering(t *testing.T) {
 	e := newEnv(t)
 	locked := e.enabledWithOneSessionAndOneUnreported()
-	before := e.registryBytes()
+	before := e.registryFile()
 
 	out := e.statusOutput()
 
@@ -90,7 +105,7 @@ func TestStatusReadsTheRegistryWithoutWalkingOrRegistering(t *testing.T) {
 			t.Errorf("status = %q, want no %q", out, unwanted)
 		}
 	}
-	if got := e.registryBytes(); got != before {
+	if got := e.registryFile(); got != before {
 		t.Errorf("status changed the registry:\n%s\nwas:\n%s", got, before)
 	}
 }
@@ -119,19 +134,7 @@ func TestDoctorWalksTheProjectWithoutRegistering(t *testing.T) {
 			t.Errorf("doctor = %q, want no %q", out, unwanted)
 		}
 	}
-	after := e.registeredFiles(e.canonicalRoot())
-	if len(after) != len(before) {
-		t.Fatalf("registered = %+v, want the one file enable registered and nothing doctor found", after)
-	}
-	for i, f := range after {
-		was := before[i]
-		if f.Path != was.Path || f.Retired != was.Retired {
-			t.Errorf("registry entry = %+v, was %+v", f, was)
-		}
-		if f.NextSegment != was.NextSegment || f.Offset != was.Offset || !slices.Equal(f.MessageIDs, was.MessageIDs) {
-			t.Errorf("doctor moved a cursor: %+v, was %+v", f, was)
-		}
-	}
+	e.checkNoCursorMovedAndNothingRegistered("doctor", before)
 }
 
 func TestDoctorRegistersTheSessionsThatPredateTheGrantAndHasThemRead(t *testing.T) {
@@ -316,12 +319,12 @@ func TestDoctorLeavesNeverReadSessionsAloneWhereEarlierSessionsWereSkipped(t *te
 	}
 	path := e.sessionFile(sessionMarker+"-1", e.deps.Now().Add(-48*time.Hour))
 	e.registerFile(e.canonicalRoot(), path, "")
-	before := e.registryBytes()
+	before := e.registryFile()
 	e.stdout.Reset()
 
 	_, out := e.doctor()
 
-	if got := e.registryBytes(); got != before {
+	if got := e.registryFile(); got != before {
 		t.Errorf("doctor changed the registry:\n%s\nwas:\n%s", got, before)
 	}
 	if got := res.reports(); len(got) != 0 {

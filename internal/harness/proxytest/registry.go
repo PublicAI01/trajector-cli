@@ -56,6 +56,19 @@ func (s *Sandbox) RegisteredPaths(projectIDHash string) []string {
 	return paths
 }
 
+// RegistryFile reports a project's registry file byte for byte, so a
+// test can show that a read-only surface wrote nothing to it. A
+// surface that may mark sessions hot is checked through
+// RegisteredFiles instead: marking rewrites the file.
+func (s *Sandbox) RegistryFile(projectIDHash string) []byte {
+	s.t.Helper()
+	data, err := fsatomic.ReadFile(filepath.Join(s.layout.FollowDir(), projectIDHash+".json"))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return data
+}
+
 // RewindCursor puts one entry back to where a reader killed after it
 // stored a segment but before it advanced the cursor left it: the file
 // is still registered, and nothing counts as read from it.
