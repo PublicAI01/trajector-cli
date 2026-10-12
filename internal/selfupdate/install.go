@@ -171,7 +171,7 @@ func replaceKeeping(staged, execPath, kept string) error {
 // new build has already accepted the install, and refusing it over a
 // note would put back a binary nothing is wrong with.
 func commit(ctx context.Context, in Installation, version, kept string) {
-	_ = updateState(in.State, func(s *State) { s.FinishPending = version })
+	_ = updateState(in.State, func(s *State) { s.setFinishPending(version) })
 	// A kept binary is what a sweep puts back, so it must not outlive
 	// the commit under its kept name. On Windows it cannot be deleted
 	// while it is still the image of a running process — the one running
@@ -182,7 +182,9 @@ func commit(ctx context.Context, in Installation, version, kept string) {
 	}
 	_ = updateState(in.State, func(s *State) { s.Installed = version })
 	if finish(ctx, in.ExecPath) == nil {
-		_ = updateState(in.State, func(s *State) { s.FinishPending = "" })
+		_ = updateState(in.State, func(s *State) { s.setFinishPending("") })
+	} else {
+		_ = updateState(in.State, func(s *State) { s.finishFailed() })
 	}
 }
 
@@ -283,7 +285,7 @@ func putBackKept(in Installation) (spare, putBack string) {
 	// kept binary went; the build put back is not that one.
 	_ = updateState(in.State, func(s *State) {
 		if s.FinishPending != version {
-			s.FinishPending = ""
+			s.setFinishPending("")
 		}
 	})
 	return "", version

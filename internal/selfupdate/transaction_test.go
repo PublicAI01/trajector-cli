@@ -181,8 +181,8 @@ func TestUpgrade_FinishThatFailsLeavesTheInstallNamedUnfinished(t *testing.T) {
 	if got := m.siblings(); len(got) != 1 {
 		t.Errorf("a committed upgrade left %v in the install directory", got)
 	}
-	if s := loadState(t, m.at("0.2.0")); s.Installed != "0.2.0" || s.FinishPending != "0.2.0" || s.Error != "" {
-		t.Errorf("state is %+v, want 0.2.0 installed and still to be finished", s)
+	if s := loadState(t, m.at("0.2.0")); s.Installed != "0.2.0" || s.FinishPending != "0.2.0" || s.FinishFailures != 1 || s.Error != "" {
+		t.Errorf("state is %+v, want 0.2.0 installed and still to be finished after one failure", s)
 	}
 }
 

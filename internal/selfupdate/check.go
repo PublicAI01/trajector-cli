@@ -33,7 +33,7 @@ type Window struct {
 // that never checked is due, and so is one whose last check is later
 // than w.Now: its clock went back, and waiting for it to catch up would
 // hold the check off for as long as it went back.
-func (s State) Due(w Window) bool {
+func (s *State) Due(w Window) bool {
 	if s.CheckedAt.IsZero() || s.CheckedAt.After(w.Now) {
 		return true
 	}
@@ -65,8 +65,9 @@ type Checked struct {
 	// managed installation before. The state file now records it as
 	// reported, so no later check reports it again.
 	TellManaged bool
-	// FinishFailed reports that this build's own install was left
-	// unfinished, and that finishing it again in this check failed too.
+	// FinishFailed reports that finishing this build's own install has
+	// now failed twice in a row, the last time in this check, and that
+	// it is no longer tried: the state file stops naming it unfinished.
 	FinishFailed bool
 }
 
@@ -94,7 +95,9 @@ var errNotARelease = errors.New("this build reports a version that is not a publ
 // A build whose own install is still unfinished — the state file names
 // its version as State.FinishPending, because its finish failed or the
 // machine stopped before it ran — runs finish again first, in this
-// process; finish is this build's own.
+// process; finish is this build's own. A second failure in a row is the
+// last: the version stops being named unfinished, and Checked says so
+// for the caller to send the user to what repairs it by hand.
 //
 // The check then asks the release index at indexURL for the newest
 // release and does one of four things, which the state file records
@@ -151,13 +154,13 @@ func Check(ctx context.Context, in Installation, indexURL string, w Window, fini
 
 	finishFailed := false
 	if s.FinishPending != "" && s.FinishPending == in.Version {
+		// As in commit, the note is not the install: a state file that
+		// cannot be written leaves the version named, and the next
+		// check finishes it again, which adds nothing.
 		if finish(ctx) == nil {
-			// As in commit, the note is not the install: a state file
-			// that cannot be written leaves the version named, and the
-			// next check finishes it again, which adds nothing.
-			_ = updateState(in.State, func(s *State) { s.FinishPending = "" })
+			_ = updateState(in.State, func(s *State) { s.setFinishPending("") })
 		} else {
-			finishFailed = true
+			_ = updateState(in.State, func(s *State) { finishFailed = s.finishFailed() })
 		}
 	}
 

@@ -44,6 +44,11 @@ type State struct {
 	// that failed, or a machine that stopped before it ran, leaves it
 	// here for that build to run again.
 	FinishPending string `json:"finish_pending,omitempty"`
+	// FinishFailures is how many times in a row finishing FinishPending
+	// has failed. At finishGiveUp the version stops being named: the
+	// user is told to run doctor --all, which repairs what a finish
+	// would, rather than every later check running it again.
+	FinishFailures int `json:"finish_failures,omitzero"`
 	// ToldManaged is the newest release the background check has
 	// reported for an installation a package manager owns. That
 	// release is not reported again: the user was told once how to
@@ -68,6 +73,28 @@ const (
 	// ResultFailed could not finish; Error says why.
 	ResultFailed Result = "failed"
 )
+
+// finishGiveUp is how many failures in a row of the same finish end
+// the attempts to run it again.
+const finishGiveUp = 2
+
+// setFinishPending names version as committed and not yet finished,
+// with no failure counted, or names none when version is empty.
+func (s *State) setFinishPending(version string) {
+	s.FinishPending, s.FinishFailures = version, 0
+}
+
+// finishFailed counts one more failure of finishing FinishPending. It
+// reports whether that was the last one tried: the version is then no
+// longer named.
+func (s *State) finishFailed() (gaveUp bool) {
+	s.FinishFailures++
+	if s.FinishFailures < finishGiveUp {
+		return false
+	}
+	s.setFinishPending("")
+	return true
+}
 
 // ManagerOf names the package manager that owns the binary at
 // execPath, or empty when none does. It is what a surface names as the

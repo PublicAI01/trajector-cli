@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +21,7 @@ var checkedAt = time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
 // unfinished: a check that ran it would have to report a call that
 // never should have happened.
 func noFinish(t *testing.T) func(context.Context) error {
+	t.Helper()
 	return func(context.Context) error {
 		t.Error("the check finished an install nothing named unfinished")
 		return nil
@@ -42,7 +44,8 @@ func TestState_DueOnceADayOrOnceAnHourWhileTheServiceWantsANewerVersion(t *testi
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := selfupdate.Window{Now: checkedAt.Add(c.since), Behind: c.behind}
-			if got := (selfupdate.State{CheckedAt: c.last}).Due(w); got != c.due {
+			s := selfupdate.State{CheckedAt: c.last}
+			if got := s.Due(w); got != c.due {
 				t.Errorf("Due = %v, want %v", got, c.due)
 			}
 		})
@@ -241,19 +244,22 @@ func TestCheck_AReleaseThatDoesNotStartIsTriedOnceUntilANewerOne(t *testing.T) {
 func TestCheck_FinishesThisBuildsUnfinishedInstallFirst(t *testing.T) {
 	for name, c := range map[string]struct {
 		pending  string
+		failures int
 		finish   error
 		calls    int
 		left     string
-		reported bool
+		leftFail int
+		gaveUp   bool
 	}{
-		"this build's, finished":         {pending: "0.1.0", calls: 1},
-		"this build's, failing again":    {pending: "0.1.0", finish: errors.New("cannot"), calls: 1, left: "0.1.0", reported: true},
-		"another build's is not its own": {pending: "0.0.9", left: "0.0.9"},
+		"this build's, finished":                     {pending: "0.1.0", failures: 1, calls: 1},
+		"this build's, failing a first time":         {pending: "0.1.0", finish: errors.New("cannot"), calls: 1, left: "0.1.0", leftFail: 1},
+		"this build's, failing a second time in row": {pending: "0.1.0", failures: 1, finish: errors.New("cannot"), calls: 1, gaveUp: true},
+		"another build's is not its own":             {pending: "0.0.9", left: "0.0.9"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			m := install(t, "the 0.1.0 binary")
 			in := m.at("0.1.0")
-			writeState(t, in, `{"installed":"0.1.0","finish_pending":"`+c.pending+`"}`)
+			writeState(t, in, fmt.Sprintf(`{"installed":"0.1.0","finish_pending":%q,"finish_failures":%d}`, c.pending, c.failures))
 			releases := fakereleases.New(t)
 			releases.Publish(t, "0.1.0", []byte("the 0.1.0 binary"))
 			calls := 0
@@ -263,14 +269,14 @@ func TestCheck_FinishesThisBuildsUnfinishedInstallFirst(t *testing.T) {
 			}
 
 			got, err := selfupdate.Check(t.Context(), in, releases.IndexURL(), selfupdate.Window{Now: checkedAt}, finish)
-			if err != nil || got.Result != selfupdate.ResultNewest || got.FinishFailed != c.reported {
-				t.Errorf("Check = %+v, %v; want the newest release found, finish failing %v", got, err, c.reported)
+			if err != nil || got.Result != selfupdate.ResultNewest || got.FinishFailed != c.gaveUp {
+				t.Errorf("Check = %+v, %v; want the newest release found, finish given up %v", got, err, c.gaveUp)
 			}
 			if calls != c.calls {
 				t.Errorf("finish ran %d times, want %d", calls, c.calls)
 			}
-			if s := loadState(t, in); s.FinishPending != c.left {
-				t.Errorf("unfinished install is %q, want %q", s.FinishPending, c.left)
+			if s := loadState(t, in); s.FinishPending != c.left || s.FinishFailures != c.leftFail {
+				t.Errorf("unfinished install is %q after %d failures, want %q after %d", s.FinishPending, s.FinishFailures, c.left, c.leftFail)
 			}
 		})
 	}
