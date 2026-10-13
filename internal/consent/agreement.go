@@ -3,7 +3,7 @@ package consent
 // AgreementVersion identifies the agreement text below. Bumping it
 // makes every earlier acceptance stale: capture pauses until the user
 // reconfirms, so recorded consent always matches the current terms.
-const AgreementVersion = "2026-09-29"
+const AgreementVersion = "2026-10-13"
 
 // UpdatesSince is the AgreementVersion that first carried the section
 // on updates: the one that tells the user this device asks for newer
@@ -11,7 +11,7 @@ const AgreementVersion = "2026-09-29"
 // version or a later one covers the automatic upgrade check; a later
 // revision that leaves the section alone does not move it, and one that
 // changes the section moves it to its own day.
-const UpdatesSince = "2026-09-29"
+const UpdatesSince = "2026-10-13"
 
 // AgreementText is shown in full before the explicit yes/no prompt.
 // It states the actual client behavior and must be kept truthful to
