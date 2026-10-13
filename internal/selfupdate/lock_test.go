@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,13 +24,10 @@ func holdLock(t *testing.T, in selfupdate.Installation) (release func()) {
 	if err != nil {
 		t.Fatalf("taking the upgrade lock: %v", err)
 	}
-	released := false
-	release = func() {
-		if !released {
-			released = true
-			unlock()
-		}
-	}
+	// A test may let go from a timer's goroutine while the cleanup lets
+	// go from its own; once serialises the two.
+	var once sync.Once
+	release = func() { once.Do(unlock) }
 	t.Cleanup(release)
 	return release
 }
