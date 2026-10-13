@@ -71,7 +71,10 @@ curl -fsSL https://raw.githubusercontent.com/PublicAI01/trajector-cli/main/insta
 The script picks the archive for your platform, verifies it against the
 release's checksum file — refusing to install anything that does not match —
 and puts `trajector` in `~/.local/bin`. Set `TRAJECTOR_INSTALL_DIR` to
-install elsewhere, or `TRAJECTOR_VERSION=v0.1.0` to pin a release.
+install elsewhere, or `TRAJECTOR_VERSION` to a release's tag (as listed on the
+[releases page](https://github.com/PublicAI01/trajector-cli/releases)) to
+install that release instead of the newest. The service accepts uploads only
+from recent releases, so a pinned version falls out of use over time.
 
 **On macOS, install with the command above rather than downloading the
 archive in a browser.** Releases are not yet code-signed, and macOS marks
@@ -151,6 +154,7 @@ deleting the binary alone leaves the settings injections behind.
 | `internal/envelope` | What a stored record is: written, classified, and read back |
 | `internal/spool` | The bounded on-disk store between capture and upload |
 | `internal/follow` | Which session files an enabled project reads, how far each has been read, and the one-time search for the files it already had |
+| `internal/sessionread` | Reading a project's session files into the spool: the one rule shared by the one-shot read a hook starts and the resident proxy's, so neither can store what the other would hold back |
 | `internal/gitsnapshot` | Observing an enabled project's git repository — commits, branch, and changed paths, never file content — and the commit it was last observed at |
 | `internal/sessionline` | What one line of a session file is, and the facts the format states in it |
 | `internal/drift` | What the lines no longer match about the shape this build was written against |
