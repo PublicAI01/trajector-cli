@@ -163,11 +163,8 @@ func freeAddr(t *testing.T) string {
 func supervised(t *testing.T, addr, version string) (*proxylife.Proxy, userdirs.Layout) {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("XDG_DATA_HOME", dir)
-	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv(versionEnv, version)
-	layout := proxytest.SandboxLayout(t, dir)
+	layout := proxytest.SpawnedSandboxLayout(t, dir)
 	p := proxylife.For(layout, version, procbin.Self(t, "proxy"), addr, nil)
 	t.Cleanup(func() {
 		p.Stop(context.WithoutCancel(t.Context()))
@@ -742,16 +739,13 @@ func TestEnsureReplacesASupervisedProxyOfOursThatStoppedAnswering(t *testing.T) 
 		t.Skip("this device reads no holder on Windows, so no holder is ever proven ours")
 	}
 	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("XDG_DATA_HOME", dir)
-	t.Setenv("XDG_STATE_HOME", dir)
 	t.Setenv(versionEnv, "dev")
 	silent := filepath.Join(dir, "hold-the-port-and-answer-nothing")
 	if err := os.WriteFile(silent, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(silentEnv, silent)
-	layout := proxytest.SandboxLayout(t, dir)
+	layout := proxytest.SpawnedSandboxLayout(t, dir)
 	addr := freeAddr(t)
 	exe := procbin.Self(t, "supervised-silent-hold")
 
