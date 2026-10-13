@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -235,12 +237,14 @@ func TestHookUpgradeCheckStartsTheCheckInAProcessOfItsOwnAndSaysNothing(t *testi
 	}
 }
 
-func TestHookUpgradeCheckDetachedRecordsWhatItFoundAndSaysNothing(t *testing.T) {
+func TestHookUpgradeCheckDetachedOnABuildThatDoesNotCheckOnItsOwnWritesNothing(t *testing.T) {
 	e := clitest.New(t)
 	e.SetReleasesURL("http://releases.invalid/releases")
 
-	// A build of the test suite announces no release, so the check
-	// fails before it asks anything, and says so only in the state file.
+	// A build of the test suite is not a release build, so the check
+	// reads the gates the hook would have read, and stops there: no
+	// release is asked for and no state file says a check ran. The
+	// check a release build runs is tested on one, in lifecycle.
 	got := e.Run("hook", "upgrade-check", "--detached")
 	if got.Exit != 0 || got.Stdout != "" || got.Stderr != "" {
 		t.Errorf("hook upgrade-check --detached = exit %d, stdout %q, stderr %q; want a silent success", got.Exit, got.Stdout, got.Stderr)
@@ -248,8 +252,8 @@ func TestHookUpgradeCheckDetachedRecordsWhatItFoundAndSaysNothing(t *testing.T) 
 	if starts := e.Spawns(); len(starts) != 0 {
 		t.Errorf("recorded starts = %v, want none", starts)
 	}
-	if checkedAt, result := e.UpgradeState(); result != "failed" || checkedAt.IsZero() {
-		t.Errorf("upgrade state = %s at %s; want a failed check recorded", result, checkedAt)
+	if _, err := os.Stat(e.Layout().UpgradeState()); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("upgrade state file: %v; want none written", err)
 	}
 }
 

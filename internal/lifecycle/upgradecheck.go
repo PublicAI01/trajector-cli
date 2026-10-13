@@ -108,12 +108,21 @@ func (m *Machine) DetachUpgradeCheck(ctx context.Context) error {
 // and doctor show. Another upgrade running on the machine makes it a
 // check that did nothing.
 //
+// The gates the session hook read before starting this process are
+// read again here: the user config can change between the two, and a
+// process started by hand on a build that does not check on its own —
+// the detached command typed at a shell, or a build of the test suite —
+// checks nothing and writes nothing.
+//
 // The lines are left while the check still holds the upgrade lock, and
 // the state file records them as told only once the notice store took
 // them: a release a package manager has to install, and a finish no
 // longer tried, are said nowhere else, so a store that cannot take them
 // leaves them for the next check to tell.
 func (m *Machine) CheckForUpgrade(ctx context.Context) {
+	if !m.upgradeGates().On() {
+		return
+	}
 	in := m.installation()
 	in.Tell = func(checked selfupdate.Checked, err error) error {
 		return m.notices.Add(m.checkNotices(checked, err)...)

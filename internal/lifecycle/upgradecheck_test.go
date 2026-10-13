@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -220,8 +221,42 @@ func TestDetachUpgradeCheck_ReportsACheckThatCouldNotStart(t *testing.T) {
 	}
 }
 
-func TestCheckForUpgrade_TellsAHomebrewUserOncePerRelease(t *testing.T) {
+// newCheckForUpgradeEnv is newUpgradeEnv as a device every gate on the
+// background check lets through, the way the session hook that starts
+// the check found it: a release build whose user config leaves
+// automatic upgrades on and whose accepted agreement tells the user
+// about them.
+func newCheckForUpgradeEnv(t *testing.T) (*env, *fakereleases.Server) {
+	t.Helper()
 	e, releases := newUpgradeEnv(t)
+	e.deps.ReleaseBuild = true
+	e.deps.AutoUpgrade = true
+	e.sandbox.AcceptAgreement(proxytest.AgreementVersion, "2026-08-01T00:00:00Z")
+	return e, releases
+}
+
+func TestCheckForUpgrade_OnADeviceThatDoesNotCheckOnItsOwnWritesNothing(t *testing.T) {
+	// The hook read the gates before it started the check; by the time
+	// the check runs, the user config can have changed, and a process
+	// started by hand on a build of the test suite passes no gate at all.
+	e, releases := newCheckForUpgradeEnv(t)
+	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
+	e.deps.AutoUpgrade = false
+
+	e.machine().CheckForUpgrade(t.Context())
+	if _, err := os.Stat(e.layout().UpgradeState()); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("upgrade state file: %v; want none written", err)
+	}
+	if got := releases.Downloads(); len(got) != 0 {
+		t.Errorf("downloads = %v, want none", got)
+	}
+	if got := e.installedBinary(); got != "the 0.1.0 binary" {
+		t.Errorf("the binary is %q", got)
+	}
+}
+
+func TestCheckForUpgrade_TellsAHomebrewUserOncePerRelease(t *testing.T) {
+	e, releases := newCheckForUpgradeEnv(t)
 	e.deps.ExecPath = exeName(filepath.Join(e.deps.Home, "Cellar", "trajector", "0.1.0", "bin", "trajector"))
 	e.installBinary("the binary Homebrew installed")
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
@@ -243,7 +278,7 @@ func TestCheckForUpgrade_TellsAHomebrewUserOncePerRelease(t *testing.T) {
 }
 
 func TestCheckForUpgrade_TellsOnceOfAReleaseThatDoesNotStart(t *testing.T) {
-	e, releases := newUpgradeEnv(t)
+	e, releases := newCheckForUpgradeEnv(t)
 	releases.Publish(t, "0.2.0", []byte("these bytes are not a program"))
 
 	e.machine().CheckForUpgrade(t.Context())
@@ -260,7 +295,7 @@ func TestCheckForUpgrade_TellsOnceOfAReleaseThatDoesNotStart(t *testing.T) {
 }
 
 func TestCheckForUpgrade_FailsSilently(t *testing.T) {
-	e, releases := newUpgradeEnv(t)
+	e, releases := newCheckForUpgradeEnv(t)
 	releases.Ration()
 
 	e.machine().CheckForUpgrade(t.Context())
@@ -274,7 +309,7 @@ func TestCheckForUpgrade_FailsSilently(t *testing.T) {
 }
 
 func TestCheckForUpgrade_SendsTheUserToDoctorWhenItsSetupFailsTwice(t *testing.T) {
-	e, releases := newUpgradeEnv(t)
+	e, releases := newCheckForUpgradeEnv(t)
 	releases.Publish(t, "0.1.0", []byte("the 0.1.0 binary"))
 	index := holdIndex(t, releases.IndexURL())
 	e.deps.Releases = index.URL
@@ -329,7 +364,7 @@ func (e *env) blockNotices() (unblock func()) {
 }
 
 func TestCheckForUpgrade_TellsAHomebrewUserOfAReleaseTheLinesCouldNotBeLeftForAgain(t *testing.T) {
-	e, releases := newUpgradeEnv(t)
+	e, releases := newCheckForUpgradeEnv(t)
 	e.deps.ExecPath = exeName(filepath.Join(e.deps.Home, "Cellar", "trajector", "0.1.0", "bin", "trajector"))
 	e.installBinary("the binary Homebrew installed")
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
@@ -350,7 +385,7 @@ func TestCheckForUpgrade_TellsAHomebrewUserOfAReleaseTheLinesCouldNotBeLeftForAg
 }
 
 func TestCheckForUpgrade_KeepsTryingASetupItCouldNotSendTheUserToDoctorFor(t *testing.T) {
-	e, releases := newUpgradeEnv(t)
+	e, releases := newCheckForUpgradeEnv(t)
 	releases.Publish(t, "0.1.0", []byte("the 0.1.0 binary"))
 	e.writeUpgradeState(`{"installed": "0.1.0", "finish_pending": "0.1.0", "finish_failures": 1}`)
 	e.blockNotices()
@@ -362,7 +397,7 @@ func TestCheckForUpgrade_KeepsTryingASetupItCouldNotSendTheUserToDoctorFor(t *te
 }
 
 func TestCheckForUpgrade_EndsWithALineWhenItPutsBackTheBuildAnInterruptedUpgradeKept(t *testing.T) {
-	e, releases := newUpgradeEnv(t)
+	e, releases := newCheckForUpgradeEnv(t)
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 	// An upgrade from 0.0.9 to this build stopped before this build
 	// accepted the install.
@@ -384,7 +419,7 @@ func TestCheckForUpgrade_EndsWithALineWhenItPutsBackTheBuildAnInterruptedUpgrade
 }
 
 func TestCheckForUpgrade_WhileAnotherUpgradeRunsDoesNothing(t *testing.T) {
-	e, releases := newUpgradeEnv(t)
+	e, releases := newCheckForUpgradeEnv(t)
 	releases.Publish(t, "0.2.0", []byte("the 0.2.0 binary"))
 	if err := os.MkdirAll(filepath.Dir(e.layout().UpgradeLock()), 0o700); err != nil {
 		t.Fatal(err)
