@@ -10,11 +10,13 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -93,7 +95,39 @@ func (s *Server) Publish(t *testing.T, version string, body []byte) {
 // read out of, or one that does not begin with "v".
 func (s *Server) PublishTag(t *testing.T, tag, version string, body []byte) {
 	t.Helper()
-	s.publish(t, tag, version, func(goos string) []byte { return pack(t, goos, body) })
+	s.publish(t, tag, version, func(goos string) []byte { return packed(t, goos, body) })
+}
+
+// packs holds every archive packed in this test process, by the bytes
+// it carries and the format it is in. Compressing a real binary is the
+// slowest thing a publish does — under the race detector it is seconds
+// per archive — and the same binary is published by test after test,
+// for six platforms that differ only in asset name. The name is what
+// asset selection is tested against; the bytes behind it can be shared.
+var (
+	packsMu sync.Mutex
+	packs   = map[packKey][]byte{}
+)
+
+type packKey struct {
+	format string
+	body   [sha256.Size]byte
+}
+
+// packed is the archive for goos carrying body, packed the first time
+// this process asks for it. Callers read the result and must not
+// modify it.
+func packed(t *testing.T, goos string, body []byte) []byte {
+	t.Helper()
+	key := packKey{format: archiveName("", goos, ""), body: sha256.Sum256(body)}
+	packsMu.Lock()
+	defer packsMu.Unlock()
+	archive, ok := packs[key]
+	if !ok {
+		archive = pack(t, goos, body)
+		packs[key] = archive
+	}
+	return archive
 }
 
 // PublishBroken adds a release whose archives are intact as far as
@@ -199,7 +233,10 @@ func archiveName(version, goos, goarch string) string {
 // pack builds the archive format the pipeline publishes for a platform,
 // holding body as the trajector binary. A companion LICENSE entry rides
 // along the way the real archives carry one, so unpacking has to pick
-// the binary out rather than take whatever it finds first.
+// the binary out rather than take whatever it finds first. Both formats
+// deflate at the fastest level: the reader does not care which level
+// wrote a stream, and the fastest halves the cost of packing a real
+// binary.
 func pack(t *testing.T, goos string, body []byte) []byte {
 	t.Helper()
 	name := "trajector"
@@ -215,7 +252,10 @@ func pack(t *testing.T, goos string, body []byte) []byte {
 func packTarGz(t *testing.T, name string, body []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
+	gz, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tw := tar.NewWriter(gz)
 	write := func(entry string, content []byte, mode int64) {
 		header := &tar.Header{
@@ -246,6 +286,9 @@ func packZip(t *testing.T, name string, body []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
+	zw.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+		return flate.NewWriter(out, flate.BestSpeed)
+	})
 	write := func(entry string, content []byte) {
 		w, err := zw.Create(entry)
 		if err != nil {
