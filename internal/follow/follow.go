@@ -8,7 +8,8 @@
 // A registry is one JSON object: {"version":1,"files":[...]}, each
 // element carrying path, inode, size, offset, next_segment, and
 // message_ids, and optionally read_at, subpath, retired, last_event,
-// pid, told, and before_rewrite. A session that moved to a directory
+// pid, told, before_rewrite, empty_reasoning_blocks,
+// reasoning_blocks_with_text, and launch_surface. A session that moved to a directory
 // consent does not cover is written as retired "relocated", the form
 // an earlier build wrote: an earlier build then never reads on past
 // the line that took the session out. An agent file of a workflow run
@@ -22,7 +23,10 @@
 // object accumulates what the reader noticed about the shape of the
 // lines it read, as counts and field names only, so a surface can
 // state it without opening a session file; it is kept in the form
-// drift gives it and summed by drift's own arithmetic. Directories
+// drift gives it and summed by drift's own arithmetic. An optional
+// "reasoning_told_on" names the UTC day, as YYYY-MM-DD, on which a
+// session of the project was last told that most of its reasoning
+// blocks carry no text. Directories
 // are 0700 and files 0600: the paths alone reveal what the user works
 // on.
 //
@@ -80,6 +84,12 @@ type registry struct {
 	Files   []File         `json:"files"`
 	Gaps    *Gaps          `json:"gaps,omitempty"`
 	Signals *drift.Signals `json:"signals,omitempty"`
+	// ReasoningToldOn is the UTC day, as YYYY-MM-DD, on which a session
+	// of the project was last told that its reasoning blocks carry no
+	// text. It belongs to the project, not to a session: the line is
+	// worth one turn of the user's attention a day, however many
+	// sessions run.
+	ReasoningToldOn string `json:"reasoning_told_on,omitempty"`
 }
 
 // RegisterAll adds each of paths to projectIDHash's registry with a
@@ -351,6 +361,38 @@ func (r *Registry) Tell(projectIDHash, path string) (first bool, err error) {
 			first = true
 		}
 		f.Told = true
+	})
+	return first && err == nil, err
+}
+
+// TellReasoning records that a session of projectIDHash was told, on
+// the UTC day of at, that most of its reasoning blocks carry no text,
+// and reports whether this call is the one that recorded it. A
+// project already told on that day is answered false, so the caller
+// says nothing a second time that day. A project with no registry is
+// refused, as an update to it is.
+func (r *Registry) TellReasoning(projectIDHash string, at time.Time) (first bool, err error) {
+	if err := checkProjectIDHash(projectIDHash); err != nil {
+		return false, err
+	}
+	if _, err := os.Stat(r.dir); os.IsNotExist(err) {
+		return false, ErrNotRegistered
+	}
+	day := at.UTC().Format(time.DateOnly)
+	err = fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
+		if old == nil {
+			return nil, ErrNotRegistered
+		}
+		reg, err := parse(old)
+		if err != nil {
+			return nil, err
+		}
+		if reg.ReasoningToldOn == day {
+			return nil, fsatomic.ErrUnchanged
+		}
+		reg.ReasoningToldOn = day
+		first = true
+		return encode(reg)
 	})
 	return first && err == nil, err
 }

@@ -50,6 +50,7 @@ const (
 	maxSegmentBytes = 8 << 20
 
 	typeRelocated = "relocated"
+	typeAssistant = "assistant"
 )
 
 // droppedTypes are the line types that never enter a segment. The two
@@ -112,7 +113,9 @@ type ReadResult struct {
 // read again from its start, and lines whose message id was consumed
 // before are not sent again: the copy sent first stands. Lines are
 // stored byte for byte; nothing in them is interpreted beyond the
-// three fields that steer reading.
+// three fields that steer reading, and the two facts the cursor
+// counts of the lines it keeps: whether each reasoning field is
+// empty, and the launch surface.
 //
 // Read judges a file by its own lines alone. An agent file holds no
 // line that says where its session is; a Reader judges it by its
@@ -189,6 +192,16 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 	var kept bytes.Buffer
 	var added []string
 	addedSet := map[string]bool{}
+	// What the kept lines say about reasoning and the launch surface
+	// belongs to them: it is let go with them, and added to the cursor
+	// only for the lines the cursor moves past.
+	var reasoning sessionline.ReasoningBlocks
+	surface := f.LaunchSurface
+	letGo := func() {
+		kept.Reset()
+		added, addedSet = nil, map[string]bool{}
+		reasoning, surface = sessionline.ReasoningBlocks{}, f.LaunchSurface
+	}
 
 	// Only bytes that existed at observation time are read: a line
 	// appended after the stat waits for the next read.
@@ -224,8 +237,7 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 				settled, outside = true, true
 				continue
 			case !settled:
-				kept.Reset()
-				added, addedSet = nil, map[string]bool{}
+				letGo()
 				settled = true
 				continue
 			case outside:
@@ -248,8 +260,7 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 					return ReadResult{}, err
 				}
 				if into {
-					kept.Reset()
-					added, addedSet = nil, map[string]bool{}
+					letGo()
 					settled = true
 					offset = end
 					continue
@@ -266,12 +277,21 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 			addedSet[fields.MessageID] = true
 		}
 		kept.Write(line)
+		if fields.Type == typeAssistant {
+			reasoning = reasoning.Add(fields.Reasoning)
+		}
+		if fields.LaunchSurface != "" {
+			surface = fields.LaunchSurface
+		}
 	}
 
 	res.File.Inode, res.File.Size, res.File.Offset = st.Inode, st.Size, offset
 	res.File.Outside = outside
 	// The caller's slices are never grown in place.
 	res.File.MessageIDs = append(slices.Clip(f.MessageIDs), added...)
+	res.File.EmptyReasoningBlocks += reasoning.Empty
+	res.File.ReasoningBlocksWithText += reasoning.WithText
+	res.File.LaunchSurface = surface
 	res.File.BeforeRewrite = nil
 	if res.More && len(skipIDs) > 0 {
 		res.File.BeforeRewrite = slices.Clip(skipIDs)

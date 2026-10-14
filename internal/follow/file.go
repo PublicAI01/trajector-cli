@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/PublicAI01/trajector-cli/internal/sessionline"
 )
 
 // File is one registered file and its cursor.
@@ -87,11 +89,28 @@ type File struct {
 	// hears the same line on every turn stops reading it, so the
 	// notice is worth exactly one turn of the user's attention.
 	Told bool `json:"told,omitzero"`
+	// EmptyReasoningBlocks and ReasoningBlocksWithText count the
+	// reasoning blocks of the assistant lines read from this file and
+	// kept: those whose reasoning field is empty, and those whose field
+	// holds text. They hold counts only, never what a field holds.
+	// LaunchSurface is how Claude Code was started, as the last kept
+	// line that states it says, and absent until a line states it. The
+	// reader writes all three with the cursor; they never leave the
+	// registry.
+	EmptyReasoningBlocks    int    `json:"empty_reasoning_blocks,omitzero"`
+	ReasoningBlocksWithText int    `json:"reasoning_blocks_with_text,omitzero"`
+	LaunchSurface           string `json:"launch_surface,omitempty"`
+}
+
+// Reasoning is what the reasoning counts of f hold.
+func (f File) Reasoning() sessionline.ReasoningBlocks {
+	return sessionline.ReasoningBlocks{Empty: f.EmptyReasoningBlocks, WithText: f.ReasoningBlocksWithText}
 }
 
 // advancedTo is f with the fields a reader owns taken from read: where
 // reading stands, what it consumed, when it last moved, where the
-// session is, and why reading stopped for good. Every other field has a writer of its own — the
+// session is, what the kept lines said about reasoning and the launch
+// surface, and why reading stopped for good. Every other field has a writer of its own — the
 // registration, the hooks that mark a session hot or cold, the notice
 // that a session was told — and an entry a reader writes back keeps
 // those as they stand now, not as they stood when the read began.
@@ -99,6 +118,8 @@ func (f File) advancedTo(read File) File {
 	f.Inode, f.Size, f.Offset, f.NextSegment = read.Inode, read.Size, read.Offset, read.NextSegment
 	f.MessageIDs, f.BeforeRewrite = read.MessageIDs, read.BeforeRewrite
 	f.ReadAt, f.Retired, f.Outside = read.ReadAt, read.Retired, read.Outside
+	f.EmptyReasoningBlocks, f.ReasoningBlocksWithText = read.EmptyReasoningBlocks, read.ReasoningBlocksWithText
+	f.LaunchSurface = read.LaunchSurface
 	return f
 }
 
