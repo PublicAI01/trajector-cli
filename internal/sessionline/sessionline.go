@@ -81,12 +81,25 @@ type Fields struct {
 	// there, and BlockIndex is then meaningless.
 	BlockIndex    int
 	HasBlockIndex bool
-	// EmptyReasoning says a block of the line's message carries the
-	// reasoning field with an empty string in it. A block without the
-	// field, and a block whose field holds anything at all, both read
-	// as false: what such a field holds is content, and content is
-	// never read here.
-	EmptyReasoning bool
+	// Reasoning counts the blocks of the line's message that carry the
+	// reasoning field as a string, by whether the string is empty.
+	Reasoning ReasoningBlocks
+}
+
+// ReasoningBlocks counts the blocks of one message that carry the
+// reasoning field as a string. Empty counts those whose string holds
+// nothing, and WithText those whose string holds anything at all. A
+// block without the field, or with a value of another shape, is in
+// neither count. Only whether the string is empty is observed: the
+// text itself is never read.
+type ReasoningBlocks struct {
+	Empty    int
+	WithText int
+}
+
+// Add is the sum of r and more.
+func (r ReasoningBlocks) Add(more ReasoningBlocks) ReasoningBlocks {
+	return ReasoningBlocks{Empty: r.Empty + more.Empty, WithText: r.WithText + more.WithText}
 }
 
 // Fields reads the structural facts out of the line. The line is
@@ -110,7 +123,7 @@ func (l Line) Fields() Fields {
 		Message struct {
 			ID      string `json:"id"`
 			Content []struct {
-				Reasoning emptiness `json:"thinking"`
+				Reasoning reasoningText `json:"thinking"`
 			} `json:"content"`
 		} `json:"message"`
 	}
@@ -133,23 +146,39 @@ func (l Line) Fields() Fields {
 	}
 	f.BlockIndex, f.HasBlockIndex = doc.BlockIndex.value, doc.BlockIndex.found
 	for _, block := range doc.Message.Content {
-		if block.Reasoning.empty {
-			f.EmptyReasoning = true
-			break
+		switch block.Reasoning {
+		case emptyText:
+			f.Reasoning.Empty++
+		case someText:
+			f.Reasoning.WithText++
+		case noText:
 		}
 	}
 	return f
 }
 
-// emptiness reads a JSON string for one fact about it: that it is
-// there and holds nothing. The text of a string that holds something
-// is never copied out, so a field read this way stays unread. A value
-// of any other shape leaves it unset, which is the reading "absent"
-// has here, and never fails the decode.
-type emptiness struct{ empty bool }
+// reasoningText reads a JSON string for one fact about it: that it is
+// there, and whether it holds nothing or something. The text of a
+// string that holds something is never copied out, so a field read
+// this way stays unread. A value of any other shape reads as noText,
+// which is the reading "absent" has here, and never fails the decode.
+type reasoningText int
 
-func (e *emptiness) UnmarshalJSON(b []byte) error {
-	e.empty = string(b) == `""`
+const (
+	noText reasoningText = iota
+	emptyText
+	someText
+)
+
+func (r *reasoningText) UnmarshalJSON(b []byte) error {
+	switch {
+	case string(b) == `""`:
+		*r = emptyText
+	case len(b) > 2 && b[0] == '"':
+		*r = someText
+	default:
+		*r = noText
+	}
 	return nil
 }
 

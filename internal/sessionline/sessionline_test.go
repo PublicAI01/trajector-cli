@@ -200,8 +200,59 @@ func TestFieldsReportsAReasoningFieldThatIsThereAndEmpty(t *testing.T) {
 			if !ok {
 				t.Fatal("not a session line")
 			}
-			if got := parsed.Fields().EmptyReasoning; got != tc.want {
-				t.Errorf("EmptyReasoning = %v, want %v", got, tc.want)
+			if got := parsed.Fields().Reasoning.Empty > 0; got != tc.want {
+				t.Errorf("Reasoning.Empty > 0 = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFieldsCountsReasoningBlocksByWhetherTheyHoldText(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		line string
+		want sessionline.ReasoningBlocks
+	}{
+		{
+			name: "one empty reasoning field",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":[{"type":"thinking","thinking":"","signature":"sig"}]}}`,
+			want: sessionline.ReasoningBlocks{Empty: 1},
+		},
+		{
+			name: "one reasoning field holding text",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":[{"type":"thinking","thinking":"weighing two options","signature":"sig"}]}}`,
+			want: sessionline.ReasoningBlocks{WithText: 1},
+		},
+		{
+			name: "a reasoning field holding only an escape",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":[{"type":"thinking","thinking":"\n"}]}}`,
+			want: sessionline.ReasoningBlocks{WithText: 1},
+		},
+		{
+			name: "both kinds and a text block",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":[{"type":"thinking","thinking":""},{"type":"text","text":"done"},{"type":"thinking","thinking":"a"},{"type":"thinking","thinking":""}]}}`,
+			want: sessionline.ReasoningBlocks{Empty: 2, WithText: 1},
+		},
+		{
+			name: "a reasoning field of another shape",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":[{"type":"thinking","thinking":null},{"type":"thinking","thinking":7}]}}`,
+		},
+		{
+			name: "no reasoning field at all",
+			line: `{"type":"assistant","message":{"id":"msg_1","content":[{"type":"text","text":"done"}]}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			parsed, ok := sessionline.Parse([]byte(tc.line))
+			if !ok {
+				t.Fatal("not a session line")
+			}
+			fields := parsed.Fields()
+			if fields.Reasoning != tc.want {
+				t.Errorf("Reasoning = %+v, want %+v", fields.Reasoning, tc.want)
 			}
 		})
 	}

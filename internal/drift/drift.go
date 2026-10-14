@@ -187,7 +187,7 @@ func (s *scanner) assistant(r *Signals, f sessionline.Fields) {
 	if f.MessageID == "" {
 		r.AssistantLinesWithoutMessageID++
 	}
-	if f.EmptyReasoning {
+	if f.Reasoning.Empty > 0 {
 		r.AssistantLinesWithEmptyReasoning++
 	}
 	if f.MessageID == "" {
