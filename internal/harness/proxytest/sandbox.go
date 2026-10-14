@@ -122,6 +122,15 @@ func (s *Sandbox) Pause(reason routing.PauseReason) {
 	}
 }
 
+// Resume lifts a standing pause of the given reason, as the command
+// that clears it would.
+func (s *Sandbox) Resume(reason routing.PauseReason) {
+	s.t.Helper()
+	if err := routing.OpenStore(s.layout.RoutingTable()).Resume(reason); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
 // PauseByBuild suspends recording device-wide and records which build
 // did it, as a build that cannot mask what it read would.
 func (s *Sandbox) PauseByBuild(reason routing.PauseReason, version string) {

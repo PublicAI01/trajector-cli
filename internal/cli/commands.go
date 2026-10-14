@@ -239,7 +239,7 @@ func (a *app) hookCmd(ctx context.Context, args []string) int {
 		}
 		hook := a.hookInput()
 		if m, cwd, err := a.prelude(); err == nil {
-			return a.tellSession(m.SessionProgressed(ctx, cwd, hook))
+			return a.tellProgressed(m.SessionProgressed(ctx, cwd, hook))
 		}
 		return 0
 	case claudesettings.HookDiscovery:
@@ -342,6 +342,33 @@ func (a *app) tellSession(stopped bool) int {
 	}
 	fmt.Fprintln(a.stderr, nothingRecordedNotice)
 	return 1
+}
+
+// noReasoningLines are the lines a running session is told when most
+// of its reasoning blocks carry no text, one for each way Claude Code
+// can be started: each names the one step that turns the summaries on
+// there. They state what this device read and nothing more. They go
+// out as nothingRecordedNotice does, for the same reasons.
+var noReasoningLines = map[lifecycle.LaunchSurface]string{
+	lifecycle.SurfaceCLI:     "trajector: no reasoning summaries in this session; run trajector enable, then start a new session",
+	lifecycle.SurfaceDesktop: "trajector: no reasoning summaries in this session; set transcript view to Thinking, then start anew",
+	lifecycle.SurfaceSDK:     "trajector: no reasoning summaries in this session; add --thinking-display summarized and rerun",
+	lifecycle.SurfaceUnknown: "trajector: no reasoning summaries in this session; run trajector status to see how to turn them on",
+}
+
+// tellProgressed says what a session hears at the end of a turn. The
+// device capturing nothing comes first: it is the line the user can
+// least afford to miss.
+func (a *app) tellProgressed(p lifecycle.Progressed) int {
+	switch {
+	case p.NothingRecorded:
+		return a.tellSession(true)
+	case p.NoReasoning:
+		fmt.Fprintln(a.stderr, noReasoningLines[p.Surface])
+		return 1
+	default:
+		return 0
+	}
 }
 
 // cannotStart tells a session that this build cannot start its proxy.

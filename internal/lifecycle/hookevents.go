@@ -6,6 +6,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/report"
+	"github.com/PublicAI01/trajector-cli/internal/sessionline"
 )
 
 // A session's hooks are the only entry into this device from inside a
@@ -51,6 +52,51 @@ func (m *Machine) SessionStarting(ctx context.Context, cwd string, hook HookInpu
 	return m.tellSession(cwd, hook), nil
 }
 
+// Progressed is what a session hears at the end of a turn: at most one
+// of the two lines, and for the second, how the session was started,
+// because what the user can do about it depends on that.
+type Progressed struct {
+	// NothingRecorded: the device captures nothing of the session, as
+	// tellSession answers it.
+	NothingRecorded bool
+	// NoReasoning: most of the reasoning blocks read from the session
+	// so far carry no text.
+	NoReasoning bool
+	// Surface is how the session was started, and is meaningful only
+	// with NoReasoning.
+	Surface LaunchSurface
+}
+
+// LaunchSurface is how Claude Code was started for a session, as far
+// as the line said to it is concerned. A value the session's lines
+// state that is not one of these, or no value, is SurfaceUnknown.
+type LaunchSurface int
+
+const (
+	SurfaceUnknown LaunchSurface = iota
+	// SurfaceCLI is the interactive command line.
+	SurfaceCLI
+	// SurfaceDesktop is the desktop app.
+	SurfaceDesktop
+	// SurfaceSDK is the command line run by a program.
+	SurfaceSDK
+)
+
+// launchSurface reads the value a session line states as how Claude
+// Code was started.
+func launchSurface(stated string) LaunchSurface {
+	switch stated {
+	case "cli":
+		return SurfaceCLI
+	case "claude-desktop":
+		return SurfaceDesktop
+	case "sdk-cli":
+		return SurfaceSDK
+	default:
+		return SurfaceUnknown
+	}
+}
+
 // SessionProgressed is the moment a session's files have just gained a
 // turn's worth of lines: the model or a subagent stopped, or a batch of
 // tools finished. It rides on every turn, so it does one thing: it
@@ -58,12 +104,23 @@ func (m *Machine) SessionStarting(ctx context.Context, cwd string, hook HookInpu
 // failure of it is reported. A subagent's stop is never told: the
 // session hears the notice once, and that once belongs to a turn of
 // the session's own, not to the end of a subagent's.
-func (m *Machine) SessionProgressed(ctx context.Context, cwd string, hook HookInput) (tell bool) {
+//
+// It is also the one moment that tells a session most of its reasoning
+// blocks carry no text: while the session runs, so the user can still
+// act on it, and from what was read of the session before this hook,
+// since the reading the hook asks for runs on its own. A device that
+// captures nothing of the session says that instead, once, and says
+// nothing of reasoning while it stays so.
+func (m *Machine) SessionProgressed(ctx context.Context, cwd string, hook HookInput) Progressed {
 	m.followSession(ctx, cwd, hook, false)
 	if hook.HookEvent == claudesettings.EventSubagentStop {
-		return false
+		return Progressed{}
 	}
-	return m.tellSession(cwd, hook)
+	if m.tellSession(cwd, hook) {
+		return Progressed{NothingRecorded: true}
+	}
+	surface, tell := m.tellReasoning(cwd, hook)
+	return Progressed{NoReasoning: tell, Surface: surface}
 }
 
 // SessionEnded is the moment a session closes. No failure of it is
@@ -122,6 +179,57 @@ func (m *Machine) tellSession(cwd string, hook HookInput) bool {
 	}
 	first, err := m.registry.Tell(st.Hash, filepath.Clean(hook.SessionPath))
 	return err == nil && first
+}
+
+// tellReasoning answers whether this session is the one to hear that
+// most of its reasoning blocks carry no text, and how it was started.
+// The facts are local: the reasoning blocks read so far from the file
+// the hook named, of which more are empty than hold text, and the
+// launch surface the last line read from that file states. The
+// session's agent files are left out: what their blocks hold follows
+// the model each agent ran on, which no setting of the user's decides,
+// and a line about the user's own session must rest on the session's
+// own file. Nothing else is asked, so the line says what this device
+// saw and no more.
+//
+// It answers true at most once a day per project, by the UTC day: the
+// registry records the day, and a line repeated on every turn of every
+// session is read as noise. A project with no standing grant is never
+// told, and neither is a session on a device that captures nothing of
+// it: what it would hear is about the records, and there are none; the
+// day is not spent on it either. Everything about it fails silent, for
+// the reasons tellSession gives.
+func (m *Machine) tellReasoning(cwd string, hook HookInput) (LaunchSurface, bool) {
+	if hook.SessionPath == "" {
+		return SurfaceUnknown, false
+	}
+	st, err := m.observeProject(cwd)
+	if err != nil || !st.Enabled {
+		return SurfaceUnknown, false
+	}
+	if report.Recording(m.recordingFacts(st)).StoppedDeviceWide() {
+		return SurfaceUnknown, false
+	}
+	files, err := m.registry.Files(st.Hash)
+	if err != nil {
+		return SurfaceUnknown, false
+	}
+	path := filepath.Clean(hook.SessionPath)
+	var read sessionline.ReasoningBlocks
+	stated := ""
+	for _, f := range files {
+		if f.Path == path {
+			read, stated = f.Reasoning(), f.LaunchSurface
+		}
+	}
+	if read.Empty == 0 || read.Empty <= read.WithText {
+		return SurfaceUnknown, false
+	}
+	first, err := m.registry.TellReasoning(st.Hash, m.deps.Now())
+	if err != nil || !first {
+		return SurfaceUnknown, false
+	}
+	return launchSurface(stated), true
 }
 
 // recordingFacts is the part of a diagnosis the recording state is

@@ -6,6 +6,15 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- When most of the reasoning blocks trajector has read from a running
+  Claude Code session carry no text, the session shows one line that
+  says how to turn reasoning summaries on where the session was started:
+  the command line, the desktop app, or a program that runs Claude Code.
+  It is shown at most once a day (UTC) per project, never blocks the
+  session, and is based only on what this device read.
+
 ### Changed
 
 - `showThinkingSummaries` is now a setting trajector requires: sessions
