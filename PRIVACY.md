@@ -175,8 +175,8 @@ One setting is not optional: `showThinkingSummaries`. Claude Code stopped
 generating summaries of the model's reasoning by default in v2.1.89; this
 setting turns them back on. Sessions recorded without reasoning summaries are
 not rewarded: they are still recorded and uploaded, but they earn nothing. The
-exact rule — what counts as a session with summaries, and how the desktop app
-and the SDK turn them on — is published at
+exact rule — what counts as a session with summaries, and how the desktop app,
+`claude -p` and the SDK turn them on — is published at
 https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries
 and is not fixed by the client.
 

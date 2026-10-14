@@ -57,7 +57,8 @@ func TestEnableAsksAndWritesTheRequestedSettingOnYes(t *testing.T) {
 		"Turn it on? [Y/n]",
 		"If you say no recording goes on, but sessions without reasoning summaries are not rewarded. " +
 			"The current rule: https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries",
-		"Where it works Claude Code in a terminal. The desktop app and the SDK have their own switch: " +
+		"Token cost none.",
+		"Where it works interactive Claude Code in a terminal. claude -p, the desktop app and the SDK have their own switch: " +
 			"https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries",
 	} {
 		if !containsWrapped(out, want) {

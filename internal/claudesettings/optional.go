@@ -64,14 +64,14 @@ var RequestedSettings = []RequestedSetting{{
 		{"For us", "your contributed records carry that reasoning instead of " +
 			"an empty field, which makes them more valuable to us"},
 		{"How far", "this project only; no other project on this machine is affected"},
-		{"Cost", "none. Reasoning is generated and billed either way — this " +
+		{"Token cost", "none. Reasoning is generated and billed either way — this " +
 			"only decides whether you are shown it"},
 		{"Undoing it", "`trajector disable` puts it back exactly as it was, or " +
 			"change it yourself at any time"},
 		{"If you say no", "recording goes on, but " + ReasoningSummariesOffCost +
 			". The current rule: " + reasoningSummariesDoc},
-		{"Where it works", "Claude Code in a terminal. The desktop app and the " +
-			"SDK have their own switch: " + reasoningSummariesDoc},
+		{"Where it works", "interactive Claude Code in a terminal. claude -p, the " +
+			"desktop app and the SDK have their own switch: " + reasoningSummariesDoc},
 	},
 	Fact: "Claude Code stopped generating these summaries by default in " +
 		"v2.1.89. This setting turns them back on.",
