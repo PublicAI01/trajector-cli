@@ -16,7 +16,7 @@ import (
 // altogether is a consent question doctor reports and leaves to the
 // user, a revoked grant covers nothing, and a project directory that
 // is gone has no file to complete. claudesettings.CompleteProjectHooks
-// is its one write, so the base URL, the token, the optional settings
+// is its one write, so the base URL, the token, the requested settings
 // and .gitignore stay as enable or the user left them.
 //
 // The projects are the ones doctor --all checks, and a root is gone by

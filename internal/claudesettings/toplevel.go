@@ -6,7 +6,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
 
-// SettingState classifies an optional setting's effective value across
+// SettingState classifies a requested setting's effective value across
 // the settings chain.
 type SettingState int
 

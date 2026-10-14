@@ -135,7 +135,7 @@ func TestCompleteProjectHooksAddsTheMissingEventAndChangesNoOtherKey(t *testing.
 	path := ProjectLocalPath(t.TempDir())
 	writeInjectionWithoutSubagentStop(t, path)
 	// The user's own keys beside the injection: an env variable, the
-	// permissions Claude Code stores here, and an optional setting.
+	// permissions Claude Code stores here, and a requested setting.
 	var settings map[string]any
 	if err := json.Unmarshal([]byte(readFile(t, path)), &settings); err != nil {
 		t.Fatal(err)

@@ -213,8 +213,8 @@ type Diagnosis struct {
 	ProxyIdleBetweenSessions bool
 	// RequestedSettings is each requested Claude Code setting's state for
 	// the current project, resolved only while it contributes. status
-	// renders it and doctor never does: an optional setting left off is
-	// not a fault.
+	// renders it and doctor never does: a setting left off is the
+	// user's choice to report, not a fault of the device to repair.
 	RequestedSettings []RequestedSettingStatus
 	// Proxy is who holds the proxy port, read without the startup grace
 	// only callers about to act on it pay.

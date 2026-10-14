@@ -215,7 +215,7 @@ func TestFinishUpgradeThatCannotCompleteAProjectFailsAfterLeavingItsLines(t *tes
 // TestFinishUpgradeNeverReachesAWholeInjection pins the repair's
 // boundary in the code itself: nothing FinishUpgrade can reach in this
 // package rewrites or removes an injection, sets a base URL, writes
-// .gitignore or an optional setting, or touches the user-level hooks.
+// .gitignore or a requested setting, or touches the user-level hooks.
 // Calls are matched by name across the package, which over-counts what
 // is reachable and so can only fail where it should not, never pass
 // where it should fail.

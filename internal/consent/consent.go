@@ -47,7 +47,7 @@ type projectRecord struct {
 	RootPath  string       `json:"root_path"`
 	State     ProjectState `json:"state"`
 	UpdatedAt string       `json:"updated_at"`
-	// Settings is absent in store files written before optional
+	// Settings is absent in store files written before requested
 	// settings existed; both readers treat absence as "no decisions".
 	Settings map[string]SettingDecision `json:"settings,omitempty"`
 }

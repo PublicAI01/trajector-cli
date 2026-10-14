@@ -248,7 +248,7 @@ func missingHookSites(root map[string]any) []hookSite {
 // A file with no injection of ours — neither an injected base URL nor
 // an ensure-proxy hook marked NoProxyMarker — is left as it is, since
 // installing into it would be granting, which only enable does. Only
-// the hooks section is written: never env, the base URL, an optional
+// the hooks section is written: never env, the base URL, a requested
 // setting, or the file's mode, and the token is never touched. A file
 // with nothing to add is not written at all.
 func CompleteProjectHooks(path string, hooks HookCommands) (added int, err error) {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// SettingAnswer is the user's recorded answer to an optional Claude
+// SettingAnswer is the user's recorded answer to a requested Claude
 // Code setting offered during enable.
 type SettingAnswer string
 
@@ -35,7 +35,7 @@ type SettingDecision struct {
 	DecidedAt string       `json:"decided_at"`
 }
 
-// SetSettingDecision records the user's answer for one optional
+// SetSettingDecision records the user's answer for one requested
 // setting. The project must already have a recorded decision; a
 // setting answer without one has no enable to belong to.
 func (s *Store) SetSettingDecision(projectIDHash, settingKey string, d SettingDecision) error {
