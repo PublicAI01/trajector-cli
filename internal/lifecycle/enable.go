@@ -280,7 +280,7 @@ func (m *Machine) installAndVerify(ctx context.Context, streams IO, st report.Pr
 			return fmt.Errorf("registering this project's session files: %w", err)
 		}
 	}
-	m.offerOptionalSettings(streams, st)
+	m.offerRequestedSettings(streams, st)
 	ledger.record(prior.settings.restore)
 	restored, unrestored, err := m.injectProject(st, token, shape)
 	if err != nil {

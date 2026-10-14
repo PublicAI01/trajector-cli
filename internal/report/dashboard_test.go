@@ -307,48 +307,48 @@ func TestStatusPrintsEveryStandingWithTheServicesWordsBetween(t *testing.T) {
 	}
 }
 
-// The Project section of a contributing project ends with the optional
+// The Project section of a contributing project ends with the requested
 // settings. Three of the lines are finalized wording; the fourth — a
 // true of the user's own — is the same statement without the
 // set-by-trajector mark.
-func TestStatusEndsTheProjectSectionWithTheOptionalSetting(t *testing.T) {
+func TestStatusEndsTheProjectSectionWithTheRequestedSetting(t *testing.T) {
 	const key = claudesettings.KeyShowThinkingSummaries
 	recommendation := "One optional setting is off: " + key + ". " +
 		"Turning it on costs you nothing and makes your records more complete. " +
 		"Run `trajector enable` (with --no-proxy if you use it) to see what it changes."
 	for _, tc := range []struct {
 		name    string
-		setting report.OptionalSettingStatus
+		setting report.RequestedSettingStatus
 		want    string
 		reject  []string
 	}{
 		{
 			name:    "off and never decided",
-			setting: report.OptionalSettingStatus{Key: key, State: claudesettings.Unset},
+			setting: report.RequestedSettingStatus{Key: key, State: claudesettings.Unset},
 			want:    recommendation,
 			reject:  []string{"declined", "set by trajector"},
 		},
 		{
 			name:    "explicitly off but never declined here",
-			setting: report.OptionalSettingStatus{Key: key, State: claudesettings.OffByUser},
+			setting: report.RequestedSettingStatus{Key: key, State: claudesettings.OffByUser},
 			want:    recommendation,
 			reject:  []string{"declined", "set by trajector"},
 		},
 		{
 			name:    "declined",
-			setting: report.OptionalSettingStatus{Key: key, State: claudesettings.Unset, Declined: true},
+			setting: report.RequestedSettingStatus{Key: key, State: claudesettings.Unset, Declined: true},
 			want:    "Optional settings: 1 declined. Run `trajector enable` (with --no-proxy if you use it) to review.",
 			reject:  []string{"costs you nothing", "set by trajector"},
 		},
 		{
 			name:    "on because trajector wrote it",
-			setting: report.OptionalSettingStatus{Key: key, State: claudesettings.OnByUs},
+			setting: report.RequestedSettingStatus{Key: key, State: claudesettings.OnByUs},
 			want:    "Optional settings: " + key + " on (set by trajector).",
 			reject:  []string{"costs you nothing", "declined"},
 		},
 		{
 			name:    "on as the user's own choice",
-			setting: report.OptionalSettingStatus{Key: key, State: claudesettings.OnByUser},
+			setting: report.RequestedSettingStatus{Key: key, State: claudesettings.OnByUser},
 			want:    "Optional settings: " + key + " on.",
 			reject:  []string{"costs you nothing", "declined", "set by trajector"},
 		},
@@ -356,7 +356,7 @@ func TestStatusEndsTheProjectSectionWithTheOptionalSetting(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			d := device()
 			d.Project = contributing()
-			d.OptionalSettings = []report.OptionalSettingStatus{tc.setting}
+			d.RequestedSettings = []report.RequestedSettingStatus{tc.setting}
 			out := dashboard(d)
 
 			wants(t, "status", out, tc.want)
@@ -365,9 +365,9 @@ func TestStatusEndsTheProjectSectionWithTheOptionalSetting(t *testing.T) {
 	}
 }
 
-func TestStatusShowsNoOptionalSettingLineOutsideAContributingProject(t *testing.T) {
+func TestStatusShowsNoRequestedSettingLineOutsideAContributingProject(t *testing.T) {
 	d := device()
-	d.OptionalSettings = []report.OptionalSettingStatus{
+	d.RequestedSettings = []report.RequestedSettingStatus{
 		{Key: claudesettings.KeyShowThinkingSummaries, State: claudesettings.Unset},
 	}
 	out := dashboard(d)

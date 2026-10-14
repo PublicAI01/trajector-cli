@@ -38,7 +38,7 @@ func writeProjectLocalSettings(t *testing.T, e *env, contents string) {
 	e.projectSettings().Put(contents)
 }
 
-func TestEnableAsksAndWritesTheOptionalSettingOnYes(t *testing.T) {
+func TestEnableAsksAndWritesTheRequestedSettingOnYes(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\ny\n"
@@ -288,7 +288,7 @@ func TestEnableRecordFailureLeavesTheSettingUnwritten(t *testing.T) {
 	}
 }
 
-func TestEnableSecondRunKeepsAnOptionalSettingOnByDefault(t *testing.T) {
+func TestEnableSecondRunKeepsARequestedSettingOnByDefault(t *testing.T) {
 	for _, input := range []string{"y\n", "\n"} {
 		t.Run(strings.TrimSuffix(input, "\n")+"<enter>", func(t *testing.T) {
 			e := newEnv(t)
@@ -520,7 +520,7 @@ func TestDisableKeepsTheRecordWhenRestoreFails(t *testing.T) {
 	}
 }
 
-func TestEnableNonInteractiveChangesNoOptionalSetting(t *testing.T) {
+func TestEnableNonInteractiveChangesNoRequestedSetting(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
 	e.stdin = "yes\n"

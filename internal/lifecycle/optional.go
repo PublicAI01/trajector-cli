@@ -12,7 +12,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
-// offerOptionalSettings puts each optional Claude Code setting to the
+// offerRequestedSettings puts each requested Claude Code setting to the
 // user according to its classified state, writes the ones accepted, and
 // records every answer. It runs after the project's granted state is
 // recorded — a setting decision has no record to attach to before that
@@ -21,7 +21,7 @@ import (
 // ask must never break enable. Every question points the same way: yes
 // means the setting is on. An answer that keeps the file as it is never
 // touches it; only an explicit answer in the other direction writes.
-func (m *Machine) offerOptionalSettings(streams IO, st report.ProjectStatus) {
+func (m *Machine) offerRequestedSettings(streams IO, st report.ProjectStatus) {
 	// A decision store that cannot be read leaves writtenByUs unknowable;
 	// every true then classifies as the user's own, which disable will
 	// never delete. Failing toward not touching the user's value.
@@ -29,7 +29,7 @@ func (m *Machine) offerOptionalSettings(streams IO, st report.ProjectStatus) {
 	if err != nil {
 		decisions = nil
 	}
-	for _, s := range claudesettings.OptionalSettings {
+	for _, s := range claudesettings.RequestedSettings {
 		d, recorded := decisions[s.Key]
 		status := claudesettings.ClassifySetting(st.Root, m.claude(), s.Key, recorded && wroteSetting(d))
 		fmt.Fprintf(streams.Out, "\nOptional setting for this project\n\n")
@@ -48,7 +48,7 @@ func (m *Machine) offerOptionalSettings(streams IO, st report.ProjectStatus) {
 				return
 			}
 			if !keep {
-				undone, failures := m.restoreRecordedSettings(st.Root, st.Hash, []claudesettings.OptionalSetting{s})
+				undone, failures := m.restoreRecordedSettings(st.Root, st.Hash, []claudesettings.RequestedSetting{s})
 				reportRestoredSettings(streams, "  ", undone, failures)
 			}
 		case claudesettings.OffByUser:
@@ -84,20 +84,20 @@ func (m *Machine) offerOptionalSettings(streams IO, st report.ProjectStatus) {
 	}
 }
 
-// optionalSettingStatuses classifies every optional setting for the
+// requestedSettingStatuses classifies every requested setting for the
 // diagnosis status renders. A decision store that cannot be read reads
 // as no decisions, exactly as when enable asks: every true then
 // classifies as the user's own.
-func (m *Machine) optionalSettingStatuses(st report.ProjectStatus) []report.OptionalSettingStatus {
+func (m *Machine) requestedSettingStatuses(st report.ProjectStatus) []report.RequestedSettingStatus {
 	decisions, err := m.consent.SettingDecisions(st.Hash)
 	if err != nil {
 		decisions = nil
 	}
-	statuses := make([]report.OptionalSettingStatus, 0, len(claudesettings.OptionalSettings))
-	for _, s := range claudesettings.OptionalSettings {
+	statuses := make([]report.RequestedSettingStatus, 0, len(claudesettings.RequestedSettings))
+	for _, s := range claudesettings.RequestedSettings {
 		d, recorded := decisions[s.Key]
 		classified := claudesettings.ClassifySetting(st.Root, m.claude(), s.Key, recorded && wroteSetting(d))
-		statuses = append(statuses, report.OptionalSettingStatus{
+		statuses = append(statuses, report.RequestedSettingStatus{
 			Key:      s.Key,
 			State:    classified.State,
 			Declined: recorded && d.Answer == consent.AnswerDeclined,
@@ -112,7 +112,7 @@ func (m *Machine) optionalSettingStatuses(st report.ProjectStatus) []report.Opti
 // without its write restores nothing, because RestoreTopLevelBool acts
 // only when the current value is the one trajector wrote. The failure
 // that can land between the two is the harmless one in this order.
-func (m *Machine) applySettingAnswer(streams IO, st report.ProjectStatus, s claudesettings.OptionalSetting, accepted bool) {
+func (m *Machine) applySettingAnswer(streams IO, st report.ProjectStatus, s claudesettings.RequestedSetting, accepted bool) {
 	if !accepted {
 		if err := m.consent.SetSettingDecision(st.Hash, s.Key, consent.SettingDecision{
 			Answer:    consent.AnswerDeclined,
@@ -169,7 +169,7 @@ func wroteSetting(d consent.SettingDecision) bool {
 // across disable/enable cycles. A record is cleared only once its
 // restore succeeded: the record is the only undo there is, so a failed
 // restore must keep it.
-func (m *Machine) restoreRecordedSettings(root, hash string, settings []claudesettings.OptionalSetting) (undone []string, failures []error) {
+func (m *Machine) restoreRecordedSettings(root, hash string, settings []claudesettings.RequestedSetting) (undone []string, failures []error) {
 	for _, s := range settings {
 		restored, err := m.restoreRecordedSettingKey(root, hash, s)
 		if restored {
@@ -186,7 +186,7 @@ func (m *Machine) restoreRecordedSettings(root, hash string, settings []claudese
 // setting: only a prior of absent or false marks a write to take back,
 // and the write comes back out only while the file still holds it — a
 // later hand edit is the user's most recent decision and wins.
-func (m *Machine) restoreRecordedSettingKey(root, hash string, s claudesettings.OptionalSetting) (restored bool, err error) {
+func (m *Machine) restoreRecordedSettingKey(root, hash string, s claudesettings.RequestedSetting) (restored bool, err error) {
 	decisions, err := m.consent.SettingDecisions(hash)
 	if err != nil {
 		return false, fmt.Errorf("reading the recorded setting decisions: %w", err)

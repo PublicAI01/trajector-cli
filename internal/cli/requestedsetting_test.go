@@ -8,7 +8,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 )
 
-func TestEnable_SecondRunKeepsAnOptionalSettingOnByDefault(t *testing.T) {
+func TestEnable_SecondRunKeepsARequestedSettingOnByDefault(t *testing.T) {
 	for _, input := range []string{"y\n", "\n"} {
 		t.Run(strings.TrimSuffix(input, "\n")+"<enter>", func(t *testing.T) {
 			e := clitest.New(t)
@@ -40,7 +40,7 @@ func TestEnable_SecondRunKeepsAnOptionalSettingOnByDefault(t *testing.T) {
 	}
 }
 
-func TestEnable_SecondRunAnswerNoRestoresTheOptionalSetting(t *testing.T) {
+func TestEnable_SecondRunAnswerNoRestoresTheRequestedSetting(t *testing.T) {
 	e := clitest.New(t)
 	e.Paired()
 	p := e.StartProxy()

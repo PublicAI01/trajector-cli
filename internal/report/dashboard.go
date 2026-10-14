@@ -125,7 +125,7 @@ func projectSection(d Diagnosis) *section {
 		if d.SessionFiles.Err != nil {
 			s.warnf("the session file registry could not be read: %v. Run `trajector doctor`.", d.SessionFiles.Err)
 		}
-		for _, line := range optionalSettingLines(d.OptionalSettings) {
+		for _, line := range requestedSettingLines(d.RequestedSettings) {
 			s.linef("%s", line)
 		}
 	case !st.Enabled && !st.Injected:
@@ -296,19 +296,19 @@ func signalLines(d Diagnosis) []string {
 	}
 	if s.AssistantLinesWithEmptyReasoning > 0 {
 		lines = append(lines, fmt.Sprintf(emptyReasoningFact, s.AssistantLinesWithEmptyReasoning, s.AssistantLines))
-		if settingOff(d.OptionalSettings, claudesettings.KeyShowThinkingSummaries) {
+		if settingOff(d.RequestedSettings, claudesettings.KeyShowThinkingSummaries) {
 			lines = append(lines, emptyReasoningWayOut)
 		}
 	}
 	return lines
 }
 
-// settingOff reports that an optional Claude Code setting is off for
+// settingOff reports that a requested Claude Code setting is off for
 // this project: either nobody set it, or the user set it to false. A
 // setting the diagnosis says nothing about is not reported off — a
 // sentence that sends the user to a setting reads its state, and never
 // guesses it from the absence of one.
-func settingOff(settings []OptionalSettingStatus, key string) bool {
+func settingOff(settings []RequestedSettingStatus, key string) bool {
 	for _, s := range settings {
 		if s.Key == key {
 			return s.State == claudesettings.Unset || s.State == claudesettings.OffByUser
@@ -438,11 +438,11 @@ func recordsWaitingLine(s SpoolState) string {
 	return line + "."
 }
 
-// optionalSettingLines closes the Project section with the optional
+// requestedSettingLines closes the Project section with the requested
 // settings. A setting that is on is stated as on; a declined one keeps
 // its single factual line and is never argued with again; only a
 // setting that is off and was never declined gets the recommendation.
-func optionalSettingLines(settings []OptionalSettingStatus) []string {
+func requestedSettingLines(settings []RequestedSettingStatus) []string {
 	var lines []string
 	declined := 0
 	var off []string

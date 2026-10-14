@@ -42,14 +42,14 @@ func TestDoctorReportsAnUnreadableTokenStore(t *testing.T) {
 
 // An optional setting left off is not a fault, so doctor never
 // mentions one, whatever state it is in.
-func TestDoctorSaysNothingAboutOptionalSettings(t *testing.T) {
+func TestDoctorSaysNothingAboutRequestedSettings(t *testing.T) {
 	for _, state := range []claudesettings.SettingState{
 		claudesettings.Unset, claudesettings.OnByUs, claudesettings.OnByUser, claudesettings.OffByUser,
 	} {
 		for _, declined := range []bool{false, true} {
 			d := device()
 			d.Project = contributing()
-			d.OptionalSettings = []report.OptionalSettingStatus{
+			d.RequestedSettings = []report.RequestedSettingStatus{
 				{Key: claudesettings.KeyShowThinkingSummaries, State: state, Declined: declined},
 			}
 			_, out := doctorText(d)

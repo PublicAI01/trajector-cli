@@ -5,20 +5,26 @@ package claudesettings
 const KeyShowThinkingSummaries = "showThinkingSummaries"
 
 // Disclosure is one labeled line of what the user is told before
-// deciding about an optional setting.
+// deciding about a requested setting.
 type Disclosure struct {
 	Label string
 	Text  string
 }
 
-// OptionalSetting describes a Claude Code setting trajector may ask
-// the user to change. Every string is final wording: rendering may
-// re-wrap lines, never rewrite words — this text is the whole
-// disclosure the user gets, with nothing elsewhere to back it up.
-type OptionalSetting struct {
+// RequestedSetting describes a Claude Code setting trajector asks the
+// user to change. Every string is final wording: rendering may re-wrap
+// lines, never rewrite words — this text is the whole disclosure the
+// user gets, with nothing elsewhere to back it up.
+type RequestedSetting struct {
 	Key string
 	// Target is the value written when the user accepts.
-	Target      bool
+	Target bool
+	// Required marks a setting trajector asks for as a condition of
+	// contributing: its disclosures state what leaving it off costs,
+	// and one refusal does not end the ask. A setting that is not
+	// required changes nothing else when the user leaves it off, and
+	// one refusal ends it.
+	Required    bool
 	Intro       string
 	Disclosures []Disclosure
 	// Fact is stated after the disclosures.
@@ -28,11 +34,12 @@ type OptionalSetting struct {
 	AlreadyOn string
 }
 
-// OptionalSettings is the one truth source for the settings trajector
-// may ask about.
-var OptionalSettings = []OptionalSetting{{
-	Key:    KeyShowThinkingSummaries,
-	Target: true,
+// RequestedSettings is the one truth source for the settings trajector
+// asks the user to change.
+var RequestedSettings = []RequestedSetting{{
+	Key:      KeyShowThinkingSummaries,
+	Target:   true,
+	Required: false,
 	Intro: "Claude Code can show you a summary of the model's reasoning as it " +
 		"works. It is off by default, and turning it on also makes the " +
 		"records you contribute more complete.",

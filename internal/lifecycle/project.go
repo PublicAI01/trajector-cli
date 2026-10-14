@@ -207,7 +207,7 @@ func (m *Machine) Uninstall(ctx context.Context, deleteData bool, streams IO) er
 				fmt.Fprintf(streams.Err, "trajector: WARNING: %s\n", unrestoredBaseURLWarning(path, unrestored))
 			}
 		}
-		undone, failures := m.restoreRecordedSettings(root, hashes[root], claudesettings.OptionalSettings)
+		undone, failures := m.restoreRecordedSettings(root, hashes[root], claudesettings.RequestedSettings)
 		reportRestoredSettings(streams, "", undone, failures)
 	}
 	fmt.Fprintf(streams.Out, "Removed injection from %d project(s).\n", removed)

@@ -56,7 +56,7 @@ func TestStatusShowsTheStateOfADeviceThatJustEnabledAProject(t *testing.T) {
 
 // What the optional-settings line says is settled at the renderer;
 // this is that the diagnosis hands it the state enable left behind.
-func TestStatusCarriesTheOptionalSettingAnswerEnableRecorded(t *testing.T) {
+func TestStatusCarriesTheRequestedSettingAnswerEnableRecorded(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		seed   func(t *testing.T, e *env)
@@ -118,7 +118,7 @@ func TestStatusCarriesTheOptionalSettingAnswerEnableRecorded(t *testing.T) {
 	}
 }
 
-func TestStatusShowsNoOptionalSettingLineForAProjectNotEnabled(t *testing.T) {
+func TestStatusShowsNoRequestedSettingLineForAProjectNotEnabled(t *testing.T) {
 	e := newEnv(t)
 	out := e.statusOutput()
 

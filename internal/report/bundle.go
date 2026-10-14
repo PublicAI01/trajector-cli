@@ -129,10 +129,10 @@ type projectWire struct {
 	// reading of whether its hooks load, and the setting that decided
 	// against it.
 	HookPolicy *hookPolicyWire `json:"hook_policy,omitempty"`
-	// OptionalSettings is each optional Claude Code setting's state for
+	// RequestedSettings is each requested Claude Code setting's state for
 	// this project. It is keys and states: the settings are trajector's
 	// own list, and no value the user set is read out of them.
-	OptionalSettings []optionalSettingWire `json:"optional_settings,omitempty"`
+	RequestedSettings []requestedSettingWire `json:"optional_settings,omitempty"`
 	// SessionFiles is counts and sizes only. A session id or a session
 	// file's path would name what the user worked on, and the bundle
 	// is handed to someone else.
@@ -144,7 +144,7 @@ type upstreamMoveWire struct {
 	At   string `json:"at"`
 }
 
-type optionalSettingWire struct {
+type requestedSettingWire struct {
 	Key      string `json:"key"`
 	State    string `json:"state"`
 	Declined bool   `json:"declined"`
@@ -319,7 +319,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			WindowsSide:            d.Project.WindowsSideClaude,
 			UpstreamMoved:          upstreamMoveValue(d),
 			HookPolicy:             hookPolicyValue(d),
-			OptionalSettings:       optionalSettingValues(d),
+			RequestedSettings:      requestedSettingValues(d),
 			SessionFiles: sessionFilesWire{
 				Err:          errString(d.SessionFiles.Err),
 				Sessions:     d.SessionFiles.Sessions,
@@ -376,7 +376,7 @@ func hookPolicyValue(d Diagnosis) *hookPolicyWire {
 	return &hookPolicyWire{Runs: d.HookPolicy.Runs, Reason: d.HookPolicy.Reason}
 }
 
-// settingStateNames spells each optional setting state for the wire. A
+// settingStateNames spells each requested setting state for the wire. A
 // state this table does not name reaches the bundle as unknown rather
 // than as one of the states it does name.
 var settingStateNames = map[claudesettings.SettingState]string{
@@ -386,19 +386,19 @@ var settingStateNames = map[claudesettings.SettingState]string{
 	claudesettings.OffByUser: "off_by_user",
 }
 
-// optionalSettingValues carries each optional setting's state, nil when
+// requestedSettingValues carries each requested setting's state, nil when
 // the diagnosis resolved none.
-func optionalSettingValues(d Diagnosis) []optionalSettingWire {
-	if len(d.OptionalSettings) == 0 {
+func requestedSettingValues(d Diagnosis) []requestedSettingWire {
+	if len(d.RequestedSettings) == 0 {
 		return nil
 	}
-	out := make([]optionalSettingWire, 0, len(d.OptionalSettings))
-	for _, s := range d.OptionalSettings {
+	out := make([]requestedSettingWire, 0, len(d.RequestedSettings))
+	for _, s := range d.RequestedSettings {
 		name, ok := settingStateNames[s.State]
 		if !ok {
 			name = "unknown"
 		}
-		out = append(out, optionalSettingWire{Key: s.Key, State: name, Declined: s.Declined})
+		out = append(out, requestedSettingWire{Key: s.Key, State: name, Declined: s.Declined})
 	}
 	return out
 }

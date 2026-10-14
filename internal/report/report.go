@@ -211,11 +211,11 @@ type Diagnosis struct {
 	// living only while a session is open is the healthy state and an
 	// absent proxy is nothing to repair.
 	ProxyIdleBetweenSessions bool
-	// OptionalSettings is each optional Claude Code setting's state for
+	// RequestedSettings is each requested Claude Code setting's state for
 	// the current project, resolved only while it contributes. status
 	// renders it and doctor never does: an optional setting left off is
 	// not a fault.
-	OptionalSettings []OptionalSettingStatus
+	RequestedSettings []RequestedSettingStatus
 	// Proxy is who holds the proxy port, read without the startup grace
 	// only callers about to act on it pay.
 	Proxy proxylife.Verdict

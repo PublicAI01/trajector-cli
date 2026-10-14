@@ -610,7 +610,7 @@ func (m *Machine) doctorInjection(ctx context.Context, f *report.Findings, st re
 		if unrestored != "" {
 			f.Problemf("%s", unrestoredBaseURLWarning(settingsPath, unrestored))
 		}
-		undone, failures := m.restoreRecordedSettings(st.Root, st.Hash, claudesettings.OptionalSettings)
+		undone, failures := m.restoreRecordedSettings(st.Root, st.Hash, claudesettings.RequestedSettings)
 		for _, key := range undone {
 			f.Detailf("%s", settingRestoredLine(key))
 		}

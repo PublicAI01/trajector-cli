@@ -76,7 +76,7 @@ func (m *Machine) diagnose(ctx context.Context, dir string, reading sessionFileR
 		d.EnabledProjects = len(grants)
 	}
 	if st.Enabled {
-		d.OptionalSettings = m.optionalSettingStatuses(st)
+		d.RequestedSettings = m.requestedSettingStatuses(st)
 		// Read fresh every time: the configuration it reads is the
 		// user's or their organization's and changes without notice,
 		// and a cached reading would report a state that no longer is.

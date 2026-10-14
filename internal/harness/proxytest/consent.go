@@ -18,7 +18,7 @@ const (
 	Denied  = consent.StateDenied
 )
 
-// SettingAnswer is the user's answer to an optional setting, in
+// SettingAnswer is the user's answer to a requested setting, in
 // consent's own type, with the two answers a setting can hold.
 type SettingAnswer = consent.SettingAnswer
 
@@ -32,7 +32,7 @@ const (
 	PriorTrue   = consent.PriorTrue
 )
 
-// SettingDecision is one optional setting's recorded answer, in
+// SettingDecision is one requested setting's recorded answer, in
 // consent's own type.
 type SettingDecision = consent.SettingDecision
 
@@ -89,7 +89,7 @@ func (s *Sandbox) DecideProject(projectIDHash, root string, d Decision, at strin
 	}
 }
 
-// DecideSetting records the answer for one optional setting of a
+// DecideSetting records the answer for one requested setting of a
 // project that already holds a decision.
 func (s *Sandbox) DecideSetting(projectIDHash, settingKey string, d SettingDecision) {
 	s.t.Helper()

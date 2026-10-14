@@ -682,26 +682,26 @@ func TestStatusPairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.T
 	const wayOut = key + " is off for this project; run `trajector enable` (with --no-proxy if you use it) to turn it on."
 	for _, tc := range []struct {
 		name     string
-		settings []report.OptionalSettingStatus
+		settings []report.RequestedSettingStatus
 		wantWay  bool
 	}{
 		{
 			name:     "nobody set it",
-			settings: []report.OptionalSettingStatus{{Key: key, State: claudesettings.Unset}},
+			settings: []report.RequestedSettingStatus{{Key: key, State: claudesettings.Unset}},
 			wantWay:  true,
 		},
 		{
 			name:     "the user set it to false",
-			settings: []report.OptionalSettingStatus{{Key: key, State: claudesettings.OffByUser}},
+			settings: []report.RequestedSettingStatus{{Key: key, State: claudesettings.OffByUser}},
 			wantWay:  true,
 		},
 		{
 			name:     "trajector set it on",
-			settings: []report.OptionalSettingStatus{{Key: key, State: claudesettings.OnByUs}},
+			settings: []report.RequestedSettingStatus{{Key: key, State: claudesettings.OnByUs}},
 		},
 		{
 			name:     "the user set it on",
-			settings: []report.OptionalSettingStatus{{Key: key, State: claudesettings.OnByUser}},
+			settings: []report.RequestedSettingStatus{{Key: key, State: claudesettings.OnByUser}},
 		},
 		{
 			name: "no state for the setting at all",
@@ -709,7 +709,7 @@ func TestStatusPairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.T
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := enabledDevice()
-			d.OptionalSettings = tc.settings
+			d.RequestedSettings = tc.settings
 			d.SessionFiles.Signals = drift.Signals{AssistantLines: 9, AssistantLinesWithEmptyReasoning: 6}
 
 			out := dashboard(d)
@@ -726,7 +726,7 @@ func TestStatusPairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.T
 
 func TestStatusStatesNoEmptyReasoningCountWhereNoLineCarriesOne(t *testing.T) {
 	d := enabledDevice()
-	d.OptionalSettings = []report.OptionalSettingStatus{
+	d.RequestedSettings = []report.RequestedSettingStatus{
 		{Key: claudesettings.KeyShowThinkingSummaries, State: claudesettings.Unset},
 	}
 	d.SessionFiles.Signals = drift.Signals{AssistantLines: 9}

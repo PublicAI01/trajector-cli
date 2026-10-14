@@ -129,7 +129,7 @@ func TestTheBundleCarriesWhatTheOtherSurfacesReportAboutTheDevice(t *testing.T) 
 	d.Project = contributing()
 	d.StaleDiscoveryHook = true
 	d.ProxyIdleBetweenSessions = true
-	d.OptionalSettings = []report.OptionalSettingStatus{{
+	d.RequestedSettings = []report.RequestedSettingStatus{{
 		Key:      claudesettings.KeyShowThinkingSummaries,
 		State:    claudesettings.OffByUser,
 		Declined: true,

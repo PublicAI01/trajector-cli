@@ -244,7 +244,7 @@ func TestFinishUpgradeNeverReachesAWholeInjection(t *testing.T) {
 		"InjectProject", "injectProject", "removeInjection", "RemoveProject",
 		"SetBaseURL",
 		"EnsureGitIgnored", "RemoveGitIgnored",
-		"SetTopLevelBool", "RestoreTopLevelBool", "offerOptionalSettings", "restoreRecordedSettings",
+		"SetTopLevelBool", "RestoreTopLevelBool", "offerRequestedSettings", "restoreRecordedSettings",
 		"InjectUserHook", "RemoveUserHook",
 	}
 	reached := map[string]bool{"FinishUpgrade": true}

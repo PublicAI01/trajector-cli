@@ -151,7 +151,7 @@ check runs it on its own.
   has, for each enabled project whose directory is still there. It
   grants nothing: a settings file with no injection of trajector's is
   left as it is, and finish writes only the hooks, never `env`, the
-  base URL, an optional setting or `.gitignore`. It then leaves the
+  base URL, a requested setting or `.gitignore`. It then leaves the
   user's next command its lines, and it never takes over the proxy:
   the next session's `ensure-proxy` does that, as for any older proxy.
   An interrupted transaction is undone by the next run that takes the

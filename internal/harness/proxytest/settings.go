@@ -65,7 +65,7 @@ const (
 	DiscoveryMarker   = claudesettings.DiscoveryMarker
 )
 
-// KeyShowThinkingSummaries is the optional setting trajector asks
+// KeyShowThinkingSummaries is the requested setting trajector asks
 // about, named from the one module that states it.
 const KeyShowThinkingSummaries = claudesettings.KeyShowThinkingSummaries
 
