@@ -4,6 +4,26 @@ All notable changes to trajector are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- `showThinkingSummaries` is now a setting trajector requires: sessions
+  recorded without reasoning summaries are not rewarded, but they are
+  still recorded and uploaded. The current rule is published at
+  https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries.
+  `trajector enable` says so when it asks, and `trajector status` says so
+  while the setting is off for the project, also after you declined it.
+  `enable` asks the same way as before: yes is the suggested answer
+  unless you turned the setting off yourself, and with no interactive
+  session nothing is asked and nothing is written.
+- Section 5 of the data agreement, Client settings, now says that
+  `showThinkingSummaries` is required; recording pauses until you run
+  `trajector enable` once to accept it (with --no-proxy if you use it).
+  PRIVACY.md has a new section, "A setting we require".
+- `trajector status` and `trajector enable` call these settings "Claude
+  Code settings" instead of "Optional settings".
+
 ## [0.4.0] - 2026-10-13
 
 ### Added
@@ -940,6 +960,7 @@ Hardened ahead of the tag:
 - State files are replaced and read atomically on every platform,
   Windows rename collisions included.
 
+[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.7...v0.4.0
 [0.3.7]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.5...v0.3.6

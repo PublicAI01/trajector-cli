@@ -4,6 +4,17 @@ package claudesettings
 // whether thinking summaries are shown to the user.
 const KeyShowThinkingSummaries = "showThinkingSummaries"
 
+// reasoningSummariesDoc is the public page that says what counts as a
+// session with reasoning summaries and how each Claude Code surface
+// turns them on. Every sentence about leaving showThinkingSummaries off
+// points there instead of restating it.
+const reasoningSummariesDoc = "https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries"
+
+// ReasoningSummariesOffCost is what leaving showThinkingSummaries off
+// costs, as a lowercase clause each surface builds its own sentence
+// around.
+const ReasoningSummariesOffCost = "sessions without reasoning summaries are not rewarded"
+
 // Disclosure is one labeled line of what the user is told before
 // deciding about a requested setting.
 type Disclosure struct {
@@ -24,7 +35,10 @@ type RequestedSetting struct {
 	// and one refusal does not end the ask. A setting that is not
 	// required changes nothing else when the user leaves it off, and
 	// one refusal ends it.
-	Required    bool
+	Required bool
+	// OffCost is what leaving a required setting off costs, as a
+	// lowercase clause; empty for a setting that is not required.
+	OffCost     string
 	Intro       string
 	Disclosures []Disclosure
 	// Fact is stated after the disclosures.
@@ -39,7 +53,8 @@ type RequestedSetting struct {
 var RequestedSettings = []RequestedSetting{{
 	Key:      KeyShowThinkingSummaries,
 	Target:   true,
-	Required: false,
+	Required: true,
+	OffCost:  ReasoningSummariesOffCost,
 	Intro: "Claude Code can show you a summary of the model's reasoning as it " +
 		"works. It is off by default, and turning it on also makes the " +
 		"records you contribute more complete.",
@@ -53,8 +68,10 @@ var RequestedSettings = []RequestedSetting{{
 			"only decides whether you are shown it"},
 		{"Undoing it", "`trajector disable` puts it back exactly as it was, or " +
 			"change it yourself at any time"},
-		{"If you say no", "nothing else changes. Recording, rewards, and every " +
-			"other part of trajector work the same"},
+		{"If you say no", "recording goes on, but " + ReasoningSummariesOffCost +
+			". The current rule: " + reasoningSummariesDoc},
+		{"Where it works", "Claude Code in a terminal. The desktop app and the " +
+			"SDK have their own switch: " + reasoningSummariesDoc},
 	},
 	Fact: "Claude Code stopped generating these summaries by default in " +
 		"v2.1.89. This setting turns them back on.",

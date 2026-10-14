@@ -5,6 +5,8 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/PublicAI01/trajector-cli/internal/capture"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -439,19 +441,24 @@ func recordsWaitingLine(s SpoolState) string {
 }
 
 // requestedSettingLines closes the Project section with the requested
-// settings. A setting that is on is stated as on; a declined one keeps
-// its single factual line and is never argued with again; only a
-// setting that is off and was never declined gets the recommendation.
+// settings. A setting that is on is stated as on. A required setting
+// that is off is stated with what that costs, declined or not: one
+// refusal does not end it. An optional setting that was declined keeps
+// its single factual line and is never argued with again; only one that
+// is off and was never declined gets the recommendation.
 func requestedSettingLines(settings []RequestedSettingStatus) []string {
 	var lines []string
 	declined := 0
 	var off []string
+	var required []RequestedSettingStatus
 	for _, s := range settings {
 		switch {
 		case s.State == claudesettings.OnByUs:
-			lines = append(lines, fmt.Sprintf("Optional settings: %s on (set by trajector).", s.Key))
+			lines = append(lines, fmt.Sprintf("Claude Code settings: %s on (set by trajector).", s.Key))
 		case s.State == claudesettings.OnByUser:
-			lines = append(lines, fmt.Sprintf("Optional settings: %s on.", s.Key))
+			lines = append(lines, fmt.Sprintf("Claude Code settings: %s on.", s.Key))
+		case s.Required:
+			required = append(required, s)
 		case s.Declined:
 			declined++
 		default:
@@ -459,7 +466,11 @@ func requestedSettingLines(settings []RequestedSettingStatus) []string {
 		}
 	}
 	if declined > 0 {
-		lines = append(lines, fmt.Sprintf("Optional settings: %d declined. Run `trajector enable` %s to review.", declined, routing.NoProxyCaveat))
+		lines = append(lines, fmt.Sprintf("Claude Code settings: %d declined. Run `trajector enable` %s to review.", declined, routing.NoProxyCaveat))
+	}
+	for _, s := range required {
+		lines = append(lines, fmt.Sprintf("A setting trajector requires is off: %s. %s. "+
+			"Run `trajector enable` %s to turn it on.", s.Key, sentenceCase(s.OffCost), routing.NoProxyCaveat))
 	}
 	for _, key := range off {
 		lines = append(lines, fmt.Sprintf("One optional setting is off: %s. "+
@@ -467,4 +478,14 @@ func requestedSettingLines(settings []RequestedSettingStatus) []string {
 			"Run `trajector enable` %s to see what it changes.", key, routing.NoProxyCaveat))
 	}
 	return lines
+}
+
+// sentenceCase capitalizes the first letter of a clause that opens a
+// sentence.
+func sentenceCase(clause string) string {
+	r, size := utf8.DecodeRuneInString(clause)
+	if size == 0 {
+		return clause
+	}
+	return string(unicode.ToUpper(r)) + clause[size:]
 }

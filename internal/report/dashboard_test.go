@@ -308,12 +308,21 @@ func TestStatusPrintsEveryStandingWithTheServicesWordsBetween(t *testing.T) {
 }
 
 // The Project section of a contributing project ends with the requested
-// settings. Three of the lines are finalized wording; the fourth — a
-// true of the user's own — is the same statement without the
-// set-by-trajector mark.
+// settings. The lines are finalized wording; a true of the user's own is
+// the same statement without the set-by-trajector mark.
 func TestStatusEndsTheProjectSectionWithTheRequestedSetting(t *testing.T) {
 	const key = claudesettings.KeyShowThinkingSummaries
-	recommendation := "One optional setting is off: " + key + ". " +
+	const optionalKey = "exampleOptionalSetting"
+	required := func(state claudesettings.SettingState, declined bool) report.RequestedSettingStatus {
+		return report.RequestedSettingStatus{
+			Key: key, State: state, Declined: declined,
+			Required: true, OffCost: claudesettings.ReasoningSummariesOffCost,
+		}
+	}
+	requiredOff := "A setting trajector requires is off: " + key + ". " +
+		"Sessions without reasoning summaries are not rewarded. " +
+		"Run `trajector enable` (with --no-proxy if you use it) to turn it on."
+	recommendation := "One optional setting is off: " + optionalKey + ". " +
 		"Turning it on costs you nothing and makes your records more complete. " +
 		"Run `trajector enable` (with --no-proxy if you use it) to see what it changes."
 	for _, tc := range []struct {
@@ -323,34 +332,52 @@ func TestStatusEndsTheProjectSectionWithTheRequestedSetting(t *testing.T) {
 		reject  []string
 	}{
 		{
-			name:    "off and never decided",
-			setting: report.RequestedSettingStatus{Key: key, State: claudesettings.Unset},
-			want:    recommendation,
-			reject:  []string{"declined", "set by trajector"},
+			name:    "required, off and never decided",
+			setting: required(claudesettings.Unset, false),
+			want:    requiredOff,
+			reject:  []string{"declined", "set by trajector", "costs you nothing"},
 		},
 		{
-			name:    "explicitly off but never declined here",
-			setting: report.RequestedSettingStatus{Key: key, State: claudesettings.OffByUser},
-			want:    recommendation,
-			reject:  []string{"declined", "set by trajector"},
+			name:    "required, explicitly off",
+			setting: required(claudesettings.OffByUser, false),
+			want:    requiredOff,
+			reject:  []string{"declined", "set by trajector", "costs you nothing"},
 		},
 		{
-			name:    "declined",
-			setting: report.RequestedSettingStatus{Key: key, State: claudesettings.Unset, Declined: true},
-			want:    "Optional settings: 1 declined. Run `trajector enable` (with --no-proxy if you use it) to review.",
+			name:    "required and declined",
+			setting: required(claudesettings.Unset, true),
+			want:    requiredOff,
+			reject:  []string{"declined", "set by trajector", "costs you nothing"},
+		},
+		{
+			name:    "required, on because trajector wrote it",
+			setting: required(claudesettings.OnByUs, false),
+			want:    "Claude Code settings: " + key + " on (set by trajector).",
+			reject:  []string{"not rewarded", "declined"},
+		},
+		{
+			name:    "required, on as the user's own choice",
+			setting: required(claudesettings.OnByUser, false),
+			want:    "Claude Code settings: " + key + " on.",
+			reject:  []string{"not rewarded", "declined", "set by trajector"},
+		},
+		{
+			name:    "optional, off and never decided",
+			setting: report.RequestedSettingStatus{Key: optionalKey, State: claudesettings.Unset},
+			want:    recommendation,
+			reject:  []string{"declined", "set by trajector", "not rewarded"},
+		},
+		{
+			name:    "optional, explicitly off but never declined here",
+			setting: report.RequestedSettingStatus{Key: optionalKey, State: claudesettings.OffByUser},
+			want:    recommendation,
+			reject:  []string{"declined", "set by trajector", "not rewarded"},
+		},
+		{
+			name:    "optional and declined",
+			setting: report.RequestedSettingStatus{Key: optionalKey, State: claudesettings.Unset, Declined: true},
+			want:    "Claude Code settings: 1 declined. Run `trajector enable` (with --no-proxy if you use it) to review.",
 			reject:  []string{"costs you nothing", "set by trajector"},
-		},
-		{
-			name:    "on because trajector wrote it",
-			setting: report.RequestedSettingStatus{Key: key, State: claudesettings.OnByUs},
-			want:    "Optional settings: " + key + " on (set by trajector).",
-			reject:  []string{"costs you nothing", "declined"},
-		},
-		{
-			name:    "on as the user's own choice",
-			setting: report.RequestedSettingStatus{Key: key, State: claudesettings.OnByUser},
-			want:    "Optional settings: " + key + " on.",
-			reject:  []string{"costs you nothing", "declined", "set by trajector"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -372,7 +399,7 @@ func TestStatusShowsNoRequestedSettingLineOutsideAContributingProject(t *testing
 	}
 	out := dashboard(d)
 
-	rejects(t, "status", out, "optional setting", "Optional settings", claudesettings.KeyShowThinkingSummaries)
+	rejects(t, "status", out, "optional setting", "Claude Code settings", "requires", claudesettings.KeyShowThinkingSummaries)
 }
 
 // contributing is a project in the fully healthy enabled state.

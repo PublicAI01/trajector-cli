@@ -679,7 +679,8 @@ func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
 
 func TestStatusPairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.T) {
 	const key = claudesettings.KeyShowThinkingSummaries
-	const wayOut = key + " is off for this project; run `trajector enable` (with --no-proxy if you use it) to turn it on."
+	const wayOut = key + " is off for this project, and sessions without reasoning summaries are not rewarded; " +
+		"run `trajector enable` (with --no-proxy if you use it) to turn it on."
 	for _, tc := range []struct {
 		name     string
 		settings []report.RequestedSettingStatus

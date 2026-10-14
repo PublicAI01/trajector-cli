@@ -40,8 +40,8 @@ func TestDoctorReportsAnUnreadableTokenStore(t *testing.T) {
 	wants(t, "doctor", out, "token store could not be read", "pairing state is unknown")
 }
 
-// An optional setting left off is not a fault, so doctor never
-// mentions one, whatever state it is in.
+// A requested setting left off is the user's choice, not a fault of the
+// device, so doctor never mentions one, whatever state it is in.
 func TestDoctorSaysNothingAboutRequestedSettings(t *testing.T) {
 	for _, state := range []claudesettings.SettingState{
 		claudesettings.Unset, claudesettings.OnByUs, claudesettings.OnByUser, claudesettings.OffByUser,
@@ -50,11 +50,14 @@ func TestDoctorSaysNothingAboutRequestedSettings(t *testing.T) {
 			d := device()
 			d.Project = contributing()
 			d.RequestedSettings = []report.RequestedSettingStatus{
-				{Key: claudesettings.KeyShowThinkingSummaries, State: state, Declined: declined},
+				{
+					Key: claudesettings.KeyShowThinkingSummaries, State: state, Declined: declined,
+					Required: true, OffCost: claudesettings.ReasoningSummariesOffCost,
+				},
 			}
 			_, out := doctorText(d)
 
-			rejects(t, "doctor", out, "optional", "Optional", claudesettings.KeyShowThinkingSummaries)
+			rejects(t, "doctor", out, "optional", "Optional", "requires", "not rewarded", claudesettings.KeyShowThinkingSummaries)
 		}
 	}
 }

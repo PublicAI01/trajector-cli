@@ -54,9 +54,12 @@ func TestStatusShowsTheStateOfADeviceThatJustEnabledAProject(t *testing.T) {
 	}
 }
 
-// What the optional-settings line says is settled at the renderer;
+// What the requested-settings line says is settled at the renderer;
 // this is that the diagnosis hands it the state enable left behind.
 func TestStatusCarriesTheRequestedSettingAnswerEnableRecorded(t *testing.T) {
+	requiredOff := "A setting trajector requires is off: " + requestedKey + ". " +
+		"Sessions without reasoning summaries are not rewarded. " +
+		"Run `trajector enable` (with --no-proxy if you use it) to turn it on."
 	for _, tc := range []struct {
 		name   string
 		seed   func(t *testing.T, e *env)
@@ -67,13 +70,13 @@ func TestStatusCarriesTheRequestedSettingAnswerEnableRecorded(t *testing.T) {
 		{
 			name:  "accepted and written by trajector",
 			stdin: "yes\ny\n",
-			want:  "Optional settings: " + optionalKey + " on (set by trajector).",
+			want:  "Claude Code settings: " + requestedKey + " on (set by trajector).",
 		},
 		{
-			name:   "declined once",
+			name:   "declined once, which does not end a required setting",
 			stdin:  "yes\nn\n",
-			want:   "Optional settings: 1 declined. Run `trajector enable` (with --no-proxy if you use it) to review.",
-			reject: "costs you nothing",
+			want:   requiredOff,
+			reject: "declined",
 		},
 		{
 			name: "on as the user's own choice",
@@ -82,17 +85,26 @@ func TestStatusCarriesTheRequestedSettingAnswerEnableRecorded(t *testing.T) {
 				writeUserSettings(t, e, `{"showThinkingSummaries": true}`)
 			},
 			stdin:  "yes\n",
-			want:   "Optional settings: " + optionalKey + " on.",
+			want:   "Claude Code settings: " + requestedKey + " on.",
 			reject: "set by trajector",
 		},
 		{
+			name: "set to false by the user and left so",
+			seed: func(t *testing.T, e *env) {
+				t.Helper()
+				writeUserSettings(t, e, `{"showThinkingSummaries": false}`)
+			},
+			stdin:  "yes\nn\n",
+			want:   requiredOff,
+			reject: "costs you nothing",
+		},
+		{
 			// stdin ends before the question, so nothing was answered,
-			// nothing recorded: status still recommends.
-			name:  "left off with no answer recorded",
-			stdin: "yes\n",
-			want: "One optional setting is off: " + optionalKey + ". Turning it on costs " +
-				"you nothing and makes your records more complete. Run `trajector enable` (with --no-proxy if you use it) " +
-				"to see what it changes.",
+			// nothing recorded: status still states the setting is off.
+			name:   "left off with no answer recorded",
+			stdin:  "yes\n",
+			want:   requiredOff,
+			reject: "costs you nothing",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,7 +134,7 @@ func TestStatusShowsNoRequestedSettingLineForAProjectNotEnabled(t *testing.T) {
 	e := newEnv(t)
 	out := e.statusOutput()
 
-	for _, unwanted := range []string{"Optional settings", "optional setting", optionalKey} {
+	for _, unwanted := range []string{"Claude Code settings", "requires", requestedKey} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("status = %q, want no %q for a project that is not enabled", out, unwanted)
 		}

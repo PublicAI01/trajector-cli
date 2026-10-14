@@ -12,11 +12,15 @@ import (
 // presents it: its key, its classified state, and whether the user
 // declined it. Declined rides beside the state because a declined
 // setting is still off — the two together decide whether status
-// recommends or merely records.
+// recommends or merely records. Required and OffCost are the
+// setting's own (claudesettings.RequestedSetting): a required setting
+// that is off is stated with its cost whether or not it was declined.
 type RequestedSettingStatus struct {
 	Key      string
 	State    claudesettings.SettingState
 	Declined bool
+	Required bool
+	OffCost  string
 }
 
 // ProjectStatus is everything the machine knows about one project's

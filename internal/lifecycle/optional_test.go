@@ -9,7 +9,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
 
-const optionalKey = proxytest.KeyShowThinkingSummaries
+const requestedKey = proxytest.KeyShowThinkingSummaries
 
 // containsWrapped reports whether out contains want regardless of where
 // rendering wrapped its lines.
@@ -19,12 +19,12 @@ func containsWrapped(out, want string) bool {
 
 func settingValue(t *testing.T, settings *proxytest.Settings) (value, found bool) {
 	t.Helper()
-	return settings.TopLevelBool(optionalKey)
+	return settings.TopLevelBool(requestedKey)
 }
 
 func settingDecision(t *testing.T, e *env, hash string) (proxytest.SettingDecision, bool) {
 	t.Helper()
-	d, ok := e.sandbox.SettingDecisions(hash)[optionalKey]
+	d, ok := e.sandbox.SettingDecisions(hash)[requestedKey]
 	return d, ok
 }
 
@@ -49,14 +49,18 @@ func TestEnableAsksAndWritesTheRequestedSettingOnYes(t *testing.T) {
 
 	out := e.stdout.String()
 	for _, want := range []string{
-		"Optional setting for this project",
+		"Claude Code setting for this project",
 		"What changes",
-		optionalKey + " becomes true in",
+		requestedKey + " becomes true in",
 		"more valuable to us",
 		"Claude Code stopped generating these summaries by default in",
 		"Turn it on? [Y/n]",
+		"If you say no recording goes on, but sessions without reasoning summaries are not rewarded. " +
+			"The current rule: https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries",
+		"Where it works Claude Code in a terminal. The desktop app and the SDK have their own switch: " +
+			"https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries",
 	} {
-		if !strings.Contains(out, want) {
+		if !containsWrapped(out, want) {
 			t.Errorf("stdout misses %q:\n%s", want, out)
 		}
 	}
@@ -77,7 +81,7 @@ func TestEnableEmptyInputTakesTheStatedDefault(t *testing.T) {
 		name       string
 		seed       func(t *testing.T, e *env)
 		wantPrompt string
-		wantSaid   string
+		wantSaid   []string
 		wantOn     bool
 		wantAnswer proxytest.SettingAnswer
 	}{
@@ -85,7 +89,7 @@ func TestEnableEmptyInputTakesTheStatedDefault(t *testing.T) {
 			name:       "an unset setting suggests yes",
 			seed:       func(*testing.T, *env) {},
 			wantPrompt: "Turn it on? [Y/n]",
-			wantSaid:   "Optional setting for this project",
+			wantSaid:   []string{"Claude Code setting for this project"},
 			wantOn:     true,
 			wantAnswer: proxytest.AnswerAccepted,
 		},
@@ -96,7 +100,12 @@ func TestEnableEmptyInputTakesTheStatedDefault(t *testing.T) {
 				writeUserSettings(t, e, `{"showThinkingSummaries": false}`)
 			},
 			wantPrompt: "Turn it on for this project? [y/N]",
-			wantSaid:   "You have showThinkingSummaries set to false in your user settings.json.",
+			wantSaid: []string{
+				"You have showThinkingSummaries set to false in your user settings.json.",
+				"Confirming would set it to true for this project only, overriding that. " +
+					"You can leave it as false. Recording goes on, but sessions without " +
+					"reasoning summaries are not rewarded.",
+			},
 			wantOn:     false,
 			wantAnswer: proxytest.AnswerDeclined,
 		},
@@ -115,8 +124,13 @@ func TestEnableEmptyInputTakesTheStatedDefault(t *testing.T) {
 			if !strings.Contains(out, tc.wantPrompt) {
 				t.Errorf("stdout misses %q:\n%s", tc.wantPrompt, out)
 			}
-			if !containsWrapped(out, tc.wantSaid) {
-				t.Errorf("stdout misses %q:\n%s", tc.wantSaid, out)
+			for _, said := range tc.wantSaid {
+				if !containsWrapped(out, said) {
+					t.Errorf("stdout misses %q:\n%s", said, out)
+				}
+			}
+			if containsWrapped(out, "nothing else changes") {
+				t.Errorf("stdout says declining a required setting changes nothing:\n%s", out)
 			}
 			if value, found := settingValue(t, e.projectSettings()); (found && value) != tc.wantOn {
 				t.Errorf("setting = %v, %v, want on=%v", value, found, tc.wantOn)
@@ -171,7 +185,7 @@ func TestEnableLeavesAUsersOwnTrueAlone(t *testing.T) {
 			wantSaid: "showThinkingSummaries is already true in your " + string(proxytest.SourceUser) + ".",
 			stillOn: func(t *testing.T, e *env) bool {
 				t.Helper()
-				value, found := e.claude().UserSettings().TopLevelBool(optionalKey)
+				value, found := e.claude().UserSettings().TopLevelBool(requestedKey)
 				return found && value
 			},
 		},
@@ -245,7 +259,7 @@ func TestEnableAcceptWhenAlreadyTrueRecordsNoWriteOfOurs(t *testing.T) {
 
 	in := &editThenAnswer{
 		edit: func() {
-			e.projectSettings().SetTopLevelBool(optionalKey, true)
+			e.projectSettings().SetTopLevelBool(requestedKey, true)
 		},
 		answer: strings.NewReader("y\n"),
 	}
@@ -471,7 +485,7 @@ func TestDisableLeavesAHandEditedValueAlone(t *testing.T) {
 	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	e.projectSettings().SetTopLevelBool(optionalKey, false)
+	e.projectSettings().SetTopLevelBool(requestedKey, false)
 
 	e.stdout.Reset()
 	if err := e.machine().Disable(t.Context(), e.project, false, e.io()); err != nil {
@@ -492,7 +506,7 @@ func TestDisableKeepsTheRecordWhenRestoreFails(t *testing.T) {
 	e := newEnv(t)
 	hash := e.status().Hash
 	e.sandbox.DecideProject(hash, e.canonicalRoot(), proxytest.Granted, "2026-08-02T00:00:00Z")
-	e.sandbox.DecideSetting(hash, optionalKey, proxytest.SettingDecision{
+	e.sandbox.DecideSetting(hash, requestedKey, proxytest.SettingDecision{
 		Answer: proxytest.AnswerAccepted, Prior: proxytest.PriorAbsent, DecidedAt: "2026-08-02T00:00:00Z",
 	})
 	writeProjectLocalSettings(t, e, "{ not json")
@@ -529,7 +543,7 @@ func TestEnableNonInteractiveChangesNoRequestedSetting(t *testing.T) {
 		t.Fatalf("enable: %v\nstdout: %s", err, e.stdout)
 	}
 	out := e.stdout.String()
-	if !strings.Contains(out, "Optional settings were not changed: they need an interactive session.") ||
+	if !strings.Contains(out, "Claude Code settings were not changed: they need an interactive session.") ||
 		!strings.Contains(out, "Run `trajector enable` (with --no-proxy if you use it) from a terminal to review them.") {
 		t.Errorf("stdout misses the non-interactive notice:\n%s", out)
 	}

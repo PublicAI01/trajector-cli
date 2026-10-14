@@ -17,10 +17,11 @@ import (
 // records every answer. It runs after the project's granted state is
 // recorded — a setting decision has no record to attach to before that
 // — and before injection. It never returns an error: a failure to ask,
-// write, or record degrades to "nothing changed", because the optional
-// ask must never break enable. Every question points the same way: yes
-// means the setting is on. An answer that keeps the file as it is never
-// touches it; only an explicit answer in the other direction writes.
+// write, or record degrades to "nothing changed", because enable does
+// not need any of these settings to finish. Every question points the
+// same way: yes means the setting is on. An answer that keeps the file
+// as it is never touches it; only an explicit answer in the other
+// direction writes.
 func (m *Machine) offerRequestedSettings(streams IO, st report.ProjectStatus) {
 	// A decision store that cannot be read leaves writtenByUs unknowable;
 	// every true then classifies as the user's own, which disable will
@@ -32,7 +33,7 @@ func (m *Machine) offerRequestedSettings(streams IO, st report.ProjectStatus) {
 	for _, s := range claudesettings.RequestedSettings {
 		d, recorded := decisions[s.Key]
 		status := claudesettings.ClassifySetting(st.Root, m.claude(), s.Key, recorded && wroteSetting(d))
-		fmt.Fprintf(streams.Out, "\nOptional setting for this project\n\n")
+		fmt.Fprintf(streams.Out, "\nClaude Code setting for this project\n\n")
 		switch status.State {
 		case claudesettings.OnByUser:
 			printWrapped(streams.Out, fmt.Sprintf(
@@ -55,9 +56,8 @@ func (m *Machine) offerRequestedSettings(streams IO, st report.ProjectStatus) {
 			printWrapped(streams.Out, fmt.Sprintf("You have %s set to false in your %s.", s.Key, status.Source))
 			fmt.Fprintln(streams.Out)
 			printWrapped(streams.Out, fmt.Sprintf(
-				"Confirming would set it to %v for this project only, overriding that. "+
-					"You can leave it as false and nothing else changes — recording, "+
-					"rewards, and every other part of trajector work the same.", s.Target))
+				"Confirming would set it to %v for this project only, overriding that. %s",
+				s.Target, leaveOffLine(s)))
 			fmt.Fprintln(streams.Out)
 			printDisclosures(streams.Out, s.Disclosures)
 			fmt.Fprintln(streams.Out)
@@ -84,6 +84,17 @@ func (m *Machine) offerRequestedSettings(streams IO, st report.ProjectStatus) {
 	}
 }
 
+// leaveOffLine is what the user is told about keeping their own false:
+// a required setting states what that costs, any other setting that
+// nothing else changes.
+func leaveOffLine(s claudesettings.RequestedSetting) string {
+	if s.Required {
+		return "You can leave it as false. Recording goes on, but " + s.OffCost + "."
+	}
+	return "You can leave it as false and nothing else changes — recording, " +
+		"rewards, and every other part of trajector work the same."
+}
+
 // requestedSettingStatuses classifies every requested setting for the
 // diagnosis status renders. A decision store that cannot be read reads
 // as no decisions, exactly as when enable asks: every true then
@@ -101,6 +112,8 @@ func (m *Machine) requestedSettingStatuses(st report.ProjectStatus) []report.Req
 			Key:      s.Key,
 			State:    classified.State,
 			Declined: recorded && d.Answer == consent.AnswerDeclined,
+			Required: s.Required,
+			OffCost:  s.OffCost,
 		})
 	}
 	return statuses
@@ -165,7 +178,7 @@ func wroteSetting(d consent.SettingDecision) bool {
 // enable put in place: disable, uninstall, and doctor's stale-injection
 // repair walk the whole table next to removeInjection, and enable's own
 // turn-off passes just the one setting the user answered about.
-// Declined answers are left standing — one refusal keeps ending the ask
+// Declined answers are left standing, so status keeps reading a refusal
 // across disable/enable cycles. A record is cleared only once its
 // restore succeeded: the record is the only undo there is, so a failed
 // restore must keep it.
@@ -238,7 +251,7 @@ func reportRestoredSettings(streams IO, indent string, undone []string, failures
 // pipeline, or a closed stdin look like — and none of the disclosure
 // conditions can be met when nobody is reading.
 func printNeedsInteractive(streams IO) {
-	fmt.Fprintln(streams.Out, "Optional settings were not changed: they need an interactive session.")
+	fmt.Fprintln(streams.Out, "Claude Code settings were not changed: they need an interactive session.")
 	fmt.Fprintln(streams.Out, "Run `trajector enable` "+routing.NoProxyCaveat+" from a terminal to review them.")
 }
 
