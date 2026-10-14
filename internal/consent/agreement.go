@@ -3,7 +3,7 @@ package consent
 // AgreementVersion identifies the agreement text below. Bumping it
 // makes every earlier acceptance stale: capture pauses until the user
 // reconfirms, so recorded consent always matches the current terms.
-const AgreementVersion = "2026-10-13"
+const AgreementVersion = "2026-10-14"
 
 // UpdatesSince is the AgreementVersion that first carried the section
 // on updates: the one that tells the user this device asks for newer
@@ -98,11 +98,15 @@ machine.
    non-official base URL, its records are marked as third-party
    origin. Reward terms are the same regardless of origin.
 
-5. Optional client settings. During enable, trajector may offer an
-   optional Claude Code setting. If you accept, trajector writes that
-   setting to the project's local Claude Code configuration, records
-   what was there before, and restores it exactly when you disable
-   the project or uninstall. If you decline, nothing else changes.
+5. Client settings. During enable, trajector may offer Claude Code
+   settings. One of them, showThinkingSummaries, is required:
+   sessions recorded without reasoning summaries are not rewarded;
+   the current rule is published at
+   https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries.
+   If you accept a setting, trajector writes it to the project's
+   local Claude Code configuration, records what was there before,
+   and restores it exactly when you disable the project or
+   uninstall. Declining an optional setting changes nothing else.
 
 6. Updates. At most once a day, trajector asks GitHub for the list of
    trajector releases. If the trajector service answers that this

@@ -4,7 +4,7 @@ This page describes everything trajector does with data on your machine and
 what leaves it. The client is fully open source; every statement here can be
 checked against the code in this repository.
 
-It describes version 2026-10-13 of the data agreement — the version
+It describes version 2026-10-14 of the data agreement — the version
 `trajector enable` shows you in full and records when you accept it. The
 agreement and this page state the same terms and change together; the
 version is the day the build carrying those terms was released.
@@ -169,9 +169,26 @@ we ask.
 leaves the change to you. What `trajector enable` asks you is the one
 exception, and it is described below.
 
+### A setting we require
+
+One setting is not optional: `showThinkingSummaries`. Claude Code stopped
+generating summaries of the model's reasoning by default in v2.1.89; this
+setting turns them back on. Sessions recorded without reasoning summaries are
+not rewarded: they are still recorded and uploaded, but they earn nothing. The
+exact rule — what counts as a session with summaries, and how the desktop app
+and the SDK turn them on — is published at
+https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries
+and is not fixed by the client.
+
+Everything else in this section applies to it, with two exceptions: declining
+it has the cost just described, and one refusal does not end it. When sessions
+in a project you enabled carry no reasoning summaries, trajector may remind you
+with a session notice at most once a day in that project. It never blocks you,
+and it stays listed in `trajector status`.
+
 ### What we may ask you to change
 
-A setting qualifies only if all six of these hold:
+An optional setting qualifies only if all six of these hold:
 
 1. **It costs you nothing.** Your token usage is identical with it on or off.
 2. **It does not make your own use of Claude Code worse.**
@@ -190,9 +207,9 @@ A setting that fails any one of these is never asked for.
 - **Never blocking.** A recommendation appears only in the output of a command
   you ran yourself, or as a session notice that does not interrupt you. There
   is nothing you must answer in order to continue.
-- **One refusal ends it.** Decline an item and trajector stops bringing it up.
-  It stays listed in `trajector status`, where you can change your mind, and
-  appears nowhere else.
+- **One refusal ends it for an optional setting.** Decline an item and
+  trajector stops bringing it up. It stays listed in `trajector status`, where
+  you can change your mind, and appears nowhere else.
 
 ### What we tell you, every time
 
@@ -214,7 +231,7 @@ in order to function, and it is allowed only when all of these hold:
 - **the answer we suggest is yes — unless your own configuration already says
   otherwise.** A setting you have explicitly turned off elsewhere is suggested
   as no, and says what it is set to now, what accepting would change it to, and
-  that leaving it alone costs you nothing.
+  what leaving it alone costs you.
 - every setting states all six disclosures above, on screen, at the moment you
   answer
 - **declining is as visible and as easy as accepting**, and the question cannot
