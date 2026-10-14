@@ -122,16 +122,18 @@ func tokenStoreUnreadableWhy(err error) string {
 	return fmt.Sprintf("%v, so the pairing state is unknown, which is not the signed-out state", err)
 }
 
-// doctorPause reports a device-wide pause. Doctor never lifts one —
+// doctorPause reports a device-wide pause, stored or about to be set
+// (ProjectStatus.Pause). Doctor never lifts one —
 // signing in and reconfirming the agreement are the user's decisions —
 // so this is always a problem with the lifting command named.
 func doctorPause(f *Findings, st ProjectStatus) {
-	if st.PauseReason == "" {
+	pause := st.Pause()
+	if pause == "" {
 		return
 	}
 	why, fix := pauseWhyFixFor(st)
 	f.ProblemFix(strings.ToLower(pausedEverywhere), why, fix)
-	for _, next := range pauseNextSteps(st.PauseReason) {
+	for _, next := range pauseNextSteps(pause) {
 		f.Detailf("%s", next)
 	}
 }

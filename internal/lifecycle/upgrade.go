@@ -254,12 +254,14 @@ func (m *Machine) VerifyUpgrade(ctx context.Context) error {
 // asks once the build is replaced, when one stands.
 //
 // The agreement pause itself is not set here: the next session sets
-// it, as it does for any build that finds the agreement changed. A
-// consent record or routing table this build cannot read leaves its
-// line out, and that session says what it found instead. A project it
-// could not complete fails it once the lines are left, so the install
-// stays unfinished and is finished again. Running it again adds
-// nothing that still waits.
+// it, as it does for any build that finds the agreement changed.
+// Until then status and doctor present the pause from the consent
+// record, the same way for a build installed by hand, which never runs
+// this. A consent record or routing table this build cannot read
+// leaves its line out, and that session says what it found instead. A
+// project it could not complete fails it once the lines are left, so
+// the install stays unfinished and is finished again. Running it again
+// adds nothing that still waits.
 func (m *Machine) FinishUpgrade(context.Context) error {
 	completed, repairErr := m.completeEnabledProjects()
 	lines := []string{upgradedNotice(m.deps.Version)}

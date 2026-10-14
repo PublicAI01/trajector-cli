@@ -71,6 +71,7 @@ func (m *Machine) diagnose(ctx context.Context, dir string, reading sessionFileR
 	if err != nil {
 		return d, err
 	}
+	st.ReconfirmPending = reconfirmPending(st)
 	d.Project = st
 	if grants, err := m.routes.All(); err == nil {
 		d.EnabledProjects = len(grants)
@@ -254,6 +255,22 @@ func (m *Machine) readConsent(st *report.ProjectStatus) {
 	if ok {
 		st.ConsentState = state
 	}
+}
+
+// reconfirmPending reports a device whose accepted agreement is not
+// the one this build asks for while the routing table holds no pause:
+// the build was replaced, by `trajector upgrade` or by hand, and no
+// session hook has run since to set the reconfirm pause. A diagnosis
+// presents it as that pause, because it is the state the next session
+// hook puts the device in and the remedy is the same command. It is
+// not part of observeProject: until a session hook sets the pause, a
+// session already running still records, and its hooks must not be
+// told that it does not. Neither a routing table that cannot be read,
+// which leaves the pause unknown and is its own finding, nor a pause
+// that already stands adds this one: the device is told one pause.
+func reconfirmPending(st report.ProjectStatus) bool {
+	return st.TableUnreadable == nil && st.PauseReason == "" &&
+		st.AgreementVersion != "" && st.AgreementVersion != consent.AgreementVersion
 }
 
 // injectionAgrees holds the injection read from the settings file

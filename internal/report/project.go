@@ -91,6 +91,11 @@ type ProjectStatus struct {
 
 	// PauseReason is the device-wide pause, empty while recording.
 	PauseReason routing.PauseReason
+	// ReconfirmPending reports that the accepted data agreement is not
+	// the one this build asks for while the routing table holds no
+	// pause: the build was replaced and no session hook has run since
+	// to set the reconfirm pause. Only a diagnosis sets it; see Pause.
+	ReconfirmPending bool
 	// ConsentPath is where the consent record lives, and ConsentErr
 	// the failure that made it unreadable. They are set together and
 	// only when the record could not be read: a pause stored as one
@@ -113,6 +118,18 @@ type ProjectStatus struct {
 // else as something to reconcile or report.
 func (s ProjectStatus) Consistent() bool {
 	return s.InjectionAgrees && s.Hooks.Complete()
+}
+
+// Pause is the device-wide pause status and doctor present: the
+// stored one, or, while ReconfirmPending, the reconfirm pause the next
+// session hook sets. The two are one problem with one remedy, so a user
+// who looks between replacing the build and that hook is told what the
+// hook is about to tell them, not that recording is on.
+func (s ProjectStatus) Pause() routing.PauseReason {
+	if s.PauseReason == "" && s.ReconfirmPending {
+		return routing.PauseConsentReconfirm
+	}
+	return s.PauseReason
 }
 
 // MissingSessionHooks reports an injection the grant calls for that

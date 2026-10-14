@@ -51,7 +51,7 @@ func Recording(d Diagnosis) RecordingState {
 	switch {
 	case d.Project.TableUnreadable != nil:
 		return RecordingTableUnreadable
-	case d.Project.PauseReason != "":
+	case d.Project.Pause() != "":
 		return RecordingPausedDeviceWide
 	case d.Spool.full():
 		return RecordingSpoolFull

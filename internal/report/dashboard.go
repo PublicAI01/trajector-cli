@@ -68,10 +68,10 @@ func deviceSection(d Diagnosis) *section {
 	if d.Project.TableUnreadable != nil {
 		s.take(tableUnreadableProblem(d.Project.TableUnreadable))
 	}
-	if d.Project.PauseReason != "" {
+	if pause := d.Project.Pause(); pause != "" {
 		why, fix := pauseWhyFixFor(d.Project)
 		s.problem(pausedEverywhere, why, fix)
-		for _, next := range pauseNextSteps(d.Project.PauseReason) {
+		for _, next := range pauseNextSteps(pause) {
 			s.detailf("%s", next)
 		}
 	}
@@ -109,7 +109,7 @@ func projectSection(d Diagnosis) *section {
 	case st.TableUnreadable != nil:
 		s.linef("Whether this project is enabled is unknown while the routing table cannot be read (see Device above).")
 	case st.InjectionAgrees:
-		if st.PauseReason != "" {
+		if st.Pause() != "" {
 			s.linef("Contributing; recording is paused for now (see Device above).")
 		} else {
 			s.linef("Contributing; recording is on for this project.")

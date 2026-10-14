@@ -24,6 +24,15 @@ All notable changes to trajector are documented here. The format follows
 - `trajector status` and `trajector enable` call these settings "Claude
   Code settings" instead of "Optional settings".
 
+### Fixed
+
+- After you install a release whose data agreement changed, by
+  `trajector upgrade` or by replacing the binary, `trajector status` and
+  `trajector doctor` now say at once that recording is paused until you
+  run `trajector enable` (with --no-proxy if you use it). Before, they
+  said `Recording: on` and `Everything checks out.` until a Claude Code
+  session started or took its next prompt.
+
 ## [0.4.0] - 2026-10-13
 
 ### Added

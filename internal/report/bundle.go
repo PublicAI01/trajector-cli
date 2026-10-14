@@ -115,6 +115,12 @@ type projectWire struct {
 	// can add. The stored reason is one word, so a bundle carrying that
 	// word alone cannot name the file that failed or how it failed.
 	PauseExplanation string `json:"pause_explanation,omitempty"`
+	// ReconfirmPending is present only when the accepted agreement is
+	// not this build's and no pause is stored yet: status and doctor
+	// then present the reconfirm pause the next session hook sets.
+	// PauseReason and PauseExplanation stay what the routing table
+	// holds.
+	ReconfirmPending bool `json:"reconfirm_pending,omitzero"`
 	// RoutingTableUnreadable is present only when the routing table
 	// exists and cannot be read: the sentence the other surfaces give
 	// as the why, naming the file and the failure. Every field above
@@ -312,6 +318,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			ConsentState:           string(d.Project.ConsentState),
 			PauseReason:            string(d.Project.PauseReason),
 			PauseExplanation:       d.Project.PauseReason.ExplainAt(d.Project.ConsentPath, d.Project.ConsentErr),
+			ReconfirmPending:       d.Project.ReconfirmPending,
 			RoutingTableUnreadable: tableUnreadableFact(d.Project.TableUnreadable),
 			NoProxy:                d.Project.Shape == routing.WithoutProxy,
 			NoEarlier:              d.Project.EarlierSkipped,

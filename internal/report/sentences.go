@@ -199,8 +199,9 @@ func ExplainHooks(policy claudesettings.HookPolicy, shape routing.Shape) HookOut
 // two commands states the second as detail, which is why the fix line
 // is the first command rather than both.
 func pauseWhyFixFor(st ProjectStatus) (why, fix string) {
-	why = st.PauseReason.WhyAt(st.ConsentPath, st.ConsentErr)
-	if steps := st.PauseReason.Fix(); len(steps) > 0 {
+	pause := st.Pause()
+	why = pause.WhyAt(st.ConsentPath, st.ConsentErr)
+	if steps := pause.Fix(); len(steps) > 0 {
 		fix = steps[0]
 	}
 	return why, fix
