@@ -4,11 +4,11 @@ package claudesettings
 // whether thinking summaries are shown to the user.
 const KeyShowThinkingSummaries = "showThinkingSummaries"
 
-// reasoningSummariesDoc is the public page that says what counts as a
+// ReasoningSummariesDoc is the public page that says what counts as a
 // session with reasoning summaries and how each Claude Code surface
 // turns them on. Every sentence about leaving showThinkingSummaries off
 // points there instead of restating it.
-const reasoningSummariesDoc = "https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries"
+const ReasoningSummariesDoc = "https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries"
 
 // ReasoningSummariesOffCost is what leaving showThinkingSummaries off
 // costs, as a lowercase clause each surface builds its own sentence
@@ -69,9 +69,9 @@ var RequestedSettings = []RequestedSetting{{
 		{"Undoing it", "`trajector disable` puts it back exactly as it was, or " +
 			"change it yourself at any time"},
 		{"If you say no", "recording goes on, but " + ReasoningSummariesOffCost +
-			". The current rule: " + reasoningSummariesDoc},
+			". The current rule: " + ReasoningSummariesDoc},
 		{"Where it works", "interactive Claude Code in a terminal. claude -p, the " +
-			"desktop app and the SDK have their own switch: " + reasoningSummariesDoc},
+			"desktop app and the SDK have their own switch: " + ReasoningSummariesDoc},
 	},
 	Fact: "Claude Code stopped generating these summaries by default in " +
 		"v2.1.89. This setting turns them back on.",

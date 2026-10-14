@@ -679,8 +679,10 @@ func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
 
 func TestStatusPairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.T) {
 	const key = claudesettings.KeyShowThinkingSummaries
-	const wayOut = key + " is off for this project, and sessions without reasoning summaries are not rewarded; " +
+	const wayOut = key + " is off for this project; " +
 		"run `trajector enable` (with --no-proxy if you use it) to turn it on."
+	const howTo = "How to turn reasoning summaries on, for each way you run Claude Code: " +
+		"https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries"
 	for _, tc := range []struct {
 		name     string
 		settings []report.RequestedSettingStatus
@@ -715,7 +717,7 @@ func TestStatusPairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.T
 
 			out := dashboard(d)
 
-			wants(t, "status", out, "6 of 9 assistant lines carry no reasoning.")
+			wants(t, "status", out, "6 of 9 assistant lines carry no reasoning.", howTo)
 			if tc.wantWay {
 				wants(t, "status", out, wayOut)
 				return
@@ -732,7 +734,7 @@ func TestStatusStatesNoEmptyReasoningCountWhereNoLineCarriesOne(t *testing.T) {
 	}
 	d.SessionFiles.Signals = drift.Signals{AssistantLines: 9}
 
-	rejects(t, "status", dashboard(d), "carry no reasoning", "to turn it on")
+	rejects(t, "status", dashboard(d), "carry no reasoning", "How to turn reasoning summaries on", "to turn it on")
 }
 
 func TestTheBundleCarriesWhatReadingNoticedWithoutValues(t *testing.T) {

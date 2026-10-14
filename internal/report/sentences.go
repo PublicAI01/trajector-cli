@@ -63,13 +63,17 @@ const (
 	// the lines and not a fault of them: what fills the field is a
 	// setting of Claude Code's.
 	emptyReasoningFact = "%d of %d assistant lines carry no reasoning."
-	// emptyReasoningWayOut follows that fact only while the setting
-	// that fills the field is off for the project. Where the setting is
-	// on, what left the field empty is not readable on this machine,
-	// and the fact stands with no next step beside it.
+	// reasoningSummariesHowTo always follows that fact: what fills the
+	// field depends on how Claude Code is started, and that is not
+	// readable on this machine, so the page that covers each way is
+	// the one next step that holds for every user.
+	reasoningSummariesHowTo = "How to turn reasoning summaries on, for each way you run Claude Code: " +
+		claudesettings.ReasoningSummariesDoc
+	// emptyReasoningWayOut follows them only while the setting that
+	// fills the field is off for the project. It names no cost: the
+	// project's required-setting line already states it.
 	emptyReasoningWayOut = claudesettings.KeyShowThinkingSummaries +
-		" is off for this project, and " + claudesettings.ReasoningSummariesOffCost +
-		"; run `trajector enable` " + routing.NoProxyCaveat + " to turn it on."
+		" is off for this project; run `trajector enable` " + routing.NoProxyCaveat + " to turn it on."
 
 	// earlierSessionsFix is what doctor says under its count of the
 	// session files a project had before it was enabled: the one way

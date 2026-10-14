@@ -274,10 +274,11 @@ func projectLines(d Diagnosis) []string {
 // record is later read by. Each line is a count, never a value from a
 // session file. A field holding a path this build does not cover is
 // not stated under the pause: it holds back only its own segment,
-// which the spool section counts, and pauses nothing. Only one count
-// names a next step, and only while a setting readable here would
-// change it; for the others the pause carries its own and the user has
-// none to take.
+// which the spool section counts, and pauses nothing. Only the count of
+// empty reasoning names a next step: always the page that says how to
+// turn reasoning summaries on, and the setting too while it is off for
+// the project. For the others the pause carries its own and the user
+// has none to take.
 func signalLines(d Diagnosis) []string {
 	s := d.SessionFiles.Signals
 	var lines []string
@@ -297,7 +298,9 @@ func signalLines(d Diagnosis) []string {
 			s.AgentLinesWithoutParent, s.AgentLines))
 	}
 	if s.AssistantLinesWithEmptyReasoning > 0 {
-		lines = append(lines, fmt.Sprintf(emptyReasoningFact, s.AssistantLinesWithEmptyReasoning, s.AssistantLines))
+		lines = append(lines,
+			fmt.Sprintf(emptyReasoningFact, s.AssistantLinesWithEmptyReasoning, s.AssistantLines),
+			reasoningSummariesHowTo)
 		if settingOff(d.RequestedSettings, claudesettings.KeyShowThinkingSummaries) {
 			lines = append(lines, emptyReasoningWayOut)
 		}
