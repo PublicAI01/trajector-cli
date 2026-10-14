@@ -351,7 +351,7 @@ func (a *app) tellSession(stopped bool) int {
 // out as nothingRecordedNotice does, for the same reasons.
 var noReasoningLines = map[lifecycle.LaunchSurface]string{
 	lifecycle.SurfaceCLI:     "trajector: no reasoning summaries in this session; run trajector enable, then start a new session",
-	lifecycle.SurfaceDesktop: "trajector: no reasoning summaries in this session; set transcript view to Thinking, then start anew",
+	lifecycle.SurfaceDesktop: "trajector: no reasoning summaries; set Default transcript view to Thinking, then start a new session",
 	lifecycle.SurfaceSDK:     "trajector: no reasoning summaries in this session; add --thinking-display summarized and rerun",
 	lifecycle.SurfaceUnknown: "trajector: no reasoning summaries in this session; run trajector status to see how to turn them on",
 }

@@ -18,7 +18,7 @@ import (
 
 const (
 	cliLine     = "trajector: no reasoning summaries in this session; run trajector enable, then start a new session\n"
-	desktopLine = "trajector: no reasoning summaries in this session; set transcript view to Thinking, then start anew\n"
+	desktopLine = "trajector: no reasoning summaries; set Default transcript view to Thinking, then start a new session\n"
 	sdkLine     = "trajector: no reasoning summaries in this session; add --thinking-display summarized and rerun\n"
 	unknownLine = "trajector: no reasoning summaries in this session; run trajector status to see how to turn them on\n"
 	recordsNone = "trajector: nothing of this session is being recorded; run trajector status\n"
@@ -121,8 +121,11 @@ func TestHookProgress_TellsASessionWhoseReasoningMostlyHoldsNoTextHowToTurnSumma
 	}{
 		{surface: "cli", want: cliLine},
 		{surface: "claude-desktop", want: desktopLine},
+		{surface: "claude-desktop-3p", want: desktopLine},
 		{surface: "sdk-cli", want: sdkLine},
-		{surface: "claude-desktop-3p", want: unknownLine},
+		{surface: "sdk-ts", want: sdkLine},
+		{surface: "sdk-py", want: sdkLine},
+		{surface: "claude-vscode", want: unknownLine},
 		{surface: "", want: unknownLine},
 	}
 	for _, tt := range tests {

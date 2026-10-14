@@ -76,9 +76,11 @@ const (
 	SurfaceUnknown LaunchSurface = iota
 	// SurfaceCLI is the interactive command line.
 	SurfaceCLI
-	// SurfaceDesktop is the desktop app.
+	// SurfaceDesktop is the desktop app, under either of its
+	// entrypoints.
 	SurfaceDesktop
-	// SurfaceSDK is the command line run by a program.
+	// SurfaceSDK is Claude Code run by a program: the command line or
+	// an Agent SDK.
 	SurfaceSDK
 )
 
@@ -88,9 +90,9 @@ func launchSurface(stated string) LaunchSurface {
 	switch stated {
 	case "cli":
 		return SurfaceCLI
-	case "claude-desktop":
+	case "claude-desktop", "claude-desktop-3p":
 		return SurfaceDesktop
-	case "sdk-cli":
+	case "sdk-cli", "sdk-ts", "sdk-py":
 		return SurfaceSDK
 	default:
 		return SurfaceUnknown
