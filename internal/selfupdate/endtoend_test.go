@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
+	"github.com/PublicAI01/trajector-cli/internal/harness/fileholders"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
@@ -21,6 +22,17 @@ import (
 func installBuild(t *testing.T, version string) installed {
 	t.Helper()
 	return installBytes(t, fakereleases.BuildRelease(t, version))
+}
+
+// runUpgrade runs an upgrade of in from the release index at indexURL.
+// When a rename fails, it logs which processes hold the files the
+// rename named, so a failure that comes and goes on one system says
+// what caused it.
+func runUpgrade(t *testing.T, in selfupdate.Installation, indexURL string) (selfupdate.Outcome, error) {
+	t.Helper()
+	out, err := selfupdate.Upgrade(t.Context(), in, indexURL, 0)
+	fileholders.LogRenameFailure(t, err)
+	return out, err
 }
 
 // reportedVersion is what the binary at path prints for `version`, the
@@ -57,7 +69,7 @@ func unusableRelease(t *testing.T, body []byte) string {
 	releases := fakereleases.New(t)
 	releases.Publish(t, "0.2.0", body)
 
-	_, err := selfupdate.Upgrade(t.Context(), m.at("0.1.0"), releases.IndexURL(), 0)
+	_, err := runUpgrade(t, m.at("0.1.0"), releases.IndexURL())
 	unusable, ok := errors.AsType[*selfupdate.UnusableError](err)
 	if !ok {
 		t.Fatalf("Upgrade = %v, want a release that does not start", err)
@@ -89,7 +101,7 @@ func TestUpgradeReplacesOneReleaseBuildWithAnotherThatRuns(t *testing.T) {
 	releases := fakereleases.New(t)
 	releases.Publish(t, "0.2.0", fakereleases.BuildRelease(t, "0.2.0"))
 
-	out, err := selfupdate.Upgrade(t.Context(), m.at("0.1.0"), releases.IndexURL(), 0)
+	out, err := runUpgrade(t, m.at("0.1.0"), releases.IndexURL())
 	if err != nil {
 		t.Fatalf("Upgrade: %v", err)
 	}
@@ -162,7 +174,7 @@ func TestUpgrade_ManualUpgradeRetriesAReleaseRecordedAsUnusable(t *testing.T) {
 	m := installBuild(t, "0.1.0")
 	broken := fakereleases.New(t)
 	broken.Publish(t, "0.2.0", []byte("these bytes are not a program"))
-	if _, err := selfupdate.Upgrade(t.Context(), m.at("0.1.0"), broken.IndexURL(), 0); err == nil {
+	if _, err := runUpgrade(t, m.at("0.1.0"), broken.IndexURL()); err == nil {
 		t.Fatal("a release that does not start was installed")
 	}
 
@@ -170,7 +182,7 @@ func TestUpgrade_ManualUpgradeRetriesAReleaseRecordedAsUnusable(t *testing.T) {
 	// asked for by hand tries it again rather than trusting the note.
 	fixed := fakereleases.New(t)
 	fixed.Publish(t, "0.2.0", fakereleases.BuildRelease(t, "0.2.0"))
-	out, err := selfupdate.Upgrade(t.Context(), m.at("0.1.0"), fixed.IndexURL(), 0)
+	out, err := runUpgrade(t, m.at("0.1.0"), fixed.IndexURL())
 	if err != nil || out.Kind != selfupdate.Upgraded {
 		t.Fatalf("Upgrade = %+v, %v; want the release tried again and installed", out, err)
 	}
@@ -207,7 +219,7 @@ func TestUpgrade_ReleaseThatServesIsCommittedAndFinished(t *testing.T) {
 	releases := fakereleases.New(t)
 	releases.Publish(t, "0.2.0", fakereleases.BuildRelease(t, "0.2.0"))
 
-	out, err := selfupdate.Upgrade(t.Context(), m.at("0.1.5"), releases.IndexURL(), 0)
+	out, err := runUpgrade(t, m.at("0.1.5"), releases.IndexURL())
 	if err != nil || out.Kind != selfupdate.Upgraded {
 		t.Fatalf("Upgrade = %+v, %v; want 0.2.0 installed", out, err)
 	}
@@ -249,7 +261,7 @@ func TestUpgrade_ReleaseWhoseProxyDoesNotStartIsPutBack(t *testing.T) {
 	}
 	t.Setenv("XDG_STATE_HOME", blocked)
 
-	_, err := selfupdate.Upgrade(t.Context(), in, releases.IndexURL(), 0)
+	_, err := runUpgrade(t, in, releases.IndexURL())
 	unusable, ok := errors.AsType[*selfupdate.UnusableError](err)
 	if !ok || unusable.Version != "0.2.0" {
 		t.Fatalf("Upgrade = %v, want 0.2.0 refused as not starting here", err)

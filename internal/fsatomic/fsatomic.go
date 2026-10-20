@@ -57,15 +57,32 @@ func WriteFile(path string, data []byte, perm fs.FileMode) error {
 	if err != nil {
 		return err
 	}
-	deadline := time.Now().Add(replaceWindow)
+	err = retryCollisions(replaceWindow, func() error { return renameReplace(tmp, path) })
+	if err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	_ = syncDir(filepath.Dir(path))
+	return nil
+}
+
+// Rename renames oldpath to newpath as os.Rename does, and retries for
+// up to window while the rename fails because another process holds
+// either file open without sharing it for delete. Only Windows refuses
+// a rename for that; elsewhere Rename is os.Rename. window is the
+// caller's: how long a holder may take to let go depends on why the
+// caller expects one.
+func Rename(oldpath, newpath string, window time.Duration) error {
+	return retryCollisions(window, func() error { return os.Rename(oldpath, newpath) })
+}
+
+// retryCollisions runs op until it returns nil or an error that is not
+// a replace collision, or until window has passed since the first try.
+func retryCollisions(window time.Duration, op func() error) error {
+	deadline := time.Now().Add(window)
 	for {
-		err := renameReplace(tmp, path)
-		if err == nil {
-			_ = syncDir(filepath.Dir(path))
-			return nil
-		}
-		if !replaceCollision(err) || time.Now().After(deadline) {
-			os.Remove(tmp)
+		err := op()
+		if err == nil || !replaceCollision(err) || time.Now().After(deadline) {
 			return err
 		}
 		time.Sleep(replaceRetry)
@@ -133,14 +150,12 @@ func writeTemp(path string, data []byte, perm fs.FileMode) (string, error) {
 // and an open that crosses the rename itself is retried within a
 // bounded window rather than surfaced as a spurious failure.
 func ReadFile(path string) ([]byte, error) {
-	deadline := time.Now().Add(replaceWindow)
-	for {
-		data, err := readOnce(path)
-		if err == nil || !replaceCollision(err) || time.Now().After(deadline) {
-			return data, err
-		}
-		time.Sleep(replaceRetry)
-	}
+	var data []byte
+	err := retryCollisions(replaceWindow, func() (err error) {
+		data, err = readOnce(path)
+		return err
+	})
+	return data, err
 }
 
 func readOnce(path string) ([]byte, error) {

@@ -44,3 +44,52 @@ func TestReadAndWriteFileTolerateEachOthersReplace(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// holdOpen opens path the way os.Open does on Windows, without delete
+// sharing, which makes every rename of path fail until the handle is
+// closed after hold.
+func holdOpen(t *testing.T, path string, hold time.Duration) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := time.AfterFunc(hold, func() { f.Close() })
+	t.Cleanup(func() {
+		if released.Stop() {
+			f.Close()
+		}
+	})
+}
+
+func TestRenameWaitsForAHolderThatLetsGoWithinTheWindow(t *testing.T) {
+	dir := t.TempDir()
+	from, to := filepath.Join(dir, "from"), filepath.Join(dir, "to")
+	if err := os.WriteFile(from, []byte("content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	holdOpen(t, from, 300*time.Millisecond)
+
+	if err := Rename(from, to, 5*time.Second); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if data, err := os.ReadFile(to); err != nil || string(data) != "content" {
+		t.Errorf("the renamed file holds %q, %v; want the content", data, err)
+	}
+}
+
+func TestRenameFailsWhenTheHolderOutlastsTheWindow(t *testing.T) {
+	dir := t.TempDir()
+	from, to := filepath.Join(dir, "from"), filepath.Join(dir, "to")
+	if err := os.WriteFile(from, []byte("content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	holdOpen(t, from, time.Minute)
+
+	if err := Rename(from, to, 300*time.Millisecond); err == nil {
+		t.Fatal("Rename succeeded while the file was held open")
+	}
+	if data, err := os.ReadFile(from); err != nil || string(data) != "content" {
+		t.Errorf("the file holds %q, %v; want it unmoved", data, err)
+	}
+}

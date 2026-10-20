@@ -24,6 +24,20 @@ const (
 	retiredMarker  = ".retired-"
 )
 
+// renameWindow is how long each rename that installs a binary, or puts
+// the previous one back, waits for another process to close either
+// file. Only Windows refuses a rename while a file is open without
+// delete sharing, and the usual holder is a scanner that opens a fresh
+// executable when it is written and again when it first runs. A scan of
+// a binary this size can take seconds on a slow disk or when the
+// scanner asks a cloud service, which is longer than the half second
+// fsatomic gives a state-file reader. The rename happens once per
+// upgrade, next to a check of the new build that may take 20 seconds,
+// so a longer wait costs nothing; giving up leaves the machine on the
+// previous release until the next background try an hour later, which
+// can meet the same scan.
+const renameWindow = 10 * time.Second
+
 // executablePerm is what an installed binary is left readable and
 // runnable as: everyone may run it, only its owner may rewrite it.
 const executablePerm = 0o755
@@ -92,7 +106,7 @@ func install(ctx context.Context, in Installation, version string, binary []byte
 	// that build cannot serve, the restarted proxy fails until the kept
 	// binary is back, a matter of seconds; nothing guards against it.
 	if err := verify(ctx, execPath, version); err != nil {
-		if back := os.Rename(kept, execPath); back != nil {
+		if back := fsatomic.Rename(kept, execPath, renameWindow); back != nil {
 			// Not an *UnusableError: that one says the previous binary
 			// is in place, and here the build that refused itself is.
 			// So nothing is recorded against the release either, and
@@ -147,10 +161,10 @@ func replaceKeeping(staged, execPath, kept string) error {
 	if err != nil {
 		return fmt.Errorf("selfupdate: keeping the previous binary beside %s: %w", execPath, err)
 	}
-	if err := os.Rename(staged, execPath); err != nil {
+	if err := fsatomic.Rename(staged, execPath, renameWindow); err != nil {
 		if inPlace {
 			os.Remove(kept)
-		} else if back := os.Rename(kept, execPath); back != nil {
+		} else if back := fsatomic.Rename(kept, execPath, renameWindow); back != nil {
 			return fmt.Errorf("selfupdate: installing over %s failed (%w) and the previous binary is at %s", execPath, err, kept)
 		}
 		return fmt.Errorf("selfupdate: installing over %s: %w", execPath, err)

@@ -10,9 +10,16 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakereleases"
+	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(procbin.Main(m, map[string]func(args []string) int{
+		"held release": heldRelease,
+	}))
+}
 
 // installed is one machine's binary: a file standing in for the running
 // program, at a path an upgrade may replace, and the directories that
