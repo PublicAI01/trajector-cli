@@ -59,6 +59,15 @@ All notable changes to trajector are documented here. The format follows
   it is, the same as the content in the message that carries it. With
   image and document upload turned off, it is still replaced by a
   placeholder. Other text on the same line is still masked.
+- `trajector disable`, pausing recording, and `trajector enable` now
+  take effect for the very next request through the proxy. Before, a
+  request that arrived up to one second later could still be decided by
+  the earlier state: after `trajector disable` deleted the project's
+  unuploaded data, such a request could be recorded again, and right
+  after recording paused it could still be recorded. `trajector enable`
+  could also fail its self-check with "the proxy does not know this
+  project's token" when the proxy had read the routing table less than
+  a second before.
 
 ## [0.5.0] - 2026-10-14
 

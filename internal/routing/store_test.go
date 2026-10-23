@@ -17,7 +17,7 @@ func openStore(t *testing.T) (*routing.Store, *routing.Table) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	store := routing.OpenStore(path)
-	return store, store.Table(time.Nanosecond)
+	return store, store.Table()
 }
 
 func grant(t *testing.T, s *routing.Store, token, root string) {
@@ -516,7 +516,7 @@ func TestATableThatExistsButCannotBeReadIsNamedByEveryReader(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "routes-under-test.json")
 			tt.spoil(t, path)
 			store := routing.OpenStore(path)
-			table := store.Table(time.Nanosecond)
+			table := store.Table()
 			if _, verdict := table.Lookup("tok"); verdict.Decision != routing.NeverRead {
 				t.Errorf("Lookup verdict = %+v, want no token placed", verdict)
 			}

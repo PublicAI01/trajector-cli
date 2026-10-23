@@ -216,7 +216,7 @@ func TestAProxyExitingOnItsStopSignalLeavesADataDirectoryDeletedMeanwhileDeleted
 	dialect.OfficialUpstream = upstream.URL()
 	server, err := apiproxy.New(apiproxy.Config{
 		Version:         "1.2.3",
-		Table:           routing.OpenStore(layout.RoutingTable()).Table(time.Millisecond),
+		Table:           routing.OpenStore(layout.RoutingTable()).Table(),
 		Dialect:         dialect,
 		DefaultUpstream: upstream.URL(),
 		Spool:           sp,

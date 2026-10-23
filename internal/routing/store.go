@@ -1,7 +1,6 @@
 package routing
 
 import (
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,10 +25,10 @@ type Store struct {
 // OpenStore returns a writer for the table at path.
 func OpenStore(path string) *Store { return &Store{path: path} }
 
-// Table returns the cached view of this store's file that the proxy
-// looks every token up in. A cacheTTL of zero selects one second.
-func (s *Store) Table(cacheTTL time.Duration) *Table {
-	return &Table{path: s.path, ttl: cmp.Or(cacheTTL, defaultCacheTTL)}
+// Table returns the view of this store's file that the proxy looks
+// every token up in.
+func (s *Store) Table() *Table {
+	return &Table{path: s.path}
 }
 
 // Shape is the form of a project's injection: whether the project's

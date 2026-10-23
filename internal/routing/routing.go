@@ -1,6 +1,7 @@
 // Package routing maps project consent tokens to their capture routes.
-// The table is hot-reloaded on modification, so enable and disable take
-// effect without restarting the proxy. It answers exactly one question
+// The proxy checks the file on every lookup and reads it again when it
+// changed, so enable, disable and a pause take effect on the next
+// request without restarting the proxy. It answers exactly one question
 // per request: where does this traffic forward, and may it be recorded.
 package routing
 
@@ -10,14 +11,9 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
 )
-
-// defaultCacheTTL bounds how stale a cached table may be. Changes on
-// disk are picked up within this window plus one request.
-const defaultCacheTTL = time.Second
 
 // Route is what the data path needs to serve one exchange. It carries
 // nothing else: the identity of the project and when it consented are
@@ -290,7 +286,14 @@ type upstreamMoveRecord struct {
 }
 
 // Table is a cached view of the on-disk routing table, safe for
-// concurrent lookups. While the file cannot be read, the table keeps
+// concurrent lookups. Every lookup checks the file first: a request that
+// starts after a write to the table is decided by that write, because a
+// `disable` deletes the project's unuploaded records right after it
+// revokes the token, and a record decided from the table before the
+// revoke would land after the deletion and be uploaded. Only a file that
+// changed is read again; see refreshLocked for what counts as a change.
+//
+// While the file cannot be read, the table keeps
 // what it last read: every token that table named keeps forwarding
 // where it was granted to, and none is recorded.
 //
@@ -303,7 +306,6 @@ type upstreamMoveRecord struct {
 // default upstream as always.
 type Table struct {
 	path string
-	ttl  time.Duration
 
 	mu sync.Mutex
 	// routes, revoked and pausedReason are the last table this process
@@ -312,9 +314,7 @@ type Table struct {
 	revoked      map[string]bool
 	pausedReason PauseReason
 	read         bool
-	checkedAt    time.Time
-	mtime        time.Time
-	size         int64
+	file         os.FileInfo
 	loadErr      error
 }
 
@@ -362,24 +362,28 @@ func verdictFor(known, revoked bool, paused PauseReason) Verdict {
 	}
 }
 
+// refreshLocked reads the file again when it is not the file this table
+// last read. The file changed when its modification time or its size
+// differs, or when the path names another file: a Store write replaces
+// the table by renaming a new file over it, and two such writes within
+// one tick of the file system's clock can leave the same time and size
+// behind. An edit made in place, by hand, that keeps both the size and
+// the time within one tick is the one change this does not see. On
+// Windows the identity check opens the file on each call that finds it
+// unchanged; see sameFile.
 func (t *Table) refreshLocked() {
-	now := time.Now()
-	if !t.checkedAt.IsZero() && now.Sub(t.checkedAt) < t.ttl {
-		return
-	}
-	t.checkedAt = now
-
 	info, err := os.Stat(t.path)
 	if err != nil {
 		// Consent is unverifiable without a readable table, so nothing
 		// records; the last table read still says where traffic goes.
 		t.loadErr = &UnreadableError{Path: t.path, Err: err}
-		t.mtime, t.size = time.Time{}, 0
+		t.file = nil
 		return
 	}
-	if t.read && t.loadErr == nil && info.ModTime().Equal(t.mtime) && info.Size() == t.size {
+	if t.read && t.loadErr == nil && sameFile(t.file, info) {
 		return
 	}
+	pinIdentity(info)
 
 	// Through fsatomic, so the CLI rewriting the table under a live
 	// proxy on Windows neither fails its rename against this read nor
@@ -403,5 +407,23 @@ func (t *Table) refreshLocked() {
 		}
 	}
 	t.routes, t.revoked, t.pausedReason, t.read, t.loadErr = routes, revoked, f.PausedReason, true, nil
-	t.mtime, t.size = info.ModTime(), info.Size()
+	t.file = info
+}
+
+// sameFile reports that now describes the file last describes, unchanged.
+// On Windows, os.SameFile reads the identity of now by opening the file,
+// so every lookup that finds the file unchanged opens one more handle;
+// that cost is accepted, since the identity is what tells a renamed-over
+// table from the one last read.
+func sameFile(last, now os.FileInfo) bool {
+	return last != nil && now.ModTime().Equal(last.ModTime()) && now.Size() == last.Size() && os.SameFile(last, now)
+}
+
+// pinIdentity makes info hold the identity of the file its path names
+// now. On Windows, os.Stat leaves the identity unread and os.SameFile
+// reads it from the path at the first comparison; by then a rename may
+// have put another file there, and the stale description would compare
+// equal to the new file.
+func pinIdentity(info os.FileInfo) {
+	_ = os.SameFile(info, info)
 }

@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
@@ -16,23 +15,6 @@ func writeTable(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// lookupOnceChanged looks up the token "tok" until the verdict
-// satisfies want, and returns the last answer after a second either
-// way. A table keeps a read for its cache TTL, and on a platform whose
-// clock ticks coarsely two lookups made one after the other can fall
-// inside one tick, so the first lookup after the file changes may still
-// answer from the read before it.
-func lookupOnceChanged(table *routing.Table, want func(routing.Verdict) bool) (routing.Route, routing.Verdict) {
-	deadline := time.Now().Add(time.Second)
-	for {
-		route, verdict := table.Lookup("tok")
-		if want(verdict) || time.Now().After(deadline) {
-			return route, verdict
-		}
-		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -55,7 +37,7 @@ func TestLookupResolvesActiveAndRevokedRoutes(t *testing.T) {
 			}
 		}
 	}`)
-	table := routing.OpenStore(path).Table(0)
+	table := routing.OpenStore(path).Table()
 
 	active, verdict := table.Lookup("tok-active")
 	if verdict.Decision != routing.Record {
@@ -82,39 +64,82 @@ func TestLookupResolvesActiveAndRevokedRoutes(t *testing.T) {
 	}
 }
 
-func TestLookupServesCachedTableWithinTTL(t *testing.T) {
+func TestLookupSeesAStoreWriteOnTheVeryNextLookup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
-	writeTable(t, path, `{"projects":{"tok":{"project_id_hash":"h1","upstream":"https://api.anthropic.com"}}}`)
-	table := routing.OpenStore(path).Table(time.Hour)
-
-	if _, verdict := table.Lookup("tok"); !verdict.Resolves() {
-		t.Fatal("token not found before rewrite")
+	store := routing.OpenStore(path)
+	grant(t, store, "tok", "/home/dev/project")
+	table := store.Table()
+	if _, verdict := table.Lookup("tok"); !verdict.Records() {
+		t.Fatalf("verdict = %+v, want the grant recorded", verdict)
 	}
-	writeTable(t, path, `{"projects":{}}`)
-	if _, verdict := table.Lookup("tok"); !verdict.Resolves() {
-		t.Error("cached table discarded before TTL elapsed")
+
+	steps := []struct {
+		name  string
+		write func() error
+		want  routing.Decision
+	}{
+		{"pause", func() error { return store.Pause(routing.PauseSignedOut) }, routing.ForwardOnlyPaused},
+		{"resume", func() error { return store.Resume(routing.PauseSignedOut) }, routing.Record},
+		{"revoke", func() error { return store.Revoke("/home/dev/project", "2026-08-02T00:00:00Z") }, routing.ForwardOnlyRevoked},
+	}
+	for _, step := range steps {
+		if err := step.write(); err != nil {
+			t.Fatalf("%s: %v", step.name, err)
+		}
+		if _, verdict := table.Lookup("tok"); verdict.Decision != step.want {
+			t.Errorf("right after %s: verdict = %+v, want %s", step.name, verdict, step.want)
+		}
 	}
 }
 
-func TestLookupPicksUpChangesAfterTTL(t *testing.T) {
+// A writer replaces the table by renaming a new file over it. Two
+// replacements within one tick of the file system's clock can leave a
+// file of the same size and modification time; it is still another
+// file.
+func TestLookupSeesAReplacementWithTheSameSizeAndModificationTime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "routes-under-test.json")
+	before := `{"projects":{"tok":{"project_id_hash":"h1","upstream":"https://api.anthropic.com"}}}`
+	after := `{"projects":{"tok":{"project_id_hash":"h2","upstream":"https://api.anthropic.com"}}}`
+	writeTable(t, path, before)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := routing.OpenStore(path).Table()
+	if route, _ := table.Lookup("tok"); route.ProjectIDHash != "h1" {
+		t.Fatalf("route = %+v, want the first table read", route)
+	}
+
+	replacement := filepath.Join(dir, "replacement.json")
+	writeTable(t, replacement, after)
+	if err := os.Chtimes(replacement, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+	if now, err := os.Stat(path); err != nil || now.Size() != info.Size() || !now.ModTime().Equal(info.ModTime()) {
+		t.Fatalf("replacement = %v, %v, want the size and modification time of the file it replaced", now, err)
+	}
+
+	if route, _ := table.Lookup("tok"); route.ProjectIDHash != "h2" {
+		t.Errorf("route = %+v, want the replacement read", route)
+	}
+}
+
+func TestLookupPicksUpARewrittenTable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects":{"tok-old":{"project_id_hash":"h1","upstream":"https://api.anthropic.com"}}}`)
-	table := routing.OpenStore(path).Table(time.Millisecond)
+	table := routing.OpenStore(path).Table()
 
 	if _, verdict := table.Lookup("tok-old"); !verdict.Resolves() {
 		t.Fatal("initial token not found")
 	}
 	writeTable(t, path, `{"projects":{"tok-new":{"project_id_hash":"h2","upstream":"https://api.anthropic.com","granted_at":"2026-08-01T00:00:00Z"}}}`)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, verdict := table.Lookup("tok-new"); verdict.Resolves() {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("rewritten table not picked up after TTL")
-		}
-		time.Sleep(5 * time.Millisecond)
+	if _, verdict := table.Lookup("tok-new"); !verdict.Resolves() {
+		t.Error("rewritten table not picked up")
 	}
 	if _, verdict := table.Lookup("tok-old"); verdict.Resolves() {
 		t.Error("removed token still resolves after reload")
@@ -124,35 +149,28 @@ func TestLookupPicksUpChangesAfterTTL(t *testing.T) {
 func TestMalformedTableResolvesNothingUntilItIsFixed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects": {`)
-	table := routing.OpenStore(path).Table(time.Millisecond)
+	table := routing.OpenStore(path).Table()
 
 	if _, verdict := table.Lookup("tok"); verdict.Resolves() {
 		t.Error("token resolved from a malformed table")
 	}
 
 	writeTable(t, path, `{"projects":{"tok":{"project_id_hash":"h","upstream":"https://api.anthropic.com"}}}`)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, verdict := table.Lookup("tok"); verdict.Resolves() {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("table did not recover after the file was fixed")
-		}
-		time.Sleep(5 * time.Millisecond)
+	if _, verdict := table.Lookup("tok"); !verdict.Resolves() {
+		t.Error("table did not recover after the file was fixed")
 	}
 }
 
 func TestATableThatBreaksKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects":{"tok":{"project_id_hash":"h","upstream":"https://relay.example.com"}}}`)
-	table := routing.OpenStore(path).Table(time.Nanosecond)
+	table := routing.OpenStore(path).Table()
 	if _, verdict := table.Lookup("tok"); !verdict.Records() {
 		t.Fatalf("verdict = %+v, want the readable grant recorded", verdict)
 	}
 
 	writeTable(t, path, `{"projects": {`)
-	route, verdict := lookupOnceChanged(table, func(v routing.Verdict) bool { return !v.Records() })
+	route, verdict := table.Lookup("tok")
 	if verdict.Decision != routing.ForwardOnlyUnreadable || verdict.Records() || !verdict.Forwards() {
 		t.Errorf("verdict = %+v, want forwarding without recording", verdict)
 	}
@@ -167,7 +185,7 @@ func TestATableThatBreaksKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T)
 func TestATableUnreadableSinceItWasOpenedPlacesNoToken(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects": {`)
-	table := routing.OpenStore(path).Table(time.Nanosecond)
+	table := routing.OpenStore(path).Table()
 
 	route, verdict := table.Lookup("tok")
 	if verdict.Decision != routing.NeverRead || verdict.Forwards() || verdict.Resolves() || verdict.Records() {
@@ -180,7 +198,7 @@ func TestATableUnreadableSinceItWasOpenedPlacesNoToken(t *testing.T) {
 
 func TestATableMissingSinceItWasOpenedPlacesNoToken(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
-	table := routing.OpenStore(path).Table(time.Nanosecond)
+	table := routing.OpenStore(path).Table()
 
 	route, verdict := table.Lookup("tok")
 	if verdict.Decision != routing.NeverRead || verdict.Forwards() || verdict.Resolves() || verdict.Records() {
@@ -196,7 +214,7 @@ func TestATableMissingSinceItWasOpenedPlacesNoToken(t *testing.T) {
 	}
 
 	writeTable(t, path, `{"projects":{"tok":{"project_id_hash":"h","upstream":"https://relay.example.com"}}}`)
-	if _, verdict := lookupOnceChanged(table, routing.Verdict.Records); !verdict.Records() {
+	if _, verdict := table.Lookup("tok"); !verdict.Records() {
 		t.Errorf("verdict = %+v, want the grant recorded once the table appears", verdict)
 	}
 }
@@ -204,7 +222,7 @@ func TestATableMissingSinceItWasOpenedPlacesNoToken(t *testing.T) {
 func TestATableMovedAsideKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routes-under-test.json")
 	writeTable(t, path, `{"projects":{"tok":{"project_id_hash":"h","upstream":"https://relay.example.com"}}}`)
-	table := routing.OpenStore(path).Table(time.Nanosecond)
+	table := routing.OpenStore(path).Table()
 	if _, verdict := table.Lookup("tok"); !verdict.Records() {
 		t.Fatalf("verdict = %+v, want the readable grant recorded", verdict)
 	}
@@ -213,7 +231,7 @@ func TestATableMovedAsideKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T)
 	if err := os.Rename(path, aside); err != nil {
 		t.Fatal(err)
 	}
-	route, verdict := lookupOnceChanged(table, func(v routing.Verdict) bool { return !v.Records() })
+	route, verdict := table.Lookup("tok")
 	if verdict.Decision != routing.ForwardOnlyUnreadable || verdict.Records() || !verdict.Forwards() {
 		t.Errorf("verdict = %+v, want forwarding without recording", verdict)
 	}
@@ -227,7 +245,7 @@ func TestATableMovedAsideKeepsTheRoutesItLastReadAndRecordsNothing(t *testing.T)
 	if err := os.Rename(aside, path); err != nil {
 		t.Fatal(err)
 	}
-	if _, verdict := lookupOnceChanged(table, routing.Verdict.Records); !verdict.Records() {
+	if _, verdict := table.Lookup("tok"); !verdict.Records() {
 		t.Errorf("verdict = %+v, want recording back once the table is back", verdict)
 	}
 }
@@ -246,7 +264,7 @@ func TestDeviceWidePauseKeepsGrantsButStopsRecording(t *testing.T) {
 		}
 	}`)
 
-	route, verdict := routing.OpenStore(path).Table(0).Lookup("tok")
+	route, verdict := routing.OpenStore(path).Table().Lookup("tok")
 	if verdict.Decision != routing.ForwardOnlyPaused {
 		t.Fatalf("verdict = %+v, want ForwardOnlyPaused", verdict)
 	}

@@ -240,7 +240,7 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 
 	server, err = apiproxy.New(apiproxy.Config{
 		Version:         a.Version,
-		Table:           a.Routes.Table(0),
+		Table:           a.Routes.Table(),
 		Dialect:         capture.Anthropic,
 		DefaultUpstream: capture.Anthropic.OfficialUpstream,
 		Spool:           sp,

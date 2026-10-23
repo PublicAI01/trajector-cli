@@ -180,7 +180,7 @@ func New(t *testing.T, opts ...Option) *Env {
 	}
 	server, err := apiproxy.New(apiproxy.Config{
 		Version:         o.version,
-		Table:           routing.OpenStore(o.layout.RoutingTable()).Table(time.Millisecond),
+		Table:           routing.OpenStore(o.layout.RoutingTable()).Table(),
 		Dialect:         dialect,
 		DefaultUpstream: e.Upstream.URL(),
 		Spool:           sp,
