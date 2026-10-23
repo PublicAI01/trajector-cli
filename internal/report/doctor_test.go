@@ -135,8 +135,8 @@ func TestDoctorExplainsEveryUploadGateInTheSameShape(t *testing.T) {
 		},
 		{
 			name:    "451",
-			finding: "uploads are paused: this account's data authorization is not complete",
-			remedy:  "Complete your data authorization at https://dashboard.example.com/authorization — then uploads resume.",
+			finding: "uploads are paused until you complete a step the service asks for",
+			remedy:  "Complete the step at https://dashboard.example.com/authorization — then uploads resume.",
 		},
 		{
 			name:    "429",
@@ -172,8 +172,8 @@ func TestDoctorRelaysAPausedUploaderWithoutCallingTheMachineBroken(t *testing.T)
 		t.Fatalf("problems = %d, want a paused uploader reported without failing doctor, output:\n%s", problems, out)
 	}
 	wants(t, "doctor", out,
-		"data authorization is not complete",
-		"Your data authorization is not complete.",
+		"uploads are paused until you complete a step the service asks for",
+		"The service says: Your data authorization is not complete.",
 		"https://dashboard.example.com/authorization",
 		"Captured data is kept",
 	)

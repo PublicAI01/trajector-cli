@@ -64,7 +64,7 @@ const (
 	// an upload is acknowledged.
 	PauseUploads Disposition = "pause_uploads"
 	// PauseUploadsAuthorize: what PauseUploads does, with the user told
-	// to complete their data authorization instead of to upgrade. It is
+	// to complete a step on the web instead of to upgrade. It is
 	// a value of its own because what the user reads is the whole of
 	// what this answer exists to get right.
 	PauseUploadsAuthorize Disposition = "pause_uploads_authorize"
@@ -100,11 +100,12 @@ const (
 	// forced flush may still try.
 	UpgradeRequired Outcome = "upgrade_required"
 	// AuthorizationRequired means the service will not take uploads from
-	// this account until its data authorization is completed on the web;
+	// this account until the user completes a step on the web — the data
+	// authorization, or another step the service's message names;
 	// automatic flushes stop for this process. Data is untouched, and a
 	// forced flush may still try — which is the recovery path, since the
-	// user completes the authorization elsewhere and nothing local has to
-	// change for uploads to resume.
+	// user completes the step elsewhere and nothing local has to change
+	// for uploads to resume.
 	AuthorizationRequired Outcome = "authorization_required"
 	// Deferred means automatic uploads are holding off until a pause
 	// elapses: one the service asked for, or the backoff after an
@@ -892,10 +893,10 @@ func unmaskable(refused []batch.Refusal) bool {
 // only a person can open.
 //
 // The authorization row stays above the rejection row, the same order
-// the answer classes are decided in: a refusal for want of a completed
-// data authorization that reached the rejection row would quarantine a
-// user's data over a condition they resolve elsewhere, which is the one
-// mistake that row exists to prevent.
+// the answer classes are decided in: a refusal for want of a step the
+// account has to complete that reached the rejection row would
+// quarantine a user's data over a condition they resolve elsewhere,
+// which is the one mistake that row exists to prevent.
 func (u *Uploader) settleFailure(token string, l lease, packed spool.Entries, err error) (Disposition, error) {
 	id := l.id()
 	var upgrade *platform.UpgradeRequiredError
@@ -923,8 +924,8 @@ func (u *Uploader) settleFailure(token string, l lease, packed spool.Entries, er
 		u.noteUpgradeRequired(upgrade.MinClientVersion, upgrade.Message)
 		return PauseUploads, fmt.Errorf("upload: batch %s: %w", id, err)
 	case errors.As(err, &unauthorized):
-		// The data is fine and so is this build; the account has not
-		// completed its data authorization. Automatic flushes stop so the
+		// The data is fine and so is this build; the account has a step
+		// to complete on the web. Automatic flushes stop so the
 		// batch is not re-offered pointlessly every minute, and nothing is
 		// quarantined — the user fixes this on the web, not here.
 		u.accountGate = Standing{}

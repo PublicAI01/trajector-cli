@@ -254,9 +254,9 @@ func TestStatusReportsAPausedUploaderWaitingOnDataAuthorization(t *testing.T) {
 	out := e.statusOutput()
 
 	for _, want := range []string{
-		"data authorization is not complete",
-		"Your data authorization is not complete.",
-		"https://dashboard.example.com/authorization",
+		"Uploads are paused until you complete a step the service asks for.",
+		"The service says: Your data authorization is not complete.",
+		"Complete the step at https://dashboard.example.com/authorization",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status = %q, want it to contain %q", out, want)

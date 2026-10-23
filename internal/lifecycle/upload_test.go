@@ -189,8 +189,8 @@ func TestUploadExplainsAMissingDataAuthorizationAndWhereToComplete(t *testing.T)
 	}
 	out := e.stdout.String()
 	for _, want := range []string{
-		"data authorization is not complete",
-		"The service says:",
+		"Uploads are paused until you complete a step the service asks for.",
+		"The service says: Your data authorization is not complete.",
 		"https://dashboard.example.com/authorization",
 		"Captured data is kept.",
 	} {
@@ -274,7 +274,7 @@ func TestUploadDoesNotOfferForceToARunThatAlreadyUsedIt(t *testing.T) {
 		{
 			name:  "authorization required",
 			reply: fakeplatform.Refuses451("https://dashboard.example.com/authorization", ""),
-			pause: "data authorization is not complete",
+			pause: "complete a step the service asks for",
 			offer: "--force",
 		},
 		{

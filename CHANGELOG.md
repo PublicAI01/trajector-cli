@@ -24,6 +24,13 @@ All notable changes to trajector are documented here. The format follows
   `trajector upload --force` tries again. Captured data stays on this
   machine. Before, trajector told you to check for a proxy or firewall
   and kept retrying.
+- When the service pauses uploads until you complete a step on the web,
+  `trajector upload`, `trajector status` and `trajector doctor` now say
+  "Uploads are paused until you complete a step the service asks for."
+  and "Complete the step at <link>", followed by the service's own
+  message, which names the step. Before, they always said the data
+  authorization was not complete, also when the step was a different
+  one, such as agreeing to updated terms.
 
 ## [0.5.0] - 2026-10-14
 

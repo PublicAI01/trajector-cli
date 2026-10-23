@@ -155,8 +155,14 @@ func TestEveryStandingNamesWhatIsTrueAndTheGatesNameWhatEndsThem(t *testing.T) {
 		{
 			name:     "an authorization refusal that named no address",
 			standing: upload.Standing{Reason: upload.AuthorizationGate},
-			explain:  "Uploads are paused: this account's data authorization is not complete.",
-			remedy:   "Complete your data authorization in the Trajector dashboard, then uploads resume.",
+			explain:  "Uploads are paused until you complete a step the service asks for.",
+			remedy:   "Complete the step in the Trajector dashboard, then uploads resume.",
+		},
+		{
+			name:     "an authorization refusal that named an address",
+			standing: upload.Standing{Reason: upload.AuthorizationGate, AuthorizeURL: "https://dashboard.example.com/terms"},
+			explain:  "Uploads are paused until you complete a step the service asks for.",
+			remedy:   "Complete the step at https://dashboard.example.com/terms — then uploads resume.",
 		},
 		{
 			name:     "a refused credential",

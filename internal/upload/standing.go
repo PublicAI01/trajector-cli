@@ -31,8 +31,12 @@ const (
 	// this build outright.
 	VersionGate Reason = "version_gate"
 	// AuthorizationGate: the service will not take this account's uploads
-	// until its data authorization is complete. The user completes it off
-	// this machine; nothing local has to change for uploads to resume.
+	// until the user completes a step on the web — the data
+	// authorization, or another step the service's message names. The
+	// user completes it off this machine; nothing local has to change for
+	// uploads to resume. The sentences below name no step, because the
+	// refusal is the same answer whichever step it is: the service's
+	// words, printed beside them, say which.
 	AuthorizationGate Reason = "authorization_gate"
 	// RateLimited: the service asked this client to slow down and named
 	// when it may try again.
@@ -90,8 +94,8 @@ type Standing struct {
 	// Message is what the service said about the refusal, in its own
 	// words, empty when it said nothing. Relayed, never parsed.
 	Message string `json:"message,omitempty"`
-	// AuthorizeURL is where the user completes the data authorization,
-	// empty when the service named no usable address.
+	// AuthorizeURL is where the user completes the step the service asks
+	// for, empty when the service named no usable address.
 	AuthorizeURL string `json:"authorize_url,omitempty"`
 	// NotBefore is when automatic uploads may attempt again. Set on the
 	// pauses that expire; zero on the gates, which end when the
@@ -136,7 +140,7 @@ func (s Standing) Explain() string {
 		}
 		return strings.ToUpper(clause[:1]) + clause[1:] + "."
 	case AuthorizationGate:
-		return "Uploads are paused: this account's data authorization is not complete."
+		return "Uploads are paused until you complete a step the service asks for."
 	case RateLimited:
 		return fmt.Sprintf("Uploads are paused until %s: the service asked to slow down.", s.pauseUntil())
 	case TimedOut:
@@ -180,9 +184,9 @@ func (s Standing) Remedy() string {
 		// client already in the field could not be told it had moved.
 		// Without one the sentence still says what to do and where.
 		if s.AuthorizeURL == "" {
-			return "Complete your data authorization in the Trajector dashboard, then uploads resume."
+			return "Complete the step in the Trajector dashboard, then uploads resume."
 		}
-		return "Complete your data authorization at " + s.AuthorizeURL + " — then uploads resume."
+		return "Complete the step at " + s.AuthorizeURL + " — then uploads resume."
 	case RateLimited, TimedOut:
 		return "Uploads resume automatically; `trajector upload --force` offers them now."
 	case CredentialRefused:

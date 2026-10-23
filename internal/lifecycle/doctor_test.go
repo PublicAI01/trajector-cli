@@ -619,7 +619,7 @@ func TestDoctorNamesBothRefusalsWhenBothStand(t *testing.T) {
 	_, out := e.doctor()
 	for _, want := range []string{
 		"requires client version 9.9.9",
-		"data authorization is not complete",
+		"complete a step the service asks for",
 		"trajector upgrade",
 		"https://dashboard.example.com/authorization",
 	} {

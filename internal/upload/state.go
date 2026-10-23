@@ -120,9 +120,9 @@ type storedHandshake struct {
 	// it because it arrives on a 426, not on an acknowledgement.
 	UpgradeMessage string `json:"upgrade_message,omitempty"`
 	// AuthorizeURL and AuthorizationMessage are what the service last
-	// said when it refused this account for want of a completed data
-	// authorization. They are kept apart from the version refusal because
-	// both refusals can stand at the same time.
+	// said when it refused this account for want of a step the account
+	// has to complete. They are kept apart from the version refusal
+	// because both refusals can stand at the same time.
 	//
 	// AuthorizationRequired is stored on its own because the service may
 	// supply neither the URL nor the message: without it, a refusal that

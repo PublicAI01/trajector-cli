@@ -156,8 +156,9 @@ func (e *UpgradeRequiredError) Unwrap() error {
 }
 
 // DataAuthorizationRequiredError reports a 451: the service will not
-// take uploads from this account until its data authorization is
-// completed on the web. Nothing is wrong with the data or with this
+// take uploads from this account until the user completes a step on the
+// web — the data authorization, or another step the service's message
+// names. Nothing is wrong with the data or with this
 // build; the caller keeps everything and stops offering it until the
 // user has done that. Like UpgradeRequiredError it refines the
 // underlying StatusError rather than replacing it.
@@ -167,8 +168,8 @@ func (e *UpgradeRequiredError) Unwrap() error {
 // whose account is also unauthorized — and one carrier could then only
 // say one of them.
 type DataAuthorizationRequiredError struct {
-	// AuthorizeURL is where the user completes the authorization, empty
-	// when the service named none or named one that did not survive
+	// AuthorizeURL is where the user completes the step, empty when the
+	// service named none or named one that did not survive
 	// SafeServiceURL. The client never composes this address from an
 	// origin of its own: doing so would freeze the page's location on the
 	// service's side forever.
@@ -181,7 +182,7 @@ type DataAuthorizationRequiredError struct {
 }
 
 func (*DataAuthorizationRequiredError) Error() string {
-	return "the service requires this account's data authorization to be completed"
+	return "the service requires this account to complete a step before it takes uploads"
 }
 
 func (e *DataAuthorizationRequiredError) Unwrap() error {
