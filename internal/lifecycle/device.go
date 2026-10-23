@@ -24,15 +24,33 @@ func (m *Machine) pairingWindow() time.Duration {
 	return defaultPairingWindow
 }
 
+// sessionCounts tells a newly paired device what a session needs to
+// count. It names no model: which models are collected is published in
+// the docs that enable links.
+const sessionCounts = "A session counts when it runs on a collected model, carries reasoning summaries, and changes code."
+
+// loginNextStep is the last line of `trajector login`. `trajector enable`
+// on an unpaired device pairs inline and does not print it: the user
+// is already running the command it names.
+const loginNextStep = "Recording is active for enabled projects. Run `trajector enable` inside a project to add it."
+
 // Login pairs this device, or completes the signed-in state when it is
 // already paired. Either way it ends in the same place: token stored,
 // recording resumed, discovery hint installed.
 func (m *Machine) Login(ctx context.Context, streams IO) error {
 	if m.Paired() {
 		fmt.Fprintln(streams.Out, "This device is already paired.")
-		return m.finishLogin(streams)
+		if err := m.finishLogin(streams); err != nil {
+			return err
+		}
+	} else {
+		if err := m.pair(ctx, streams); err != nil {
+			return err
+		}
+		fmt.Fprintln(streams.Out, sessionCounts)
 	}
-	return m.pair(ctx, streams)
+	fmt.Fprintln(streams.Out, loginNextStep)
+	return nil
 }
 
 // pair runs the browser pairing flow and signs the device in.
@@ -117,7 +135,6 @@ func (m *Machine) finishLogin(streams IO) error {
 			return fmt.Errorf("installing the discovery hint: %w", err)
 		}
 	}
-	fmt.Fprintln(streams.Out, "Recording is active for enabled projects. Run `trajector enable` inside a project to add it.")
 	return nil
 }
 

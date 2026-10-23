@@ -4,6 +4,20 @@ All notable changes to trajector are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- `trajector login` on a new pairing now says that a session counts
+  when it runs on a collected model, carries reasoning summaries, and
+  changes code. While recording is on, `trajector enable` now ends with
+  the next steps: start a new Claude Code session in the project and
+  change some code, find each session under My data on the dashboard,
+  and read what a session needs at
+  https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/rewards.
+  When `enable` pairs the device first, it no longer tells you to run
+  `trajector enable`.
+
 ## [0.5.0] - 2026-10-14
 
 ### Added
@@ -978,6 +992,7 @@ Hardened ahead of the tag:
 - State files are replaced and read atomically on every platform,
   Windows rename collisions included.
 
+[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.5.0...HEAD
 [0.5.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.7...v0.4.0
 [0.3.7]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.6...v0.3.7

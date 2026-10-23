@@ -25,11 +25,13 @@ func (m *Machine) Status(ctx context.Context, dir string, streams IO) (problems 
 // dashboard renders, so the line enable prints cannot differ from the
 // line status opens with. A diagnosis that cannot be resolved reads as
 // a project that does not contribute: the line must still answer the
-// question.
-func (m *Machine) verdict(ctx context.Context, dir string) string {
+// question. The state comes with the line so a caller can act on it
+// without parsing the text.
+func (m *Machine) verdict(ctx context.Context, dir string) (report.RecordingState, string) {
 	d, err := m.diagnose(ctx, dir, fromRegistry)
 	if err != nil {
-		return report.Verdict(report.RecordingOffHere, 0)
+		return report.RecordingOffHere, report.Verdict(report.RecordingOffHere, 0)
 	}
-	return report.Verdict(report.Recording(d), d.EnabledProjects)
+	state := report.Recording(d)
+	return state, report.Verdict(state, d.EnabledProjects)
 }

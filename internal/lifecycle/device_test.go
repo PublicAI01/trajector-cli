@@ -49,6 +49,96 @@ func TestLoginOnAlreadyPairedDeviceStillReachesTheSignedInState(t *testing.T) {
 	}
 }
 
+const (
+	sessionCountsLine = "A session counts when it runs on a collected model, carries reasoning summaries, and changes code."
+	runEnableLine     = "Run `trajector enable` inside a project to add it."
+	enableNextLine    = "Next: start a new Claude Code session in this project and change some code."
+	myDataLine        = "Sessions upload while you work; each one shows up under My data on the dashboard."
+	rewardsDocURL     = "https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/rewards"
+	sessionNeedsLine  = "What a session needs to be rewarded: " + rewardsDocURL
+)
+
+func TestLoginOnANewPairingSaysWhatASessionNeedsThenPointsToEnable(t *testing.T) {
+	e := newUnpairedEnv(t)
+	e.pairable()
+
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	out := e.stdout.String()
+	if !strings.Contains(out, "Device paired.\n"+sessionCountsLine+"\nRecording is active for enabled projects. "+runEnableLine+"\n") {
+		t.Errorf("stdout lacks what a session needs between the pairing and the pointer to enable:\n%s", out)
+	}
+	if strings.Contains(out, rewardsDocURL) {
+		t.Errorf("login names the docs link, which belongs to enable:\n%s", out)
+	}
+}
+
+func TestLoginOnAnAlreadyPairedDeviceDoesNotRepeatWhatASessionNeeds(t *testing.T) {
+	e := newEnv(t)
+
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	out := e.stdout.String()
+	if strings.Contains(out, sessionCountsLine) {
+		t.Errorf("stdout carries %q on a re-login:\n%s", sessionCountsLine, out)
+	}
+	if !strings.Contains(out, runEnableLine) {
+		t.Errorf("stdout lacks %q:\n%s", runEnableLine, out)
+	}
+}
+
+func TestEnableThatPairsFirstEndsWithItsOwnNextStepsOnly(t *testing.T) {
+	e := newUnpairedEnv(t)
+	e.pairable()
+	e.startProxy()
+
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	out := e.stdout.String()
+	for _, line := range []string{sessionCountsLine, runEnableLine} {
+		if strings.Contains(out, line) {
+			t.Errorf("stdout carries the login line %q:\n%s", line, out)
+		}
+	}
+	assertOrdered(t, out, "Device paired.", contributesLine, "\nRecording: on", enableNextLine, myDataLine, sessionNeedsLine)
+}
+
+func TestEnableOnAPairedDeviceEndsWithTheNextSteps(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	out := e.stdout.String()
+	want := strings.Join([]string{enableNextLine, myDataLine, sessionNeedsLine}, "\n") + "\n"
+	if !strings.HasSuffix(out, want) {
+		t.Errorf("stdout does not end with the next steps:\n%s", out)
+	}
+}
+
+func TestEnableOnAPausedDeviceLeavesOutTheNextSteps(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.sandbox.Pause(proxytest.PauseSignedOut)
+
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithoutProxy), e.io()); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	out := e.stdout.String()
+	if !strings.Contains(out, "Recording: PAUSED on this device") {
+		t.Fatalf("stdout lacks the paused verdict:\n%s", out)
+	}
+	for _, line := range []string{enableNextLine, myDataLine, sessionNeedsLine} {
+		if strings.Contains(out, line) {
+			t.Errorf("stdout carries %q while nothing is recorded:\n%s", line, out)
+		}
+	}
+}
+
 func TestLoginRidesOutATransientPairingCheckFailure(t *testing.T) {
 	e := newUnpairedEnv(t)
 	e.service.PairableAsAfterOutage("pair-1", "dev-tok-fake")

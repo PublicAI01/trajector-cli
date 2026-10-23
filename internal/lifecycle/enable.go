@@ -38,6 +38,16 @@ const (
 	contributesNow = "This project now contributes data. Run `trajector disable` here to stop."
 )
 
+// enableNextSteps close a successful enable, after the recording
+// verdict: what to do now, where the result shows, and what a session
+// needs, by link. They are printed only while the project records: a
+// new session on a paused or stopped device is not captured.
+var enableNextSteps = []string{
+	"Next: start a new Claude Code session in this project and change some code.",
+	"Sessions upload while you work; each one shows up under My data on the dashboard.",
+	"What a session needs to be rewarded: " + report.RewardsDoc,
+}
+
 // projectIgnoreRules are the .gitignore lines an enabled project
 // carries: the injected settings file with its transient siblings,
 // which embed a consent token, and both forms of a diagnostic bundle.
@@ -350,7 +360,13 @@ func (m *Machine) installAndVerify(ctx context.Context, streams IO, st report.Pr
 	fmt.Fprintln(streams.Out, report.ShapeNotice(shape))
 	fmt.Fprintln(streams.Out, report.UnwitnessedReward)
 	fmt.Fprintln(streams.Out, contributesNow)
-	fmt.Fprintln(streams.Out, m.verdict(ctx, st.Root))
+	state, verdict := m.verdict(ctx, st.Root)
+	fmt.Fprintln(streams.Out, verdict)
+	if state == report.RecordingOn {
+		for _, line := range enableNextSteps {
+			fmt.Fprintln(streams.Out, line)
+		}
+	}
 	return nil
 }
 
