@@ -37,7 +37,7 @@ func (m *Machine) Doctor(ctx context.Context, dir string, streams IO) (problems 
 	if err != nil {
 		return 0, err
 	}
-	run := doctorRun{f: f, d: &d, startProxy: d.Project.Enabled}
+	run := doctorRun{f: f, d: &d, startProxy: d.Project.Enabled, reportedPause: d.Project.Pause()}
 	if err := m.runDoctorChecks(ctx, run, devicePart, projectPart); err != nil {
 		return 0, err
 	}
@@ -76,7 +76,7 @@ func (m *Machine) DoctorAll(ctx context.Context, dir string, streams IO) (proble
 	problems = device.Problems()
 	for _, root := range roots {
 		f := &report.Findings{}
-		if err := m.doctorProject(ctx, f, root); err != nil {
+		if err := m.doctorProject(ctx, f, root, d.Project.Pause()); err != nil {
 			report.DoctorProjectFailed(f, err)
 		}
 		f.RenderSection(streams.Out, streams.OutStyle, root)
@@ -174,11 +174,15 @@ const (
 // findings it adds to, the diagnosis it repairs from, and whether the
 // proxy is wanted running now because a project the run covers is
 // enabled. A proxy no covered project wants is left to start on
-// demand.
+// demand. reportedPause is the device-wide pause the device part of
+// the run reported, empty when it reported none: a project's part reads
+// its own diagnosis later, and a pause written in between is not one
+// the device part said.
 type doctorRun struct {
-	f          *report.Findings
-	d          *report.Diagnosis
-	startProxy bool
+	f             *report.Findings
+	d             *report.Diagnosis
+	startProxy    bool
+	reportedPause routing.PauseReason
 }
 
 // doctorCheck is one step of a doctor run.
@@ -229,7 +233,7 @@ var doctorChecks = []doctorCheck{
 		return nil
 	}},
 	{projectPart, func(_ context.Context, m *Machine, r doctorRun) error {
-		m.doctorSelfcheck(r.f, *r.d)
+		m.doctorSelfcheck(r.f, *r.d, r.reportedPause)
 		return nil
 	}},
 }
@@ -256,9 +260,10 @@ func (m *Machine) doctorDevice(ctx context.Context, r doctorRun) error {
 }
 
 // doctorProject is one project's part of a doctor run, over a
-// diagnosis of dir of its own, read in full. A root that is no longer
-// there is said in one line and checked no further.
-func (m *Machine) doctorProject(ctx context.Context, f *report.Findings, dir string) error {
+// diagnosis of dir of its own, read in full. reportedPause is the pause
+// the device part reported. A root that is no longer there is said in
+// one line and checked no further.
+func (m *Machine) doctorProject(ctx context.Context, f *report.Findings, dir string, reportedPause routing.PauseReason) error {
 	if rootGone(dir) {
 		report.DoctorProjectGone(f)
 		return nil
@@ -267,7 +272,7 @@ func (m *Machine) doctorProject(ctx context.Context, f *report.Findings, dir str
 	if err != nil {
 		return err
 	}
-	return m.runDoctorChecks(ctx, doctorRun{f: f, d: &d}, projectPart)
+	return m.runDoctorChecks(ctx, doctorRun{f: f, d: &d, reportedPause: reportedPause}, projectPart)
 }
 
 // grantedRoots is every project root a standing grant covers, each
@@ -721,8 +726,9 @@ func (m *Machine) doctorStaleDiscoveryHook(f *report.Findings, d report.Diagnosi
 // doctorSelfcheck closes an enabled project's diagnosis by asking the
 // live proxy itself — the same self-check enable runs. Files can look
 // right while the running proxy holds a state that will not record;
-// only the proxy's own answer settles it.
-func (m *Machine) doctorSelfcheck(f *report.Findings, d report.Diagnosis) {
+// only the proxy's own answer settles it. reportedPause is the pause
+// the device part of the run reported.
+func (m *Machine) doctorSelfcheck(f *report.Findings, d report.Diagnosis, reportedPause routing.PauseReason) {
 	if !d.Project.Enabled || d.Proxy.Holder != proxylife.HolderOurs {
 		return
 	}
@@ -731,6 +737,9 @@ func (m *Machine) doctorSelfcheck(f *report.Findings, d report.Diagnosis) {
 		return
 	}
 	if err := m.explainSelfcheck(*d.Selfcheck); err != nil {
+		if !d.Selfcheck.Recording && report.DoctorSelfcheckPaused(f, reportedPause, routing.PauseReason(d.Selfcheck.PauseReason)) {
+			return
+		}
 		f.Problemf("the files agree, but the live proxy will not record this project: %v", err)
 		return
 	}

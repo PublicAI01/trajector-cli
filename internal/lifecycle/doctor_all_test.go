@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
+	"github.com/PublicAI01/trajector-cli/internal/report"
 )
 
 // doctorAll runs `doctor --all` from dir and returns its count and
@@ -201,5 +202,70 @@ func doubleGrant(t *testing.T, path, root string) {
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDoctorAllStatesADevicePauseOnceForEveryProject(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	a := e.enableAt(t.TempDir())
+	b := e.enableAt(t.TempDir())
+	e.doctorAll(t.TempDir())
+	e.sandbox.Pause(proxytest.PauseSignedOut)
+
+	problems, out := e.doctorAll(t.TempDir())
+	if problems != 1 {
+		t.Errorf("problems = %d, want the pause counted once, output:\n%s", problems, out)
+	}
+	if n := strings.Count(out, proxytest.PauseSignedOut.Why()); n != 1 {
+		t.Errorf("why the pause stands appears %d times, want once:\n%s", n, out)
+	}
+	_, body := sectionsOf(out)
+	for _, root := range []string{a, b} {
+		if strings.TrimSpace(lastLine(body[root])) != selfcheckUnderPause {
+			t.Errorf("section %s ends with %q, want the self-check to point at the pause above:\n%s", root, lastLine(body[root]), body[root])
+		}
+	}
+}
+
+// lastLine is the last line of a section body.
+func lastLine(body string) string {
+	lines := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
+	return lines[len(lines)-1]
+}
+
+func TestDoctorAllExplainsInFullAPauseTheDevicePartDidNotReport(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	e.enableAt(t.TempDir())
+	e.enableAt(t.TempDir())
+	e.doctorAll(t.TempDir())
+	// The pause is written while the first project's part runs, after
+	// the device part is printed: the device part reports no pause, and
+	// the second project's part reads the pause from the table as well
+	// as from the proxy.
+	getenv := e.deps.Getenv
+	e.deps.Getenv = func(key string) string {
+		if strings.Contains(e.stdout.String(), report.DoctorDeviceHeading) && e.sandbox.PausedReason() == "" {
+			e.sandbox.Pause(proxytest.PauseSignedOut)
+		}
+		return getenv(key)
+	}
+
+	problems, out := e.doctorAll(t.TempDir())
+	if e.sandbox.PausedReason() == "" {
+		t.Fatalf("the pause was never written, output:\n%s", out)
+	}
+	headings, body := sectionsOf(out)
+	if strings.Contains(body[report.DoctorDeviceHeading], "paused everywhere") {
+		t.Fatalf("the device part reported the pause, so it was written too early:\n%s", out)
+	}
+	for _, h := range headings {
+		if strings.Contains(body[h], "(see above)") {
+			t.Errorf("section %s points at a pause the device part did not report:\n%s", h, out)
+		}
+	}
+	if problems != 2 {
+		t.Errorf("problems = %d, want each project's self-check counted, output:\n%s", problems, out)
 	}
 }

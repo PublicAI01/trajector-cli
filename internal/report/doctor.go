@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
@@ -136,6 +137,21 @@ func doctorPause(f *Findings, st ProjectStatus) {
 	for _, next := range pauseNextSteps(pause) {
 		f.Detailf("%s", next)
 	}
+}
+
+// DoctorSelfcheckPaused states a project's self-check that the live
+// proxy answered with the device-wide pause doctorPause reported for the
+// same run: the project is routed, and what the pause stops, why it
+// stands and what lifts it are said once, there. reported is that pause,
+// empty when doctorPause reported none. It writes nothing and reports
+// false for any other pause, which the caller explains in full. It is a
+// note, not a problem: the pause is counted once, where it is reported.
+func DoctorSelfcheckPaused(f *Findings, reported, proxyPause routing.PauseReason) bool {
+	if proxyPause == "" || proxyPause != reported {
+		return false
+	}
+	f.notef("live proxy routes this project; %s (see above)", strings.ToLower(pausedEverywhere))
+	return true
 }
 
 // DoctorProject reports what a diagnosis establishes about the current

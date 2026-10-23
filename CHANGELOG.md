@@ -31,6 +31,11 @@ All notable changes to trajector are documented here. The format follows
   message, which names the step. Before, they always said the data
   authorization was not complete, also when the step was a different
   one, such as agreeing to updated terms.
+- While recording is paused, `trajector doctor` and `trajector doctor
+  --all` state the pause and the command that lifts it once, at the top.
+  Each project's self-check now says that the proxy routes the project
+  and points to the pause above, and the pause counts as one problem
+  instead of one more for each project.
 
 ### Fixed
 

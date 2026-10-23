@@ -704,3 +704,33 @@ func TestDoctorLeavesTheDiscoveryHookWhereNothingMovesTheConfigDir(t *testing.T)
 		t.Error("doctor removed the discovery hook Claude Code reads")
 	}
 }
+
+const selfcheckUnderPause = "note: live proxy routes this project; recording is paused everywhere (see above)"
+
+func TestDoctorRightAfterTheSessionHookPausesRecordingStatesThePauseOnce(t *testing.T) {
+	e := newEnv(t)
+	e.startProxy()
+	if err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io()); err != nil {
+		t.Fatal(err)
+	}
+	e.doctor()
+	e.sandbox.AcceptAgreement("2020-01-obsolete", "2020-01-01T00:00:00Z")
+	if err := e.machine().EnsureProxy(t.Context(), e.project, e.io()); err != nil {
+		t.Fatal(err)
+	}
+
+	e.stdout.Reset()
+	problems, out := e.doctor()
+	if problems != 1 {
+		t.Errorf("problems = %d, want the pause counted once, output:\n%s", problems, out)
+	}
+	if n := strings.Count(out, proxytest.PauseConsentReconfirm.Why()); n != 1 {
+		t.Errorf("why the pause stands appears %d times, want once:\n%s", n, out)
+	}
+	if !strings.Contains(out, selfcheckUnderPause) {
+		t.Errorf("doctor = %q, want the self-check to point at the pause above", out)
+	}
+	if strings.Contains(out, "routes and records") {
+		t.Errorf("doctor = %q, want no confirmation that the paused project records", out)
+	}
+}
