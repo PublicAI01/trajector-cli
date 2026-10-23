@@ -41,7 +41,12 @@ func (m *Machine) Upload(ctx context.Context, force bool, streams IO) error {
 	case upload.BelowThreshold:
 		fmt.Fprintln(streams.Out, "Below the upload thresholds; use --force to upload anyway.")
 	case upload.Paused:
-		explainStanding(streams, reply.Standing, reply.Standing.Remedy())
+		remedy := reply.Standing.Remedy()
+		if reply.Standing.Reason == upload.AccountRefused {
+			// As for a deferral, the remedy is the --force offer.
+			remedy = retry(force, remedy)
+		}
+		explainStanding(streams, reply.Standing, remedy)
 	case upload.UpgradeRequired:
 		// The kept-data line stands alone: a user reading a pause needs
 		// to know nothing was lost before they read what to do about it.
@@ -109,11 +114,12 @@ func setAsideUnreadable(rejections []upload.Rejection) int {
 }
 
 // retry returns the sentence offering --force, or nothing when this run
-// already used it. Both pauses that offer it are reachable under
-// --force: the service can refuse a forced attempt outright, and it can
-// ask a forced attempt to slow down. Repeating the offer there sends the
-// user back to the switch they just held down, which cannot move either
-// pause — only the service can.
+// already used it. Every pause that offers it is reachable under
+// --force: the service can refuse a forced attempt outright, refuse the
+// account it comes from, and ask a forced attempt to slow down.
+// Repeating the offer there sends the user back to the switch they just
+// held down, which cannot move any of those pauses — only the service
+// can.
 func retry(force bool, sentence string) string {
 	if force {
 		return ""

@@ -203,6 +203,36 @@ func TestUploadExplainsAMissingDataAuthorizationAndWhereToComplete(t *testing.T)
 	}
 }
 
+func TestUploadRelaysWhatTheServiceSaidAboutARefusedAccount(t *testing.T) {
+	const said = "This account does not take part in uploads at the moment."
+	e := newEnv(t)
+	e.service.Stub("POST", "/v1/batches", fakeplatform.RefusesAccount("participation_ended", said))
+	servedProxy(t, e)
+
+	e.sandbox.SeedRawcall("req-1", "hash-p1", time.Now().UTC())
+	if err := e.machine().Upload(t.Context(), true, e.io()); err != nil {
+		t.Fatal(err)
+	}
+	out := e.stdout.String()
+	for _, want := range []string{
+		"Uploads are paused: the service does not take uploads from this account. Captured data is kept.",
+		"The service says: " + said,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout = %q, want it to contain %q", out, want)
+		}
+	}
+	if strings.Contains(out, "proxy or firewall") {
+		t.Errorf("stdout = %q, want no hint at something between this machine and the service", out)
+	}
+	if strings.Contains(out, "--force") {
+		t.Errorf("stdout = %q, want no offer of the --force this run already used", out)
+	}
+	if n := len(e.sandbox.Rawcalls()); n != 1 {
+		t.Errorf("spool holds %d rawcalls, want the refused record kept and not quarantined", n)
+	}
+}
+
 func TestUploadFallsBackToItsOwnWordingWhenTheServiceNamesNoUsableAddress(t *testing.T) {
 	// A link that opens nothing is worse than none. The client drops it
 	// and still has to say what to do.

@@ -44,6 +44,7 @@ func TestEveryUploadFailureClassCarriesItsStatus(t *testing.T) {
 		{"429 rate limited", fakeplatform.Response{Status: 429, Body: []byte(`{}`)}, true},
 		{"400 batch rejected", fakeplatform.JSON(400, map[string]any{"error": "malformed"}), false},
 		{"401 unauthorized", fakeplatform.JSON(401, map[string]any{}), false},
+		{"403 account refused", fakeplatform.RefusesAccount("account_suspended", ""), false},
 		{"503 service failure", fakeplatform.JSON(503, map[string]any{}), true},
 	}
 	for _, tt := range tests {
@@ -359,6 +360,53 @@ func TestUploadBatchRefusalsOfTheAskerAreNotBatchRejections(t *testing.T) {
 		if _, ok := errors.AsType[*platform.BatchRejectedError](err); ok {
 			t.Errorf("%v reads as a rejection of the batch, which would quarantine records the service never judged", err)
 		}
+	}
+}
+
+func TestUploadBatch403NamingTheAccountRelaysTheServiceWords(t *testing.T) {
+	for _, code := range []string{"account_suspended", "participation_ended", "account_pending_approval"} {
+		t.Run(code, func(t *testing.T) {
+			const said = "This account does not take part in uploads at the moment."
+			err := uploadRefused(t, fakeplatform.RefusesAccount(code, said))
+			account, ok := errors.AsType[*platform.AccountRefusedError](err)
+			if !ok {
+				t.Fatalf("error = %v, want an AccountRefusedError", err)
+			}
+			if account.Message != said {
+				t.Errorf("message = %q, want %q", account.Message, said)
+			}
+			if _, ok := errors.AsType[*platform.BatchRejectedError](err); ok {
+				t.Errorf("%v reads as a rejection of the batch", err)
+			}
+		})
+	}
+}
+
+func TestUploadBatch403ThatNamesNoAccountRefusalStaysAnAccessRefusal(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"an unknown error value", `{"error":"forbidden","message":"Access denied."}`},
+		{"a message with no error value", `{"message":"This account is closed."}`},
+		{"a gateway page", `<html><body>403 Forbidden</body></html>`},
+		{"an empty body", ``},
+		{"an error value that is not a string", `{"error":["account_suspended"]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := uploadRefused(t, fakeplatform.Response{Status: 403, Body: []byte(tc.body)})
+			if _, ok := errors.AsType[*platform.AccessRefusedError](err); !ok {
+				t.Errorf("error = %v, want an AccessRefusedError", err)
+			}
+		})
+	}
+}
+
+func TestUploadBatch403AccountWordingCannotDrawOnTheTerminal(t *testing.T) {
+	err := uploadRefused(t, fakeplatform.RefusesAccount("account_suspended", "refused\r\x1b[Atrajector: everything is fine"))
+	account, ok := errors.AsType[*platform.AccountRefusedError](err)
+	if !ok {
+		t.Fatalf("error = %v", err)
+	}
+	if strings.ContainsAny(account.Message, "\x1b\r\n") {
+		t.Fatalf("message = %q, want it disarmed", account.Message)
 	}
 }
 

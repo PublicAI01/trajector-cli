@@ -236,6 +236,30 @@ func TestStatusAndDoctorPresentAnUnwritableSpoolAlike(t *testing.T) {
 	}
 }
 
+// The refusal names the account, so both surfaces relay what the
+// service said about it and point at nothing between this machine and
+// the service.
+func TestStatusAndDoctorRelayARefusedAccountWithTheServiceWords(t *testing.T) {
+	const said = "This account does not take part in uploads at the moment."
+	at := time.Date(2026, 8, 30, 14, 32, 0, 0, time.UTC)
+	d := device()
+	d.Standings = []upload.Standing{{Reason: upload.AccountRefused, Since: at, Message: said}}
+
+	problems, doctorOut := doctorText(d)
+	if problems != 0 {
+		t.Fatalf("problems = %d, want a refused account reported without failing doctor, output:\n%s", problems, doctorOut)
+	}
+	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
+		wants(t, surface, out,
+			"paused since 2026-08-30T14:32:00Z: the service does not take uploads from this account",
+			"The service says: "+said,
+			d.Standings[0].Remedy())
+		if strings.Contains(out, "proxy or firewall") {
+			t.Errorf("%s = %q, want no hint at something between this machine and the service", surface, out)
+		}
+	}
+}
+
 // A full spool is what a refused endpoint leads to when nothing
 // uploads for long enough, so the two stand together and both surfaces
 // have to say both: the spool that stopped recording, and the refusal

@@ -101,6 +101,13 @@ func (m *Machine) pair(ctx context.Context, streams IO) error {
 				return fmt.Errorf("storing the device token: %w", err)
 			}
 			fmt.Fprintln(streams.Out, "Device paired.")
+			// The new pairing can be under another account, so a refusal
+			// of the account before it stops standing here. A login on a
+			// device that stays paired keeps its token and its account,
+			// and keeps the refusal.
+			if err := upload.ClearAccountRefusal(m.deps.Layout.UploadDir()); err != nil {
+				fmt.Fprintf(streams.Err, "trajector: warning: could not clear the recorded account refusal: %v\n", err)
+			}
 			return m.finishLogin(streams)
 		case result.Status == platform.PairingExpired:
 			return errors.New("the pairing link expired; run `trajector login` again")

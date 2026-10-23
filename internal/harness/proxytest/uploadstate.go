@@ -102,6 +102,7 @@ const (
 	TimedOut          = upload.TimedOut
 	CredentialRefused = upload.CredentialRefused
 	AccessRefused     = upload.AccessRefused
+	AccountRefused    = upload.AccountRefused
 )
 
 // credentialRefusal is what the file records about a refused
@@ -119,6 +120,25 @@ func (s *Sandbox) SeedCredentialRefusal(since time.Time) {
 	s.overlayHandshake(credentialRefusal{Since: since})
 	if got := s.standing(upload.CredentialRefused, since); !got.Since.Equal(since) {
 		s.t.Fatalf("the uploader reads the seeded refusal back as starting %s, want %s", got.Since, since)
+	}
+}
+
+// accountRefusal is what the file records about a refused account:
+// when the service first refused it, and what it last said about it.
+type accountRefusal struct {
+	Since   time.Time `json:"account_refused_since"`
+	Message string    `json:"account_message,omitempty"`
+}
+
+// SeedAccountRefusal persists the service refusing uploads from this
+// account, as an upload that met that refusal would have left it. Like
+// the other seeders it leaves the rest of the file alone.
+func (s *Sandbox) SeedAccountRefusal(since time.Time, message string) {
+	s.t.Helper()
+	s.overlayHandshake(accountRefusal{Since: since, Message: message})
+	got := s.standing(upload.AccountRefused, since)
+	if want := platform.SafeServiceText(message); !got.Since.Equal(since) || got.Message != want {
+		s.t.Fatalf("the uploader reads the seeded refusal back as %s / %q, want %s / %q", got.Since, got.Message, since, want)
 	}
 }
 

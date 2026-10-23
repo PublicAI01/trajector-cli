@@ -268,6 +268,26 @@ func TestStatusReportsAPausedUploaderWaitingOnDataAuthorization(t *testing.T) {
 	}
 }
 
+func TestStatusAndDoctorRelayARefusedAccountWithTheServiceWords(t *testing.T) {
+	const said = "This account does not take part in uploads at the moment."
+	since := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	e := newEnv(t)
+	e.sandbox.SeedAccountRefusal(since, said)
+
+	_, doctorOut := e.doctor()
+	for surface, out := range map[string]string{"status": e.statusOutput(), "doctor": doctorOut} {
+		for _, want := range []string{
+			"paused since 2026-10-20T09:00:00Z: the service does not take uploads from this account",
+			"The service says: " + said,
+			"`trajector upload --force`",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s = %q, want it to contain %q", surface, out, want)
+			}
+		}
+	}
+}
+
 func TestStatusDropsAnAuthorizeAddressAUserCannotSafelyOpen(t *testing.T) {
 	e := newEnv(t)
 	e.deps.Version = "0.1.0"

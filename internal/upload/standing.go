@@ -57,6 +57,12 @@ const (
 	// perfectly good, and not a rejection because it says nothing about
 	// the batch.
 	AccessRefused Reason = "access_refused"
+	// AccountRefused: the service does not take uploads from this
+	// account, and its own words say why. It is not AccessRefused
+	// because the answer names the account, so nothing between this
+	// machine and the service is to blame and no wait ends it. Captured
+	// data is kept.
+	AccountRefused Reason = "account_refused"
 )
 
 // Standing is one reason uploads are held back, with everything the
@@ -141,6 +147,8 @@ func (s Standing) Explain() string {
 		return fmt.Sprintf("Uploads are paused%s: the service refused this device's credential. Captured data is kept.", s.pausedSince())
 	case AccessRefused:
 		return fmt.Sprintf("Uploads are paused%s until %s: the service refused this client access. Captured data is kept.", s.pausedSince(), s.pauseUntil())
+	case AccountRefused:
+		return fmt.Sprintf("Uploads are paused%s: the service does not take uploads from this account. Captured data is kept.", s.pausedSince())
 	default:
 		return string(s.Reason)
 	}
@@ -186,6 +194,10 @@ func (s Standing) Remedy() string {
 		// reason can say — the refusal may be coming from something the
 		// user, and no one at the service, can look at.
 		return "Uploads resume automatically; `trajector upload --force` offers them now. If this persists, check whether a proxy or firewall sits between this machine and the service."
+	case AccountRefused:
+		// What ends it is in the service's words printed beside this
+		// sentence; all this client adds is how to ask again once it has.
+		return "When the service takes uploads from this account again, `trajector upload --force` offers them."
 	default:
 		return ""
 	}

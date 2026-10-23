@@ -177,6 +177,18 @@ func TestEveryStandingNamesWhatIsTrueAndTheGatesNameWhatEndsThem(t *testing.T) {
 			remedy:   "Uploads resume automatically; `trajector upload --force` offers them now. If this persists, check whether a proxy or firewall sits between this machine and the service.",
 		},
 		{
+			name:     "a refused account",
+			standing: upload.Standing{Reason: upload.AccountRefused, Message: "This account is closed."},
+			explain:  "Uploads are paused: the service does not take uploads from this account. Captured data is kept.",
+			remedy:   "When the service takes uploads from this account again, `trajector upload --force` offers them.",
+		},
+		{
+			name:     "a refused account read off disk",
+			standing: upload.Standing{Reason: upload.AccountRefused, Since: at},
+			explain:  "Uploads are paused since 2026-08-30T14:32:00Z: the service does not take uploads from this account. Captured data is kept.",
+			remedy:   "When the service takes uploads from this account again, `trajector upload --force` offers them.",
+		},
+		{
 			name:     "a refused endpoint read off disk",
 			standing: upload.Standing{Reason: upload.AccessRefused, Since: at, NotBefore: at.Add(time.Minute)},
 			explain:  "Uploads are paused since 2026-08-30T14:32:00Z until 2026-08-30T14:33:00Z: the service refused this client access. Captured data is kept.",

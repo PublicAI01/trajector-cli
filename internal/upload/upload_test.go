@@ -1276,6 +1276,39 @@ func TestPairingAgainAfterARefusedCredentialResumesTheNextAutomaticFlush(t *test
 	}
 }
 
+func TestPairingAgainAfterARefusedAccountResumesTheNextAutomaticFlush(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.RefusesAccount("participation_ended", ""))
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
+	f.storeRawcall(t, "req-1", f.now)
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+
+	f.token = "dev-tok-fake-2"
+
+	res, err := f.uploader.Flush(t.Context(), false)
+	if err != nil || res.Outcome != upload.Uploaded || res.Records != 1 {
+		t.Fatalf("automatic flush under the new pairing = %+v, %v; want the waiting record uploaded", res, err)
+	}
+}
+
+func TestPairingAgainClearsTheRecordedAccountRefusal(t *testing.T) {
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.RefusesAccount("account_suspended", ""))
+	f.storeRawcall(t, "req-1", f.now)
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+
+	if err := upload.ClearAccountRefusal(f.dir); err != nil {
+		t.Fatalf("clearing the account refusal: %v", err)
+	}
+	if got := f.standing(upload.AccountRefused); got.Held() {
+		t.Errorf("standing after pairing again = %+v, want none", got)
+	}
+}
+
 func TestARefusedEndpointKeepsTheBatchAndStopsAutomaticFlushes(t *testing.T) {
 	f := newFixture(t)
 	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}))
@@ -1308,6 +1341,142 @@ func TestARefusedEndpointKeepsTheBatchAndStopsAutomaticFlushes(t *testing.T) {
 	}
 	if want := f.now.Add(time.Minute); !held[0].NotBefore.Equal(want) {
 		t.Errorf("next try at %s, want %s", held[0].NotBefore, want)
+	}
+}
+
+func TestARefusedAccountPausesAutomaticFlushesWithoutTouchingData(t *testing.T) {
+	for _, code := range []string{"account_suspended", "participation_ended", "account_pending_approval"} {
+		t.Run(code, func(t *testing.T) {
+			const said = "This account does not take part in uploads at the moment."
+			f := newFixture(t)
+			f.server.Stub("POST", "/v1/batches", fakeplatform.RefusesAccount(code, said))
+			f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
+			f.storeRawcall(t, "req-1", f.now)
+
+			res, err := f.uploader.Flush(t.Context(), true)
+			if err == nil {
+				t.Fatal("the refusal did not surface as an error")
+			}
+			if res.Outcome != upload.Paused || res.Standing.Reason != upload.AccountRefused || res.Standing.Message != said {
+				t.Fatalf("refused flush = %+v, want paused on the refused account with the service's words", res)
+			}
+			if f.spool.Usage() == 0 {
+				t.Fatal("the batch left the spool over a refusal that said nothing about it")
+			}
+			if n := rejectedRecords(t, f.rejected); n != 0 {
+				t.Fatalf("an account refusal quarantined %d valid rawcall(s)", n)
+			}
+
+			f.now = f.now.Add(24 * time.Hour)
+			res, err = f.uploader.Flush(t.Context(), false)
+			if err != nil || res.Outcome != upload.Paused || res.Standing.Reason != upload.AccountRefused || res.Standing.Message != said {
+				t.Fatalf("automatic flush a day later = %+v, %v; want it still paused on the refused account", res, err)
+			}
+			if f.uploadCount() != 1 {
+				t.Fatalf("automatic flushes made %d more attempts, want 0", f.uploadCount()-1)
+			}
+
+			res, err = f.uploader.Flush(t.Context(), true)
+			if err != nil || res.Outcome != upload.Uploaded {
+				t.Fatalf("forced flush past the gate = %+v, %v", res, err)
+			}
+			if res, err := f.uploader.Flush(t.Context(), false); err != nil || res.Outcome != upload.Empty {
+				t.Fatalf("flush after a success = %+v, %v; the gate must have lifted", res, err)
+			}
+			if got := f.standing(upload.AccountRefused); got.Held() {
+				t.Errorf("the recorded refusal = %+v, want it gone after the acknowledgement", got)
+			}
+		})
+	}
+}
+
+func TestARefusedAccountIsRememberedFromItsFirstRefusal(t *testing.T) {
+	const said = "This account does not take part in uploads at the moment."
+	f := newFixture(t)
+	f.server.Stub("POST", "/v1/batches", fakeplatform.RefusesAccount("account_suspended", "first words"))
+	f.server.Stub("POST", "/v1/batches", fakeplatform.RefusesAccount("account_suspended", said))
+	f.storeRawcall(t, "req-1", f.now)
+	first := f.now
+
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
+		t.Fatal("the refusal did not surface as an error")
+	}
+	f.now = f.now.Add(time.Hour)
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil {
+		t.Fatal("the second refusal did not surface as an error")
+	}
+
+	f.uploader = f.newUploader(t)
+	got := f.standing(upload.AccountRefused)
+	if !got.Since.Equal(first) || got.Message != said {
+		t.Fatalf("standing after a restart = %+v, want it since %s with the latest words %q", got, first, said)
+	}
+}
+
+func TestARefusedAccountReplacesWhatEarlierRefusalsLeft(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		first fakeplatform.Response
+		gone  upload.Reason
+	}{
+		{"a refused endpoint", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}), upload.AccessRefused},
+		{"a refused credential", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}), upload.CredentialRefused},
+		{"a step to complete", fakeplatform.Refuses451("https://dashboard.example.com/authorization", ""), upload.AuthorizationGate},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.server.Stub("POST", "/v1/batches", tc.first)
+			f.server.Stub("POST", "/v1/batches", fakeplatform.RefusesAccount("account_suspended", ""))
+			f.storeRawcall(t, "req-1", f.now)
+
+			if _, err := f.uploader.Flush(t.Context(), true); err == nil {
+				t.Fatal("the first refusal did not surface as an error")
+			}
+			if _, err := f.uploader.Flush(t.Context(), true); err == nil {
+				t.Fatal("the account refusal did not surface as an error")
+			}
+			if got := f.standing(tc.gone); got.Held() {
+				t.Errorf("standing on disk after the account refusal = %+v, want it gone", got)
+			}
+			res, err := f.uploader.Flush(t.Context(), false)
+			if err != nil || res.Standing.Reason != upload.AccountRefused {
+				t.Errorf("automatic flush = %+v, %v; want it paused on the refused account", res, err)
+			}
+		})
+	}
+}
+
+func TestALaterRefusalReplacesARefusedAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		second   fakeplatform.Response
+		standing upload.Reason
+		outcome  upload.Outcome
+	}{
+		{"a step to complete", fakeplatform.Refuses451("https://dashboard.example.com/authorization", ""), upload.AuthorizationGate, upload.AuthorizationRequired},
+		{"a refused credential", fakeplatform.JSON(401, map[string]any{"error": "token revoked"}), upload.CredentialRefused, upload.Paused},
+		{"a refused endpoint", fakeplatform.JSON(403, map[string]any{"error": "forbidden"}), upload.AccessRefused, upload.Deferred},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.server.Stub("POST", "/v1/batches", fakeplatform.RefusesAccount("participation_ended", ""))
+			f.server.Stub("POST", "/v1/batches", tc.second)
+			f.storeRawcall(t, "req-1", f.now)
+
+			if _, err := f.uploader.Flush(t.Context(), true); err == nil {
+				t.Fatal("the account refusal did not surface as an error")
+			}
+			if _, err := f.uploader.Flush(t.Context(), true); err == nil {
+				t.Fatal("the later refusal did not surface as an error")
+			}
+			res, err := f.uploader.Flush(t.Context(), false)
+			if err != nil || res.Outcome != tc.outcome || res.Standing.Reason != tc.standing {
+				t.Errorf("automatic flush = %+v, %v; want %q on %q", res, err, tc.outcome, tc.standing)
+			}
+			if got := f.standing(upload.AccountRefused); got.Held() {
+				t.Errorf("the recorded account refusal = %+v, want it replaced by the later refusal", got)
+			}
+		})
 	}
 }
 

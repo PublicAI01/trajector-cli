@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
+	"slices"
 	"strconv"
 	"time"
 
@@ -214,13 +215,14 @@ func (e *CredentialRefusedError) Unwrap() error {
 	return e.status
 }
 
-// AccessRefusedError reports a 403: the service, or something answering
-// in front of it, refuses this client the upload endpoint outright. It
-// is a class apart from CredentialRefusedError because it says nothing
-// about the pairing — a proxy or a gateway answers this way as readily
-// as the service does — and apart from BatchRejectedError because it
-// says nothing about the batch. It carries no field of its own, for the
-// reason CredentialRefusedError carries none.
+// AccessRefusedError reports a 403 that names no refusal of the
+// account: the service, or something answering in front of it, refuses
+// this client the upload endpoint outright. It is a class apart from
+// CredentialRefusedError because it says nothing about the pairing — a
+// proxy or a gateway answers this way as readily as the service does —
+// and apart from BatchRejectedError because it says nothing about the
+// batch. It carries no field of its own, for the reason
+// CredentialRefusedError carries none.
 type AccessRefusedError struct{ status *StatusError }
 
 func (*AccessRefusedError) Error() string {
@@ -233,6 +235,42 @@ func (e *AccessRefusedError) Unwrap() error {
 	}
 	return e.status
 }
+
+// AccountRefusedError reports a 403 whose body names a refusal of this
+// account: the service does not take uploads from it. Nothing is wrong
+// with the data or with this build, so the caller keeps everything and
+// stops offering it until the service takes this account's uploads
+// again. Like the gates above it refines the underlying StatusError.
+//
+// It is a class apart from AccessRefusedError because the answer itself
+// says who refused and why: waiting does not end it, and nothing
+// between this machine and the service is to blame.
+type AccountRefusedError struct {
+	// Message is what the service wants the user to read about the
+	// refusal, empty when it said nothing. Shown as the service's words,
+	// never used to decide anything.
+	Message string
+	status  *StatusError
+}
+
+func (*AccountRefusedError) Error() string {
+	return "the service does not take uploads from this account"
+}
+
+func (e *AccountRefusedError) Unwrap() error {
+	if e.status == nil {
+		return nil
+	}
+	return e.status
+}
+
+// accountRefusals are the values of a 403 body's error field that name
+// a refusal of the account. A 403 is read as one only when its body is
+// JSON naming one of these: a proxy or a gateway in front of the
+// service answers 403 too, with a body of its own, and that answer has
+// to keep reading as AccessRefusedError — what it says about the
+// account is nothing.
+var accountRefusals = []string{"account_suspended", "participation_ended", "account_pending_approval"}
 
 // maxRetryAfter caps how long a Retry-After can silence automatic
 // flushes, so a service misconfiguration cannot mute every client
@@ -427,6 +465,13 @@ func classifyUploadFailure(resp *http.Response, body []byte, bodyBytes int64, bu
 	case resp.StatusCode == http.StatusUnauthorized:
 		return &CredentialRefusedError{status: status}
 	case resp.StatusCode == http.StatusForbidden:
+		var deny struct {
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(body, &deny) == nil && slices.Contains(accountRefusals, deny.Error) {
+			return &AccountRefusedError{Message: SafeServiceText(deny.Message), status: status}
+		}
 		return &AccessRefusedError{status: status}
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		// status.Status, never resp.Status: settleFailure copies this field

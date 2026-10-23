@@ -141,6 +141,18 @@ func Refuses451(authorizeURL, message string) Response {
 	})
 }
 
+// accountRefusal is the body of a 403 that refuses this account.
+type accountRefusal struct {
+	Error   string `json:"error"`
+	Message string `json:"message,omitempty"`
+}
+
+// RefusesAccount is the service refusing uploads from this account with
+// a 403 whose body names why in code. The message is optional.
+func RefusesAccount(code, message string) Response {
+	return JSON(http.StatusForbidden, accountRefusal{Error: code, Message: message})
+}
+
 // acknowledgement is the body of an accepted upload. Its Notice shadows
 // the handshake's own field: the handshake leaves an empty notice out,
 // and a notice the service clears is sent present and empty.

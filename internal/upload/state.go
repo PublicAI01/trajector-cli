@@ -134,9 +134,19 @@ type storedHandshake struct {
 	// credential this device pairs with, zero when it did not. It is a
 	// record and not a gate: a surface in another process must be able
 	// to say why uploads stopped, but a flusher that did not meet the
-	// refusal asks once for itself rather than standing on it. Only a
-	// new pairing — or an acknowledgement — ends it.
+	// refusal asks once for itself rather than standing on it. A new
+	// pairing, an acknowledgement, or a later refusal of the endpoint or
+	// of the account, which is the newer word, ends it.
 	CredentialRefusedSince time.Time `json:"credential_refused_since,omitzero"`
+	// AccountRefusedSince is when the service started refusing uploads
+	// from this account, zero when it does not, and AccountMessage what
+	// it said about the refusal. Like the refused credential it is a
+	// record and not a gate: a flusher that did not meet the refusal
+	// asks once for itself. A new pairing, which can be under another
+	// account, ends it, and so does a later answer: an acknowledgement,
+	// or another refusal of the asker, which is the newer word.
+	AccountRefusedSince time.Time `json:"account_refused_since,omitzero"`
+	AccountMessage      string    `json:"account_message,omitempty"`
 	// NotBefore is when automatic uploads may attempt again, and
 	// BackoffReason which of the waits set it. BackoffSince is when that
 	// wait first started. Kept on disk rather than in the flusher's
@@ -241,6 +251,13 @@ func LoadStandings(dir, version string, now time.Time) []Standing {
 			Message:      platform.SafeServiceText(h.AuthorizationMessage),
 		})
 	}
+	if !h.AccountRefusedSince.IsZero() {
+		standings = append(standings, Standing{
+			Reason:  AccountRefused,
+			Since:   h.AccountRefusedSince,
+			Message: platform.SafeServiceText(h.AccountMessage),
+		})
+	}
 	if !h.CredentialRefusedSince.IsZero() {
 		standings = append(standings, Standing{Reason: CredentialRefused, Since: h.CredentialRefusedSince})
 	}
@@ -272,12 +289,12 @@ func (h *storedHandshake) backoff(now time.Time) (Standing, bool) {
 // already have stopped making.
 //
 // The refusals a person answers are not read back, on purpose: a 426 is
-// answered by replacing this binary, a 451 off this machine entirely,
-// and a 401 by pairing again, so a fresh process must be allowed to ask
-// once rather than inherit an answer that may already be stale. Neither
-// is how far a doubling wait has escalated: the wait itself is an
-// instruction the next process honours, while the count behind it
-// budgets the attempts of the process that was refused.
+// answered by replacing this binary, a 451 and a refused account off
+// this machine entirely, and a 401 by pairing again, so a fresh process
+// must be allowed to ask once rather than inherit an answer that may
+// already be stale. Neither is how far a doubling wait has escalated:
+// the wait itself is an instruction the next process honours, while the
+// count behind it budgets the attempts of the process that was refused.
 func loadBackoff(dir string, now time.Time) (Standing, bool) {
 	var h storedHandshake
 	readJSON(filepath.Join(dir, handshakeName), &h)
@@ -462,6 +479,7 @@ func (u *Uploader) noteUpgradeRequired(minVersion, message string) {
 // report. Best-effort.
 func (u *Uploader) noteAuthorizationRequired(authorizeURL, message string) {
 	u.noteRefusal(func(h *storedHandshake) {
+		h.clearAccountRefusal()
 		h.AuthorizationRequired = true
 		h.AuthorizeURL = authorizeURL
 		h.AuthorizationMessage = message
@@ -489,6 +507,7 @@ func (u *Uploader) noteBackoff(reason Reason, notBefore time.Time) {
 func (u *Uploader) noteAccessRefused(wait time.Duration) {
 	now := u.deps.Now().UTC()
 	u.noteRefusal(func(h *storedHandshake) {
+		h.clearAccountRefusal()
 		h.CredentialRefusedSince = time.Time{}
 		h.startBackoff(AccessRefused, now)
 		h.NotBefore = now.Add(wait)
@@ -504,13 +523,42 @@ func (u *Uploader) noteAccessRefused(wait time.Duration) {
 func (u *Uploader) noteCredentialRefused() {
 	now := u.deps.Now().UTC()
 	u.noteRefusal(func(h *storedHandshake) {
-		if h.BackoffReason == AccessRefused {
-			h.BackoffReason, h.BackoffSince, h.NotBefore = Flowing, time.Time{}, time.Time{}
-		}
+		h.clearAccountRefusal()
+		h.clearAccessRefusal()
 		if h.CredentialRefusedSince.IsZero() {
 			h.CredentialRefusedSince = now
 		}
 	}, "the credential refusal")
+}
+
+// noteAccountRefused keeps the service's refusal of this account, and
+// what it said about it, where every surface reads what stops uploads.
+// It is the newest word about who is asking and about the account, so
+// it drops what a refused credential, a refused endpoint or a step the
+// account had to complete left: telling the user to complete that step
+// would send them to do something that changes nothing. An earlier
+// account refusal keeps its own start. Best-effort.
+func (u *Uploader) noteAccountRefused(message string) {
+	now := u.deps.Now().UTC()
+	u.noteRefusal(func(h *storedHandshake) {
+		h.AuthorizationRequired, h.AuthorizeURL, h.AuthorizationMessage = false, "", ""
+		h.CredentialRefusedSince = time.Time{}
+		h.clearAccessRefusal()
+		if h.AccountRefusedSince.IsZero() {
+			h.AccountRefusedSince = now
+		}
+		h.AccountMessage = message
+	}, "the account refusal")
+}
+
+func (h *storedHandshake) clearAccountRefusal() {
+	h.AccountRefusedSince, h.AccountMessage = time.Time{}, ""
+}
+
+func (h *storedHandshake) clearAccessRefusal() {
+	if h.BackoffReason == AccessRefused {
+		h.BackoffReason, h.BackoffSince, h.NotBefore = Flowing, time.Time{}, time.Time{}
+	}
 }
 
 // ClearCredentialRefusal drops a refused credential from the stored
@@ -524,6 +572,19 @@ func ClearCredentialRefusal(dir string) error {
 		return nil
 	}
 	h.CredentialRefusedSince = time.Time{}
+	return saveHandshake(dir, h)
+}
+
+// ClearAccountRefusal drops a refused account from the stored
+// handshake. A new pairing calls it: the pairing can be under another
+// account, and the refusal was answered about the one before it.
+func ClearAccountRefusal(dir string) error {
+	var h storedHandshake
+	readJSON(filepath.Join(dir, handshakeName), &h)
+	if h.AccountRefusedSince.IsZero() {
+		return nil
+	}
+	h.clearAccountRefusal()
 	return saveHandshake(dir, h)
 }
 

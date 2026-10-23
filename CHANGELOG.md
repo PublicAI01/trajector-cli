@@ -17,6 +17,13 @@ All notable changes to trajector are documented here. The format follows
   https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/rewards.
   When `enable` pairs the device first, it no longer tells you to run
   `trajector enable`.
+- When the service refuses uploads from your account, for example
+  because the account is suspended or its participation in the beta has
+  ended, `trajector upload`, `trajector status` and `trajector doctor`
+  now show the service's message, and automatic uploads stop retrying.
+  `trajector upload --force` tries again. Captured data stays on this
+  machine. Before, trajector told you to check for a proxy or firewall
+  and kept retrying.
 
 ## [0.5.0] - 2026-10-14
 

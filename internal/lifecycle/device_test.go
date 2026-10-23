@@ -677,3 +677,40 @@ func TestLoginClearsARefusedCredentialRecordedByAnEarlierUpload(t *testing.T) {
 		}
 	}
 }
+
+func TestLoginUnderANewPairingClearsARefusedAccount(t *testing.T) {
+	const said = "This account does not take part in uploads at the moment."
+	e := newUnpairedEnv(t)
+	e.pairable()
+	refusedAt := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	e.sandbox.SeedAccountRefusal(refusedAt, said)
+
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	for _, s := range e.sandbox.HeldStandings(refusedAt.Add(time.Hour)) {
+		if s.Reason == proxytest.AccountRefused {
+			t.Error("the refused account survived a new pairing")
+		}
+	}
+	if out := e.statusOutput(); strings.Contains(out, said) {
+		t.Errorf("status = %q, want no refusal of the account before the new pairing", out)
+	}
+}
+
+func TestLoginOnAPairedDeviceKeepsARefusedAccount(t *testing.T) {
+	e := newEnv(t)
+	refusedAt := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	e.sandbox.SeedAccountRefusal(refusedAt, "")
+
+	if err := e.machine().Login(t.Context(), e.io()); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	held := false
+	for _, s := range e.sandbox.HeldStandings(refusedAt.Add(time.Hour)) {
+		held = held || s.Reason == proxytest.AccountRefused
+	}
+	if !held {
+		t.Error("a login that kept the pairing dropped the refusal of its account")
+	}
+}
