@@ -44,6 +44,14 @@ All notable changes to trajector are documented here. The format follows
   did not show it to you. When a session closes, the line that nothing
   is recorded is still printed as a failed `SessionEnd` hook, because
   that is the only output Claude Code shows from that hook.
+- When `status`, `doctor`, `enable`, the session hooks or the proxy's
+  error for an unusable base URL tell you to run `trajector enable`
+  again in a project that is already enabled, they now say "(with
+  --no-proxy and --no-earlier if you use them)". Before, they named only
+  --no-proxy or no flag, so a project enabled with --no-earlier that
+  followed them had its earlier sessions collected. The lines
+  that tell you how to collect earlier sessions still name only
+  --no-proxy.
 
 ## [0.5.0] - 2026-10-14
 

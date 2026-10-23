@@ -59,7 +59,7 @@ func TestStatusShowsTheStateOfADeviceThatJustEnabledAProject(t *testing.T) {
 func TestStatusCarriesTheRequestedSettingAnswerEnableRecorded(t *testing.T) {
 	requiredOff := "A setting trajector requires is off: " + requestedKey + ". " +
 		"Sessions without reasoning summaries are not rewarded. " +
-		"Run `trajector enable` (with --no-proxy if you use it) to turn it on."
+		"Run `trajector enable` (with --no-proxy and --no-earlier if you use them) to turn it on."
 	for _, tc := range []struct {
 		name   string
 		seed   func(t *testing.T, e *env)

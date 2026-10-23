@@ -378,7 +378,7 @@ func TestStatus_ShowsSignalCounts(t *testing.T) {
 func TestStatus_PairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.T) {
 	const fact = "6 of 9 assistant lines carry no reasoning."
 	const wayOut = requestedKey + " is off for this project; " +
-		"run `trajector enable` (with --no-proxy if you use it) to turn it on."
+		"run `trajector enable` (with --no-proxy and --no-earlier if you use them) to turn it on."
 	for _, tc := range []struct {
 		name    string
 		stdin   string

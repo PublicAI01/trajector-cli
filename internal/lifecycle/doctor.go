@@ -578,7 +578,7 @@ func (m *Machine) doctorInjection(ctx context.Context, f *report.Findings, st re
 		// Re-injecting would resume capture the user may have stopped on
 		// purpose by hand-editing; consent questions are theirs to answer.
 		f.Problemf("the routing table grants this project but its settings inject nothing.")
-		f.Detailf("Run `trajector enable` %s to restore the injection,", routing.NoProxyCaveat)
+		f.Detailf("Run `trajector enable` %s to restore the injection,", routing.ReEnableCaveat)
 		f.Detailf("or `trajector disable` to withdraw this project.")
 		return nil
 
@@ -622,7 +622,7 @@ func (m *Machine) doctorInjection(ctx context.Context, f *report.Findings, st re
 
 	if st.IdentityDisagreement() {
 		f.Problemf("the routing table and the consent record disagree about this project's identity.")
-		f.Detailf("Run `trajector disable` and then `trajector enable` %s to record both afresh.", routing.NoProxyCaveat)
+		f.Detailf("Run `trajector disable` and then `trajector enable` %s to record both afresh.", routing.ReEnableCaveat)
 		return nil
 	}
 	switch {

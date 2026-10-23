@@ -73,7 +73,7 @@ const (
 	// fills the field is off for the project. It names no cost: the
 	// project's required-setting line already states it.
 	emptyReasoningWayOut = claudesettings.KeyShowThinkingSummaries +
-		" is off for this project; run `trajector enable` " + routing.NoProxyCaveat + " to turn it on."
+		" is off for this project; run `trajector enable` " + routing.ReEnableCaveat + " to turn it on."
 
 	// earlierSessionsFix is what doctor says under its count of the
 	// session files a project had before it was enabled: the one way
@@ -81,15 +81,18 @@ const (
 	// its own sentence, earlierSessionsSkippedWayBack, because the two
 	// surfaces count different projects — doctor counts files older
 	// than the grant, status the files a user asked enable to leave
-	// alone.
-	earlierSessionsFix = "Run `trajector enable` in this project " + routing.NoProxyCaveat + " to register them."
+	// alone. It carries CollectEarlierCaveat: the run it names is there
+	// to register those files, so it must omit --no-earlier.
+	earlierSessionsFix = "Run `trajector enable` in this project " + routing.CollectEarlierCaveat + " to register them."
 
 	// earlierSessionsSkippedWayBack is what status says under a project
 	// enabled with its earlier session files left alone. It names the
 	// way back and says that the way back re-declares the whole
 	// install: enable writes the shape as well as this choice, so a
-	// run that omits the shape flag changes the shape too.
-	earlierSessionsSkippedWayBack = "Earlier sessions were skipped at enable; run `trajector enable` again " + routing.NoProxyCaveat + " to collect them."
+	// run that omits the shape flag changes the shape too. It carries
+	// CollectEarlierCaveat, which names the shape flag and not
+	// --no-earlier: the run it names must omit --no-earlier.
+	earlierSessionsSkippedWayBack = "Earlier sessions were skipped at enable; run `trajector enable` again " + routing.CollectEarlierCaveat + " to collect them."
 
 	// spellingVariantsNotice is the standing disclosure of what the
 	// search for a project's session files cannot find by design.

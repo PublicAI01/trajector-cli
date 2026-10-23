@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
@@ -647,13 +648,12 @@ func notRecordingReason(reply proxylife.Selfcheck) string {
 		return "nothing is recorded: " + routing.PauseReason(reply.PauseReason).Explain()
 	}
 	if reply.Decision == string(routing.ForwardOnlyRevoked) {
-		return "this project's token is revoked; run `trajector enable` again " + routing.NoProxyCaveat + " to re-grant it"
+		return "this project's token is revoked; run `trajector enable` again " + routing.ReEnableCaveat + " to re-grant it"
 	}
 	if reply.Decision == string(routing.Record) {
 		// A verdict that records, from a proxy that would not, is a
 		// route upstream the proxy refuses to forward to.
-		return "this project's recorded base URL is not a usable http(s) URL, so nothing is forwarded; run `trajector enable` " +
-			routing.NoProxyCaveat + " in the project to set it again, or `trajector disable` to take trajector out of the way"
+		return apiproxy.UnroutableUpstream
 	}
 	return "the proxy would not record this project"
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/selfupdate"
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
@@ -107,7 +108,7 @@ func (st AutoUpgradeState) sentence() string {
 	case st.Off:
 		return autoUpgradesLabel + "off (" + userdirs.ConfigFileName + ")."
 	case st.NeedsAgreement:
-		return autoUpgradesLabel + "off until you accept the current data agreement (run `trajector enable`)."
+		return autoUpgradesLabel + "off until you accept the current data agreement; run `trajector enable` " + routing.ReEnableCaveat + "."
 	case st.CheckedAt.IsZero():
 		return autoUpgradesLabel + "on; no check has run yet."
 	}

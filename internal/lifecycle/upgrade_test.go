@@ -687,7 +687,7 @@ func TestStatusSaysWhatTheLastUpgradeCheckFound(t *testing.T) {
 		"an agreement accepted before the check was in it": {
 			agreement: agreementBeforeTheCheck(t),
 			state:     `{"checked_at": "2026-10-12T08:30:00Z", "result": "failed", "error": "fetching the release index: 503 Service Unavailable"}`,
-			want:      "Automatic upgrades: off until you accept the current data agreement (run `trajector enable`).",
+			want:      "Automatic upgrades: off until you accept the current data agreement; run `trajector enable` (with --no-proxy and --no-earlier if you use them).",
 		},
 	}
 	for name, tc := range cases {

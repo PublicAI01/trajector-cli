@@ -108,12 +108,20 @@ const (
 	driftSecondStep = DoctorCommand
 )
 
-// NoProxyCaveat is the one spelling of the clause a sentence carries
+// ReEnableCaveat is the one spelling of the clause a sentence carries
 // when it sends an already enabled project back to `trajector enable`.
-// A bare run declares the shape with a proxy, so a project in the shape
-// without one is converted by following such a sentence unless the
-// sentence tells the user to name the flag again.
-const NoProxyCaveat = "(with --no-proxy if you use it)"
+// A bare run declares the shape with a proxy and collects the earlier
+// session files, so following such a sentence converts a project in the
+// shape without a proxy, and collects the earlier session files of a
+// project enabled with them left alone, unless the sentence tells the
+// user to name both flags again.
+const ReEnableCaveat = "(with --no-proxy and --no-earlier if you use them)"
+
+// CollectEarlierCaveat is the clause a sentence carries in place of
+// ReEnableCaveat when the enable it names is there to collect a
+// project's earlier session files. That run must omit --no-earlier, so
+// the clause names only the shape flag.
+const CollectEarlierCaveat = "(with --no-proxy if you use it)"
 
 // AllPauseReasons returns every pause value this build knows, in the
 // order a surface that answers for all of them should read. It is what
@@ -180,7 +188,7 @@ func (r PauseReason) Fix() []string {
 // states it next to them.
 func (r PauseReason) FixCaveat() string {
 	if slices.Contains(r.Fix(), consentWayOut) {
-		return NoProxyCaveat
+		return ReEnableCaveat
 	}
 	return ""
 }

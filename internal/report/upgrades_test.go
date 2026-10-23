@@ -80,7 +80,7 @@ func TestStatusAlwaysSaysHowTrajectorKeepsItselfUpToDate(t *testing.T) {
 			// them about it.
 			"an accepted agreement that does not cover the check",
 			report.AutoUpgradeState{NeedsAgreement: true, CheckedAt: lastCheck, Result: selfupdate.ResultFailed, Error: "x"},
-			"Automatic upgrades: off until you accept the current data agreement (run `trajector enable`).",
+			"Automatic upgrades: off until you accept the current data agreement; run `trajector enable` (with --no-proxy and --no-earlier if you use them).",
 		},
 		{
 			"turned off before any agreement covers the check",
@@ -159,7 +159,7 @@ func TestDoctorStatesEveryOtherUpgradeStateAndCountsNoneOfThem(t *testing.T) {
 		"config file":      {report.AutoUpgradeState{ConfigErr: errors.New("cut")}, "automatic upgrades: off (config.json could not be read)"},
 		"never checked":    {report.AutoUpgradeState{}, "automatic upgrades: on; no check has run yet"},
 		"not a release":    {report.AutoUpgradeState{NotRelease: true, CheckedAt: lastCheck, Result: selfupdate.ResultFailed}, "automatic upgrades: off (not a release build)"},
-		"agreement":        {report.AutoUpgradeState{NeedsAgreement: true, CheckedAt: lastCheck, Result: selfupdate.ResultFailed}, "automatic upgrades: off until you accept the current data agreement (run `trajector enable`)"},
+		"agreement":        {report.AutoUpgradeState{NeedsAgreement: true, CheckedAt: lastCheck, Result: selfupdate.ResultFailed}, "automatic upgrades: off until you accept the current data agreement; run `trajector enable` (with --no-proxy and --no-earlier if you use them)"},
 		"state unreadable": {report.AutoUpgradeState{StateErr: errors.New("cut")}, "automatic upgrades: on; what the last check found could not be read: cut"},
 	}
 	for name, tc := range cases {

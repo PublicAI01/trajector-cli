@@ -433,7 +433,7 @@ func TestNoSurfaceSendsAnEnabledProjectToEnableWithoutNamingTheShapeFlag(t *test
 				}
 				// A fix line holds the command alone; its caveat is
 				// the line directly under it.
-				if i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == routing.NoProxyCaveat {
+				if i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == routing.ReEnableCaveat {
 					continue
 				}
 				t.Errorf("%s says %q, want the shape flag named so a project that records without a proxy is not converted by following it", tc.surface, strings.TrimSpace(line))
@@ -680,7 +680,7 @@ func TestStatusStatesWhatReadingNoticedAsCountsAndFieldNames(t *testing.T) {
 func TestStatusPairsTheEmptyReasoningCountWithTheSettingThatFillsIt(t *testing.T) {
 	const key = claudesettings.KeyShowThinkingSummaries
 	const wayOut = key + " is off for this project; " +
-		"run `trajector enable` (with --no-proxy if you use it) to turn it on."
+		"run `trajector enable` (with --no-proxy and --no-earlier if you use them) to turn it on."
 	const howTo = "How to turn reasoning summaries on, for each way you run Claude Code: " +
 		"https://docs.publicai.io/publicai-documentation/publicai-trajector-cli/reasoning-summaries"
 	for _, tc := range []struct {

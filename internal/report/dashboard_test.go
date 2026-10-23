@@ -321,10 +321,10 @@ func TestStatusEndsTheProjectSectionWithTheRequestedSetting(t *testing.T) {
 	}
 	requiredOff := "A setting trajector requires is off: " + key + ". " +
 		"Sessions without reasoning summaries are not rewarded. " +
-		"Run `trajector enable` (with --no-proxy if you use it) to turn it on."
+		"Run `trajector enable` (with --no-proxy and --no-earlier if you use them) to turn it on."
 	recommendation := "One optional setting is off: " + optionalKey + ". " +
 		"Turning it on costs you nothing and makes your records more complete. " +
-		"Run `trajector enable` (with --no-proxy if you use it) to see what it changes."
+		"Run `trajector enable` (with --no-proxy and --no-earlier if you use them) to see what it changes."
 	for _, tc := range []struct {
 		name    string
 		setting report.RequestedSettingStatus
@@ -376,7 +376,7 @@ func TestStatusEndsTheProjectSectionWithTheRequestedSetting(t *testing.T) {
 		{
 			name:    "optional and declined",
 			setting: report.RequestedSettingStatus{Key: optionalKey, State: claudesettings.Unset, Declined: true},
-			want:    "Claude Code settings: 1 declined. Run `trajector enable` (with --no-proxy if you use it) to review.",
+			want:    "Claude Code settings: 1 declined. Run `trajector enable` (with --no-proxy and --no-earlier if you use them) to review.",
 			reject:  []string{"costs you nothing", "set by trajector"},
 		},
 	} {

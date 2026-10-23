@@ -545,7 +545,7 @@ func TestEnableNonInteractiveChangesNoRequestedSetting(t *testing.T) {
 	}
 	out := e.stdout.String()
 	if !strings.Contains(out, "Claude Code settings were not changed: they need an interactive session.") ||
-		!strings.Contains(out, "Run `trajector enable` (with --no-proxy if you use it) from a terminal to review them.") {
+		!strings.Contains(out, "Run `trajector enable` (with --no-proxy and --no-earlier if you use them) from a terminal to review them.") {
 		t.Errorf("stdout misses the non-interactive notice:\n%s", out)
 	}
 	if _, found := settingValue(t, e.projectSettings()); found {

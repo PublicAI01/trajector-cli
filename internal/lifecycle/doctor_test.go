@@ -93,7 +93,7 @@ func TestDoctorFlagsALiveProxyThatWillNotRecord(t *testing.T) {
 	}
 }
 
-const noProxyCaveat = "(with --no-proxy if you use it)"
+const reEnableCaveat = "(with --no-proxy and --no-earlier if you use them)"
 
 func TestDoctorFlagsALiveProxyThatRefusesTheRecordedUpstream(t *testing.T) {
 	e := newEnv(t)
@@ -114,7 +114,7 @@ func TestDoctorFlagsALiveProxyThatRefusesTheRecordedUpstream(t *testing.T) {
 	for _, want := range []string{
 		"live proxy will not record",
 		"recorded base URL is not a usable http(s) URL",
-		"`trajector enable` " + noProxyCaveat + " in the project",
+		"`trajector enable` " + reEnableCaveat + " in the project",
 		"`trajector disable`",
 	} {
 		if !strings.Contains(out, want) {
@@ -136,7 +136,7 @@ func TestDoctorSendsAnIdentityDisagreementBackToEnableInItsOwnShape(t *testing.T
 
 	e.stdout.Reset()
 	_, out := e.doctor()
-	if want := "`trajector enable` " + noProxyCaveat + " to record both afresh"; !strings.Contains(out, want) {
+	if want := "`trajector enable` " + reEnableCaveat + " to record both afresh"; !strings.Contains(out, want) {
 		t.Errorf("doctor = %q, want %q", out, want)
 	}
 }
@@ -158,7 +158,7 @@ func TestDoctorSendsARevokedTokenBackToEnableInItsOwnShape(t *testing.T) {
 	if problems == 0 {
 		t.Fatalf("problems = 0 while the live proxy holds this token revoked, output:\n%s", out)
 	}
-	if want := "token is revoked; run `trajector enable` again " + noProxyCaveat + " to re-grant it"; !strings.Contains(out, want) {
+	if want := "token is revoked; run `trajector enable` again " + reEnableCaveat + " to re-grant it"; !strings.Contains(out, want) {
 		t.Errorf("doctor = %q, want %q", out, want)
 	}
 }
@@ -387,7 +387,7 @@ func TestDoctorReportsAnOrphanedGrant(t *testing.T) {
 	if problems == 0 {
 		t.Fatalf("problems = 0 for a grant with no injection, output:\n%s", out)
 	}
-	if !strings.Contains(out, "`trajector enable` (with --no-proxy if you use it)") || !strings.Contains(out, "`trajector disable`") {
+	if !strings.Contains(out, "`trajector enable` (with --no-proxy and --no-earlier if you use them)") || !strings.Contains(out, "`trajector disable`") {
 		t.Errorf("doctor = %q, want both ways out offered", out)
 	}
 }

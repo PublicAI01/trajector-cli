@@ -469,16 +469,16 @@ func requestedSettingLines(settings []RequestedSettingStatus) []string {
 		}
 	}
 	if declined > 0 {
-		lines = append(lines, fmt.Sprintf("Claude Code settings: %d declined. Run `trajector enable` %s to review.", declined, routing.NoProxyCaveat))
+		lines = append(lines, fmt.Sprintf("Claude Code settings: %d declined. Run `trajector enable` %s to review.", declined, routing.ReEnableCaveat))
 	}
 	for _, s := range required {
 		lines = append(lines, fmt.Sprintf("A setting trajector requires is off: %s. %s. "+
-			"Run `trajector enable` %s to turn it on.", s.Key, sentenceCase(s.OffCost), routing.NoProxyCaveat))
+			"Run `trajector enable` %s to turn it on.", s.Key, sentenceCase(s.OffCost), routing.ReEnableCaveat))
 	}
 	for _, key := range off {
 		lines = append(lines, fmt.Sprintf("One optional setting is off: %s. "+
 			"Turning it on costs you nothing and makes your records more complete. "+
-			"Run `trajector enable` %s to see what it changes.", key, routing.NoProxyCaveat))
+			"Run `trajector enable` %s to see what it changes.", key, routing.ReEnableCaveat))
 	}
 	return lines
 }

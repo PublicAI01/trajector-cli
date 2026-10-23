@@ -25,7 +25,7 @@ import (
 const (
 	tableUnreadableHeadline = "recording is stopped: the routing table could not be read"
 	tableUnreadableMoveStep = "Move that file aside yourself; no command of trajector's moves or rewrites it."
-	tableUnreadableNextStep = "Then run `trajector enable` " + routing.NoProxyCaveat + " in each project you enabled."
+	tableUnreadableNextStep = "Then run `trajector enable` " + routing.ReEnableCaveat + " in each project you enabled."
 )
 
 // An injection of trajector's writes over the ANTHROPIC_BASE_URL a

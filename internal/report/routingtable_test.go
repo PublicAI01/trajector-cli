@@ -31,7 +31,7 @@ func TestAnUnreadableRoutingTableStopsTheDeviceAndNamesTheFileOnEverySurface(t *
 		"Move that file aside yourself; no command of trajector's moves or rewrites it.",
 		"For a project that sends its traffic through a relay: write the relay's URL back to ANTHROPIC_BASE_URL in its .claude/settings.local.json. An earlier copy of the routing table records it as that project's `upstream`.",
 		"For a project that uses the official endpoint: delete that ANTHROPIC_BASE_URL line.",
-		"Then run `trajector enable` (with --no-proxy if you use it) in each project you enabled.",
+		"Then run `trajector enable` (with --no-proxy and --no-earlier if you use them) in each project you enabled.",
 	}
 
 	status := dashboard(d)

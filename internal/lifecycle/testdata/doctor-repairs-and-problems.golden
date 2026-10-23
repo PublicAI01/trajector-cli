@@ -8,6 +8,6 @@ trajector testv doctor
   ok: every session file of this project is registered (0 session(s))
   ok: capture spool writable (0 B of 2.0 GiB used)
   ok: no rejected batches quarantined
-  error: the files agree, but the live proxy will not record this project: this project's recorded base URL is not a usable http(s) URL, so nothing is forwarded; run `trajector enable` (with --no-proxy if you use it) in the project to set it again, or `trajector disable` to take trajector out of the way
+  error: the files agree, but the live proxy will not record this project: this project's recorded base URL is not a usable http(s) URL, so nothing is forwarded; run `trajector enable` (with --no-proxy and --no-earlier if you use them) in the project to set it again, or `trajector disable` to take trajector out of the way
 
 1 problem(s) need attention.

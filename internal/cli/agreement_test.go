@@ -57,7 +57,7 @@ func TestStatusAndDoctorReportAChangedAgreementBeforeAnySessionHookRuns(t *testi
 		for _, want := range []string{
 			routing.PauseConsentReconfirm.Why(),
 			"fix:  trajector enable\n",
-			routing.NoProxyCaveat,
+			routing.ReEnableCaveat,
 		} {
 			if !strings.Contains(device, want) {
 				t.Errorf("%s device section lacks %q:\n%s", name, want, device)

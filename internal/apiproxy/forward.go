@@ -112,10 +112,15 @@ func (s *Server) newForwarder() http.Handler {
 // other way to learn what happened.
 func (s *Server) refuseUnroutable(w http.ResponseWriter, d *decision) {
 	s.cfg.Logf("refusing to forward for project %s: its recorded upstream is not a usable http(s) URL; nothing was sent upstream", d.projectIDHash)
-	http.Error(w, "trajector: this project's recorded base URL is not a usable http(s) URL, so nothing was forwarded. "+
-		"Run `trajector enable` in the project to set it again, or `trajector disable` to take trajector out of the way.",
-		http.StatusBadGateway)
+	http.Error(w, "trajector: "+UnroutableUpstream+".", http.StatusBadGateway)
 }
+
+// UnroutableUpstream is the one spelling of a project whose recorded
+// upstream is not a usable http(s) URL, and of the two commands that end
+// that state: the proxy answers the project's client with it, and the
+// diagnosis says it about a proxy that will not record the project.
+const UnroutableUpstream = "this project's recorded base URL is not a usable http(s) URL, so nothing is forwarded; run `trajector enable` " +
+	routing.ReEnableCaveat + " in the project to set it again, or `trajector disable` to take trajector out of the way"
 
 // refuseTableNeverRead answers an exchange that carries a token while
 // the routing table cannot be read and this process never read it. The

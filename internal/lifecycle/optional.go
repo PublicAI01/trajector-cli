@@ -252,7 +252,7 @@ func reportRestoredSettings(streams IO, indent string, undone []string, failures
 // conditions can be met when nobody is reading.
 func printNeedsInteractive(streams IO) {
 	fmt.Fprintln(streams.Out, "Claude Code settings were not changed: they need an interactive session.")
-	fmt.Fprintln(streams.Out, "Run `trajector enable` "+routing.NoProxyCaveat+" from a terminal to review them.")
+	fmt.Fprintln(streams.Out, "Run `trajector enable` "+routing.ReEnableCaveat+" from a terminal to review them.")
 }
 
 // Rendering re-wraps the finalized disclosure wording; it never rewrites
