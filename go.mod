@@ -2,7 +2,7 @@ module github.com/PublicAI01/trajector-cli
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/betterleaks/betterleaks v1.9.0

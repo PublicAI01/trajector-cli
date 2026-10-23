@@ -4,7 +4,7 @@ All notable changes to trajector are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-10-23
 
 ### Changed
 
@@ -1048,7 +1048,7 @@ Hardened ahead of the tag:
 - State files are replaced and read atomically on every platform,
   Windows rename collisions included.
 
-[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.5.0...HEAD
+[0.6.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.7...v0.4.0
 [0.3.7]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.6...v0.3.7
