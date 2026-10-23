@@ -32,6 +32,19 @@ All notable changes to trajector are documented here. The format follows
   authorization was not complete, also when the step was a different
   one, such as agreeing to updated terms.
 
+### Fixed
+
+- The lines a running Claude Code session shows when nothing of it is
+  being recorded, or when its reasoning has no summaries, now appear as
+  a message from the hook (for example `Stop says: trajector: …`).
+  Before, Claude Code showed them as a hook error ("Failed with
+  non-blocking status code"), which read as trajector being broken.
+  The one-time note that a project is not contributing coding data is
+  now a hook message too; before, Claude Code gave it to the model and
+  did not show it to you. When a session closes, the line that nothing
+  is recorded is still printed as a failed `SessionEnd` hook, because
+  that is the only output Claude Code shows from that hook.
+
 ## [0.5.0] - 2026-10-14
 
 ### Added

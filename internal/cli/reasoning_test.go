@@ -17,11 +17,10 @@ import (
 )
 
 const (
-	cliLine     = "trajector: no reasoning summaries in this session; run trajector enable, then start a new session\n"
-	desktopLine = "trajector: no reasoning summaries; set Default transcript view to Thinking, then start a new session\n"
-	sdkLine     = "trajector: no reasoning summaries in this session; add --thinking-display summarized and rerun\n"
-	unknownLine = "trajector: no reasoning summaries in this session; run trajector status to see how to turn them on\n"
-	recordsNone = "trajector: nothing of this session is being recorded; run trajector status\n"
+	cliLine     = "trajector: no reasoning summaries in this session; run trajector enable, then start a new session"
+	desktopLine = "trajector: no reasoning summaries; set Default transcript view to Thinking, then start a new session"
+	sdkLine     = "trajector: no reasoning summaries in this session; add --thinking-display summarized and rerun"
+	unknownLine = "trajector: no reasoning summaries in this session; run trajector status to see how to turn them on"
 )
 
 // reasoningEnv is a project enabled without the proxy, whose session
@@ -109,8 +108,8 @@ func thinking(id, text, surface string) string {
 
 func wantSaid(t *testing.T, got clitest.Result, line string) {
 	t.Helper()
-	if got.Exit != 1 || got.Stderr != line || got.Stdout != "" {
-		t.Errorf("exit = %d, stdout = %q, stderr = %q; want exit 1 and only %q on stderr", got.Exit, got.Stdout, got.Stderr, line)
+	if message := toldUser(t, got); message != line {
+		t.Errorf("message = %q, want %q", message, line)
 	}
 }
 
@@ -138,9 +137,8 @@ func TestHookProgress_TellsASessionWhoseReasoningMostlyHoldsNoTextHowToTurnSumma
 			)
 			r.registerAndRead(path)
 
-			got := r.hook("Stop", path)
-			wantSaid(t, got, tt.want)
-			if n := utf8.RuneCountInString(strings.TrimSuffix(got.Stderr, "\n")); n > 100 {
+			wantSaid(t, r.hook("Stop", path), tt.want)
+			if n := utf8.RuneCountInString(tt.want); n > 100 {
 				t.Errorf("line is %d runes, want at most 100", n)
 			}
 		})
@@ -209,7 +207,7 @@ func TestHookProgress_ADeviceThatRecordsNothingSaysOnlyThatAndNothingOfReasoning
 	r.registerAndRead(path)
 	r.Sandbox().Pause(proxytest.PauseSignedOut)
 
-	wantSaid(t, r.hook("Stop", path), recordsNone)
+	wantSaid(t, r.hook("Stop", path), nothingRecorded)
 	assertSilentSuccess(t, r.hook("Stop", path))
 	r.Sandbox().Resume(proxytest.PauseSignedOut)
 	wantSaid(t, r.hook("Stop", path), cliLine)

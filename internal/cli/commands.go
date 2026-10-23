@@ -3,9 +3,11 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
@@ -163,9 +165,10 @@ func (a *app) uninstallCmd(ctx context.Context, args []string) int {
 
 // hookCmd hosts the commands injected into Claude Code hooks. They must
 // never block a session: any failure is reported on stderr with a
-// non-blocking exit code, and success is silent — what a session hook
-// writes on stdout reaches the model, and what it writes on stderr
-// reaches the user.
+// non-blocking exit code, which Claude Code shows the user as a hook
+// error, and success is silent. Plain text on stdout reaches the model
+// on some events, so a hook writes nothing there except the one JSON
+// message that tells the user something (tellUser).
 func (a *app) hookCmd(ctx context.Context, args []string) int {
 	// A hook runs where nobody is watching, so a mistyped flag must be
 	// refused before the hook name is read as an event and before any
@@ -197,7 +200,9 @@ func (a *app) hookCmd(ctx context.Context, args []string) int {
 		// Starting a session may say other things on stderr first — a
 		// stale agreement, a moved upstream — and they are held back:
 		// a build that cannot start its proxy must have its sentence
-		// on the first line, the one Claude Code shows.
+		// on the first line, the one Claude Code shows. A session told
+		// that nothing of it is recorded hears them in the same
+		// message, before that notice.
 		var said bytes.Buffer
 		streams := a.io()
 		streams.Err = &said
@@ -207,19 +212,24 @@ func (a *app) hookCmd(ctx context.Context, args []string) int {
 			fmt.Fprint(a.stderr, said.String())
 			return exit
 		}
-		fmt.Fprint(a.stderr, said.String())
-		if exit := a.exit(err); exit != 0 {
-			return exit
+		if err == nil && tell {
+			return a.tellUser(said.String() + nothingRecordedNotice)
 		}
-		return a.tellSession(tell)
+		fmt.Fprint(a.stderr, said.String())
+		return a.exit(err)
 	case claudesettings.HookSessionEnd:
 		if len(rest) != 0 {
 			fmt.Fprintln(a.stderr, hookUsage)
 			return 2
 		}
 		hook := a.hookInput()
-		if m, cwd, err := a.prelude(); err == nil {
-			return a.tellSession(m.SessionEnded(ctx, cwd, hook))
+		// Claude Code drops a SessionEnd hook's JSON message. The one
+		// output of this event it shows is a failed hook's stderr,
+		// printed to the terminal after the session closes, so the
+		// notice takes that way here and only here.
+		if m, cwd, err := a.prelude(); err == nil && m.SessionEnded(ctx, cwd, hook) {
+			fmt.Fprintln(a.stderr, nothingRecordedNotice)
+			return 1
 		}
 		return 0
 	case claudesettings.HookGitSnapshot:
@@ -248,11 +258,21 @@ func (a *app) hookCmd(ctx context.Context, args []string) int {
 			return 2
 		}
 		// A lost hint is acceptable; a blocked session is not, so every
-		// failure here is silent.
-		if m, cwd, err := a.prelude(); err == nil {
-			m.Discovery(cwd, a.io())
+		// failure here is silent. The hint goes out as a message for the
+		// user: this hook runs at SessionStart, where plain text on
+		// stdout is sent to the model and not shown.
+		m, cwd, err := a.prelude()
+		if err != nil {
+			return 0
 		}
-		return 0
+		var hint bytes.Buffer
+		streams := a.io()
+		streams.Out = &hint
+		m.Discovery(cwd, streams)
+		if hint.Len() == 0 {
+			return 0
+		}
+		return a.tellUser(hint.String())
 	case claudesettings.HookRead:
 		if len(rest) != 1 {
 			fmt.Fprintf(a.stderr, "usage: trajector hook %s <project-dir>\n", claudesettings.HookRead)
@@ -329,26 +349,35 @@ func (a *app) hookCmd(ctx context.Context, args []string) int {
 // when this device captures nothing of it. It names the command that
 // says why, and nothing else: a hook has one line of the user's
 // attention and must spend it on where to look, not on which of
-// several reasons holds. It goes on the hook's stderr with a non-zero
-// exit so that Claude Code shows it — a hook that exits 0 keeps its
-// stderr in the transcript, and a hook that exits 2 blocks the
-// session, which no hook of trajector's may ever do. Everything else
-// about the hook has already succeeded by the time this is said.
+// several reasons holds.
 const nothingRecordedNotice = "trajector: nothing of this session is being recorded; run trajector status"
 
-func (a *app) tellSession(stopped bool) int {
-	if !stopped {
-		return 0
+// hookMessage is the JSON a hook writes on stdout to have Claude Code
+// show the user a message. Claude Code shows systemMessage in the
+// session as "<event> says: <message>", keeps it out of what the model
+// is sent, and lets the session go on.
+type hookMessage struct {
+	SystemMessage string `json:"systemMessage"`
+}
+
+// tellUser has Claude Code show message to the user, and exits 0. A
+// notice is not a failure: stderr with a non-zero exit is shown as a
+// hook error, and exit 2 blocks the session, which no hook of
+// trajector's may ever do. Everything else about the hook has already
+// succeeded by the time this is said.
+func (a *app) tellUser(message string) int {
+	out, err := json.Marshal(hookMessage{SystemMessage: strings.TrimSuffix(message, "\n")})
+	if err != nil {
+		return a.fail(err)
 	}
-	fmt.Fprintln(a.stderr, nothingRecordedNotice)
-	return 1
+	fmt.Fprintf(a.stdout, "%s\n", out)
+	return 0
 }
 
 // noReasoningLines are the lines a running session is told when most
 // of its reasoning blocks carry no text, one for each way Claude Code
 // can be started: each names the one step that turns the summaries on
-// there. They state what this device read and nothing more. They go
-// out as nothingRecordedNotice does, for the same reasons.
+// there. They state what this device read and nothing more.
 var noReasoningLines = map[lifecycle.LaunchSurface]string{
 	lifecycle.SurfaceCLI:     "trajector: no reasoning summaries in this session; run trajector enable, then start a new session",
 	lifecycle.SurfaceDesktop: "trajector: no reasoning summaries; set Default transcript view to Thinking, then start a new session",
@@ -362,10 +391,9 @@ var noReasoningLines = map[lifecycle.LaunchSurface]string{
 func (a *app) tellProgressed(p lifecycle.Progressed) int {
 	switch {
 	case p.NothingRecorded:
-		return a.tellSession(true)
+		return a.tellUser(nothingRecordedNotice)
 	case p.NoReasoning:
-		fmt.Fprintln(a.stderr, noReasoningLines[p.Surface])
-		return 1
+		return a.tellUser(noReasoningLines[p.Surface])
 	default:
 		return 0
 	}
