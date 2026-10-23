@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -361,8 +362,7 @@ func (s *Server) serveIndex(w http.ResponseWriter) {
 		Assets     []asset `json:"assets"`
 	}
 	index := []entry{}
-	for i := len(s.releases) - 1; i >= 0; i-- {
-		rel := s.releases[i]
+	for _, rel := range slices.Backward(s.releases) {
 		e := entry{
 			TagName: rel.tag,
 			Draft:   rel.draft,

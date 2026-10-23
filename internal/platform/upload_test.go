@@ -211,12 +211,10 @@ func TestUploadBatch451IsNotAPoisonBatch(t *testing.T) {
 	// lock the user's data away over a state they fix in a browser, and
 	// report it as the data having been refused.
 	err := uploadRefused(t, fakeplatform.Refuses451("", ""))
-	var rejected *platform.BatchRejectedError
-	if errors.As(err, &rejected) {
+	if _, ok := errors.AsType[*platform.BatchRejectedError](err); ok {
 		t.Fatalf("451 classified as a rejected batch: %v", err)
 	}
-	var unauthorized *platform.DataAuthorizationRequiredError
-	if !errors.As(err, &unauthorized) {
+	if _, ok := errors.AsType[*platform.DataAuthorizationRequiredError](err); !ok {
 		t.Fatalf("error = %v, want the gate to hold even with no detail in the body", err)
 	}
 }

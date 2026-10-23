@@ -54,8 +54,8 @@ type upgradeRefusal struct {
 func (s *Sandbox) SeedUpgradeRefusal(minClientVersion, message string) {
 	s.t.Helper()
 	s.overlayHandshake(upgradeRefusal{
-		Handshake:      Handshake{MinClientVersion: minClientVersion},
-		UpgradeMessage: message,
+		MinClientVersion: minClientVersion,
+		UpgradeMessage:   message,
 	})
 	if got, want := upload.LoadHandshake(s.layout.UploadDir()).MinClientVersion, platform.SafeServiceText(minClientVersion); got != want {
 		s.t.Fatalf("the uploader reads the seeded minimum version back as %q, want %q", got, want)

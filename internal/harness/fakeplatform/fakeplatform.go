@@ -124,9 +124,9 @@ type authorizationRefusal struct {
 // either way, which is what makes this one stimulus rather than three.
 func Refuses426(minClientVersion, message string) Response {
 	return JSON(http.StatusUpgradeRequired, upgradeRefusal{
-		Handshake: platform.Handshake{MinClientVersion: minClientVersion},
-		Error:     "cli_upgrade_required",
-		Message:   message,
+		MinClientVersion: minClientVersion,
+		Error:            "cli_upgrade_required",
+		Message:          message,
 	})
 }
 

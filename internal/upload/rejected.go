@@ -372,8 +372,7 @@ func Requeue(rejectedDir string, sp *spool.Spool, batchID string) (Rejection, in
 			continue
 		}
 		if err := respool(sp, data); err != nil {
-			var unreadable *unreadableRecordError
-			if errors.As(err, &unreadable) {
+			if _, ok := errors.AsType[*unreadableRecordError](err); ok {
 				stuck = append(stuck, fmt.Errorf("record %s is not a readable record and stays quarantined: %w", name, err))
 				continue
 			}

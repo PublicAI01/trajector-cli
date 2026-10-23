@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
@@ -143,10 +144,10 @@ func RemoveGitIgnored(projectRoot string, rules []string) error {
 	return fsatomic.Update(path, info.Mode().Perm(), func(existing []byte) ([]byte, error) {
 		lines := strings.Split(string(existing), "\n")
 		for _, rule := range rules {
-			for i := len(lines) - 1; i >= 0; i-- {
+			for i, line := range slices.Backward(lines) {
 				// Matched exactly, as written: trimming here could take a
 				// user's own line that differs only in trailing space.
-				if lines[i] == rule {
+				if line == rule {
 					lines = append(lines[:i], lines[i+1:]...)
 					break
 				}

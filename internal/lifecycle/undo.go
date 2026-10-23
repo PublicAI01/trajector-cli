@@ -1,6 +1,9 @@
 package lifecycle
 
-import "errors"
+import (
+	"errors"
+	"slices"
+)
 
 // enableLedger records what an install changed and how each change is
 // taken back. An entry goes on the ledger at the step that makes the
@@ -31,8 +34,8 @@ func (l *enableLedger) record(undo func() error) {
 // reports everything that failed.
 func (l *enableLedger) undo() error {
 	var errs []error
-	for i := len(l.entries) - 1; i >= 0; i-- {
-		errs = append(errs, l.entries[i]())
+	for _, undo := range slices.Backward(l.entries) {
+		errs = append(errs, undo())
 	}
 	return errors.Join(errs...)
 }

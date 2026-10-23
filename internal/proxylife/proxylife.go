@@ -105,8 +105,7 @@ func (p *PortHeldError) Unwrap() error { return p.Why }
 // whether err is one. A surface asks here rather than parsing the
 // sentence it prints.
 func HeldPort(err error) (string, bool) {
-	var held *PortHeldError
-	if errors.As(err, &held) {
+	if held, ok := errors.AsType[*PortHeldError](err); ok {
 		return held.Addr, true
 	}
 	return "", false
@@ -700,8 +699,7 @@ func adminClient(timeout time.Duration) *http.Client {
 // path it carries the project token, which must never reach an error
 // string a caller prints — and keeps the cause.
 func transportCause(err error) error {
-	var ue *url.Error
-	if errors.As(err, &ue) {
+	if ue, ok := errors.AsType[*url.Error](err); ok {
 		return ue.Err
 	}
 	return err

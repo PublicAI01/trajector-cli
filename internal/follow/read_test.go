@@ -1102,8 +1102,7 @@ func TestRead_StatFailureIsReported(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Read() = %+v, nil, want an error", res)
 	}
-	var pathErr *os.PathError
-	if !errors.As(err, &pathErr) {
+	if _, ok := errors.AsType[*os.PathError](err); !ok {
 		t.Errorf("err = %v, want a path error", err)
 	}
 }

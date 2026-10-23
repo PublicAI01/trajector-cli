@@ -670,8 +670,7 @@ func (u *Uploader) flush(ctx context.Context, mode flushMode, deadline time.Time
 // the service recognizes the id and does not ingest it again.
 func (u *Uploader) resendPending(ctx context.Context, token string, res *Result, deadline time.Time) error {
 	l, ok, err := resumeLease(u.deps.Dir)
-	var unreadable *unreadablePendingError
-	if errors.As(err, &unreadable) {
+	if unreadable, isUnreadable := errors.AsType[*unreadablePendingError](err); isUnreadable {
 		return u.discardUnreadablePending(unreadable.raw)
 	}
 	if err != nil {

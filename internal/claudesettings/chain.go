@@ -1,6 +1,9 @@
 package claudesettings
 
-import "path/filepath"
+import (
+	"path/filepath"
+	"slices"
+)
 
 // Source identifies where a configuration value was found. It names a
 // rank of the settings chain, never the file a value happened to be
@@ -84,8 +87,8 @@ func (l layer) lookup(key string, read reader) (any, bool) {
 		value := l.shell(key)
 		return value, value != ""
 	}
-	for i := len(l.roots) - 1; i >= 0; i-- {
-		if value, found := read(l.roots[i], key); found {
+	for _, root := range slices.Backward(l.roots) {
+		if value, found := read(root, key); found {
 			return value, true
 		}
 	}

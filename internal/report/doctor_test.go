@@ -241,7 +241,7 @@ func TestStatusAndDoctorPresentAFullSpoolAlike(t *testing.T) {
 
 // refused is the account of a full spool that turned rawcalls away.
 func refused(count int) report.DroppedState {
-	return report.DroppedState{DroppedRecord: apiproxy.DroppedRecord{Reasons: map[string]apiproxy.DroppedReason{
+	return report.DroppedState{Reasons: map[string]apiproxy.DroppedReason{
 		"spool full": {
 			Count:   count,
 			Bytes:   3 << 20,
@@ -249,7 +249,7 @@ func refused(count int) report.DroppedState {
 			LastAt:  time.Date(2026, 11, 2, 9, 30, 0, 0, time.UTC),
 		},
 		"capture deadline passed": {Count: 1, FirstAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)},
-	}}}
+	}}
 }
 
 const refusedSentence = "Since 2026-10-22T08:00:00Z, 4395 rawcall(s) (3.0 MiB) were not recorded because the spool was full; the last at 2026-11-02T09:30:00Z."

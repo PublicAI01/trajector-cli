@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
@@ -100,14 +101,14 @@ func trimLog(path string) error {
 func logTail(data []byte, limit int) []byte {
 	lines := bytes.SplitAfter(data, []byte("\n"))
 	start, size := len(lines), 0
-	for i := len(lines) - 1; i >= 0; i-- {
-		if len(bytes.TrimSpace(lines[i])) == 0 {
+	for i, line := range slices.Backward(lines) {
+		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		if size+len(lines[i]) > limit && start < len(lines) {
+		if size+len(line) > limit && start < len(lines) {
 			break
 		}
-		size += len(lines[i])
+		size += len(line)
 		start = i
 	}
 	return bytes.Join(lines[start:], nil)
