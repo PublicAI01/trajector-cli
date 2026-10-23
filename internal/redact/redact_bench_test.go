@@ -1,11 +1,14 @@
 package redact_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"testing"
 
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/redact"
 )
 
@@ -53,6 +56,88 @@ func BenchmarkRedactJSONLBytes(b *testing.B) {
 			}
 		})
 	}
+}
+
+// BenchmarkRedactSegment measures the masking pass over the lines of one
+// session file segment.
+func BenchmarkRedactSegment(b *testing.B) {
+	cases := []struct {
+		name string
+		data []byte
+	}{
+		{
+			// Session lines on which Read opened an image: the content
+			// stands twice on the line, in the block and in the Read
+			// result, as 128 KiB of base64 each.
+			name: "Synthetic/ReadResultImage",
+			data: generateBenchmarkReadResultJSONL(b, 200, 25),
+		},
+	}
+
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(tc.data)))
+			seg := envelope.NewSegment("bench-session", "", 0, envelope.Capture{}, string(tc.data))
+			for b.Loop() {
+				redacted, err := redact.Segment(seg)
+				if err != nil {
+					b.Fatalf("redact segment: %v", err)
+				}
+				if len(redacted.Lines) == 0 {
+					b.Fatal("redacted output was empty")
+				}
+			}
+		})
+	}
+}
+
+// generateBenchmarkReadResultJSONL emits session lines of ordinary prose,
+// with every imageEvery-th line a Read of an image instead.
+func generateBenchmarkReadResultJSONL(b *testing.B, lines, imageEvery int) []byte {
+	b.Helper()
+
+	random := rand.NewChaCha8([32]byte{})
+	var out strings.Builder
+	for i := range lines {
+		entry := map[string]any{
+			"type":      roleForBenchmarkLine(i),
+			"sessionId": "bench-session",
+			"uuid":      fmt.Sprintf("bench-line-%06d", i),
+			"message": map[string]any{
+				"role":    roleForBenchmarkLine(i),
+				"content": benchmarkLineContent(i),
+			},
+		}
+		if i%imageEvery == 0 {
+			image := make([]byte, 96<<10)
+			_, _ = random.Read(image)
+			content := base64.StdEncoding.EncodeToString(image)
+			entry["type"] = "user"
+			entry["message"] = map[string]any{
+				"role": "user",
+				"content": []any{map[string]any{
+					"type":        "tool_result",
+					"tool_use_id": fmt.Sprintf("toolu_%06d", i),
+					"content": []any{map[string]any{
+						"type":   "image",
+						"source": map[string]any{"type": "base64", "media_type": "image/png", "data": content},
+					}},
+				}},
+			}
+			entry["toolUseResult"] = map[string]any{
+				"type": "image",
+				"file": map[string]any{"base64": content, "type": "image/png", "originalSize": len(image)},
+			}
+		}
+		encoded, err := json.Marshal(entry)
+		if err != nil {
+			b.Fatalf("marshal benchmark line: %v", err)
+		}
+		out.Write(encoded)
+		out.WriteByte('\n')
+	}
+	return []byte(out.String())
 }
 
 func generateBenchmarkJSONL(b *testing.B, lines int) []byte {

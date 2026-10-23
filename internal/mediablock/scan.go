@@ -292,9 +292,10 @@ func (m *members) block(data []byte) (block, bool) {
 
 // readResult reads the object as the result Claude Code's Read tool
 // keeps on a session line for an image or a PDF — a "file" object whose
-// "base64" member is the content — if it is one. It carries the same
-// content as the image or document block the call sent, so it is
-// omitted with it; it is never referred to.
+// "base64" member is the content, as base64 text — if it is one. Claude
+// Code writes the same content into the image or document block the
+// call sent, so it is omitted with it; it is never referred to. The
+// content is not compared with that block.
 func (m *members) readResult(data []byte) (block, bool) {
 	if m.typeCount != 1 || m.sourceCount != 0 || m.fileCount != 1 || m.file == nil {
 		return block{}, false
@@ -308,7 +309,28 @@ func (m *members) readResult(data []byte) (block, bool) {
 		return block{}, false
 	}
 	b := block{dataKey: m.file.base64Key, dataValue: m.file.base64Value, readResult: true, displaced: m.file.displaced()}
-	return b.withPayload(data, false)
+	b, ok := b.withPayload(data, false)
+	if !ok || !isBase64Text(b.payload) {
+		return block{}, false
+	}
+	return b, true
+}
+
+// isBase64Text reports whether text is non-empty base64 in the standard
+// alphabet, with or without its "=" padding.
+func isBase64Text(text []byte) bool {
+	data := bytes.TrimRight(text, "=")
+	if len(data) == 0 || len(text)-len(data) > 2 {
+		return false
+	}
+	for _, c := range data {
+		switch {
+		case 'A' <= c && c <= 'Z', 'a' <= c && c <= 'z', '0' <= c && c <= '9', c == '+', c == '/':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // withPayload completes a block whose content is the string at

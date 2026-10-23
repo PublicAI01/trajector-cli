@@ -1,13 +1,13 @@
 package redact
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
+	"github.com/PublicAI01/trajector-cli/internal/mediablock"
 	"github.com/PublicAI01/trajector-cli/internal/sessionline"
 )
 
@@ -177,12 +177,17 @@ var acknowledgedPaths = []pathField{
 	},
 }
 
-// Segment masks one segment for upload: the anchored project
-// paths are stripped first, then the raw JSONL bytes go through the
-// same pass every rawcall goes through. The envelope around the lines
-// (session_id, file, segment_index, capture) is not scanned: every one
-// of those is a value this client wrote itself, and a scan could only
-// damage it.
+// Segment masks one segment for upload: the anchored project paths are
+// stripped first, then each line goes through the same pass every
+// rawcall goes through. One value is kept out of that pass: the content
+// of a Read result (see mediablock.ReadResultContent), which is base64
+// of an image or a PDF. No text layer can say anything about base64, and
+// masking parts of it only breaks the content; the same content in the
+// line's block is kept out of the pass for the same reason.
+//
+// The envelope around the lines (session_id, file, segment_index,
+// capture) is not scanned: every one of those is a value this client
+// wrote itself, and a scan could only damage it.
 //
 // The returned segment is redacted as a whole. The caller serializes it
 // and wraps the bytes with AlreadyRedacted; a second pass over the
@@ -194,28 +199,29 @@ func Segment(seg envelope.Segment) (envelope.Segment, error) {
 	if !strings.HasSuffix(seg.Lines, "\n") {
 		return envelope.Segment{}, ErrIncompleteLine
 	}
-	var stripped strings.Builder
-	stripped.Grow(len(seg.Lines))
-	rest := []byte(seg.Lines)
-	for len(rest) > 0 {
-		nl := bytes.IndexByte(rest, '\n')
-		line := rest[:nl]
-		rest = rest[nl+1:]
-		// A line that is not one of a session file names no anchored
-		// field: its bytes go on as they are, and the pass below is
-		// what masks them.
-		if parsed, ok := sessionline.Parse(line); ok {
-			stripped.WriteString(stripAnchoredPaths(parsed))
-		} else {
-			stripped.Write(line)
-		}
-		stripped.WriteByte('\n')
-	}
-	redacted, err := JSONLBytes([]byte(stripped.String()))
-	if err != nil {
+	if err := requireDetector(); err != nil {
 		return envelope.Segment{}, err
 	}
-	seg.Lines = string(redacted.Bytes())
+	var masked strings.Builder
+	masked.Grow(len(seg.Lines))
+	for line := range strings.SplitSeq(strings.TrimSuffix(seg.Lines, "\n"), "\n") {
+		// A line that is not one of a session file names no anchored
+		// field and keeps no Read result: the pass masks all of it.
+		keep := region{}
+		if parsed, ok := sessionline.Parse([]byte(line)); ok {
+			line = stripAnchoredPaths(parsed)
+			if start, end, ok := mediablock.ReadResultContent([]byte(line)); ok {
+				keep = region{start, end}
+			}
+		}
+		out, err := jsonlLine(line, keep)
+		if err != nil {
+			return envelope.Segment{}, err
+		}
+		masked.WriteString(out)
+		masked.WriteByte('\n')
+	}
+	seg.Lines = masked.String()
 	return seg, nil
 }
 

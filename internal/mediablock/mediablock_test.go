@@ -490,12 +490,16 @@ func TestRewrite_NeverRefersToTheContentAReadResultKeeps(t *testing.T) {
 func TestRewrite_LeavesEveryOtherReadResultAlone(t *testing.T) {
 	a := tinyPNG(t, 10)
 	cases := map[string]string{
-		"not at the root of the line": `{"message":{"toolUseResult":{"type":"image","file":{"base64":"` + a + `"}}}}`,
-		"a result of another type":    `{"toolUseResult":{"type":"text","file":{"base64":"` + a + `"}}}`,
-		"content already emptied":     `{"toolUseResult":{"type":"image","file":{"base64":"","type":"image/png"}}}`,
-		"content that is no string":   `{"toolUseResult":{"type":"image","file":{"base64":null}}}`,
-		"content named twice":         `{"toolUseResult":{"type":"image","file":{"base64":"` + a + `","base64":"` + a + `"}}}`,
-		"a notebook":                  `{"toolUseResult":{"type":"notebook","file":{"cells":[{"outputs":[{"image":{"image_data":"` + a + `"}}]}]}}}`,
+		"not at the root of the line":  `{"message":{"toolUseResult":{"type":"image","file":{"base64":"` + a + `"}}}}`,
+		"a result of another type":     `{"toolUseResult":{"type":"text","file":{"base64":"` + a + `"}}}`,
+		"content already emptied":      `{"toolUseResult":{"type":"image","file":{"base64":"","type":"image/png"}}}`,
+		"content that is no string":    `{"toolUseResult":{"type":"image","file":{"base64":null}}}`,
+		"content named twice":          `{"toolUseResult":{"type":"image","file":{"base64":"` + a + `","base64":"` + a + `"}}}`,
+		"content that is prose":        `{"toolUseResult":{"type":"image","file":{"base64":"see the attached file"}}}`,
+		"content in the URL alphabet":  `{"toolUseResult":{"type":"image","file":{"base64":"` + strings.NewReplacer("+", "-", "/", "_").Replace(a) + `-_"}}}`,
+		"content padded three times":   `{"toolUseResult":{"type":"image","file":{"base64":"QQ==="}}}`,
+		"content that is padding only": `{"toolUseResult":{"type":"image","file":{"base64":"=="}}}`,
+		"a notebook":                   `{"toolUseResult":{"type":"notebook","file":{"cells":[{"outputs":[{"image":{"image_data":"` + a + `"}}]}]}}}`,
 	}
 	for name, line := range cases {
 		t.Run(name, func(t *testing.T) {

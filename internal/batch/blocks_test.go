@@ -234,7 +234,7 @@ func TestBuild_OmitsTheReadResultCopyASessionLineKeeps(t *testing.T) {
 	}
 }
 
-func TestBuild_WithUploadOnTheReadResultCopyIsMaskedAsText(t *testing.T) {
+func TestBuild_WithUploadOnTheReadResultCopyGoesUpAsItIs(t *testing.T) {
 	x := noisyPNG(t)
 	line := `{"type":"user","sessionId":"sess-1","toolUseResult":{"type":"image","file":{"base64":"` + x + `","type":"image/png"}}}` + "\n"
 	b, _, err := batch.Build("batch-1", buildTime, "test", spool.Entries{storedSegment(t, "sess-1", "", 0, buildTime, line)}, batch.Run{},
@@ -243,8 +243,8 @@ func TestBuild_WithUploadOnTheReadResultCopyIsMaskedAsText(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := packedBodies(t, b)[0]
-	if bytes.Contains([]byte(body), []byte("sha256")) || !bytes.Contains([]byte(body), []byte("REDACTED")) {
-		t.Fatalf("a Read result was rewritten, or no longer passed through redaction:\n%.300s", body)
+	if bytes.Contains([]byte(body), []byte("sha256")) || !bytes.Contains([]byte(body), []byte(x)) {
+		t.Fatalf("a Read result was rewritten:\n%.300s", body)
 	}
 }
 

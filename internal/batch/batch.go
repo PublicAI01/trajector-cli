@@ -405,9 +405,10 @@ func maskRawcall(kind envelope.Kind, e spool.Entry, env envelope.Envelope, rewri
 // the serialized record they are inside one string and no longer
 // objects.
 //
-// The rewrite comes first because redaction reads a Read result's copy
-// of the content as text and masks parts of it: a placeholder taken
-// after that would state a digest and a size of no content at all.
+// The rewrite comes first because a line that redaction cannot read
+// field by field is masked as raw text, the content included: a
+// placeholder taken after that would state a digest and a size of no
+// content at all.
 func maskSegment(kind envelope.Kind, seg envelope.Segment, rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
 	seg.Lines = string(rewrite([]byte(seg.Lines)))
 	masked, err := redact.Segment(seg)

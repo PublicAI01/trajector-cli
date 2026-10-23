@@ -708,14 +708,8 @@ func normalizeCredentialJSONKey(key string) string {
 // JSONLBytes redacts secrets in JSONL-formatted byte content and returns
 // the result as RedactedBytes, certifying the output has been through redaction.
 func JSONLBytes(b []byte) (RedactedBytes, error) {
-	// The pattern layer is not optional: content it never saw cannot be
-	// certified as redacted, so the refusal travels as an error and the
-	// batch packer turns it into a quarantined record rather than
-	// shipping it. Failing closed is the only reading of "unredacted data
-	// never leaves the machine" that survives a detector that will not
-	// load. 2026-08-25.
-	if _, err := loadDetector(); err != nil {
-		return RedactedBytes{}, fmt.Errorf("redact: the pattern-based secret detector is unavailable, so this content cannot be masked: %w", err)
+	if err := requireDetector(); err != nil {
+		return RedactedBytes{}, err
 	}
 	s := string(b)
 	redacted, err := jsonlContent(s)
@@ -726,6 +720,20 @@ func JSONLBytes(b []byte) (RedactedBytes, error) {
 		return RedactedBytes{data: b}, nil
 	}
 	return RedactedBytes{data: []byte(redacted)}, nil
+}
+
+// requireDetector returns an error when the pattern layer cannot run.
+// The pattern layer is not optional: content it never saw cannot be
+// certified as redacted, so the refusal travels as an error and the
+// batch packer turns it into a quarantined record rather than shipping
+// it. Failing closed is the only reading of "unredacted data never
+// leaves the machine" that survives a detector that will not load.
+// 2026-08-25.
+func requireDetector() error {
+	if _, err := loadDetector(); err != nil {
+		return fmt.Errorf("redact: the pattern-based secret detector is unavailable, so this content cannot be masked: %w", err)
+	}
+	return nil
 }
 
 // jsonlContent parses each line as JSON to determine which string values
@@ -766,17 +774,7 @@ func jsonlContent(content string) (string, error) {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		lineTrimmed := strings.TrimSpace(line)
-		if lineTrimmed == "" {
-			b.WriteString(line)
-			continue
-		}
-		var parsed any
-		if err := json.Unmarshal([]byte(lineTrimmed), &parsed); err != nil || hasDuplicateJSONKeys(lineTrimmed) {
-			b.WriteString(redactString(line))
-			continue
-		}
-		result, err := spliceFieldAware(line, parsed)
+		result, err := jsonlLine(line, region{})
 		if err != nil {
 			return "", err
 		}
@@ -785,11 +783,49 @@ func jsonlContent(content string) (string, error) {
 	return b.String(), nil
 }
 
+// jsonlLine masks one line of JSONL content. keep is the byte range of
+// one string token in line, quotes included, that is left exactly as it
+// is: no layer reads its value, and no replacement reaches it. The zero
+// region keeps nothing.
+//
+// The kept token is read as an empty string while the line is decoded,
+// so no reading of its value is collected. A line that is not one JSON
+// value, or that names a key twice, is scanned whole as raw text, the
+// kept token included: its decoded form cannot be trusted to match its
+// bytes, and masking too much is the safe side of that.
+func jsonlLine(line string, keep region) (string, error) {
+	decoded := line
+	if keep != (region{}) {
+		decoded = line[:keep.start] + `""` + line[keep.end:]
+	}
+	trimmed := strings.TrimSpace(decoded)
+	if trimmed == "" {
+		return line, nil
+	}
+	parsed, ok := decodeJSONLLine(trimmed)
+	if !ok {
+		return redactString(line), nil
+	}
+	return applyJSONReplacements(line, collectJSONLReplacements(parsed), keep)
+}
+
+// decodeJSONLLine decodes one trimmed JSONL line for the field-aware
+// pass. ok is false when the line is not one JSON value or names a key
+// twice. That is not a failure of the line: the caller falls back to
+// the raw-text scan, which reads every byte, so the decode error is
+// dropped here on purpose.
+func decodeJSONLLine(trimmed string) (parsed any, ok bool) {
+	if json.Unmarshal([]byte(trimmed), &parsed) != nil || hasDuplicateJSONKeys(trimmed) {
+		return nil, false
+	}
+	return parsed, true
+}
+
 // spliceFieldAware is the field-aware pass: the replacements collected
 // from parsed, the decoded form of content, are applied to the raw text
 // of content.
 func spliceFieldAware(content string, parsed any) (string, error) {
-	return applyJSONReplacements(content, collectJSONLReplacements(parsed))
+	return applyJSONReplacements(content, collectJSONLReplacements(parsed), region{})
 }
 
 // applyJSONReplacements applies collected (original, redacted) string pairs
@@ -803,7 +839,10 @@ func spliceFieldAware(content string, parsed any) (string, error) {
 // — `—` for an em dash, `\/` for a slash, upper- or lower-case hex. A byte
 // search for one spelling silently misses the others, and a silent miss here
 // is a secret leaving the machine unmasked.
-func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
+//
+// The string token that starts at keep.start is left as it is, whatever
+// the replacements say; the zero region keeps no token.
+func applyJSONReplacements(s string, repls []jsonReplacement, keep region) (string, error) {
 	if len(repls) == 0 {
 		return s, nil
 	}
@@ -921,6 +960,10 @@ func applyJSONReplacements(s string, repls []jsonReplacement) (string, error) {
 				// caller parsed. Leave the remainder alone rather than risk
 				// mangling it.
 				i = len(s)
+				continue
+			}
+			if keep != (region{}) && i == keep.start {
+				i = end
 				continue
 			}
 			value, decoded := decodeJSONStringToken(s[i:end])

@@ -52,6 +52,13 @@ All notable changes to trajector are documented here. The format follows
   followed them had its earlier sessions collected. The lines
   that tell you how to collect earlier sessions still name only
   --no-proxy.
+- When Claude Code's `Read` tool opens an image or a PDF, Claude Code
+  keeps a copy of its base64 content in the session file. Redaction read
+  that copy as text and masked most of it, so the copy that was uploaded
+  was broken and the masking protected nothing. The copy now goes up as
+  it is, the same as the content in the message that carries it. With
+  image and document upload turned off, it is still replaced by a
+  placeholder. Other text on the same line is still masked.
 
 ## [0.5.0] - 2026-10-14
 

@@ -24,8 +24,8 @@
 // A session line holds the same content a second time when Claude
 // Code's Read tool opened an image or a PDF: under "toolUseResult" at
 // the root of the line, an object whose "type" is exactly "image" or
-// "pdf" and whose "file" holds the content as a non-empty "base64"
-// string. With upload turned off it becomes a placeholder too. It is
+// "pdf" and whose "file" holds the content as a "base64" string of
+// non-empty base64 text. With upload turned off it becomes a placeholder too. It is
 // never referred to: it appears once per line. Content a line holds in
 // any other shape is not a block and leaves as it is — the images an
 // older Claude Code kept from a notebook's cell outputs are one such
@@ -116,9 +116,7 @@ type Rewritten struct {
 // caller knows the record is packed.
 func (p *Pass) Rewrite(scope string, data []byte) Rewritten {
 	out := Rewritten{Data: data, scope: scope}
-	// A record that spells "base64" nowhere, not even with an escape,
-	// holds no block: the walk below is skipped for it.
-	if !bytes.Contains(data, []byte("base64")) && !bytes.Contains(data, []byte(`\u`)) {
+	if !mayHoldBlock(data) {
 		return out
 	}
 	blocks := findBlocks(data)
@@ -144,6 +142,31 @@ func (p *Pass) Rewrite(scope string, data []byte) Rewritten {
 	}
 	out.Data = apply(data, edits)
 	return out
+}
+
+// ReadResultContent returns the byte range in line of the string
+// token, quotes included, that holds the content of the Read result the
+// line keeps, if it keeps one. line is one session line. The token is
+// the one Rewrite reads as a Read result: its content is base64 text in
+// the standard alphabet. It is not compared with the block on the same
+// line; Claude Code writes the same content there.
+func ReadResultContent(line []byte) (start, end int, ok bool) {
+	if !mayHoldBlock(line) {
+		return 0, 0, false
+	}
+	for _, b := range findBlocks(line) {
+		if b.readResult {
+			return b.dataValue.start, b.dataValue.end, true
+		}
+	}
+	return 0, 0, false
+}
+
+// mayHoldBlock reports whether data can hold a block or a Read result.
+// Data that spells "base64" nowhere, not even with an escape, holds
+// none, and the walk is skipped for it.
+func mayHoldBlock(data []byte) bool {
+	return bytes.Contains(data, []byte("base64")) || bytes.Contains(data, []byte(`\u`))
 }
 
 // refers reports whether a copy of this payload may be sent as a
