@@ -60,6 +60,8 @@ homebrew_casks:
   - name: trajector
     binaries: [trajector]
     homepage: https://github.com/PublicAI01/trajector-cli
+    # Go 1.27 binaries need macOS 13. This line makes Homebrew refuse the install on 12 and earlier.
+    custom_block: 'depends_on macos: ">= :ventura"'
     description: Turn your own Claude Code sessions into compensated data contributions
     repository:
       owner: PublicAI01

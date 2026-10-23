@@ -12,7 +12,7 @@ All notable changes to trajector are documented here. The format follows
   now built with Go 1.27.4, which does not support earlier macOS
   versions. On macOS 12 or earlier the new version does not start;
   automatic upgrades check for this and keep the version already
-  installed.
+  installed, and Homebrew refuses to install it there.
 
 ## [0.6.1] - 2026-11-05
 
