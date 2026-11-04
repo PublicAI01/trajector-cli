@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/batch"
@@ -190,8 +191,10 @@ type Uploader struct {
 	deps Deps
 	mu   sync.Mutex
 
-	// closed refuses every flush after Close ran its last one.
-	closed bool
+	closed       atomic.Bool
+	closeOnce    sync.Once
+	activeMu     sync.Mutex
+	cancelActive context.CancelFunc
 
 	// The gates suppress automatic flushes only; a forced flush
 	// walks straight past them. They reset on any acknowledged upload,
@@ -315,11 +318,25 @@ func (u *Uploader) FlushRecords(ctx context.Context) (Result, error) {
 // gate, and reports a failed flush's outcome from the disposition it
 // reached.
 func (u *Uploader) locked(ctx context.Context, mode flushMode) (Result, error) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	if u.closed {
+	if u.closed.Load() {
 		return Result{}, ErrClosed
 	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	u.activeMu.Lock()
+	if u.closed.Load() {
+		u.activeMu.Unlock()
+		return Result{}, ErrClosed
+	}
+	u.cancelActive = cancel
+	u.activeMu.Unlock()
+	defer func() {
+		u.activeMu.Lock()
+		u.cancelActive = nil
+		u.activeMu.Unlock()
+	}()
 	res, err := u.flush(ctx, mode, time.Time{})
 	if err != nil {
 		res.Outcome, res.Standing = "", Standing{}
@@ -458,14 +475,31 @@ func (u *Uploader) reportBackoff(res *Result) bool {
 // successor's wait — and what it does not manage to upload stays in the
 // spool, with its batch id pinned, for whoever flushes next.
 func (u *Uploader) Close(ctx context.Context, budget time.Duration) error {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	if u.closed {
-		return nil
-	}
-	u.closed = true
-	_, err := u.flush(ctx, flushMode{ignoreThreshold: true}, time.Now().Add(budget))
+	var err error
+	u.closeOnce.Do(func() {
+		u.closed.Store(true)
+		deadline := time.Now().Add(budget)
+		ctx, cancel := context.WithDeadline(ctx, deadline)
+		defer cancel()
+		stop := context.AfterFunc(ctx, u.cancelRunningFlush)
+		defer func() {
+			stop()
+			u.cancelRunningFlush()
+		}()
+		u.mu.Lock()
+		defer u.mu.Unlock()
+		_, err = u.flush(ctx, flushMode{ignoreThreshold: true}, deadline)
+	})
 	return err
+}
+
+func (u *Uploader) cancelRunningFlush() {
+	u.activeMu.Lock()
+	cancel := u.cancelActive
+	u.activeMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // flushMode names the two checks a flush can waive, separately. A
@@ -493,6 +527,9 @@ type flushMode struct {
 // attempt fails.
 func (u *Uploader) flush(ctx context.Context, mode flushMode, deadline time.Time) (Result, error) {
 	res := Result{Outcome: Empty}
+	if err := ctx.Err(); err != nil {
+		return res, err
+	}
 
 	token, err := u.deps.DeviceToken()
 	if err != nil {
@@ -568,6 +605,9 @@ func (u *Uploader) flush(ctx context.Context, mode flushMode, deadline time.Time
 	}
 
 	for {
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
 		entries, err := u.collect(flushBytes)
 		if err != nil {
 			return res, fmt.Errorf("upload: reading the spool: %w", err)
@@ -658,6 +698,9 @@ func (u *Uploader) discardUnreadablePending(raw []byte) error {
 // — except records the build itself refused, which move to the rejected
 // store so one unreadable file cannot stall every upload behind it.
 func (u *Uploader) send(ctx context.Context, token string, l lease, entries spool.Entries, res *Result, deadline time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	entries, err := u.dropWithdrawn(entries)
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)

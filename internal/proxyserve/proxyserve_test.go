@@ -19,6 +19,7 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/proxyserve"
+	"github.com/PublicAI01/trajector-cli/internal/upload"
 )
 
 // serve runs one serving process in the background and reports what it
@@ -174,20 +175,31 @@ func TestServeFinishesItsExitFlushBeforeReleasingThePort(t *testing.T) {
 }
 
 func TestASlowExitFlushReleasesThePortAndLeavesItsRecordsToTheSuccessor(t *testing.T) {
+	testSlowFlushTakeover(t, false)
+}
+
+func TestTakeoverBoundsAnUploadAlreadyInProgress(t *testing.T) {
+	testSlowFlushTakeover(t, true)
+}
+
+func testSlowFlushTakeover(t *testing.T, alreadyRunning bool) {
+	t.Helper()
 	e := newEnv(t)
 	e.assembly.Version = "1.0.0"
 	e.sandbox.SeedRawcall("req-old", "hash-p1", aged())
 
-	// The exit flush meets a link too slow to finish inside any window
+	// The first flush meets a link too slow to finish inside any window
 	// the successor is willing to wait; every later upload is answered
 	// at once.
 	released := make(chan struct{})
 	t.Cleanup(func() { close(released) })
+	uploadStarted := make(chan struct{})
 	slow := make(chan struct{}, 1)
 	slow <- struct{}{}
 	e.service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
 		select {
 		case <-slow:
+			close(uploadStarted)
 			select {
 			case <-released:
 			case <-time.After(time.Minute):
@@ -199,6 +211,24 @@ func TestASlowExitFlushReleasesThePortAndLeavesItsRecordsToTheSuccessor(t *testi
 
 	predecessor := e.serve(io.Discard, io.Discard)
 	e.waitHealthy()
+	type flushResult struct {
+		reply upload.FlushReply
+		err   error
+	}
+	var flushed chan flushResult
+	if alreadyRunning {
+		flushed = make(chan flushResult, 1)
+		proxy := proxylife.For(e.assembly.Layout, "1.0.0", "unspawnable", e.assembly.Addr, nil)
+		go func() {
+			reply, err := proxy.Flush(t.Context(), true)
+			flushed <- flushResult{reply: reply, err: err}
+		}()
+		select {
+		case <-uploadStarted:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the initial upload did not reach the service")
+		}
+	}
 
 	takeover := proxylife.For(e.assembly.Layout, "2.0.0", "unspawnable", e.assembly.Addr, nil).Ensure(t.Context())
 	if takeover == nil || !strings.Contains(takeover.Error(), "starting proxy") {
@@ -208,6 +238,16 @@ func TestASlowExitFlushReleasesThePortAndLeavesItsRecordsToTheSuccessor(t *testi
 		t.Errorf("takeover = %v, want the exit flush to give up the port inside the successor's wait", takeover)
 	}
 	e.waitExit(predecessor, 20*time.Second)
+	if alreadyRunning {
+		select {
+		case result := <-flushed:
+			if result.err != nil || result.reply.Error == "" || result.reply.Records != 0 {
+				t.Errorf("interrupted flush = %+v, %v; want a reply reporting the unacknowledged upload", result.reply, result.err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the predecessor exited while its flush was still active")
+		}
+	}
 	if n := len(e.sandbox.Rawcalls()); n != 1 {
 		t.Fatalf("spool holds %d rawcalls after the abandoned exit flush, want the record kept for the successor", n)
 	}
