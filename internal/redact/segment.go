@@ -214,7 +214,7 @@ func Segment(seg envelope.Segment) (envelope.Segment, error) {
 				keep = region{start, end}
 			}
 		}
-		out, err := jsonlLine(line, keep)
+		out, err := jsonlLine(line, keep, nil)
 		if err != nil {
 			return envelope.Segment{}, err
 		}
@@ -234,7 +234,7 @@ func Segment(seg envelope.Segment) (envelope.Segment, error) {
 // The returned snapshot is redacted as a whole; the caller wraps its
 // serialized bytes with AlreadyRedacted.
 func MetaSnapshot(snap envelope.MetaSnapshot) (envelope.MetaSnapshot, error) {
-	redacted, err := JSONLBytes(snap.Content)
+	redacted, err := jsonlBytes(snap.Content, nil)
 	if err != nil {
 		return envelope.MetaSnapshot{}, err
 	}
@@ -559,7 +559,7 @@ func GitSnapshot(snap envelope.GitSnapshot) (envelope.GitSnapshot, error) {
 	if err != nil {
 		return envelope.GitSnapshot{}, err
 	}
-	redacted, err := JSONLBytes(encoded)
+	redacted, err := jsonlBytes(encoded, nil)
 	if err != nil {
 		return envelope.GitSnapshot{}, err
 	}

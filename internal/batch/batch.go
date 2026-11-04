@@ -93,6 +93,11 @@ func (r Refusal) ID() string { return r.Entry.ID }
 // is rewritten under blocks, by the one pass every kind of record goes
 // through, and redaction then masks what the rewrite left. The zero
 // policy sends the content as it is.
+//
+// The rawcalls of one batch are masked against one memo, so a string
+// value that an earlier rawcall carried, such as the conversation
+// history each request repeats, is not scanned again. The memo is
+// dropped when Build returns.
 func Build(id string, createdAt time.Time, clientVersion string, in spool.Entries, run Run, blocks mediablock.Policy) (Batch, []Refusal, error) {
 	if id == "" {
 		return Batch{}, nil, errors.New("batch: a batch needs an id")
@@ -121,13 +126,14 @@ func Build(id string, createdAt time.Time, clientVersion string, in spool.Entrie
 	)
 	ix := newIndex(id, createdAt, clientVersion, run)
 	pass := mediablock.NewPass(blocks)
+	rawcalls := redact.NewMasker()
 	for _, p := range ready {
 		var rewritten mediablock.Rewritten
 		rewrite := func(masked []byte) []byte {
 			rewritten = pass.Rewrite(p.scope, masked)
 			return rewritten.Data
 		}
-		item, masked, err := p.mask(rewrite)
+		item, masked, err := p.mask(rawcalls, rewrite)
 		if err != nil {
 			refused = append(refused, Refusal{Entry: p.entry, Err: err})
 			continue
@@ -209,12 +215,12 @@ func (a placement) before(b placement) bool {
 // scope is the scope the record's image and document blocks are
 // counted in, empty for a record that has none. mask applies rewrite
 // to the bytes that hold those blocks, before it masks them, and to
-// nothing else.
+// nothing else. A rawcall is masked by rawcalls, the batch's Masker.
 type packable struct {
 	entry spool.Entry
 	at    placement
 	scope string
-	mask  func(rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error)
+	mask  func(rawcalls *redact.Masker, rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error)
 }
 
 // A scope names the session a record's blocks are counted in. The
@@ -310,8 +316,8 @@ func read(e spool.Entry) (packable, error) {
 			entry: e,
 			at:    placement{slot: rawcallSlot, session: session, unnamed: session == "", when: e.Timestamp, id: e.ID},
 			scope: rawcallScope(session, env.ProjectIDHash(), env.StatedTimestamp()),
-			mask: func(rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
-				return maskRawcall(kind, e, env, rewrite)
+			mask: func(rawcalls *redact.Masker, rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
+				return maskRawcall(kind, e, env, rawcalls, rewrite)
 			},
 		}, nil
 	case envelope.KindSegment:
@@ -328,7 +334,7 @@ func read(e spool.Entry) (packable, error) {
 				file: seg.File, index: seg.SegmentIndex, when: captureTime(seg.Capture), id: seg.RecordID,
 			},
 			scope: segmentScope(seg.SessionID),
-			mask: func(rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
+			mask: func(_ *redact.Masker, rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
 				return maskSegment(kind, seg, rewrite)
 			},
 		}, nil
@@ -343,7 +349,7 @@ func read(e spool.Entry) (packable, error) {
 				slot: sessionRecordSlot, session: snap.SessionID, unnamed: snap.SessionID == "",
 				file: snap.File, index: snapshotOrder, when: captureTime(snap.Capture), id: snap.RecordID,
 			},
-			mask: func(func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
+			mask: func(*redact.Masker, func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
 				return maskMetaSnapshot(kind, snap)
 			},
 		}, nil
@@ -360,7 +366,7 @@ func read(e spool.Entry) (packable, error) {
 				slot: hookRecordSlot, session: snap.SessionID, unnamed: snap.SessionID == "",
 				when: captureTime(snap.Capture), id: snap.RecordID,
 			},
-			mask: func(func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
+			mask: func(*redact.Masker, func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
 				return maskGitSnapshot(kind, snap)
 			},
 		}, nil
@@ -376,16 +382,16 @@ func captureTime(capture envelope.Capture) time.Time {
 	return at
 }
 
-// maskRawcall rewrites one rawcall's blocks, masks it, and indexes it.
-// The index copies what the rawcall's own envelope says.
-func maskRawcall(kind envelope.Kind, e spool.Entry, env envelope.Envelope, rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
+// maskRawcall rewrites one rawcall's blocks, masks it with rawcalls, and
+// indexes it. The index copies what the rawcall's own envelope says.
+func maskRawcall(kind envelope.Kind, e spool.Entry, env envelope.Envelope, rawcalls *redact.Masker, rewrite func([]byte) []byte) (IndexItem, redact.RedactedBytes, error) {
 	// The batch and every record in it declare one version, so a record
 	// stored under an earlier one is restated before it is masked.
 	stored, err := env.Restated()
 	if err != nil {
 		return IndexItem{}, redact.RedactedBytes{}, err
 	}
-	masked, err := redact.JSONLBytes(rewrite(stored))
+	masked, err := rawcalls.JSONLBytes(rewrite(stored))
 	if err != nil {
 		// An unmaskable record must not be shipped.
 		return IndexItem{}, redact.RedactedBytes{}, fmt.Errorf("redacting: %w", err)

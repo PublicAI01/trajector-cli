@@ -167,7 +167,7 @@ var placeholderSecretValues = func() map[string]struct{} {
 // the contract at compile time: unredacted data must never leave the
 // machine, and the type is how a compiler proves a path cannot ship it.
 //
-// Produced by JSONLBytes (primary constructor) or AlreadyRedacted for
+// Produced by Masker.JSONLBytes (primary constructor) or AlreadyRedacted for
 // trusted sources.
 type RedactedBytes struct {
 	data []byte
@@ -186,7 +186,7 @@ func (r RedactedBytes) Len() int {
 // AlreadyRedacted wraps bytes known to already be redacted: output
 // derived mechanically from RedactedBytes (such as the compressed
 // record stream a batch carries) or controlled test fixtures. For fresh
-// input, use JSONLBytes.
+// input, use Masker.JSONLBytes.
 func AlreadyRedacted(data []byte) RedactedBytes {
 	return RedactedBytes{data: data}
 }
@@ -202,7 +202,7 @@ var (
 		err      error
 	}
 	// newDetector builds the pattern layer. It is a variable so a test can
-	// make construction fail: the refusal in JSONLBytes is the guarantee,
+	// make construction fail: the refusal in jsonlBytes is the guarantee,
 	// and a guarantee no test can reach is not one.
 	newDetector = newDefaultDetector
 )
@@ -724,14 +724,39 @@ func normalizeCredentialJSONKey(key string) string {
 	return key
 }
 
+// Masker masks the JSON content of many records against one memo of
+// string values. The two readings of a string value depend on the value
+// alone, so a value the Masker has masked once is not scanned again. The
+// rawcalls of one session repeat the system prompt, the tools and every
+// earlier message in each request, and most of their string values are
+// such repeats.
+//
+// The memo keeps every distinct string value until the Masker is
+// dropped, so a Masker lives for one batch. It is not safe for
+// concurrent use.
+type Masker struct {
+	memo valueMemo
+}
+
+// NewMasker returns a Masker with an empty memo.
+func NewMasker() *Masker {
+	return &Masker{memo: valueMemo{}}
+}
+
 // JSONLBytes redacts secrets in JSONL-formatted byte content and returns
-// the result as RedactedBytes, certifying the output has been through redaction.
-func JSONLBytes(b []byte) (RedactedBytes, error) {
+// the result as RedactedBytes, certifying the output has been through
+// redaction. The output is the same as with an empty memo.
+func (m *Masker) JSONLBytes(b []byte) (RedactedBytes, error) {
+	return jsonlBytes(b, m.memo)
+}
+
+// jsonlBytes is JSONLBytes against memo; a nil memo remembers nothing.
+func jsonlBytes(b []byte, memo valueMemo) (RedactedBytes, error) {
 	if err := requireDetector(); err != nil {
 		return RedactedBytes{}, err
 	}
 	s := string(b)
-	redacted, err := jsonlContent(s)
+	redacted, err := jsonlContent(s, memo)
 	if err != nil {
 		return RedactedBytes{}, err
 	}
@@ -768,7 +793,7 @@ func requireDetector() error {
 // A document or line that names a key twice in one object is scanned as
 // raw text instead, like a line that does not parse; see
 // hasDuplicateJSONKeys.
-func jsonlContent(content string) (string, error) {
+func jsonlContent(content string, memo valueMemo) (string, error) {
 	// Try parsing the entire content as a single JSON value first.
 	// Uses a streaming decoder to avoid copying the full content into []byte.
 	// After decoding, attempts a second Decode to confirm EOF — if it succeeds,
@@ -782,7 +807,7 @@ func jsonlContent(content string) (string, error) {
 				return redactString(content), nil
 			}
 			// Content is a single JSON value (object/array) — redact field-aware.
-			return spliceFieldAware(content, parsed)
+			return spliceFieldAware(content, parsed, memo)
 		}
 	}
 
@@ -793,7 +818,7 @@ func jsonlContent(content string) (string, error) {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		result, err := jsonlLine(line, region{})
+		result, err := jsonlLine(line, region{}, memo)
 		if err != nil {
 			return "", err
 		}
@@ -812,7 +837,7 @@ func jsonlContent(content string) (string, error) {
 // value, or that names a key twice, is scanned whole as raw text, the
 // kept token included: its decoded form cannot be trusted to match its
 // bytes, and masking too much is the safe side of that.
-func jsonlLine(line string, keep region) (string, error) {
+func jsonlLine(line string, keep region, memo valueMemo) (string, error) {
 	decoded := line
 	if keep != (region{}) {
 		decoded = line[:keep.start] + `""` + line[keep.end:]
@@ -825,7 +850,7 @@ func jsonlLine(line string, keep region) (string, error) {
 	if !ok {
 		return redactString(line), nil
 	}
-	return applyJSONReplacements(line, collectJSONLReplacements(parsed), keep)
+	return applyJSONReplacements(line, collectJSONLReplacements(parsed, memo), keep)
 }
 
 // decodeJSONLLine decodes one trimmed JSONL line for the field-aware
@@ -843,8 +868,8 @@ func decodeJSONLLine(trimmed string) (parsed any, ok bool) {
 // spliceFieldAware is the field-aware pass: the replacements collected
 // from parsed, the decoded form of content, are applied to the raw text
 // of content.
-func spliceFieldAware(content string, parsed any) (string, error) {
-	return applyJSONReplacements(content, collectJSONLReplacements(parsed), region{})
+func spliceFieldAware(content string, parsed any, memo valueMemo) (string, error) {
+	return applyJSONReplacements(content, collectJSONLReplacements(parsed, memo), region{})
 }
 
 // applyJSONReplacements applies collected (original, redacted) string pairs
@@ -1196,8 +1221,8 @@ func valueHasDuplicateKeys(dec *json.Decoder) bool {
 // collectJSONLReplacements walks a parsed JSON value and collects unique
 // string replacements. Protected fields are not excluded here: the skip
 // policy lives in applyJSONReplacements, the one place that decides what
-// gets rewritten.
-func collectJSONLReplacements(v any) []jsonReplacement {
+// gets rewritten. The readings of each string value come from memo.
+func collectJSONLReplacements(v any, memo valueMemo) []jsonReplacement {
 	seen := make(map[string]int)
 	var repls []jsonReplacement
 	// elementCredential collects the values some key named a credential.
@@ -1274,31 +1299,10 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 				walk("", credentialContext, child)
 			}
 		case string:
-			// A string value that is itself a JSON document is walked as
-			// one document, so every rule the structured side owns — key
-			// normalization, the credential-shaped enclosing object, the
-			// field policies — reaches the values inside it. A rawcall
-			// carries JSON inside JSON constantly: a tool_result's
-			// content, an MCP answer, a `Read` of a .json config file all
-			// arrive as a string holding a document, and its keys are the
-			// same keys. The text layers still run afterwards over what
-			// the document walk left, which is what covers the key names
-			// themselves and anything spanning two tokens.
-			//
-			// The re-entry terminates: every string reached inside the
-			// document is strictly shorter than the string that holds it.
-			// A document the walk cannot re-apply falls back to the
-			// string as it arrived, which the text layers still scan.
-			text := val
-			if document, ok := embeddedJSONDocument(val); ok {
-				if masked, err := spliceFieldAware(val, document); err == nil {
-					text = masked
-				}
-			}
 			// Both readings are collected because the applying side, not
 			// this one, knows which a given occurrence gets: the same value
 			// can sit in a protected field and an ordinary one at once.
-			redacted, deterministic := redactReadings(text)
+			redacted, deterministic := memo.readings(val)
 			// The key itself says this value is a password, so the whole
 			// value goes — never just the parts the pattern layers caught.
 			// Until 2026-08-14 this ran only when redactString had changed
@@ -1326,6 +1330,53 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 		})
 	}
 	return repls
+}
+
+// valueMemo maps a string value to its two readings. A nil valueMemo
+// remembers nothing.
+//
+// The readings are taken before a credential key overrides them: that
+// verdict belongs to the key and the enclosing object of one occurrence,
+// not to the value, so it is decided again for each occurrence and never
+// stored here.
+type valueMemo map[string]valueReadings
+
+type valueReadings struct {
+	redacted, deterministic string
+}
+
+// readings returns the two readings of val, and scans val only when the
+// memo does not hold it. Both readings depend on val alone. A reading
+// that leaves val as it is shares the bytes of the key.
+func (m valueMemo) readings(val string) (redacted, deterministic string) {
+	if r, ok := m[val]; ok {
+		return r.redacted, r.deterministic
+	}
+	// A string value that is itself a JSON document is walked as one
+	// document, so every rule the structured side owns — key
+	// normalization, the credential-shaped enclosing object, the field
+	// policies — reaches the values inside it. A rawcall carries JSON
+	// inside JSON constantly: a tool_result's content, an MCP answer, a
+	// `Read` of a .json config file all arrive as a string holding a
+	// document, and its keys are the same keys. The text layers still run
+	// afterwards over what the document walk left, which is what covers
+	// the key names themselves and anything spanning two tokens.
+	//
+	// The re-entry terminates: every string reached inside the document
+	// is strictly shorter than the string that holds it. A document the
+	// walk cannot re-apply falls back to the string as it arrived, which
+	// the text layers still scan.
+	text := val
+	if document, ok := embeddedJSONDocument(val); ok {
+		if masked, err := spliceFieldAware(val, document, m); err == nil {
+			text = masked
+		}
+	}
+	redacted, deterministic = redactReadings(text)
+	if m != nil {
+		m[val] = valueReadings{redacted: redacted, deterministic: deterministic}
+	}
+	return redacted, deterministic
 }
 
 // fieldPolicy says how much of the detection stack the value (subtree

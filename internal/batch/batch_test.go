@@ -29,8 +29,8 @@ var buildTime = time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC)
 // bytes name no kind: the slot is known, the content is not.
 var unattributed = envelope.Kind{Source: envelope.KindSegment.Source}
 
-func storedRawcall(t *testing.T, id, sessionKey, projectHash, requestBody, responseBody string, at time.Time) spool.Entry {
-	t.Helper()
+func storedRawcall(tb testing.TB, id, sessionKey, projectHash, requestBody, responseBody string, at time.Time) spool.Entry {
+	tb.Helper()
 	env, err := envelope.Record(envelope.Observation{
 		Provider:          "anthropic",
 		Endpoint:          "/v1/messages",
@@ -48,7 +48,7 @@ func storedRawcall(t *testing.T, id, sessionKey, projectHash, requestBody, respo
 		UpstreamRequestID: id,
 	})
 	if err != nil {
-		t.Fatalf("recording fixture rawcall: %v", err)
+		tb.Fatalf("recording fixture rawcall: %v", err)
 	}
 	return spool.Entry{
 		Kind:       envelope.KindRawcall,
@@ -108,16 +108,16 @@ func storedAgentXMeta(t *testing.T, sessionID string, at time.Time, content stri
 	return spool.Entry{Kind: envelope.KindMetaSnapshot, ID: snap.RecordID, Timestamp: at, Raw: data}
 }
 
-func decompress(t *testing.T, data []byte) []byte {
-	t.Helper()
+func decompress(tb testing.TB, data []byte) []byte {
+	tb.Helper()
 	zr, err := zstd.NewReader(bytes.NewReader(data))
 	if err != nil {
-		t.Fatalf("opening zstd stream: %v", err)
+		tb.Fatalf("opening zstd stream: %v", err)
 	}
 	defer zr.Close()
 	out, err := io.ReadAll(zr)
 	if err != nil {
-		t.Fatalf("decompressing records: %v", err)
+		tb.Fatalf("decompressing records: %v", err)
 	}
 	return out
 }

@@ -25,7 +25,7 @@ func maskedContent(t *testing.T, s string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rb, err := JSONLBytes(doc)
+	rb, err := NewMasker().JSONLBytes(doc)
 	if err != nil {
 		t.Fatal(err)
 	}

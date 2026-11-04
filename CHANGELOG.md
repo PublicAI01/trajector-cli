@@ -8,6 +8,14 @@ All notable changes to trajector are documented here. The format follows
 
 ### Fixed
 
+- The proxy uses much less CPU when it uploads. Before an upload,
+  trajector masks secrets and personal data in each recorded request,
+  and every request of a Claude Code session repeats the conversation
+  so far. trajector scanned that repeated text again in every request,
+  and scanned each piece of text twice, at about one second of one CPU
+  core for each MB of requests. Now text is scanned once, and text that
+  an earlier request in the same upload carried is not scanned again.
+  The masked data that is uploaded does not change.
 - When an upload fails with a server error or a network error, automatic
   uploads now wait before they try again: one minute after the first
   failure, doubling up to 15 minutes, as they already did after an
@@ -1072,6 +1080,7 @@ Hardened ahead of the tag:
 - State files are replaced and read atomically on every platform,
   Windows rename collisions included.
 
+[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.6.0...HEAD
 [0.6.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.3.7...v0.4.0

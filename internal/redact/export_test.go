@@ -17,7 +17,7 @@ func SpliceJSON(s string) (string, error) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(s)), &parsed); err != nil {
 		return "", err
 	}
-	return spliceFieldAware(s, parsed)
+	return spliceFieldAware(s, parsed, nil)
 }
 
 // ReadingsOfOneScan is redactReadings: both readings of s from one scan.
@@ -29,4 +29,10 @@ func ReadingsOfOneScan(s string) (redacted, deterministic string) {
 // scan each, the full one and the one without layers 1 and 7.
 func ReadingsOfTwoScans(s string) (redacted, deterministic string) {
 	return applyRegions(s, detectLayers(s, true)), applyRegions(s, detectLayers(s, false))
+}
+
+// MaskWithoutMemo is Masker.JSONLBytes with no memo: every string value
+// is scanned where it occurs.
+func MaskWithoutMemo(b []byte) (RedactedBytes, error) {
+	return jsonlBytes(b, nil)
 }

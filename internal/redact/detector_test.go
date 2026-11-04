@@ -34,7 +34,7 @@ func TestJSONLBytesRefusesWhenThePatternDetectorIsUnavailable(t *testing.T) {
 	want := errors.New("the detector config could not be built")
 	stubDetector(t, want)
 
-	out, err := JSONLBytes([]byte(`{"note":"anything at all"}`))
+	out, err := NewMasker().JSONLBytes([]byte(`{"note":"anything at all"}`))
 	if err == nil {
 		t.Fatalf("JSONLBytes certified %q as redacted with a whole detection layer missing", out.Bytes())
 	}

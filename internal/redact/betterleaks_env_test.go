@@ -37,7 +37,7 @@ func TestBetterleaksEnvCheckChild(t *testing.T) {
 		t.Skip("child-process half of TestBetterleaksDoesNotPoisonGitEnvironment")
 	}
 	// Force detector initialization through the production entry point.
-	if _, err := redact.JSONLBytes([]byte("key=AKIAYRWQG5EJLPZLBYNP")); err != nil {
+	if _, err := redact.NewMasker().JSONLBytes([]byte("key=AKIAYRWQG5EJLPZLBYNP")); err != nil {
 		t.Fatalf("JSONLBytes: %v", err)
 	}
 	for _, name := range []string{

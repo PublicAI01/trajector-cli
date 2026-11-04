@@ -114,7 +114,7 @@ func TestPII_SecretAndPIICoexist(t *testing.T) {
 // their typed tokens.
 func TestPII_JSONLSessionLineMasked(t *testing.T) {
 	input := `{"type":"user","content":"reach me at jane.doe@example.com or 555-123-4567"}`
-	rb, err := redact.JSONLBytes([]byte(input))
+	rb, err := redact.NewMasker().JSONLBytes([]byte(input))
 	if err != nil {
 		t.Fatalf("JSONLBytes: %v", err)
 	}

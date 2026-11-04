@@ -34,7 +34,7 @@ func openSSHPrivateKeyMarker(kind string) string {
 // layered scan the way a malformed session line would.
 func redactedString(t testing.TB, s string) string {
 	t.Helper()
-	rb, err := redact.JSONLBytes([]byte(s))
+	rb, err := redact.NewMasker().JSONLBytes([]byte(s))
 	if err != nil {
 		t.Fatalf("JSONLBytes: %v", err)
 	}
@@ -50,7 +50,7 @@ func redactedField(t testing.TB, s string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rb, err := redact.JSONLBytes(doc)
+	rb, err := redact.NewMasker().JSONLBytes(doc)
 	if err != nil {
 		t.Fatalf("JSONLBytes: %v", err)
 	}
@@ -96,7 +96,7 @@ func assertRedactionCases(t *testing.T, fn func(testing.TB, string) string, test
 
 func TestJSONLBytes_RawTextNoSecrets(t *testing.T) {
 	input := []byte("hello world, this is normal text")
-	result, err := redact.JSONLBytes(input)
+	result, err := redact.NewMasker().JSONLBytes(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestJSONLBytes_RawTextNoSecrets(t *testing.T) {
 
 func TestJSONLBytes_RawTextWithSecret(t *testing.T) {
 	input := []byte("my key is " + highEntropySecret + " ok")
-	result, err := redact.JSONLBytes(input)
+	result, err := redact.NewMasker().JSONLBytes(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestJSONLBytes_RawTextWithSecret(t *testing.T) {
 
 func TestJSONLBytes_NoSecrets(t *testing.T) {
 	input := []byte(`{"type":"text","content":"hello"}`)
-	result, err := redact.JSONLBytes(input)
+	result, err := redact.NewMasker().JSONLBytes(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestJSONLBytes_NoSecrets(t *testing.T) {
 
 func TestJSONLBytes_WithSecret(t *testing.T) {
 	input := []byte(`{"type":"text","content":"key=` + highEntropySecret + `"}`)
-	result, err := redact.JSONLBytes(input)
+	result, err := redact.NewMasker().JSONLBytes(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestJSONLBytes_FieldSkipPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rb, err := redact.JSONLBytes(doc)
+			rb, err := redact.NewMasker().JSONLBytes(doc)
 			if err != nil {
 				t.Fatalf("JSONLBytes: %v", err)
 			}
@@ -452,7 +452,7 @@ func TestJSONLBytes_ProtectedFieldStillMasksFormatRecognizedCredentials(t *testi
 				if err != nil {
 					t.Fatal(err)
 				}
-				rb, err := redact.JSONLBytes(doc)
+				rb, err := redact.NewMasker().JSONLBytes(doc)
 				if err != nil {
 					t.Fatalf("JSONLBytes: %v", err)
 				}
@@ -493,7 +493,7 @@ func TestJSONLBytes_ProtectedFieldKeepsObservedIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rb, err := redact.JSONLBytes(doc)
+	rb, err := redact.NewMasker().JSONLBytes(doc)
 	if err != nil {
 		t.Fatalf("JSONLBytes: %v", err)
 	}

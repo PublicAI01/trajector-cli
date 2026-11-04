@@ -38,7 +38,7 @@ func TestEscapedUnicodeDoesNotDefeatRedaction(t *testing.T) {
 		{"nested object", `{"a":{"content":"key ` + secret + ` ` + escDash + `"}}`, []string{"—"}},
 	}
 	for _, c := range cases {
-		rb, err := redact.JSONLBytes([]byte(c.raw))
+		rb, err := redact.NewMasker().JSONLBytes([]byte(c.raw))
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}

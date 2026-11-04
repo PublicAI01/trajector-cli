@@ -46,7 +46,11 @@ func BenchmarkRedactJSONLBytes(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(tc.data)))
 			for b.Loop() {
-				redacted, err := redact.JSONLBytes(tc.data)
+				// One Masker reads all lines of a case, so a value an
+				// earlier line carried is taken from the memo: this is the
+				// rawcall path with a memo. Session lines are masked
+				// without a memo; BenchmarkRedactSegment measures them.
+				redacted, err := redact.NewMasker().JSONLBytes(tc.data)
 				if err != nil {
 					b.Fatalf("redact JSONL: %v", err)
 				}
