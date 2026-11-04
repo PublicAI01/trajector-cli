@@ -17,7 +17,7 @@ checks, replaces and verifies the new version with rollback on failure.
 Custom source builds keep automatic upgrades disabled.
 
 The installer leaves PATH and permanent execution-policy settings alone.
-A source build uses `.\scripts\build.ps1`; it needs the Go toolchain in
+A source build uses `scripts/build.ps1`; it needs the Go toolchain in
 `go.mod`. `-Version` is useful for a source archive without Git metadata;
 it does not mark the build as an official release.
 
@@ -97,7 +97,7 @@ Tests asserting POSIX mode-bit behavior remain platform-specific.
 $env:GOTOOLCHAIN = 'go1.26.10'
 go test ./...
 go vet ./...
-.\scripts\build.ps1 -Out .\dist\trajector.exe
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Out .\dist\trajector.exe
 ```
 
 All service tests use local stand-ins and isolated user directories. Before

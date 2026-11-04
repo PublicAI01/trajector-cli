@@ -24,8 +24,8 @@ script rather than a bare `go build`:
 On native Windows, the equivalent build is:
 
 ```powershell
-.\scripts\build.ps1
-.\scripts\build.ps1 -Version v0.6.0 -Out .\dist\trajector.exe
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Version v0.6.0 -Out .\dist\trajector.exe
 ```
 
 Both scripts leave the release-build mark unset: a source build does not
