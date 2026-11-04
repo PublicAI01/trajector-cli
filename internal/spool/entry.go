@@ -1,6 +1,7 @@
 package spool
 
 import (
+	"errors"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
@@ -63,6 +64,39 @@ func (e Entry) inRawcallSlot() bool { return e.Kind.Source == envelope.KindRawca
 // what they are, so they arrive as one sequence.
 func (s *Spool) EachEntry(visit func(Entry) error) error {
 	return s.EachEntryWhere(func(string) bool { return true }, visit)
+}
+
+func (s *Spool) Collect(limit int64, recordsFirst bool) (Entries, error) {
+	var entries Entries
+	var total int64
+	errEnough := errors.New("collected enough")
+	visit := func(e Entry) error {
+		entries = append(entries, e)
+		total += int64(len(e.Raw))
+		if total >= limit {
+			return errEnough
+		}
+		return nil
+	}
+	rawcalls := func() error {
+		return s.Each(func(r Rawcall) error { return visit(r.entry()) })
+	}
+	records := func() error {
+		return s.EachRecord(func(r Record) error { return visit(r.entry()) })
+	}
+	first, second := rawcalls, records
+	if recordsFirst {
+		first, second = records, rawcalls
+	}
+	for _, collect := range []func() error{first, second} {
+		if err := collect(); err != nil {
+			if errors.Is(err, errEnough) {
+				return entries, nil
+			}
+			return nil, err
+		}
+	}
+	return entries, nil
 }
 
 // EachEntryWhere is EachEntry restricted to the records whose id
