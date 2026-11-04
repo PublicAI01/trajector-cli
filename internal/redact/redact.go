@@ -303,7 +303,7 @@ func redactString(s string) string {
 	return applyRegions(s, detectAllLayers(s))
 }
 
-// redactDeterministic masks only what layers 2-6 recognize: a credential
+// redactReadings also computes a reading that masks only what layers 2-6 recognize: a credential
 // named by its own format or by what surrounds it, never a value judged
 // random on its own.
 //
@@ -315,33 +315,24 @@ func redactString(s string) string {
 // against real values: observed ids trigger no layer 2-6 rule at all.
 // PII stays out because a protected field keeping its PII is a standing
 // decision of its own (TestPII_JSONLSkippedFieldWithEmail). 2026-08-31.
-func redactDeterministic(s string) string {
-	return applyRegions(s, detectLayers(s, false))
+func redactReadings(s string) (string, string) {
+	regions := detectLayers(s, false)
+	deterministic := applyRegions(s, regions)
+	regions = append(regions, detectEntropy(s)...)
+	regions = append(regions, detectPII(getPIIPatterns(), s)...)
+	return applyRegions(s, regions), deterministic
 }
 
 // detectAllLayers runs the seven always-on/opt-in regex-based redaction
 // layers and returns their tagged regions.
 func detectAllLayers(s string) []taggedRegion { return detectLayers(s, true) }
 
-// entropyCandidates yields the spans layer 1 would judge, and none at all
-// when this is not a full scan — the one layer a protected field opts out
-// of. See redactDeterministic.
-func entropyCandidates(s string, full bool) [][]int {
-	if !full {
-		return nil
-	}
-	return secretPattern.FindAllStringIndex(s, -1)
-}
-
-// detectLayers runs the redaction layers over s. full selects whether the
-// two layers that judge by something other than credential format take
-// part: the entropy layer (1) and the PII layer (7).
-func detectLayers(s string, full bool) []taggedRegion {
+func detectEntropy(s string) []taggedRegion {
 	var regions []taggedRegion
 
 	// 1. Entropy-based detection (secrets — full scans only; see
 	// jsonFieldPolicy for the fields that opt out of this layer).
-	for _, loc := range entropyCandidates(s, full) {
+	for _, loc := range secretPattern.FindAllStringIndex(s, -1) {
 		start, end := loc[0], loc[1]
 
 		// Don't consume characters that are part of JSON/string escape sequences.
@@ -366,6 +357,17 @@ func detectLayers(s string, full bool) []taggedRegion {
 		if shannonEntropy(s[start:end]) > entropyThreshold {
 			regions = append(regions, taggedRegion{region: region{start, end}})
 		}
+	}
+	return regions
+}
+
+// detectLayers runs the redaction layers over s. full selects whether the
+// two layers that judge by something other than credential format take
+// part: the entropy layer (1) and the PII layer (7).
+func detectLayers(s string, full bool) []taggedRegion {
+	var regions []taggedRegion
+	if full {
+		regions = detectEntropy(s)
 	}
 
 	// 2. Pattern-based detection via betterleaks (secrets — always on).
@@ -410,7 +412,7 @@ func detectLayers(s string, full bool) []taggedRegion {
 
 	// 7. PII detection (on by default, and only on a full scan: a
 	// protected field keeping its PII is a standing decision of its own,
-	// see redactDeterministic).
+	// see redactReadings).
 	if full {
 		regions = append(regions, detectPII(getPIIPatterns(), s)...)
 	}
@@ -1276,11 +1278,10 @@ func collectJSONLReplacements(v any) []jsonReplacement {
 					text = masked
 				}
 			}
-			redacted := redactString(text)
 			// Both readings are collected because the applying side, not
 			// this one, knows which a given occurrence gets: the same value
 			// can sit in a protected field and an ordinary one at once.
-			deterministic := redactDeterministic(text)
+			redacted, deterministic := redactReadings(text)
 			// The key itself says this value is a password, so the whole
 			// value goes — never just the parts the pattern layers caught.
 			// Until 2026-08-14 this ran only when redactString had changed

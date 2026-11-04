@@ -190,6 +190,8 @@ type Uploader struct {
 	deps Deps
 	mu   sync.Mutex
 
+	recordsFirst bool
+
 	// closed refuses every flush after Close ran its last one.
 	closed bool
 
@@ -1015,25 +1017,16 @@ func (u *Uploader) applyHandshake(h platform.Handshake) {
 
 // collect gathers stored records up to roughly limit bytes in total,
 // so one batch stays bounded no matter how much a long offline stretch
-// accumulated. The spool hands them over in one sequence, and a flush
-// drains until nothing is left, so where the limit falls decides only
+// accumulated. Successive batches alternate which slot is read first,
+// and a flush drains until nothing is left, so where the limit falls decides only
 // which batch a record rides in, never whether it is sent.
 func (u *Uploader) collect(limit int64) (spool.Entries, error) {
-	var (
-		entries spool.Entries
-		total   int64
-	)
-	errEnough := errors.New("collected enough")
-	err := u.deps.Spool.EachEntry(func(e spool.Entry) error {
-		entries = append(entries, e)
-		total += int64(len(e.Raw))
-		if total >= limit {
-			return errEnough
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, errEnough) {
+	entries, err := u.deps.Spool.Collect(limit, u.recordsFirst)
+	if err != nil {
 		return nil, err
+	}
+	if len(entries) > 0 {
+		u.recordsFirst = !u.recordsFirst
 	}
 	return entries, nil
 }
