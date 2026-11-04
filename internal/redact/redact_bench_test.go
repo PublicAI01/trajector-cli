@@ -94,8 +94,8 @@ func BenchmarkRedactSegment(b *testing.B) {
 
 // generateBenchmarkReadResultJSONL emits session lines of ordinary prose,
 // with every imageEvery-th line a Read of an image instead.
-func generateBenchmarkReadResultJSONL(b *testing.B, lines, imageEvery int) []byte {
-	b.Helper()
+func generateBenchmarkReadResultJSONL(tb testing.TB, lines, imageEvery int) []byte {
+	tb.Helper()
 
 	random := rand.NewChaCha8([32]byte{})
 	var out strings.Builder
@@ -132,7 +132,7 @@ func generateBenchmarkReadResultJSONL(b *testing.B, lines, imageEvery int) []byt
 		}
 		encoded, err := json.Marshal(entry)
 		if err != nil {
-			b.Fatalf("marshal benchmark line: %v", err)
+			tb.Fatalf("marshal benchmark line: %v", err)
 		}
 		out.Write(encoded)
 		out.WriteByte('\n')
@@ -140,8 +140,8 @@ func generateBenchmarkReadResultJSONL(b *testing.B, lines, imageEvery int) []byt
 	return []byte(out.String())
 }
 
-func generateBenchmarkJSONL(b *testing.B, lines int) []byte {
-	b.Helper()
+func generateBenchmarkJSONL(tb testing.TB, lines int) []byte {
+	tb.Helper()
 
 	var out strings.Builder
 	for i := range lines {
@@ -161,7 +161,7 @@ func generateBenchmarkJSONL(b *testing.B, lines int) []byte {
 		}
 		encoded, err := json.Marshal(entry)
 		if err != nil {
-			b.Fatalf("marshal benchmark line: %v", err)
+			tb.Fatalf("marshal benchmark line: %v", err)
 		}
 		out.Write(encoded)
 		out.WriteByte('\n')
@@ -169,8 +169,8 @@ func generateBenchmarkJSONL(b *testing.B, lines int) []byte {
 	return []byte(out.String())
 }
 
-func generateBenchmarkEmbeddedJSONL(b *testing.B, lines int) []byte {
-	b.Helper()
+func generateBenchmarkEmbeddedJSONL(tb testing.TB, lines int) []byte {
+	tb.Helper()
 
 	var out strings.Builder
 	for i := range lines {
@@ -184,7 +184,7 @@ func generateBenchmarkEmbeddedJSONL(b *testing.B, lines int) []byte {
 			"notes": benchmarkLineContent(i),
 		})
 		if err != nil {
-			b.Fatalf("marshal embedded document: %v", err)
+			tb.Fatalf("marshal embedded document: %v", err)
 		}
 		entry := map[string]any{
 			"type":       "user",
@@ -200,7 +200,7 @@ func generateBenchmarkEmbeddedJSONL(b *testing.B, lines int) []byte {
 		}
 		encoded, err := json.Marshal(entry)
 		if err != nil {
-			b.Fatalf("marshal benchmark line: %v", err)
+			tb.Fatalf("marshal benchmark line: %v", err)
 		}
 		out.Write(encoded)
 		out.WriteByte('\n')

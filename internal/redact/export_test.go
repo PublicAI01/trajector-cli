@@ -19,3 +19,14 @@ func SpliceJSON(s string) (string, error) {
 	}
 	return spliceFieldAware(s, parsed)
 }
+
+// ReadingsOfOneScan is redactReadings: both readings of s from one scan.
+func ReadingsOfOneScan(s string) (redacted, deterministic string) {
+	return redactReadings(s)
+}
+
+// ReadingsOfTwoScans gives the same two readings of s from a separate
+// scan each, the full one and the one without layers 1 and 7.
+func ReadingsOfTwoScans(s string) (redacted, deterministic string) {
+	return applyRegions(s, detectLayers(s, true)), applyRegions(s, detectLayers(s, false))
+}
