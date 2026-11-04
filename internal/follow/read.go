@@ -286,6 +286,7 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 	}
 
 	res.File.Inode, res.File.Size, res.File.Offset = st.Inode, st.Size, offset
+	res.File.FileID = st.FileID
 	res.File.Outside = outside
 	// The caller's slices are never grown in place.
 	res.File.MessageIDs = append(slices.Clip(f.MessageIDs), added...)
@@ -405,6 +406,7 @@ func readMeta(res ReadResult, st Stat, capture envelope.Capture, sessionOutside 
 		return ReadResult{}, err
 	}
 	res.File.Inode, res.File.Size, res.File.Offset = st.Inode, int64(len(content)), int64(len(content))
+	res.File.FileID = st.FileID
 	if len(bytes.TrimSpace(content)) == 0 {
 		return res, nil
 	}

@@ -56,7 +56,7 @@ func TestHeadsRememberTheLastCommitPerProject(t *testing.T) {
 
 func TestHeadsAreReadableOnlyByTheirOwner(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("the session-file and git sources do not work on native Windows, which is no release target (proxytest.RequireSessionSources)")
+		t.Skip("Windows uses access control lists rather than POSIX permission bits")
 	}
 	h, path := newHeads(t)
 	if err := h.See(hashA, commitA); err != nil {

@@ -58,10 +58,7 @@ func (e *env) lockedSubdir(name string) string {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		e.t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0); err != nil {
-		e.t.Fatal(err)
-	}
-	e.t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	restrictDirectory(e.t, dir, 0)
 	return dir
 }
 
@@ -584,7 +581,6 @@ func TestDoctorBundleCarriesTheSessionsNoHookReported(t *testing.T) {
 }
 
 func TestStatusAndDoctorReportARegistryTheyCannotRead(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.startProxy()
 	e.enable(proxytest.WithProxy)

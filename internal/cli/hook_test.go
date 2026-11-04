@@ -27,7 +27,6 @@ type hookEnv struct {
 
 func newHookEnv(t *testing.T) *hookEnv {
 	t.Helper()
-	proxytest.RequireSessionSources(t)
 	e := clitest.New(t)
 	procbin.Self(t, "cli")
 	configDir := filepath.Join(t.TempDir(), "claude")

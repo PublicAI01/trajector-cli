@@ -36,6 +36,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // DefaultQuota bounds total spool size. When the quota is reached the
@@ -167,7 +168,7 @@ type Spool struct {
 // needed, and computes current usage from disk. A quota of zero selects
 // DefaultQuota.
 func Create(dir string, quota int64) (*Spool, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := userdirs.EnsureOwnerDir(dir); err != nil {
 		return nil, err
 	}
 	return Open(dir, quota)
@@ -517,7 +518,7 @@ func (s *Spool) StopCreatingDir() {
 // that lands between it and the create.
 func (s *Spool) mkdirLocked(dir string) error {
 	if !s.existingDirOnly {
-		return os.MkdirAll(dir, 0o700)
+		return userdirs.EnsureOwnerDir(dir)
 	}
 	rel, err := filepath.Rel(s.dir, dir)
 	if err != nil {

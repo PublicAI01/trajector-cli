@@ -5,6 +5,7 @@ dist/
 
 # Test and coverage artifacts
 *.test
+*.test.exe
 *.out
 coverage.html
 
@@ -19,3 +20,5 @@ go.work.sum
 .idea/
 .vscode/
 *.swp
+
+/trajector-doctor-*.tar.gz

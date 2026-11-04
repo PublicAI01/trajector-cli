@@ -82,14 +82,29 @@ anything a browser downloaded; unpacking such an archive in Finder passes
 that mark to the binary, and Gatekeeper then refuses to run it. A download
 made by `curl` carries no mark.
 
-**Windows has no published build.** The client compiles and is tested for
-it, but the end-to-end pass against the service has only been run on macOS
-and Linux, and an archive on the releases page would read as a platform we
-support. On Windows, run trajector under
-[WSL](https://learn.microsoft.com/windows/wsl/install): install a Linux
-distribution and use the command above inside it. The v0.1.0 Windows
-archives are still on the releases page — they are what they were, a
-release behind and untested. Scoop is not available.
+On native Windows, download and review the PowerShell installer, then run it:
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/PublicAI01/trajector-cli/main/install.ps1 -OutFile install.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+It selects the newest release and its Windows amd64 or arm64 archive,
+verifies SHA-256 and the executable's version, and installs into
+`$env:USERPROFILE\.local\bin`. `-InstallDir` and `-Version` override those
+choices; the same environment variables as `install.sh` also work. Add the
+installation directory to your user PATH, or run the executable by its full
+path. An existing installation is left intact: use `trajector upgrade` for
+an update with rollback protection. The command changes execution policy
+only for that installer process, never for the user or machine.
+
+Native Windows uses PowerShell command hooks and does not require WSL or
+Git Bash. Use a current Claude Code release that supports the `shell` hook
+field. Git for Windows is needed for Git snapshots. Windows archives are
+available starting with the first release containing this support; a release
+without a matching archive is refused, without falling back to an obsolete
+Windows build. See [Windows](docs/windows.md)
+for storage locations, source builds, diagnostics and verification.
 
 On macOS, Homebrew works too:
 
@@ -173,4 +188,4 @@ deleting the binary alone leaves the settings injections behind.
 | `internal/semver` | The one version comparison: which release is newer, and which proxy a newer one may replace |
 | `internal/cli` | argv, exit codes, and what the user reads |
 | `internal/harness` | Test doubles and sandboxes: a fake upstream, a fake service, a real proxy in a temp directory |
-| `internal/installscript` | Where `install.sh` is run end to end against a local release source |
+| `internal/installscript` | Where `install.sh` and `install.ps1` are run end to end against a local release source |

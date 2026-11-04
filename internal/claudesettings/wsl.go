@@ -1,6 +1,9 @@
 package claudesettings
 
-import "regexp"
+import (
+	"regexp"
+	"runtime"
+)
 
 // windowsDriveMount matches a path on a Windows drive mounted into WSL.
 // Only drive-letter mounts count: /mnt/data on a plain Linux host is an
@@ -14,8 +17,12 @@ var windowsDrivePath = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 // of a WSL boundary: the project lives on a Windows drive mounted into
 // WSL, or a session file path has a drive letter or backslashes. Hooks
 // fired from that side run Windows commands and cannot reach a
-// trajector installed in WSL.
+// trajector installed in WSL. A native Windows build can read those
+// files directly, so none of its paths crosses that boundary.
 func WindowsSideClaude(projectRoot, sessionFilePath string) bool {
+	if runtime.GOOS == "windows" {
+		return false
+	}
 	return windowsDriveMount.MatchString(projectRoot) || windowsShaped(sessionFilePath)
 }
 

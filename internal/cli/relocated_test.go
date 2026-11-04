@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ func TestHookRead_StoresOnlyWhatASessionWroteInsideTheProject(t *testing.T) {
 		`{"type":"user","message":{"role":"user","content":"inside-one"}}`,
 		`{"type":"relocated","relocatedCwd":"/elsewhere/away-one"}`,
 		`{"type":"user","message":{"role":"user","content":"outside-one"}}`,
-		`{"type":"relocated","relocatedCwd":"`+root+`"}`,
+		fmt.Sprintf(`{"type":"relocated","relocatedCwd":%q}`, root),
 		`{"type":"user","message":{"role":"user","content":"inside-two"}}`,
 		`{"type":"relocated","relocatedCwd":"/elsewhere/away-two"}`,
 		`{"type":"user","message":{"role":"user","content":"outside-two"}}`,

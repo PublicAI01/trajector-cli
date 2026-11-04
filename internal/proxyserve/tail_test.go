@@ -131,7 +131,6 @@ func eventually(t *testing.T, within time.Duration, check func() bool) bool {
 }
 
 func TestProgressReportReadsTheOneFileItNames(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	hash := e.enabledProject()
 	named := e.sessionFile(hash, "named.jsonl", sessionLine)
@@ -168,7 +167,6 @@ func TestProgressReportReadsTheOneFileItNames(t *testing.T) {
 }
 
 func TestProgressReportLeavesTheHeatTheHookWrote(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	hash := e.enabledProject()
 	path := e.sessionFile(hash, "s.jsonl", sessionLine)
@@ -204,7 +202,6 @@ func TestProgressReportRefusesAFileThatIsNotRegistered(t *testing.T) {
 }
 
 func TestProgressReportOfASessionEndReadsFlushesAndCools(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	hash := e.enabledProject()
@@ -235,7 +232,6 @@ func TestProgressReportOfASessionEndReadsFlushesAndCools(t *testing.T) {
 }
 
 func TestStartSweepReadsHotFilesAndNeverColdOnes(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	hash := e.enabledProject()
 	hot := e.sessionFile(hash, "hot.jsonl", sessionLine)
@@ -260,7 +256,6 @@ func TestStartSweepReadsHotFilesAndNeverColdOnes(t *testing.T) {
 }
 
 func TestARunningSessionProcessStretchesTheIdleExit(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	hash := e.enabledProject()
 	path := e.sessionFile(hash, "s.jsonl", "")
@@ -289,7 +284,6 @@ func TestARunningSessionProcessStretchesTheIdleExit(t *testing.T) {
 }
 
 func TestProgressReportReadsTheAgentFilesBesideTheNamedOne(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	hash := e.enabledProject()
 	named := e.sessionFile(hash, "sess.jsonl", sessionLine)
@@ -327,7 +321,6 @@ func TestProgressReportReadsTheAgentFilesBesideTheNamedOne(t *testing.T) {
 }
 
 func TestProgressReportAnswersBeforeTheFlushRuns(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	hash := e.enabledProject()
 	path := e.sessionFile(hash, "s.jsonl", sessionLine)
@@ -371,7 +364,6 @@ func TestProgressReportAnswersBeforeTheFlushRuns(t *testing.T) {
 }
 
 func TestStartSweepCoolsAQuietFileAndSendsTheSpoolAtOnce(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	hash := e.enabledProject()
@@ -406,7 +398,6 @@ func TestStartSweepCoolsAQuietFileAndSendsTheSpoolAtOnce(t *testing.T) {
 }
 
 func TestStartSweepReadsAColdWorkflowAgentFileLeftUnreadAndNoOtherColdFile(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	hash := e.enabledProject()
 	main := e.sessionFile(hash, "sess.jsonl", sessionLine)
@@ -446,7 +437,6 @@ func TestStartSweepReadsAColdWorkflowAgentFileLeftUnreadAndNoOtherColdFile(t *te
 }
 
 func TestStartSweepLeavesAColdWorkflowAgentFileReadToItsEnd(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	hash := e.enabledProject()
 	main := e.sessionFile(hash, "sess.jsonl", sessionLine)
@@ -491,7 +481,6 @@ func TestStartSweepLeavesAColdWorkflowAgentFileReadToItsEnd(t *testing.T) {
 }
 
 func TestAnExitingProxyDoesNotRecreateADeletedStateDirectoryWhateverMadeItExit(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	proxyserve.SetSweepInterval(t, 20*time.Millisecond)
 	e := newEnv(t)
 	hash := e.enabledProject()

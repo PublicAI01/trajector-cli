@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"unicode/utf16"
 
 	"golang.org/x/text/unicode/norm"
@@ -15,16 +16,21 @@ import (
 // alphanumeric units pass through unchanged. So a directory name can be
 // matched against a slice of the encoded name without decoding
 // anything: each alphanumeric byte pins the unit, each "-" accepts any
-// other unit. The search starts at "/" and descends only into
+// other unit. The search starts at the project's volume root and descends only into
 // directories whose names fit, listing names and nothing else.
 // Symbolic links are not followed: Claude Code records the physical
 // working directory, so a path through a link never names a project.
-func trie(name string) []string {
+func trie(name, root string) []string {
 	type step struct {
 		dir string
 		i   int
 	}
-	frontier := []step{{dir: "/", i: 1}}
+	origin := filepath.VolumeName(root) + string(filepath.Separator)
+	prefix, _ := encode(origin)
+	if !strings.HasPrefix(name, prefix) {
+		return nil
+	}
+	frontier := []step{{dir: origin, i: len(prefix)}}
 	var results []string
 	for len(frontier) > 0 {
 		s := frontier[len(frontier)-1]

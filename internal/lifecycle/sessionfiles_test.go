@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -43,7 +44,6 @@ func (e *env) registeredPaths(root string) []string {
 }
 
 func TestSessionEndedRegistersTheSessionFileItWasToldAbout(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	const sessionFile = "-work-sample/0f1e2d3c.jsonl"
 	tests := []struct {
 		name string
@@ -135,7 +135,7 @@ func TestSessionEndedRegistersTheSessionFileItWasToldAbout(t *testing.T) {
 			name:    "backslash inside an otherwise absolute path",
 			enabled: true,
 			path:    `%s\-work-sample\0f1e2d3c.jsonl`,
-			want:    false,
+			want:    runtime.GOOS == "windows",
 		},
 	}
 	for _, tt := range tests {
@@ -166,7 +166,6 @@ func TestSessionEndedRegistersTheSessionFileItWasToldAbout(t *testing.T) {
 }
 
 func TestSessionEndedTakesTheAgentFilesBesideTheSessionFile(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.enableProject()
 	sessionDir := filepath.Join(e.sessionFilesRoot(), "-work-sample")
@@ -208,7 +207,6 @@ func TestSessionEndedLeavesAProjectUnderTheWSLMountAlone(t *testing.T) {
 }
 
 func TestSessionStartingFollowsTheSessionAndObservesTheRepository(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.startProxy()
 	e.gitProject()
@@ -233,7 +231,6 @@ func TestSessionStartingFollowsTheSessionAndObservesTheRepository(t *testing.T) 
 }
 
 func TestSessionEndedStartsAReaderThatExitsCleanly(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	trajector := proxytest.InstalledTrajector(t, e.deps.Home)
 	e.deps.ExecPath = trajector.Path()
@@ -249,7 +246,6 @@ func TestSessionEndedStartsAReaderThatExitsCleanly(t *testing.T) {
 }
 
 func TestSessionEndedKeepsTheRegistrationWhenTheReaderCannotStart(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.enableProject()
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", "")
@@ -627,7 +623,6 @@ func TestReadSessionFiles_BringsUpTheResidentProcess(t *testing.T) {
 }
 
 func TestHook_EndToEnd_RegisterReadStore(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.isolateForSpawn()
 	e.enableProject()

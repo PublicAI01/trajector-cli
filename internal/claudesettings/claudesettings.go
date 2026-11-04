@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -576,6 +577,10 @@ func dropInjectedEnv(root map[string]any) {
 // event is left where it is: which group holds it is the user's file to
 // arrange, not this package's to normalize.
 func addHook(root map[string]any, event, matcher, command string) error {
+	nativePowerShell := runtime.GOOS == "windows" && strings.HasPrefix(command, "& '")
+	if nativePowerShell && matcher == bashMatcher {
+		matcher = "Bash|PowerShell"
+	}
 	hooks, err := childObject(root, "hooks")
 	if err != nil {
 		return err
@@ -590,6 +595,9 @@ func addHook(root map[string]any, event, matcher, command string) error {
 	exists := false
 	eachHookEntry(root, func(e string, entry map[string]any) hookAction {
 		if cmd, _ := entry["command"].(string); e == event && cmd == command {
+			if nativePowerShell {
+				entry["shell"] = "powershell"
+			}
 			exists = true
 		}
 		return keepEntry
@@ -597,9 +605,11 @@ func addHook(root map[string]any, event, matcher, command string) error {
 	if exists {
 		return nil
 	}
-	group := map[string]any{
-		"hooks": []any{map[string]any{"type": "command", "command": command}},
+	entry := map[string]any{"type": "command", "command": command}
+	if nativePowerShell {
+		entry["shell"] = "powershell"
 	}
+	group := map[string]any{"hooks": []any{entry}}
 	if matcher != "" {
 		group["matcher"] = matcher
 	}

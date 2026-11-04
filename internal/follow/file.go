@@ -11,9 +11,10 @@ import (
 
 // File is one registered file and its cursor.
 type File struct {
-	Path  string `json:"path"`
-	Inode uint64 `json:"inode"`
-	Size  int64  `json:"size"`
+	Path   string `json:"path"`
+	Inode  uint64 `json:"inode"`
+	FileID string `json:"file_id,omitempty"`
+	Size   int64  `json:"size"`
 	// Offset is the byte position reading stopped at.
 	Offset int64 `json:"offset"`
 	// NextSegment only grows. It survives a Rewrite of the file, so it
@@ -116,6 +117,7 @@ func (f File) Reasoning() sessionline.ReasoningBlocks {
 // those as they stand now, not as they stood when the read began.
 func (f File) advancedTo(read File) File {
 	f.Inode, f.Size, f.Offset, f.NextSegment = read.Inode, read.Size, read.Offset, read.NextSegment
+	f.FileID = read.FileID
 	f.MessageIDs, f.BeforeRewrite = read.MessageIDs, read.BeforeRewrite
 	f.ReadAt, f.Retired, f.Outside = read.ReadAt, read.Retired, read.Outside
 	f.EmptyReasoningBlocks, f.ReasoningBlocksWithText = read.EmptyReasoningBlocks, read.ReasoningBlocksWithText
@@ -281,22 +283,22 @@ const readAtLayout = time.RFC3339
 type Stat struct {
 	Exists bool
 	Inode  uint64
+	FileID string
 	Size   int64
 }
 
 // StatFile observes path. A path that does not exist is an observation,
-// not a failure. Inode is 0 where the platform has no stable file
-// identity to report; a cursor compares inodes only when both sides
-// know theirs.
+// not a failure. A cursor compares an inode or file ID only when both
+// observations carry that kind of identity.
 func StatFile(path string) (Stat, error) {
-	info, err := os.Stat(path)
+	st, err := statFile(path)
 	if os.IsNotExist(err) {
 		return Stat{}, nil
 	}
 	if err != nil {
 		return Stat{}, err
 	}
-	return Stat{Exists: true, Inode: inodeOf(info), Size: info.Size()}, nil
+	return st, nil
 }
 
 // Reaction is how reading must continue after observing a file.
@@ -321,6 +323,8 @@ func (f File) React(st Stat) Reaction {
 	switch {
 	case !st.Exists:
 		return Vanished
+	case f.FileID != "" && st.FileID != "" && st.FileID != f.FileID:
+		return Rewrite
 	case f.Inode != 0 && st.Inode != 0 && st.Inode != f.Inode:
 		return Rewrite
 	case st.Size < f.Size:

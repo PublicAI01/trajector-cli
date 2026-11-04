@@ -2,7 +2,14 @@
 
 package fsatomic
 
-import "os"
+import (
+	"io/fs"
+	"os"
+)
+
+func createTemp(dir, prefix string) (*os.File, error) { return os.CreateTemp(dir, prefix+"*") }
+
+func setTempPermissions(tmp, _ string, perm fs.FileMode) error { return os.Chmod(tmp, perm) }
 
 // replaceCollision reports transient open/rename collisions, which only
 // Windows produces: POSIX renames never contend with open handles.

@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -60,6 +62,10 @@ var projectIgnoreRules = append([]string{claudesettings.ProjectLocalIgnoreRule},
 
 // hookCommand renders the shell command injected into settings hooks.
 func hookCommand(execPath, subcommand string) string {
+	execPath = filepath.ToSlash(execPath)
+	if runtime.GOOS == "windows" {
+		return "& '" + strings.ReplaceAll(execPath, "'", "''") + "' " + strings.Join(claudesettings.HookArgv(subcommand), " ")
+	}
 	if strings.ContainsAny(execPath, " \t") {
 		execPath = `"` + execPath + `"`
 	}

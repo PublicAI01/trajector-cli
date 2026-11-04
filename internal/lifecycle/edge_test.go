@@ -25,7 +25,11 @@ func TestInjectedHookQuotesBinaryPathsWithSpaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, hook := range []string{"ensure-proxy", "session-end"} {
-		if !strings.Contains(string(settings), `\"/Users/dev/My Tools/trajector\" hook `+hook) {
+		quoted := `\"/Users/dev/My Tools/trajector\"`
+		if runtime.GOOS == "windows" {
+			quoted = `\u0026 '/Users/dev/My Tools/trajector'`
+		}
+		if !strings.Contains(string(settings), quoted+" hook "+hook) {
 			t.Errorf("injected %s hook does not quote the spaced path:\n%s", hook, settings)
 		}
 	}

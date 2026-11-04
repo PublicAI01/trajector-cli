@@ -46,7 +46,7 @@ func TestLogKeepsEveryEntryInTheOrderItWasAppended(t *testing.T) {
 
 func TestLogAndItsDirectoryAreOwnerOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("the session-file and git sources do not work on native Windows, which is no release target (proxytest.RequireSessionSources)")
+		t.Skip("Windows uses access control lists rather than POSIX permission bits")
 	}
 	dir := filepath.Join(t.TempDir(), "state")
 	path := filepath.Join(dir, "reader.log")

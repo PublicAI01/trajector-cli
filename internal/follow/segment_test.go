@@ -123,7 +123,6 @@ func TestRead_ALineLongerThanTheBoundIsASegmentOfItsOwn(t *testing.T) {
 }
 
 func TestReader_ARewriteReadInSeveralSegmentsSendsNoSeenMessageAgain(t *testing.T) {
-	requireSessionSources(t)
 	a := newAdvancing(t)
 	path := mainPath(t)
 	writeFile(t, path, assistantLine("msg_a", 0, "a")+assistantLine("msg_b", 0, "b"))

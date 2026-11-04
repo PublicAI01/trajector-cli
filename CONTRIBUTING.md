@@ -21,6 +21,17 @@ script rather than a bare `go build`:
 ./scripts/build.sh v0.4.1     # from a source tarball, name the release
 ```
 
+On native Windows, the equivalent build is:
+
+```powershell
+.\scripts\build.ps1
+.\scripts\build.ps1 -Version v0.6.0 -Out .\dist\trajector.exe
+```
+
+Both scripts leave the release-build mark unset: a source build does not
+replace itself automatically with a published binary. See
+[Windows verification](docs/windows.md#verification) for the native checks.
+
 The service gates uploads on the version a client reports. A bare
 `go build` reports `dev` — "this build cannot say which release it is" —
 and the service treats that as a client it cannot place, which is the safe
