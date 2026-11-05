@@ -114,10 +114,15 @@ type Env struct {
 	addr     string
 	client   *http.Client
 	spool    *spool.Spool
+	dropped  *apiproxy.Dropped
 	stopped  chan struct{}
 	serveErr error
 	cancel   context.CancelFunc
 }
+
+// Dropped is the account of the captures this proxy gave up on, the
+// one its server counts into.
+func (e *Env) Dropped() *apiproxy.Dropped { return e.dropped }
 
 // Client returns an HTTP client whose connection pool lives and dies
 // with the test. On the process-wide client, pooled connections outlive
@@ -176,6 +181,7 @@ func New(t *testing.T, opts ...Option) *Env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.dropped = dropped
 
 	dialect := capture.Anthropic
 	dialect.OfficialUpstream = e.Upstream.URL()

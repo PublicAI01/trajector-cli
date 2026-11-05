@@ -60,6 +60,12 @@ type Dropped struct {
 	// unwritten is what this process counted and the file does not hold
 	// yet.
 	unwritten DroppedRecord
+	// writing is held for the whole of one write — taking the unwritten
+	// counts, writing them, and putting them back if the write failed —
+	// and by Snapshot while it reads the file and the unwritten counts,
+	// so a count is never in flight between the two when they are read.
+	// count never takes it: forwarding does not wait for the disk.
+	writing sync.Mutex
 }
 
 // OpenDropped makes sure the directory of the record at path is there
@@ -91,6 +97,30 @@ func ReadDropped(path string) (DroppedRecord, error) {
 		return DroppedRecord{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return rec, nil
+}
+
+// Snapshot is the account as it stands: what the record on disk holds,
+// with what this process has counted and not written yet folded in. A
+// record on disk that cannot be read counts for nothing, as it does
+// for the writer that replaces it. The map is never nil, so an empty
+// account serializes as an object with no reasons.
+func (d *Dropped) Snapshot() DroppedRecord {
+	d.writing.Lock()
+	defer d.writing.Unlock()
+	rec := DroppedRecord{Reasons: map[string]DroppedReason{}}
+	if d.path != "" {
+		if onDisk, err := ReadDropped(d.path); err == nil {
+			for reason, r := range onDisk.Reasons {
+				rec = rec.with(reason, r)
+			}
+		}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for reason, r := range d.unwritten.Reasons {
+		rec = rec.with(reason, r)
+	}
+	return rec
 }
 
 // count adds one capture given up for reason, observed to bytes, at
@@ -138,6 +168,8 @@ func (d *Dropped) start(logf func(format string, args ...any)) (stop func()) {
 // write held is kept for the next one; a failure costs the proxy one
 // log line and nothing else.
 func (d *Dropped) write(logf func(format string, args ...any)) {
+	d.writing.Lock()
+	defer d.writing.Unlock()
 	d.mu.Lock()
 	delta := d.unwritten
 	d.unwritten = DroppedRecord{}
