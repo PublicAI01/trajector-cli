@@ -47,14 +47,14 @@ use_toolchain() {
 # golangci-lint runs from its release archive, not an image: it loads
 # packages through the host's Go toolchain and module cache. The version
 # and the archive checksums are updated by hand, together.
-golangci_version=2.14.0
+golangci_version=2.15.0
 
 golangci_sum() {
 	case $1 in
-	linux-amd64) echo ab90aeb7b066f92a33415b638a50fe5344bbb75a0d32ad30cc248d88f81032ab ;;
-	linux-arm64) echo ee7ec5f3453d15ddf106fae5a4d6c71737712348a979d1fe9cd52ec7ea299bae ;;
-	darwin-amd64) echo a5667c1c3536be1740133213e1e822bfb8f0d98ea12903174d6d5f635e4ed68d ;;
-	darwin-arm64) echo 5ef5f36a7147e91dc58ef9ef4d11bb7bad5ead0c76eb6c01327a73c641d1dcc3 ;;
+	linux-amd64) echo 9b7fe6a6bf6334b98decf8d86b11415ea7889afdabdd1959fdce23af2a9ebcea ;;
+	linux-arm64) echo b4d8f17068b35ee6060cc2f69a16fb48740d706fbba81661c318649c114a6998 ;;
+	darwin-amd64) echo 767b899a28285e88ded2823d5dcc4bc5ef681173eb2d80f029a7b17ee4ece3b8 ;;
+	darwin-arm64) echo d1e409481a8ca846c4bc97e781eb5cb1bd5c23353a0b3977a1cbda1b1b6447d5 ;;
 	*)
 		echo "check_static: no golangci-lint archive for $1" >&2
 		exit 2

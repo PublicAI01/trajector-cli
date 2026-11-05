@@ -74,12 +74,14 @@ homebrew_casks:
     # Releases are not code-signed yet, and Homebrew's download carries
     # the quarantine mark a browser download would. Without this the
     # binary is refused by Gatekeeper on first run. Remove it once the
-    # macOS build is signed and notarized.
+    # macOS build is signed and notarized. The body is Homebrew's
+    # declarative install-steps DSL, not Ruby: the same cask installs on
+    # Linux, which has no xattr, so the step is guarded by on_macos.
     hooks:
       post:
-        install: |
-          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/trajector"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/trajector"]
           end
 
 # Stated explicitly so validation does not depend on a configured git
