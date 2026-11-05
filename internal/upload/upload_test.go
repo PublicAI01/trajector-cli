@@ -2,6 +2,7 @@ package upload_test
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,6 +34,9 @@ type fixture struct {
 	// takesWritesAgain puts back.
 	handshakeBytes []byte
 	token          string
+	// readingToken, when set, runs each time the uploader reads the
+	// device token, which every flush does first.
+	readingToken func()
 	// logs collects what the uploader reports through its Logf seam.
 	logs strings.Builder
 	// now is the uploader's clock; tests advance it to cross gates.
@@ -76,9 +82,14 @@ func (f *fixture) newUploader(t *testing.T) *upload.Uploader {
 	t.Helper()
 	sp := f.spool
 	u, err := upload.New(upload.Deps{
-		Spool:       sp,
-		Service:     platform.New(cmp.Or(f.serviceURL, f.server.URL()), "test"),
-		DeviceToken: func() (string, error) { return f.token, nil },
+		Spool:   sp,
+		Service: platform.New(cmp.Or(f.serviceURL, f.server.URL()), "test"),
+		DeviceToken: func() (string, error) {
+			if f.readingToken != nil {
+				f.readingToken()
+			}
+			return f.token, nil
+		},
 		Withdrawn:   func(hash string) bool { return f.withdrawn[hash] },
 		Version:     "1.0.0",
 		Dir:         f.dir,
@@ -556,6 +567,198 @@ func TestCloseAbandonsAnUploadThatOutlastsItsBudget(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(f.dir, "pending.json")); err != nil {
 		t.Errorf("the abandoned batch left no pending record for the next flusher: %v", err)
+	}
+}
+
+func TestCloseStopsARunningFlushAtItsNextBatchBoundary(t *testing.T) {
+	f := newFixture(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{FlushBytes: 1}))
+	f.storeRawcall(t, "req-seed", time.Now().UTC())
+	if _, err := f.uploader.Flush(t.Context(), true); err != nil {
+		t.Fatal(err)
+	}
+
+	const backlog = 12
+	var answered atomic.Int32
+	f.server.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		if answered.Add(1) <= 2 {
+			time.Sleep(300 * time.Millisecond)
+		}
+		return fakeplatform.Acknowledges(platform.Handshake{FlushBytes: 1})(r)
+	})
+	for i := range backlog {
+		f.storeRawcall(t, fmt.Sprintf("req-%02d", i), time.Now().UTC().Add(-25*time.Hour))
+	}
+	running := f.flushInBackground(t)
+	f.waitForUploads(t, 2)
+
+	start := time.Now()
+	err := f.uploader.Close(t.Context(), 10*time.Second)
+	spent := time.Since(start)
+	if err != nil {
+		t.Fatalf("close = %v", err)
+	}
+	got := running.wait(t)
+	if got.err != nil {
+		t.Errorf("the flush that was running = %v, want it ended as a regular flush", got.err)
+	}
+	if got.res.Outcome != upload.Uploaded || got.res.Batches == 0 {
+		t.Errorf("the flush that was running = %+v, want the batches it acknowledged reported", got.res)
+	}
+	if got.res.Batches >= backlog {
+		t.Errorf("the flush that was running acknowledged %d of %d batches, want it stopped at a batch boundary once Close was asked", got.res.Batches, backlog)
+	}
+	if spent > 5*time.Second {
+		t.Errorf("close ran %s, want the running flush to yield at its next batch", spent)
+	}
+	if f.spool.Usage() != 0 {
+		t.Error("the final flush left records in the spool")
+	}
+	if f.uploadCount() != backlog+1 {
+		t.Errorf("service saw %d requests, want %d", f.uploadCount(), backlog+1)
+	}
+	if held := upload.LoadStandings(f.dir, "1.0.0", f.now); len(held) != 0 {
+		t.Errorf("standings after close = %+v, want none", held)
+	}
+}
+
+func TestCloseCutsOffTheAttemptOfARunningFlushWhenItsBudgetRunsOut(t *testing.T) {
+	f := newFixture(t)
+	released := make(chan struct{})
+	t.Cleanup(func() { close(released) })
+	f.server.StubFunc("POST", "/v1/batches", func(fakeplatform.Request) fakeplatform.Response {
+		select {
+		case <-released:
+		case <-time.After(10 * time.Second):
+		}
+		return fakeplatform.JSON(200, map[string]any{"batch_id": "never-acknowledged"})
+	})
+	f.storeRawcall(t, "req-1", time.Now().UTC().Add(-25*time.Hour))
+	running := f.flushInBackground(t)
+	f.waitForUploads(t, 1)
+
+	const budget = 200 * time.Millisecond
+	start := time.Now()
+	err := f.uploader.Close(t.Context(), budget)
+	spent := time.Since(start)
+
+	if spent > 30*budget {
+		t.Errorf("close ran %s on a %s budget, want the attempt in flight cut off when the budget ran out", spent, budget)
+	}
+	if err == nil {
+		t.Error("close = nil, want the spent budget reported")
+	}
+	got := running.wait(t)
+	if got.err == nil {
+		t.Error("the flush that was running = nil, want its cut-off attempt reported")
+	}
+	if got.res.Outcome != "" {
+		t.Errorf("the flush that was running reported outcome %q, want none for an attempt that was cut off", got.res.Outcome)
+	}
+	if f.uploadCount() != 1 {
+		t.Errorf("service saw %d requests, want the one attempt that was cut off and no attempt on the way out", f.uploadCount())
+	}
+	if f.spool.Usage() == 0 {
+		t.Error("the cut-off attempt's records left the spool")
+	}
+	if _, err := os.Stat(filepath.Join(f.dir, "pending.json")); err != nil {
+		t.Errorf("the cut-off batch left no pending record for the next flusher: %v", err)
+	}
+	if held := upload.LoadStandings(f.dir, "1.0.0", f.now); len(held) != 0 {
+		t.Errorf("standings after close = %+v, want a cut-off attempt recorded as no failure", held)
+	}
+	if st := upload.LoadState(f.dir); st.LastError != "" {
+		t.Errorf("state.LastError = %q, want a cut-off attempt recorded as no failure", st.LastError)
+	}
+}
+
+func TestAFlushCloseStopsBeforeItsFirstBatchReportsTheUploaderClosed(t *testing.T) {
+	f := newFixture(t)
+	f.server.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
+	f.storeRawcall(t, "req-1", time.Now().UTC())
+	reading := make(chan struct{})
+	release := make(chan struct{})
+	f.readingToken = sync.OnceFunc(func() {
+		close(reading)
+		<-release
+	})
+
+	running := f.flushInBackground(t)
+	select {
+	case <-reading:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the flush never read the device token")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- f.uploader.Close(context.WithoutCancel(t.Context()), 10*time.Second) }()
+	waitForClosing(t, f.uploader)
+	close(release)
+
+	got := running.wait(t)
+	if !errors.Is(got.err, upload.ErrClosed) {
+		t.Errorf("the flush Close stopped = %+v, %v, want ErrClosed rather than a report of an empty spool", got.res, got.err)
+	}
+	if err := <-closed; err != nil {
+		t.Fatalf("close = %v", err)
+	}
+	if f.uploadCount() != 1 {
+		t.Errorf("service saw %d requests, want the one batch of the final flush", f.uploadCount())
+	}
+	if f.spool.Usage() != 0 {
+		t.Error("the final flush left records in the spool")
+	}
+}
+
+// waitForClosing returns once Close has been asked of u: the flush it
+// stops reads that mark between its first steps and its first batch.
+func waitForClosing(t *testing.T, u *upload.Uploader) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !upload.Closing(u) {
+		if time.Now().After(deadline) {
+			t.Fatal("Close was never asked")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// flushed is what one forced flush, run on a goroutine of its own,
+// returned.
+type flushed struct {
+	res upload.Result
+	err error
+	ch  <-chan flushed
+}
+
+func (f *fixture) flushInBackground(t *testing.T) flushed {
+	t.Helper()
+	ch := make(chan flushed, 1)
+	go func() {
+		res, err := f.uploader.Flush(context.WithoutCancel(t.Context()), true)
+		ch <- flushed{res: res, err: err}
+	}()
+	return flushed{ch: ch}
+}
+
+func (r flushed) wait(t *testing.T) flushed {
+	t.Helper()
+	select {
+	case got := <-r.ch:
+		return got
+	case <-time.After(20 * time.Second):
+		t.Fatal("the flush that was running never returned")
+		return flushed{}
+	}
+}
+
+func (f *fixture) waitForUploads(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for f.uploadCount() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("service saw %d requests, want %d before the test goes on", f.uploadCount(), n)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

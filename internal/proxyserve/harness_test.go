@@ -101,6 +101,20 @@ func (e *env) drain() {
 	resp.Body.Close()
 }
 
+// flushInBackground asks the served proxy for a forced flush and does
+// not wait for the reply: the flush it starts is what the test then
+// interrupts.
+func (e *env) flushInBackground() {
+	e.t.Helper()
+	req := proxytest.FlushRequest(e.t, e.assembly.Addr, e.assembly.Layout)
+	go func() {
+		resp, err := e.client.Do(req)
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+}
+
 func (e *env) flush() proxytest.FlushReply {
 	e.t.Helper()
 	return proxytest.Flush(e.t, e.client, e.assembly.Addr, e.assembly.Layout)

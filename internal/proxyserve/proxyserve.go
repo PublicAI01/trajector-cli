@@ -45,7 +45,10 @@ const flushInterval = time.Minute
 // flush on a slow link can run far longer than that — one attempt alone
 // may take half an hour by the regular proportional budget — so the
 // exit path is capped well inside the successor's wait, leaving room
-// for the listener close behind it. What the cap cuts off is not lost:
+// for the listener close behind it. The cap covers the whole exit: a
+// flush already running when it begins stops at its next batch, and an
+// attempt that would outlast the cap is cut off. What the cap cuts off
+// is not lost:
 // those records stay in the spool, and whoever flushes next, this
 // proxy's successor included, picks them up under the batch id already
 // pinned for them.
@@ -376,7 +379,7 @@ func periodicFlush(ctx context.Context, served <-chan struct{}, nudge *flushNudg
 		}
 		if err := flush(atOnce); err != nil {
 			if errors.Is(err, upload.ErrClosed) {
-				// The exit flush already ran; the cadence is done.
+				// The exit flush has begun or ran; the cadence is done.
 				return
 			}
 			logf("flush: %v", err)

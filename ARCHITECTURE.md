@@ -65,7 +65,11 @@ first. If a healthy proxy is listening, that is a no-op; only a proxy
 announcing a strictly older release is asked to drain in-flight requests and hand the port
 over — an equal or newer proxy is reused, and so is one whose version
 cannot be ordered against this build's (a dev build, for instance), so
-coexisting builds never drain each other. Nothing listening starts a
+coexisting builds never drain each other. The hand-over is bounded: an
+upload the old proxy has running stops at its next batch; the whole exit,
+the wait for a running upload included, gets about 15 seconds; and
+whatever is left waits in the spool for the new proxy under the batch id
+already pinned. Nothing listening starts a
 supervisor that restarts a crashed proxy with backoff. Idle for 30
 minutes — no traffic forwarded and no session file gaining lines — the
 proxy exits on its own; while a session's process is still running the

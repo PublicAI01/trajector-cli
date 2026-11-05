@@ -511,12 +511,7 @@ const (
 // asking on purpose, not waiting on a threshold.
 func Flush(t *testing.T, client *http.Client, addr string, layout userdirs.Layout) FlushReply {
 	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+addr+upload.FlushPath+"?force=1", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	Authorize(req, layout)
-	resp, err := client.Do(req)
+	resp, err := client.Do(FlushRequest(t, addr, layout))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,6 +521,20 @@ func Flush(t *testing.T, client *http.Client, addr string, layout userdirs.Layou
 		t.Fatalf("decoding the flush reply: %v", err)
 	}
 	return reply
+}
+
+// FlushRequest is the authorized request for the forced flush Flush
+// asks for, for a test that sends it on a goroutine of its own and does
+// not wait for the reply. Build it on the test's goroutine: it fails
+// the test when the request cannot be built.
+func FlushRequest(t *testing.T, addr string, layout userdirs.Layout) *http.Request {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+addr+upload.FlushPath+"?force=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	Authorize(req, layout)
+	return req
 }
 
 // Selfcheck is what the proxy reports about one token.

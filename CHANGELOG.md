@@ -19,6 +19,14 @@ All notable changes to trajector are documented here. The format follows
   the proxy built and masked the same batch again every minute for as
   long as the service kept failing, which kept about a fifth of one CPU
   core busy while nothing else was happening.
+- A newer build now takes the proxy over within about 15 seconds while
+  the old proxy is still uploading a backlog. The old proxy stops its
+  upload at the next batch, runs its last flush inside that budget, and
+  hands the port over; what it did not upload waits in the spool for the
+  new proxy, under the batch id already assigned, so nothing is lost or
+  uploaded twice. Before, the hand-over waited until the old proxy had
+  uploaded everything, which on a large backlog took hours, and the
+  upgrade only completed when the old proxy was stopped by hand.
 
 ## [0.6.0] - 2026-10-23
 

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/batch"
@@ -190,8 +191,19 @@ type Uploader struct {
 	deps Deps
 	mu   sync.Mutex
 
-	// closed refuses every flush after Close ran its last one.
-	closed bool
+	// closing is set the moment Close is asked, before Close holds the
+	// lock, and is never cleared. A flush running under the lock reads
+	// it between batches and ends there, so the wait Close has for the
+	// lock is bounded by one attempt and not by the backlog; a flush
+	// asked after it is refused. abandon is closed when that one attempt
+	// outlasts Close's budget too: every attempt derives its context
+	// from it, so the one in flight stops and a later one never starts.
+	// closed records that Close ran its final flush, so a second Close
+	// does nothing.
+	closing         atomic.Bool
+	abandon         chan struct{}
+	abandonAttempts func()
+	closed          bool
 
 	// The gates suppress automatic flushes only; a forced flush
 	// walks straight past them. They reset on any acknowledged upload,
@@ -279,11 +291,14 @@ func New(deps Deps) (*Uploader, error) {
 	if deps.OmitImagesAndDocuments == nil {
 		deps.OmitImagesAndDocuments = func() bool { return false }
 	}
-	return &Uploader{deps: deps}, nil
+	u := &Uploader{deps: deps, abandon: make(chan struct{})}
+	u.abandonAttempts = sync.OnceFunc(func() { close(u.abandon) })
+	return u, nil
 }
 
-// ErrClosed reports a flush requested after Close: this uploader has
-// done its last work and refuses to start more.
+// ErrClosed reports a flush asked after Close was asked, or one that
+// Close stopped before it uploaded a batch: this uploader is doing, or
+// has done, its last work and refuses to start more.
 var ErrClosed = errors.New("upload: the uploader has shut down")
 
 // errBudgetSpent reports a flush that stopped because the budget it
@@ -291,6 +306,12 @@ var ErrClosed = errors.New("upload: the uploader has shut down")
 // a batch already offered keeps its pending id, so the next flush
 // resends it under that id rather than a fresh one.
 var errBudgetSpent = errors.New("upload: the flush ran out of its budget; what it did not upload stays in the spool for the next flush")
+
+// errCutOff reports an attempt that Close stopped in flight because it
+// outlasted Close's budget. It is not an answer of the service and
+// records none: the batch keeps its pending id and waits in the spool
+// for whoever flushes next.
+var errCutOff = errors.New("upload: the uploader shut down during the upload; the batch stays in the spool, under its batch id, for the next flush")
 
 // Flush uploads what the spool holds. Unforced, it first checks the
 // thresholds; forced, it uploads regardless. Either way a flush that
@@ -316,13 +337,13 @@ func (u *Uploader) FlushRecords(ctx context.Context) (Result, error) {
 	return u.locked(ctx, flushMode{recordsDue: true})
 }
 
-// locked runs one flush under the uploader's lock and the closed
+// locked runs one flush under the uploader's lock and the closing
 // gate, and reports a failed flush's outcome from the disposition it
 // reached.
 func (u *Uploader) locked(ctx context.Context, mode flushMode) (Result, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.closed {
+	if u.closing.Load() {
 		return Result{}, ErrClosed
 	}
 	res, err := u.flush(ctx, mode, time.Time{})
@@ -459,24 +480,49 @@ func (u *Uploader) reportBackoff(res *Result) bool {
 //
 // Close must be called while this process still holds whatever excludes
 // a successor flusher (for the proxy, its listen port): a flush already
-// running when Close is called finishes under the same lock, so once
-// Close returns, no upload activity from this process can overlap a
+// running when Close is called ends under the same lock, so once Close
+// returns, no upload activity from this process can overlap a
 // successor's.
 //
 // Because the exclusion is held for exactly as long as this call runs,
-// the budget is what the caller is willing to keep a successor waiting.
-// It is measured on the wall clock — no injected clock can shorten a
-// successor's wait — and what it does not manage to upload stays in the
-// spool, with its batch id pinned, for whoever flushes next.
+// the budget is what the caller is willing to keep a successor waiting,
+// and the whole of Close runs inside it: a flush already running stops
+// at its next batch, and when the attempt it is on outlasts the budget
+// that attempt is cut off. It is measured on the wall clock — no
+// injected clock can shorten a successor's wait — and what it does not
+// manage to upload stays in the spool, with its batch id pinned, for
+// whoever flushes next. Building a batch is not interruptible, so a
+// flush that is masking one when the budget runs out still finishes
+// that before it stops.
 func (u *Uploader) Close(ctx context.Context, budget time.Duration) error {
-	u.mu.Lock()
+	deadline := time.Now().Add(budget)
+	u.closing.Store(true)
+	u.lockBy(deadline)
 	defer u.mu.Unlock()
 	if u.closed {
 		return nil
 	}
 	u.closed = true
-	_, err := u.flush(ctx, flushMode{ignoreThreshold: true}, time.Now().Add(budget))
+	_, err := u.flush(ctx, flushMode{ignoreThreshold: true, final: true}, deadline)
 	return err
+}
+
+// lockBy takes the uploader's lock, cutting off the attempt in flight
+// when the lock is not free by the deadline.
+func (u *Uploader) lockBy(deadline time.Time) {
+	locked := make(chan struct{})
+	go func() {
+		u.mu.Lock()
+		close(locked)
+	}()
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-locked:
+	case <-timer.C:
+		u.abandonAttempts()
+		<-locked
+	}
 }
 
 // flushMode names the two checks a flush can waive, separately. A
@@ -497,11 +543,14 @@ type flushMode struct {
 	// files as reached: any such record in the spool starts the flush.
 	// The thresholds for recorded calls still hold a spool without one.
 	recordsDue bool
+	// final is the flush Close runs: the one flush that does not stop
+	// between batches once Close is asked, since it is Close's own.
+	final bool
 }
 
-// flush is Flush without the lock and the closed gate. A zero deadline
-// is a flush with no budget: it runs until the spool is drained or an
-// attempt fails.
+// flush is Flush without the lock and the closing gate. A zero deadline
+// is a flush with no budget: it runs until the spool is drained, an
+// attempt fails, or Close is asked.
 func (u *Uploader) flush(ctx context.Context, mode flushMode, deadline time.Time) (Result, error) {
 	res := Result{Outcome: Empty}
 
@@ -579,6 +628,18 @@ func (u *Uploader) flush(ctx context.Context, mode flushMode, deadline time.Time
 	}
 
 	for {
+		// Once Close is asked, a flush that is not Close's own sends no
+		// further batch: what it acknowledged stands, and the rest of
+		// the spool is for Close's final flush, or the next flusher, to
+		// send. A flush stopped before it acknowledged anything reports
+		// that Close stopped it: an empty outcome would read as an empty
+		// spool.
+		if !mode.final && u.closing.Load() {
+			if res.Batches == 0 {
+				return res, ErrClosed
+			}
+			break
+		}
 		entries, err := u.collect(flushBytes)
 		if err != nil {
 			return res, fmt.Errorf("upload: reading the spool: %w", err)
@@ -669,6 +730,11 @@ func (u *Uploader) discardUnreadablePending(raw []byte) error {
 // — except records the build itself refused, which move to the rejected
 // store so one unreadable file cannot stall every upload behind it.
 func (u *Uploader) send(ctx context.Context, token string, l lease, entries spool.Entries, res *Result, deadline time.Time) error {
+	if !deadline.IsZero() && time.Until(deadline) <= 0 {
+		// Checked before the batch is built: building masks every record,
+		// which can take longer than the budget had left.
+		return errBudgetSpent
+	}
 	entries, err := u.dropWithdrawn(entries)
 	if err != nil {
 		return fmt.Errorf("upload: %w", err)
@@ -709,7 +775,24 @@ func (u *Uploader) send(ctx context.Context, token string, l lease, entries spoo
 			return errBudgetSpent
 		}
 	}
+	// A flush without a budget of its own is still cut off when Close
+	// has waited its budget out: see lockBy. That cut is this process
+	// leaving, not the service answering, so it is settled as neither a
+	// failure nor a timeout — a wait recorded for it would be read by
+	// the next flusher as the service's word.
+	ctx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	go func() {
+		select {
+		case <-u.abandon:
+			stop(errCutOff)
+		case <-ctx.Done():
+		}
+	}()
 	ack, err := u.deps.Service.UploadBatch(ctx, token, b.ID, b.Envelope, b.Records, budget)
+	if err != nil && errors.Is(context.Cause(ctx), errCutOff) {
+		return errCutOff
+	}
 	u.noteAttempt(err)
 	if err != nil {
 		res.Disposition, err = u.settleFailure(token, l, b.Packed, err)

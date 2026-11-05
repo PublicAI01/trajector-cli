@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -234,6 +236,88 @@ func TestASlowExitFlushReleasesThePortAndLeavesItsRecordsToTheSuccessor(t *testi
 	}
 	if len(batchIDs) != 1 {
 		t.Errorf("the abandoned record was offered under %d batch ids, want the pending id reused", len(batchIDs))
+	}
+	if n := len(e.sandbox.Rawcalls()); n != 0 {
+		t.Errorf("spool holds %d rawcalls after the successor flushed, want 0", n)
+	}
+}
+
+func TestATakeoverDuringABacklogDrainReleasesThePortInsideTheExitBudget(t *testing.T) {
+	e := newEnv(t)
+	e.assembly.Version = "1.0.0"
+
+	// Every record is a batch of its own, and each upload takes a second
+	// while the predecessor serves: a backlog whose drain outlasts the
+	// wait a successor gives the port. The successor's own uploads are
+	// answered at once.
+	e.sandbox.SeedHandshake(proxytest.Handshake{FlushBytes: 1})
+	const backlog = 40
+	for i := range backlog {
+		e.sandbox.SeedRawcall(fmt.Sprintf("req-%02d", i), "hash-p1", aged())
+	}
+	var slow atomic.Bool
+	slow.Store(true)
+	e.service.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		if slow.Load() {
+			time.Sleep(time.Second)
+		}
+		return fakeplatform.Acknowledges(platform.Handshake{FlushBytes: 1})(r)
+	})
+
+	predecessor := e.serve(io.Discard, io.Discard)
+	e.waitHealthy()
+	e.flushInBackground()
+	if !eventually(t, 10*time.Second, func() bool { return len(e.service.Requests()) >= 2 }) {
+		t.Fatal("the drain of the backlog never started")
+	}
+
+	start := time.Now()
+	takeover := proxylife.For(e.assembly.Layout, "2.0.0", "unspawnable", e.assembly.Addr, nil).Ensure(t.Context())
+	spent := time.Since(start)
+	if takeover == nil || !strings.Contains(takeover.Error(), "starting proxy") {
+		t.Fatalf("takeover = %v, want it to have reached the point of starting the replacement", takeover)
+	}
+	if strings.Contains(takeover.Error(), "did not release the port") {
+		t.Errorf("takeover = %v, want the port released inside the successor's wait while the backlog drains", takeover)
+	}
+	if limit := proxyserve.ExitFlushBudget + 3*time.Second; spent > limit {
+		t.Errorf("the port came free %s after the takeover asked, want inside %s: the exit must not wait for the backlog to drain", spent, limit)
+	}
+	e.waitExit(predecessor, 20*time.Second)
+	slow.Store(false)
+	left := len(e.sandbox.Rawcalls())
+	if left == 0 {
+		t.Fatal("the predecessor drained the whole backlog on its way out, want the rest left to the successor")
+	}
+
+	successor := e.serve(io.Discard, io.Discard)
+	e.waitHealthy()
+	if reply := e.flush(); reply.Outcome != proxytest.Uploaded || reply.Records != left {
+		t.Errorf("successor flush = %+v, want the %d records the predecessor left uploaded", reply, left)
+	}
+	e.drain()
+	e.waitExit(successor, 20*time.Second)
+
+	batchIDsByRecord := map[string]map[string]bool{}
+	for _, r := range e.service.Requests() {
+		b, err := parseBatch(r)
+		if err != nil {
+			t.Fatalf("unreadable upload request: %v", err)
+		}
+		for _, id := range b.RecordIDs {
+			if batchIDsByRecord[id] == nil {
+				batchIDsByRecord[id] = map[string]bool{}
+			}
+			batchIDsByRecord[id][b.BatchID] = true
+		}
+	}
+	if len(batchIDsByRecord) != backlog {
+		t.Errorf("%d records were offered, want all %d", len(batchIDsByRecord), backlog)
+	}
+	for id, ids := range batchIDsByRecord {
+		if len(ids) != 1 {
+			t.Errorf("record %s was offered under %d batch ids, want one across the takeover", id, len(ids))
+		}
 	}
 	if n := len(e.sandbox.Rawcalls()); n != 0 {
 		t.Errorf("spool holds %d rawcalls after the successor flushed, want 0", n)
