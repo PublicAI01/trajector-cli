@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -485,12 +486,14 @@ func writeUploadFile(t *testing.T, e *env, name string, contents map[string]any)
 // from a fault.
 func TestStatusNamesWhenAPausedUploadResumes(t *testing.T) {
 	until := time.Date(2026, 8, 2, 14, 32, 0, 0, time.UTC)
+	const resumes = "Uploads resume automatically; `trajector upload --force` offers them now."
 	for _, tc := range []struct {
 		name, want string
 		reason     proxytest.Reason
 	}{
 		{name: "the service asked", reason: proxytest.RateLimited, want: "the service asked to slow down"},
 		{name: "the attempt ran long", reason: proxytest.TimedOut, want: "the last attempt ran out of time"},
+		{name: "the attempt failed", reason: proxytest.AttemptFailed, want: "the last attempt failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -502,6 +505,9 @@ func TestStatusNamesWhenAPausedUploadResumes(t *testing.T) {
 			}
 			if !strings.Contains(out, tc.want) {
 				t.Errorf("status = %q, want %q", out, tc.want)
+			}
+			if !slices.ContainsFunc(strings.Split(out, "\n"), func(line string) bool { return strings.TrimSpace(line) == resumes }) {
+				t.Errorf("status = %q, want the line %q as the remedy", out, resumes)
 			}
 		})
 	}

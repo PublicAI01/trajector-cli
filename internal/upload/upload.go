@@ -229,16 +229,21 @@ type Uploader struct {
 	accountGate       Standing
 	credentialGate    Standing
 	refusedToken      string
-	// timeouts counts consecutive timed-out upload attempts and refusals
-	// consecutive refused-endpoint answers. Each one lengthens the wait
-	// before the next automatic attempt, and a timeout also widens that
-	// attempt's budget, so the batch at the head of the queue is never
-	// retried forever on the terms that just failed. Both count this
-	// process's own attempts and neither goes to disk: a process that did
-	// not make the refused attempt starts its own count. Any
-	// acknowledged upload resets them.
+	// timeouts counts consecutive timed-out upload attempts, refusals
+	// consecutive refused-endpoint answers, and failures consecutive
+	// attempts that failed with an answer of no other class — a 5xx, a
+	// connection refused or reset, a name that did not resolve, an error
+	// on this machine before the request was sent, a 2xx that did not
+	// echo the batch id. Each one lengthens the wait before the next
+	// automatic attempt, and a timeout also widens that attempt's
+	// budget, so the batch at the head of the queue is never retried
+	// forever on the terms that just failed. All three count this
+	// process's own attempts and none goes to disk: a process that did
+	// not make the failed attempt starts its own count. Any acknowledged
+	// upload resets them.
 	timeouts int
 	refusals int
+	failures int
 
 	// sent is what sent-blocks.json holds, read on first use. This
 	// process is the only one that adds to it; another process only
@@ -349,8 +354,14 @@ func (u *Uploader) reportDisposition(res *Result) {
 		// Nothing on disk changed, so the only thing left to report is
 		// what the attempt left behind — a gate, or a pause — which is
 		// exactly what the next automatic flush will refuse to start on.
+		// The pause after a failed attempt is the one exception: the
+		// failure is this flush's answer, and the error carries it, while
+		// the pause is for the automatic flushes after it. Reporting the
+		// pause here would read a 5xx under --force as a working state.
 		if !u.reportAccountGate(res) && !u.reportCredentialGate(res) {
-			u.reportBackoff(res)
+			if u.reportBackoff(res) && res.Standing.Reason == AttemptFailed {
+				res.Outcome, res.Standing = "", Standing{}
+			}
 		}
 	case Ack:
 	}
@@ -707,7 +718,7 @@ func (u *Uploader) send(ctx context.Context, token string, l lease, entries spoo
 	res.Disposition = Ack
 	u.upgradeGate, u.authorizationGate, u.accountGate, u.credentialGate = Standing{}, Standing{}, Standing{}, Standing{}
 	u.refusedToken = ""
-	u.timeouts, u.refusals = 0, 0
+	u.timeouts, u.refusals, u.failures = 0, 0, 0
 
 	if err := l.settle(u.deps.Spool, b.Packed); err != nil {
 		return fmt.Errorf("upload: %w", err)
@@ -888,9 +899,12 @@ func unmaskable(refused []batch.Refusal) bool {
 // also what the arms below return whenever nothing on disk may change.
 // The disposition is a promise about the data, so it holds for all of
 // them: the spool and the pending record stay, and the next flush
-// retries under the same id. What separates those arms from the default
-// is what they leave in this process: a pause to wait out, or a gate
-// only a person can open.
+// retries under the same id. What separates the rows that return it is
+// what they leave in this process: a pause to wait out, or a gate only
+// a person can open. The default leaves a pause too: an answer of no
+// class is one the next tick would most likely meet again, and every
+// retry builds and masks the batch anew, which is the costliest thing
+// this process does.
 //
 // The authorization row stays above the rejection row, the same order
 // the answer classes are decided in: a refusal for want of a step the
@@ -994,7 +1008,15 @@ func (u *Uploader) settleFailure(token string, l lease, packed spool.Entries, er
 		u.noteRejection(rej)
 		return Quarantine, &rejectedError{rej: rej, dir: filepath.Join(u.deps.RejectedDir, id)}
 	}
-	return RetrySameID, fmt.Errorf("upload: batch %s: %w", id, err)
+	// A 5xx, a refused or reset connection, a name that did not resolve,
+	// an error on this machine before the request was sent, a 2xx that
+	// did not echo the batch id: each retry builds and masks the whole
+	// batch again, so the next automatic attempt waits. The wait doubles
+	// as it does after a timeout; a forced flush still asks at once.
+	u.failures++
+	pause := doublingBackoff(u.failures)
+	u.noteBackoff(AttemptFailed, u.deps.Now().Add(pause))
+	return RetrySameID, fmt.Errorf("upload: batch %s: %w; the next attempt waits %s", id, err, pause)
 }
 
 // applyHandshake persists what the service said and puts the spool
@@ -1085,10 +1107,11 @@ const defaultRateLimitPause = 5 * time.Minute
 // doublingBackoff is how long automatic flushes hold off after the nth
 // consecutive answer of one kind: doubling from backoffStart, so
 // neither a struggling link nor something refusing in front of the
-// service is asked again every flush tick. A timed-out attempt and a
-// refused endpoint share it because they are the same shape of answer —
-// nothing on this machine ends either, so the only move left is to ask
-// again later, and the only cost worth bounding is how often.
+// service is asked again every flush tick. A timed-out attempt, a
+// refused endpoint and an attempt that failed with an answer of no
+// other class share it because they are the same shape of answer —
+// nothing on this machine ends any of them, so the only move left is to
+// ask again later, and the only cost worth bounding is how often.
 func doublingBackoff(n int) time.Duration {
 	pause := backoffStart
 	for ; n > 1 && pause < backoffCap; n-- {

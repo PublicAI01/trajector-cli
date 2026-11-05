@@ -156,6 +156,23 @@ func TestDoctorExplainsEveryUploadGateInTheSameShape(t *testing.T) {
 	}
 }
 
+func TestDoctorStatesWhatTheLastUploadAttemptFailedWithAsStatusDoes(t *testing.T) {
+	failedAt := time.Date(2026, 11, 4, 9, 15, 0, 0, time.UTC)
+	d := device()
+	d.Standings = []upload.Standing{{Reason: upload.AttemptFailed, NotBefore: failedAt.Add(time.Minute)}}
+	d.Uploads.LastError = "service answered 503"
+	d.Uploads.LastErrorAt = failedAt
+
+	_, out := doctorText(d)
+	wants(t, "doctor", out, "note: last error: service answered 503 (2026-11-04T09:15:00Z)")
+	wants(t, "status", dashboard(d), "Last error: service answered 503 (2026-11-04T09:15:00Z).")
+}
+
+func TestDoctorSaysNothingOfALastErrorWhenTheLastAttemptSucceeded(t *testing.T) {
+	_, out := doctorText(device())
+	rejects(t, "doctor", out, "last error")
+}
+
 // Nothing here is broken and nothing doctor can do would change it: the
 // user finishes this in a browser. Counting it as a problem would fail
 // `trajector doctor` on a healthy install.

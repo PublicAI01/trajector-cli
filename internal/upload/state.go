@@ -284,9 +284,10 @@ func (h *storedHandshake) backoff(now time.Time) (Standing, bool) {
 // routine here — idle exit, version handover, reboot — and a wait the
 // next process ignores puts back exactly the load the service asked to
 // shed. What is read back this way is what nothing on this machine can
-// shorten: a 429, an attempt of this client's own that ran out of time,
-// and an endpoint refusal that something in front of the service may
-// already have stopped making.
+// shorten: a 429, an attempt of this client's own that ran out of time
+// or failed with an answer of no other class, and an endpoint refusal
+// that something in front of the service may already have stopped
+// making.
 //
 // The refusals a person answers are not read back, on purpose: a 426 is
 // answered by replacing this binary, a 451 and a refused account off
@@ -486,8 +487,9 @@ func (u *Uploader) noteAuthorizationRequired(authorizeURL, message string) {
 	}, "the data authorization refusal")
 }
 
-// noteBackoff keeps the pause a rate limit or a timed-out attempt just
-// imposed, and which of the two imposed it, where every surface reads
+// noteBackoff keeps the pause a rate limit, a timed-out attempt or a
+// failed attempt just imposed, and which of them imposed it, where every
+// surface reads
 // what stops uploads. Best-effort, like the rest of this bookkeeping: a
 // pause that cannot be written is a pause nobody takes, which costs the
 // service another attempt but never costs the user a rawcall.

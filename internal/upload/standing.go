@@ -47,6 +47,17 @@ const (
 	// and a user reading it is looking at their link rather than at the
 	// service.
 	TimedOut Reason = "timed_out"
+	// AttemptFailed: the last attempt failed with an answer of no other
+	// class — the service answered an error of its own; nothing answered
+	// (the name did not resolve, the connection was refused or reset); an
+	// error on this machine stopped the request before it was sent (an
+	// unusable service address, a request that could not be assembled);
+	// or a 2xx answer did not echo the batch id. The next automatic
+	// attempt waits, longer after each consecutive failure. It is not
+	// TimedOut: the attempt was not too slow, it was turned away, broken
+	// off or never sent, so a user reading it looks at the last error,
+	// not at their link's speed.
+	AttemptFailed Reason = "attempt_failed"
 	// QuarantineOnly: the spool holds nothing to send and every rawcall
 	// left on this machine is waiting in quarantine.
 	QuarantineOnly Reason = "quarantine_only"
@@ -145,6 +156,8 @@ func (s Standing) Explain() string {
 		return fmt.Sprintf("Uploads are paused until %s: the service asked to slow down.", s.pauseUntil())
 	case TimedOut:
 		return fmt.Sprintf("Uploads are paused until %s: the last attempt ran out of time.", s.pauseUntil())
+	case AttemptFailed:
+		return fmt.Sprintf("Uploads are paused until %s: the last attempt failed.", s.pauseUntil())
 	case QuarantineOnly:
 		return "Uploads have nothing to send: every record left on this machine is quarantined."
 	case CredentialRefused:
@@ -187,7 +200,9 @@ func (s Standing) Remedy() string {
 			return "Complete the step in the Trajector dashboard, then uploads resume."
 		}
 		return "Complete the step at " + s.AuthorizeURL + " — then uploads resume."
-	case RateLimited, TimedOut:
+	case RateLimited, TimedOut, AttemptFailed:
+		// For AttemptFailed the failure itself is the last error, which
+		// status and doctor print beside this sentence.
 		return "Uploads resume automatically; `trajector upload --force` offers them now."
 	case CredentialRefused:
 		return "Run `trajector login` to pair this device again; uploads resume at the next flush."

@@ -1,9 +1,11 @@
 package upload_test
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +44,9 @@ type fixture struct {
 	// omitImages stands in for the user config file: whether image and
 	// document upload is turned off.
 	omitImages bool
+	// serviceURL, when set, is where the next uploader built over these
+	// files finds the service instead of the fake platform.
+	serviceURL string
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -72,7 +77,7 @@ func (f *fixture) newUploader(t *testing.T) *upload.Uploader {
 	sp := f.spool
 	u, err := upload.New(upload.Deps{
 		Spool:       sp,
-		Service:     platform.New(f.server.URL(), "test"),
+		Service:     platform.New(cmp.Or(f.serviceURL, f.server.URL()), "test"),
 		DeviceToken: func() (string, error) { return f.token, nil },
 		Withdrawn:   func(hash string) bool { return f.withdrawn[hash] },
 		Version:     "1.0.0",
@@ -662,20 +667,114 @@ func TestAClassifiedFailureCarriesItsOutcomeAlongsideTheError(t *testing.T) {
 	}
 }
 
-func TestAnUnclassifiedFailureCarriesNoOutcome(t *testing.T) {
+func TestAnUnclassifiedFailureDefersAutomaticFlushesAndRetriesTheSameBatch(t *testing.T) {
 	f := newFixture(t)
-	f.server.Stub("POST", "/v1/batches", fakeplatform.JSON(503, map[string]any{"error": "down"}))
-	f.storeRawcall(t, "req-1", time.Now().UTC())
+	fails := func(status int) func(fakeplatform.Request) fakeplatform.Response {
+		return func(fakeplatform.Request) fakeplatform.Response {
+			return fakeplatform.JSON(status, map[string]any{"error": "down"})
+		}
+	}
+	acknowledges := fakeplatform.Acknowledges(platform.Handshake{})
+	answers := []func(fakeplatform.Request) fakeplatform.Response{fails(503), fails(502), acknowledges, fails(503), acknowledges}
+	var asked int
+	f.server.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		asked++
+		return answers[min(asked, len(answers))-1](r)
+	})
+	f.storeRawcall(t, "req-1", f.now)
 
 	res, err := f.uploader.Flush(t.Context(), true)
 	if err == nil {
 		t.Fatal("the failure did not surface as an error")
 	}
-	if res.Outcome != "" {
-		t.Errorf("outcome = %q, want none for a failure with no class", res.Outcome)
-	}
 	if res.Disposition != upload.RetrySameID {
 		t.Errorf("disposition = %q, want %q: a failure of no class is kept and offered again", res.Disposition, upload.RetrySameID)
+	}
+	if res.Outcome != "" {
+		t.Errorf("outcome = %q, want none: the failure is this flush's answer, the pause is for the automatic flushes after it", res.Outcome)
+	}
+	if !strings.Contains(err.Error(), "503") || !strings.Contains(err.Error(), "waits 1m0s") {
+		t.Errorf("flush error = %q, want the answer and the wait named", err)
+	}
+
+	res, err = f.uploader.Flush(t.Context(), false)
+	if err != nil || res.Outcome != upload.Deferred || res.Standing.Reason != upload.AttemptFailed {
+		t.Fatalf("automatic flush right after the failure = %+v, %v, want %q", res, err, upload.Deferred)
+	}
+	if f.uploadCount() != 1 {
+		t.Fatalf("service saw %d requests during the pause, want 1", f.uploadCount())
+	}
+
+	f.now = f.now.Add(61 * time.Second)
+	if _, err := f.uploader.Flush(t.Context(), false); err == nil || !strings.Contains(err.Error(), "waits 2m0s") {
+		t.Fatalf("second failed attempt = %v, want it to surface with a doubled wait", err)
+	}
+	f.now = f.now.Add(61 * time.Second)
+	res, err = f.uploader.Flush(t.Context(), false)
+	if err != nil || res.Outcome != upload.Deferred {
+		t.Fatalf("flush one minute into the doubled pause = %+v, %v, want %q", res, err, upload.Deferred)
+	}
+	if f.uploadCount() != 2 {
+		t.Fatalf("service saw %d requests, want 2", f.uploadCount())
+	}
+
+	f.now = f.now.Add(60 * time.Second)
+	res, err = f.uploader.Flush(t.Context(), false)
+	if err != nil || res.Outcome != upload.Uploaded {
+		t.Fatalf("flush after the doubled pause = %+v, %v", res, err)
+	}
+	reqs := f.server.Requests()
+	if len(reqs) != 3 {
+		t.Fatalf("service saw %d requests, want 3", len(reqs))
+	}
+	first := uploadedBatchID(t, reqs[0])
+	for i, r := range reqs[1:] {
+		if id := uploadedBatchID(t, r); id != first {
+			t.Fatalf("attempt %d used batch id %q, first attempt used %q; they must match", i+2, id, first)
+		}
+	}
+	if f.spool.Usage() != 0 {
+		t.Error("acknowledged records were not deleted")
+	}
+
+	f.storeRawcall(t, "req-2", f.now)
+	if _, err := f.uploader.Flush(t.Context(), true); err == nil || !strings.Contains(err.Error(), "waits 1m0s") {
+		t.Fatalf("failure after an acknowledgement = %v, want the wait back at its start", err)
+	}
+}
+
+func TestAnUnreachableServiceDefersAutomaticFlushes(t *testing.T) {
+	f := newFixture(t)
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.serviceURL = "http://" + l.Addr().String()
+	l.Close()
+	f.uploader = f.newUploader(t)
+	f.storeRawcall(t, "req-1", f.now)
+
+	res, err := f.uploader.Flush(t.Context(), true)
+	if err == nil || !strings.Contains(err.Error(), "waits 1m0s") {
+		t.Fatalf("flush against a closed port = %v, want the failure and the wait named", err)
+	}
+	if res.Outcome != "" {
+		t.Fatalf("result = %+v, want no outcome for the flush that failed", res)
+	}
+	got := f.standing(upload.AttemptFailed)
+	if !got.Held() || !got.NotBefore.Equal(f.now.Add(time.Minute)) {
+		t.Fatalf("standing on disk = %+v, want the failed attempt recorded until a minute from now", got)
+	}
+	if f.standing(upload.TimedOut).Held() {
+		t.Error("a refused connection was recorded as an attempt that ran out of time")
+	}
+
+	res, err = f.newUploader(t).Flush(t.Context(), false)
+	if err != nil || res.Outcome != upload.Deferred {
+		t.Fatalf("automatic flush from a fresh process inside the pause = %+v, %v, want %q", res, err, upload.Deferred)
+	}
+	if f.spool.Usage() == 0 {
+		t.Error("a failed attempt touched the spool")
 	}
 }
 

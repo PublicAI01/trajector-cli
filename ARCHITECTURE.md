@@ -231,9 +231,11 @@ data loss:
   until acknowledged, so a retry is recognizable as a retry and can never
   be ingested as new data.
 - Only a 2xx that **echoes the batch id** deletes local records. Anything
-  else keeps them: auth failures and server errors retry, a timed-out
-  upload retries under the same id with a longer time budget after a
-  growing pause (the budget scales with the batch's size, so a slow link
+  else keeps them: auth failures retry, server errors and network errors
+  retry under the same id after a growing pause (one minute after the
+  first failure, doubling to fifteen), a timed-out upload retries under
+  the same id with a longer time budget after the same growing pause
+  (the budget scales with the batch's size, so a slow link
   gets more time instead of the same failure), a version gate
   (426) pauses automatic uploads until upgrade, a data-authorization
   gate (451) pauses them until the account's authorization is complete

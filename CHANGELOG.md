@@ -4,6 +4,22 @@ All notable changes to trajector are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- When an upload fails with a server error or a network error, automatic
+  uploads now wait before they try again: one minute after the first
+  failure, doubling up to 15 minutes, as they already did after an
+  attempt that ran out of time. `trajector status` and `trajector doctor`
+  show the pause as "Uploads are paused until <time>: the last attempt
+  failed.", `trajector doctor` now also shows what the last attempt
+  failed with, as `trajector status` already did, and `trajector upload
+  --force` still tries at once. Before,
+  the proxy built and masked the same batch again every minute for as
+  long as the service kept failing, which kept about a fifth of one CPU
+  core busy while nothing else was happening.
+
 ## [0.6.0] - 2026-10-23
 
 ### Changed

@@ -135,6 +135,12 @@ func TestEveryStandingNamesWhatIsTrueAndTheGatesNameWhatEndsThem(t *testing.T) {
 			remedy:   "Uploads resume automatically; `trajector upload --force` offers them now.",
 		},
 		{
+			name:     "attempt failed",
+			standing: upload.Standing{Reason: upload.AttemptFailed, NotBefore: at},
+			explain:  "Uploads are paused until 2026-08-30T14:32:00Z: the last attempt failed.",
+			remedy:   "Uploads resume automatically; `trajector upload --force` offers them now.",
+		},
+		{
 			name:     "quarantine only",
 			standing: upload.Standing{Reason: upload.QuarantineOnly},
 			explain:  "Uploads have nothing to send: every record left on this machine is quarantined.",

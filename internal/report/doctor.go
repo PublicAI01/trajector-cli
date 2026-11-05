@@ -95,7 +95,7 @@ func DoctorStaleDiscoveryHook(f *Findings, err error) {
 func DoctorData(f *Findings, d Diagnosis) {
 	doctorSpool(f, d.Spool)
 	doctorRejected(f, d)
-	doctorStandings(f, d.Standings)
+	doctorStandings(f, d.Standings, d.Uploads)
 	doctorService(f, d.Handshake)
 }
 
@@ -338,14 +338,15 @@ func doctorRejected(f *Findings, d Diagnosis) {
 // if it supplied any, then the standing's own remedy. Reading three
 // gates that stopped uploads for three different reasons therefore
 // takes learning one shape, and none of the wording is doctor's to
-// choose.
+// choose. What the last attempt failed with follows them, in the
+// words status uses.
 //
 // None of them is a problem. Being behind the service's minimum, or
 // waiting out a pause, or holding an account whose data authorization
 // is unfinished, is not a broken machine: nothing doctor can do would
 // change any of it, and counting them would fail `trajector doctor` on
 // a healthy install over states the user resolves elsewhere.
-func doctorStandings(f *Findings, standings []upload.Standing) {
+func doctorStandings(f *Findings, standings []upload.Standing, uploads upload.State) {
 	for _, s := range standings {
 		f.notef("%s", doctorClause(s.Explain()))
 		if s.Message != "" {
@@ -360,6 +361,16 @@ func doctorStandings(f *Findings, standings []upload.Standing) {
 			f.Detailf("Captured data is kept; nothing was quarantined.")
 		}
 	}
+	if uploads.LastError != "" {
+		f.notef("%s", doctorClause(lastErrorLine(uploads)))
+	}
+}
+
+// lastErrorLine is the one sentence both status and doctor use for what
+// the last upload attempt failed with, so the two surfaces cannot drift
+// apart.
+func lastErrorLine(u upload.State) string {
+	return fmt.Sprintf("Last error: %s (%s).", u.LastError, u.LastErrorAt.UTC().Format(time.RFC3339))
 }
 
 // doctorService relays what the service last said about anything other

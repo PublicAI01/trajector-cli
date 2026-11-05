@@ -160,8 +160,9 @@ var contractRows = map[upload.Disposition]struct {
 
 // What a fixture's answer amounts to for the flush as a whole, where
 // the disposition alone does not decide it. RetrySameID is the one such
-// row: it covers both an answer that changes nothing — a lost echo, a
-// 500 — and an answer whose remedy is a person, which leaves a gate
+// row: it covers both an answer that is a failure of this flush — a lost
+// echo, a 500, which leave only a pause for the automatic flushes after
+// it — and an answer whose remedy is a person, which leaves a gate
 // behind. Only the case knows which, so the case names it rather than
 // the row admitting both.
 var caseOutcomes = map[string]upload.Outcome{

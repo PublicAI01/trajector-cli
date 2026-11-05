@@ -208,7 +208,7 @@ func uploadsSection(d Diagnosis) *section {
 		s.linef("Never uploaded.")
 	}
 	if d.Uploads.LastError != "" {
-		s.linef("Last error: %s (%s).", d.Uploads.LastError, d.Uploads.LastErrorAt.UTC().Format(time.RFC3339))
+		s.linef("%s", lastErrorLine(d.Uploads))
 	}
 	if d.Spool.OpenErr == nil {
 		s.linef("%s", recordsWaitingLine(d.Spool))

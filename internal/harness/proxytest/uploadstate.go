@@ -100,6 +100,7 @@ type Reason = upload.Reason
 const (
 	RateLimited       = upload.RateLimited
 	TimedOut          = upload.TimedOut
+	AttemptFailed     = upload.AttemptFailed
 	CredentialRefused = upload.CredentialRefused
 	AccessRefused     = upload.AccessRefused
 	AccountRefused    = upload.AccountRefused
@@ -151,7 +152,7 @@ func (s *Sandbox) HeldStandings(now time.Time) []upload.Standing {
 
 // SeedUploadPause persists the last "do not upload before" instruction
 // this device was given — the service asking it to slow down, or its
-// own last attempt running out of time — as the flush that met one
+// own last attempt running out of time or failing — as the flush that met one
 // would have left it. Like the two refusals it leaves the rest of the
 // file alone: a device can be waiting out a pause and refused at the
 // same time.
@@ -165,7 +166,7 @@ func (s *Sandbox) SeedUploadPause(reason Reason, notBefore time.Time) {
 }
 
 // uploadPause is what the file records about a pause with an expiry:
-// when uploads may attempt again, and which of the two conditions asked
+// when uploads may attempt again, and which of the three conditions asked
 // for the wait.
 type uploadPause struct {
 	Reason    Reason    `json:"backoff_reason"`
