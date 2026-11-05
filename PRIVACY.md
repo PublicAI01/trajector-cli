@@ -4,7 +4,7 @@ This page describes everything trajector does with data on your machine and
 what leaves it. The client is fully open source; every statement here can be
 checked against the code in this repository.
 
-It describes version 2026-10-14 of the data agreement — the version
+It describes version 2026-11-05 of the data agreement — the version
 `trajector enable` shows you in full and records when you accept it. The
 agreement and this page state the same terms and change together; the
 version is the day the build carrying those terms was released.
@@ -81,11 +81,12 @@ prints is copied as printed.
   start of a session, and your tool results, may hold file paths from your
   machine, and trajector does not rewrite them, because rewriting them would
   destroy the data itself.
-- **Telemetry.** There is no separate reporting channel. A handful of
-  counters (records captured, stream reassembly failures, spool usage) ride
-  along inside data uploads you already consented to; no upload, no
-  counters. The one-time project discovery hint is computed locally and
-  never touches the network.
+- **Telemetry.** There is no separate reporting channel. A block of
+  counters about the client itself rides along inside data uploads you
+  already consented to — every field is listed under
+  [Counters that ride along with each upload](#counters-that-ride-along-with-each-upload)
+  — and no upload means no counters. The one-time project discovery hint is
+  computed locally and never touches the network.
 - **Diagnostics, unless you send them.** `trajector doctor bundle` writes an
   archive you can inspect and attach to a report yourself. It contains
   identities, counters, and timestamps — never captured records, credentials,
@@ -102,7 +103,14 @@ Recorded calls, recorded session lines, and recorded git observations wait
 in a local spool, in files
 and directories readable only by your user account (0600/0700), under a
 bounded disk quota (2 GiB by default). A full spool stops recording; it
-never evicts captured data. trajector only reads the session files Claude
+never evicts captured data. The proxy keeps an account of the calls it
+did not record, in `dropped-captures.json` in its state directory: for
+each reason it names — a full spool, a call larger than the record limit,
+a call that ended before it was captured in full, a record it could not
+assemble or write — how many calls, how many bytes they held, and when
+the first and the last were given up. It holds no content and no path, it
+is not reset when the proxy restarts, and `trajector status` and
+`trajector doctor` show it. trajector only reads the session files Claude
 Code writes; it never writes to them.
 
 Before anything is uploaded, records from every source pass the **same local
@@ -270,6 +278,39 @@ idempotency key, so a retried upload can never be counted twice. Local
 records are deleted **only after** the service acknowledges the batch by
 echoing that key; any other answer leaves your data in place for retry.
 
+### Counters that ride along with each upload
+
+Each batch carries, next to its records, a block of counters about the
+client itself. It replaces a separate telemetry channel: nothing is
+reported unless a batch is uploaded, and the block travels with nothing
+else. Every value is a count, a size in bytes, a duration in seconds, a
+platform name or a yes/no; none is content from a record, and none is a
+path. The fields, by the names they travel under:
+
+- `recorded_today`, `sse_degraded_today`, `captures_dropped`: how many
+  calls the running proxy recorded today, how many streamed responses it
+  could not reassemble, and how many calls it gave up on. They start again
+  each time the proxy starts.
+- `proxy_uptime_seconds`: how long the proxy that built the batch has been
+  running.
+- `spool_usage_bytes`, `spool_quota_bytes`: how much is waiting on disk,
+  and the limit.
+- `spool_waiting`: how many records are waiting on disk, by kind: recorded
+  calls, session segments, session metadata snapshots, git observations.
+- `spool_oldest_record_age_seconds`: how long the oldest waiting record has
+  waited.
+- `upload_failures_since_last_ack`, `upload_last_failure_class`: how many
+  uploads failed since the last one the service acknowledged, and how the
+  latest failed: it ran out of time, the service asked for a pause, or a
+  server or network error.
+- `dropped_captures`: the account kept in `dropped-captures.json`, described
+  above: for each reason, a count, the bytes, and the first and last time.
+- `os`, `arch`: the operating system and processor family this build runs
+  on, as the Go toolchain names them, such as `linux` and `amd64`.
+- `build_modified`: whether this build was made from a source tree with
+  changes not committed, as the Go toolchain recorded it. The build says
+  this of itself; nothing checks it.
+
 trajector also asks GitHub whether a newer release exists. The request is an
 HTTPS GET to
 `https://api.github.com/repos/PublicAI01/trajector-cli/releases`, unless
@@ -339,9 +380,9 @@ and trajector never modifies or deletes them — not on `disable`, not on
   optionally deletes all local data. Run it before deleting the binary —
   removing the binary alone does not clean up the settings injections.
 
-Data that has already been delivered and compensated is licensed under the
-data agreement you accepted at enable time; deletion requests reach
-everything before that point.
+Deletion cannot reach copies already delivered to buyers, which stay under
+the license you granted, or anything already published in an open dataset.
+It reaches everything else.
 
 ## Questions
 

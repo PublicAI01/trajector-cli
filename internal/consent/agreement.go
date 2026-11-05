@@ -3,7 +3,7 @@ package consent
 // AgreementVersion identifies the agreement text below. Bumping it
 // makes every earlier acceptance stale: capture pauses until the user
 // reconfirms, so recorded consent always matches the current terms.
-const AgreementVersion = "2026-10-14"
+const AgreementVersion = "2026-11-05"
 
 // UpdatesSince is the AgreementVersion that first carried the section
 // on updates: the one that tells the user this device asks for newer
@@ -53,6 +53,15 @@ machine.
    Only enabled projects are collected. Traffic from other projects
    never reaches the proxy, and the paths to their session files are
    never constructed, so those files are never opened.
+
+   Each upload also carries a block of counters about the client
+   itself: how many calls the proxy recorded today, how many it did
+   not record and why, how much is waiting on disk and for how long,
+   how long the proxy has run, how many uploads failed since the last
+   one the service acknowledged and how, this machine's operating
+   system and processor family, and whether this build was made from
+   source with changes not committed. They hold no content and no
+   path. There is no other reporting channel: no upload, no counters.
 
 2. What never leaves your machine. Credential headers (Authorization,
    x-api-key) are never written to disk. Before upload, every record
@@ -124,11 +133,12 @@ machine.
 
 7. Revocation. Disabling a project stops collection immediately,
    revokes its token, and deletes its local unuploaded data. You may
-   additionally request deletion of uploaded data that has not yet
-   been delivered. Data already delivered and rewarded is covered by
-   an irrevocable license. Trajector deletes only its own copies: the
-   session files Claude Code writes on your machine are yours, and
-   trajector never modifies or deletes them — not on disable, not on
-   uninstall.
+   additionally request deletion of uploaded data. Deletion cannot
+   reach copies already delivered to third parties, which stay under
+   the license you granted, or anything already published in an open
+   dataset; it reaches everything else. Trajector deletes only its
+   own copies: the session files Claude Code writes on your machine
+   are yours, and trajector never modifies or deletes them — not on
+   disable, not on uninstall.
 
 By answering yes you accept these terms for this device.`

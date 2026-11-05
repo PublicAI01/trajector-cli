@@ -13,6 +13,26 @@ All notable changes to trajector are documented here. The format follows
   versions. On macOS 12 or earlier the new version does not start;
   automatic upgrades check for this and keep the version already
   installed, and Homebrew refuses to install it there.
+- Each upload now carries more counters about the client itself, next
+  to the five it already carried: how long the proxy has run, how many
+  records wait on disk by kind and how long the oldest has waited, how
+  many uploads failed since the last one the service acknowledged and
+  how the latest failed, the account of the calls the proxy did not
+  record and why, the operating system and processor family, and
+  whether the build was made from source with changes not committed.
+  Every value is a count, a size, a duration, a platform name or a
+  yes/no; none is content and none is a path. `PRIVACY.md` lists every
+  field, and the data agreement names the block. There is still no
+  separate reporting channel: no upload, no counters.
+- The proxy's account of the calls it did not record, which `status`
+  and `doctor` have shown since 0.6.1, is now described in
+  `PRIVACY.md`: it lives in `dropped-captures.json` and holds, per
+  reason, a count, the bytes, and the first and last time.
+- Section 7 of the data agreement and `PRIVACY.md` now say what a
+  deletion request cannot reach: copies already delivered, which stay
+  under the license you granted, and anything already published in an
+  open dataset. Everything else is deleted. The agreement version moves
+  to 2026-11-05, so `enable` asks once more.
 
 ## [0.6.1] - 2026-11-05
 
