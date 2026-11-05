@@ -603,7 +603,7 @@ func (s *Spool) rewriteIndexFileLocked(path string, drop func(line []byte) bool)
 // is waiting has to know how many kinds there are: the kinds are
 // envelope's, and a kind it does not declare is counted under none of
 // them.
-type Count map[envelope.Kind]int
+type Count map[envelope.Kind]int //nolint:recvcheck // MarshalJSON takes a value: an Index is marshaled by value, and encoding/json does not call a pointer method on a value it cannot address
 
 // Add counts one record of the kind it declares. A kind this client
 // does not store is counted under no key, so a count never claims a
@@ -616,6 +616,48 @@ func (c *Count) Add(kind envelope.Kind) {
 		*c = Count{}
 	}
 	(*c)[kind]++
+}
+
+// MarshalJSON writes one key per record kind, under the name that
+// kind's count travels by and in envelope's order, zero included. The
+// keys are written here rather than carried by struct tags because the
+// set of keys is the set of kinds: a kind added to envelope's table
+// reaches every reader of a count with no edit here, and a key already
+// written is never respelled.
+func (c Count) MarshalJSON() ([]byte, error) {
+	return append(appendCounts([]byte{'{'}, c), '}'), nil
+}
+
+// UnmarshalJSON reads what MarshalJSON wrote. A key that names no kind
+// this client stores is dropped, as Add drops such a kind, and a zero
+// count is not kept, so a count read back is empty where it was empty.
+func (c *Count) UnmarshalJSON(data []byte) error {
+	var byKey map[string]int
+	if err := json.Unmarshal(data, &byKey); err != nil {
+		return err
+	}
+	*c = nil
+	for _, kind := range envelope.Kinds() {
+		if n := byKey[kind.CountKey()]; n != 0 {
+			if *c == nil {
+				*c = Count{}
+			}
+			(*c)[kind] = n
+		}
+	}
+	return nil
+}
+
+// appendCounts appends c's keys and counts to out, in envelope's order,
+// comma-separated and without braces.
+func appendCounts(out []byte, c Count) []byte {
+	for i, kind := range envelope.Kinds() {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = fmt.Appendf(out, `%q:%d`, kind.CountKey(), c[kind])
+	}
+	return out
 }
 
 // Plus adds another count into this one.
@@ -653,21 +695,15 @@ type DaySummary struct {
 	RecordBytes int64 `json:"record_bytes"`
 }
 
-// MarshalJSON writes the day with one key per record kind, under the
-// name that kind's count travels by and in envelope's order. The count
-// keys are written here rather than carried by struct tags because the
-// set of keys is the set of kinds: a kind added to envelope's table
-// reaches this diagnostic with no edit here, and a key already written
-// is never respelled.
+// MarshalJSON writes the day flat: the day, then the count's keys as
+// Count writes them, then the sizes.
 func (d DaySummary) MarshalJSON() ([]byte, error) {
 	day, err := json.Marshal(d.Day)
 	if err != nil {
 		return nil, err
 	}
 	out := append([]byte(`{"day":`), day...)
-	for _, kind := range envelope.Kinds() {
-		out = fmt.Appendf(out, `,%q:%d`, kind.CountKey(), d.Count[kind])
-	}
+	out = appendCounts(append(out, ','), d.Count)
 	return fmt.Appendf(out, `,"bytes":%d,"record_bytes":%d}`, d.Bytes, d.RecordBytes), nil
 }
 

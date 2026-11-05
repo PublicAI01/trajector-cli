@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1069,6 +1070,34 @@ func TestSpool_DeletingASessionTakesItsObservationsToo(t *testing.T) {
 	got := collectRecords(t, s)
 	if len(got) != 1 || got[0].ID != kept.RecordID {
 		t.Errorf("records = %+v, want only the other session's observation", got)
+	}
+}
+
+func TestCountStatesEveryRecordKindZeroIncluded(t *testing.T) {
+	var c spool.Count
+	c.Add(envelope.KindSegment)
+	c.Add(envelope.KindSegment)
+	c.Add(envelope.Kind{Source: "elsewhere", RecordKind: "other"})
+
+	for name, count := range map[string]spool.Count{"two segments": c, "nil": nil} {
+		got, err := json.Marshal(count)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `{"rawcalls":0,"segments":0,"snapshots":0,"git_snapshots":0}`
+		if name == "two segments" {
+			want = `{"rawcalls":0,"segments":2,"snapshots":0,"git_snapshots":0}`
+		}
+		if string(got) != want {
+			t.Errorf("%s count = %s, want %s", name, got, want)
+		}
+		var back spool.Count
+		if err := json.Unmarshal(got, &back); err != nil {
+			t.Fatal(err)
+		}
+		if !maps.Equal(back, count) {
+			t.Errorf("%s count read back = %v, want %v", name, back, count)
+		}
 	}
 }
 
