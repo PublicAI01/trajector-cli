@@ -45,6 +45,13 @@ All notable changes to trajector are documented here. The format follows
   `trajector upload --force`, which only runs what is already running.
   On a device that is not signed in, where nothing uploads, they
   recommend `trajector login` instead.
+- A password that a field name marks as a credential is now also masked
+  where the same value appears as a plain list element on the other side
+  of a JSON document carried inside a string value, for example a
+  tool result that holds `{"password": ...}` while the request's `argv`
+  list repeats the value, or the other way round. Before, the copy in
+  the list left the machine unmasked when the value was not random
+  enough for the other detection layers to catch.
 
 ## [0.6.0] - 2026-10-23
 

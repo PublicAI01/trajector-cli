@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -141,6 +142,9 @@ func isToolUseID(match string) bool {
 
 // redactedPlaceholder is the replacement text used for redacted secrets.
 const redactedPlaceholder = "REDACTED"
+
+// redactedPlaceholderJSON is redactedPlaceholder as a JSON string token.
+const redactedPlaceholderJSON = `"` + redactedPlaceholder + `"`
 
 // placeholderSecretValues lists lowercase values that should be treated as
 // non-secrets when they appear as a credential value: prior redactions
@@ -275,7 +279,7 @@ type jsonReplacement struct {
 	// owning key — an array element. It carries a value-level judgement
 	// that could not have been reached from the token itself, so it must
 	// never reach a field that was judged on its own key. See the
-	// elementCredential note in collectJSONLReplacements.
+	// credentials note in collectJSONLReplacements.
 	elementOnly bool
 }
 
@@ -807,7 +811,8 @@ func jsonlContent(content string, memo valueMemo) (string, error) {
 				return redactString(content), nil
 			}
 			// Content is a single JSON value (object/array) — redact field-aware.
-			return spliceFieldAware(content, parsed, memo)
+			masked, _, err := spliceFieldAware(content, parsed, memo, nil)
+			return masked, err
 		}
 	}
 
@@ -850,7 +855,8 @@ func jsonlLine(line string, keep region, memo valueMemo) (string, error) {
 	if !ok {
 		return redactString(line), nil
 	}
-	return applyJSONReplacements(line, collectJSONLReplacements(parsed, memo), keep)
+	repls, _ := collectJSONLReplacements(parsed, memo, nil)
+	return applyJSONReplacements(line, repls, keep)
 }
 
 // decodeJSONLLine decodes one trimmed JSONL line for the field-aware
@@ -867,9 +873,12 @@ func decodeJSONLLine(trimmed string) (parsed any, ok bool) {
 
 // spliceFieldAware is the field-aware pass: the replacements collected
 // from parsed, the decoded form of content, are applied to the raw text
-// of content.
-func spliceFieldAware(content string, parsed any, memo valueMemo) (string, error) {
-	return applyJSONReplacements(content, collectJSONLReplacements(parsed, memo), region{})
+// of content. inherited and credentials are the credential verdicts
+// collectJSONLReplacements takes in and gives back.
+func spliceFieldAware(content string, parsed any, memo valueMemo, inherited map[string]bool) (masked string, credentials map[string]bool, err error) {
+	repls, credentials := collectJSONLReplacements(parsed, memo, inherited)
+	masked, err = applyJSONReplacements(content, repls, region{})
+	return masked, credentials, err
 }
 
 // applyJSONReplacements applies collected (original, redacted) string pairs
@@ -1080,16 +1089,27 @@ func encodeReplacement(r jsonReplacement) (encodedReplacement, error) {
 	var enc encodedReplacement
 	var err error
 	if r.redacted != r.original {
-		if enc.full, err = jsonEncodeString(r.redacted); err != nil {
+		if enc.full, err = encodeReplacementReading(r.redacted); err != nil {
 			return encodedReplacement{}, err
 		}
 	}
 	if r.deterministic != r.original {
-		if enc.deterministic, err = jsonEncodeString(r.deterministic); err != nil {
+		if enc.deterministic, err = encodeReplacementReading(r.deterministic); err != nil {
 			return encodedReplacement{}, err
 		}
 	}
 	return enc, nil
+}
+
+// encodeReplacementReading is jsonEncodeString with the one reading every
+// credential verdict produces encoded once: a record with a credential in
+// it carries that reading for each key that named it and for each array
+// element it reached.
+func encodeReplacementReading(reading string) (string, error) {
+	if reading == redactedPlaceholder {
+		return redactedPlaceholderJSON, nil
+	}
+	return jsonEncodeString(reading)
 }
 
 // jsonStringEnd returns the index just past the closing quote of the JSON
@@ -1222,10 +1242,13 @@ func valueHasDuplicateKeys(dec *json.Decoder) bool {
 // string replacements. Protected fields are not excluded here: the skip
 // policy lives in applyJSONReplacements, the one place that decides what
 // gets rewritten. The readings of each string value come from memo.
-func collectJSONLReplacements(v any, memo valueMemo) []jsonReplacement {
+//
+// inherited holds the credential verdicts of the documents that enclose
+// v, nil at the top level; credentials holds those and every verdict
+// reached in v or in a document embedded in it.
+func collectJSONLReplacements(v any, memo valueMemo, inherited map[string]bool) (repls []jsonReplacement, credentials map[string]bool) {
 	seen := make(map[string]int)
-	var repls []jsonReplacement
-	// elementCredential collects the values some key named a credential.
+	// credentials collects the values some key named a credential.
 	// An array has no field names, so its elements are walked with an
 	// empty key (see the []any arm below) and isCredentialJSONValue
 	// can never reach them: until 2026-09-16 the same secret in
@@ -1241,7 +1264,31 @@ func collectJSONLReplacements(v any, memo valueMemo) []jsonReplacement {
 	// the same text is prose, not a second copy of the credential;
 	// masking it would overrule a judgement this pass already made. An
 	// element has no such judgement to overrule.
-	elementCredential := map[string]bool{}
+	//
+	// A string value that is itself a JSON document is walked as a
+	// document of its own (see valueMemo.readings), and the verdict
+	// crosses that boundary both ways: a key inside the document reaches
+	// an element outside it, and a key outside reaches an element inside.
+	// Until 2026-11-04 each walk kept its own set, and the password in
+	// {"tool_input":"{\"password\":\"hunter2hunter\",…}","argv":["hunter2hunter"]}
+	// was masked inside the document and shipped verbatim in argv.
+	// Outward, the verdicts found inside a document come back with its
+	// readings. Inward, the document is read again with the whole set,
+	// in the pass below the walk.
+	credentials = maps.Clone(inherited)
+	credential := func(val string) {
+		if credentials == nil {
+			credentials = make(map[string]bool)
+		}
+		credentials[val] = true
+	}
+	// documents lists the string values that are a JSON document, each
+	// with the verdicts found inside it, for the pass below the walk.
+	type embeddedDocument struct {
+		key, value  string
+		credentials map[string]bool
+	}
+	var documents []embeddedDocument
 	// record files one reading of one value under the key it was seen
 	// with. Every collection point goes through here so the dedup rule
 	// below is stated once.
@@ -1302,7 +1349,8 @@ func collectJSONLReplacements(v any, memo valueMemo) []jsonReplacement {
 			// Both readings are collected because the applying side, not
 			// this one, knows which a given occurrence gets: the same value
 			// can sit in a protected field and an ordinary one at once.
-			redacted, deterministic := memo.readings(val)
+			r := memo.readings(val)
+			redacted, deterministic := r.redacted, r.deterministic
 			// The key itself says this value is a password, so the whole
 			// value goes — never just the parts the pattern layers caught.
 			// Until 2026-08-14 this ran only when redactString had changed
@@ -1316,12 +1364,57 @@ func collectJSONLReplacements(v any, memo valueMemo) []jsonReplacement {
 			}
 			record(key, val, redacted, deterministic, credentialKey)
 			if credentialKey && key != "" {
-				elementCredential[val] = true
+				credential(val)
+			}
+			for inner := range r.credentials {
+				credential(inner)
+			}
+			if r.document {
+				documents = append(documents, embeddedDocument{key: key, value: val, credentials: r.credentials})
 			}
 		}
 	}
 	walk("", false, v)
-	for val := range elementCredential {
+
+	// A verdict from outside a document reaches the array elements inside
+	// it only when the document is read again with it. The readings a
+	// document already has were taken with the verdicts found inside it,
+	// so only a verdict from elsewhere whose value the document can hold
+	// calls for the second reading, and that reading is not memoized: it
+	// is not a property of the document alone. The text layers run again
+	// only when the second reading changed the document.
+	for _, d := range documents {
+		if !verdictFromOutsideMayReach(d.value, d.credentials, credentials) {
+			continue
+		}
+		seenKey := d.key + "\x00" + d.value
+		idx, recorded := seen[seenKey]
+		if recorded && repls[idx].redacted == redactedPlaceholder && repls[idx].deterministic == redactedPlaceholder {
+			continue
+		}
+		document, ok := embeddedJSONDocument(d.value)
+		if !ok {
+			continue
+		}
+		masked, _, err := spliceFieldAware(d.value, document, memo, credentials)
+		if err != nil || masked == d.value {
+			continue
+		}
+		redacted, deterministic := redactReadings(masked)
+		if recorded {
+			repls[idx].redacted, repls[idx].deterministic = redacted, deterministic
+			continue
+		}
+		seen[seenKey] = len(repls)
+		repls = append(repls, jsonReplacement{
+			key:           d.key,
+			original:      d.value,
+			redacted:      redacted,
+			deterministic: deterministic,
+		})
+	}
+
+	for val := range credentials {
 		repls = append(repls, jsonReplacement{
 			original:      val,
 			redacted:      redactedPlaceholder,
@@ -1329,28 +1422,79 @@ func collectJSONLReplacements(v any, memo valueMemo) []jsonReplacement {
 			elementOnly:   true,
 		})
 	}
-	return repls
+	return repls, credentials
 }
 
-// valueMemo maps a string value to its two readings. A nil valueMemo
+// verdictFromOutsideMayReach reports whether a verdict in all that is
+// not in own, the verdicts found inside the document text, may name a
+// string token of text. A value every encoder spells literally is looked
+// for as bytes; any other value may be spelled with escapes the bytes
+// would miss, so it is taken as present and the document is read again.
+func verdictFromOutsideMayReach(text string, own, all map[string]bool) bool {
+	for val := range all {
+		if own[val] {
+			continue
+		}
+		if !spelledLiterallyInJSON(val) || strings.Contains(text, val) {
+			return true
+		}
+	}
+	return false
+}
+
+// spelledLiterallyInJSON reports whether every JSON encoder writes s
+// into a string token byte for byte. The grammar lets an encoder escape
+// any character, and encoders escape more than the quote, the backslash
+// and the control characters: the default .NET encoder escapes the plus
+// sign, the backtick and the HTML characters, and others escape the
+// slash, the apostrophe or everything outside ASCII. A list of escaped
+// characters cannot be complete, so only the characters
+// alwaysLiteralInJSON accepts count as literal. A value taken as not
+// literal costs one more reading of the document; it never masks more.
+func spelledLiterallyInJSON(s string) bool {
+	for i := range len(s) {
+		if !alwaysLiteralInJSON(s[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func alwaysLiteralInJSON(c byte) bool {
+	switch {
+	case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9':
+		return true
+	}
+	return strings.IndexByte(" _.:@=,;-", c) >= 0
+}
+
+// valueMemo maps a string value to its readings. A nil valueMemo
 // remembers nothing.
 //
 // The readings are taken before a credential key overrides them: that
 // verdict belongs to the key and the enclosing object of one occurrence,
 // not to the value, so it is decided again for each occurrence and never
-// stored here.
+// stored here. The verdicts reached inside a value that is itself a
+// document are the opposite case: the keys that reached them are part of
+// the value, so they are stored with it.
 type valueMemo map[string]valueReadings
 
+// valueReadings is what one scan of a value established. document says
+// the value is a JSON document the walk entered; credentials holds the
+// values a key inside that document named a credential, nil when there
+// are none.
 type valueReadings struct {
 	redacted, deterministic string
+	document                bool
+	credentials             map[string]bool
 }
 
-// readings returns the two readings of val, and scans val only when the
-// memo does not hold it. Both readings depend on val alone. A reading
-// that leaves val as it is shares the bytes of the key.
-func (m valueMemo) readings(val string) (redacted, deterministic string) {
+// readings returns the readings of val, and scans val only when the memo
+// does not hold it. Every reading depends on val alone. A reading that
+// leaves val as it is shares the bytes of the key.
+func (m valueMemo) readings(val string) valueReadings {
 	if r, ok := m[val]; ok {
-		return r.redacted, r.deterministic
+		return r
 	}
 	// A string value that is itself a JSON document is walked as one
 	// document, so every rule the structured side owns — key
@@ -1366,17 +1510,20 @@ func (m valueMemo) readings(val string) (redacted, deterministic string) {
 	// is strictly shorter than the string that holds it. A document the
 	// walk cannot re-apply falls back to the string as it arrived, which
 	// the text layers still scan.
+	var r valueReadings
 	text := val
 	if document, ok := embeddedJSONDocument(val); ok {
-		if masked, err := spliceFieldAware(val, document, m); err == nil {
+		if masked, credentials, err := spliceFieldAware(val, document, m, nil); err == nil {
 			text = masked
+			r.document = true
+			r.credentials = credentials
 		}
 	}
-	redacted, deterministic = redactReadings(text)
+	r.redacted, r.deterministic = redactReadings(text)
 	if m != nil {
-		m[val] = valueReadings{redacted: redacted, deterministic: deterministic}
+		m[val] = r
 	}
-	return redacted, deterministic
+	return r
 }
 
 // fieldPolicy says how much of the detection stack the value (subtree

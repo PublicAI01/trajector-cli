@@ -17,7 +17,8 @@ func SpliceJSON(s string) (string, error) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(s)), &parsed); err != nil {
 		return "", err
 	}
-	return spliceFieldAware(s, parsed, nil)
+	masked, _, err := spliceFieldAware(s, parsed, nil, nil)
+	return masked, err
 }
 
 // ReadingsOfOneScan is redactReadings: both readings of s from one scan.
