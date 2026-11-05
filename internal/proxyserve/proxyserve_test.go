@@ -3,6 +3,7 @@ package proxyserve_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -17,6 +20,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeupstream"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
@@ -542,4 +546,95 @@ func TestServeRefusesASocketBoundToAnotherAddress(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatalf("Serve served on a socket bound to %s while its address is %s", l.Addr(), e.assembly.Addr)
 	}
+}
+
+func TestServeTellsTheDeviceStateInEachBatchAndNoPathWithIt(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.SeedRawcall("req-old", "hash-p1", aged())
+	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
+	upstream := fakeupstream.New(t)
+	root := t.TempDir()
+	e.sandbox.GrantProject(proxytest.Grant{
+		Token:         "tok-proj",
+		ProjectIDHash: proxytest.ProjectIDHash(root),
+		RootPath:      root,
+		Upstream:      upstream.URL(),
+	})
+	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
+
+	served := e.serve(io.Discard, io.Discard)
+	e.waitHealthy()
+	e.recordedExchange(upstream)
+	refused := e.waitRefused(1)
+	e.drain()
+	e.waitExit(served, 10*time.Second)
+
+	reqs := e.service.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("service saw %d requests, want the one exit-flush batch", len(reqs))
+	}
+	ix, err := fakeplatform.UploadedIndex(reqs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := ix.Run
+	if got := run.DroppedCaptures.SpoolFull(); got != refused.SpoolFull() {
+		t.Errorf("dropped_captures says the full spool refused %+v, want the account on disk, %+v", got, refused.SpoolFull())
+	}
+	if run.CapturesDropped != 1 {
+		t.Errorf("captures_dropped = %d, want the one rawcall this proxy gave up", run.CapturesDropped)
+	}
+	if run.SpoolWaiting[envelope.KindRawcall] != 1 || run.SpoolWaiting[envelope.KindSegment] != 0 {
+		t.Errorf("spool_waiting = %v, want the one seeded rawcall and nothing else", run.SpoolWaiting)
+	}
+	if run.SpoolOldestRecordAgeSeconds < 24*60*60 {
+		t.Errorf("spool_oldest_record_age_seconds = %d, want the seeded record's day-old age", run.SpoolOldestRecordAgeSeconds)
+	}
+	if run.SpoolQuotaBytes != 1 || run.SpoolUsageBytes == 0 {
+		t.Errorf("spool usage/quota = %d/%d, want the seeded record over the quota of one byte", run.SpoolUsageBytes, run.SpoolQuotaBytes)
+	}
+	if run.OS != runtime.GOOS || run.Arch != runtime.GOARCH || run.BuildModified {
+		t.Errorf("platform = %s/%s modified=%v, want %s/%s and an unmodified build", run.OS, run.Arch, run.BuildModified, runtime.GOOS, runtime.GOARCH)
+	}
+	if run.UploadFailuresSinceLastAck != 0 || run.UploadLastFailureClass != "" {
+		t.Errorf("upload failures = %d %q, want none before the first attempt", run.UploadFailuresSinceLastAck, run.UploadLastFailureClass)
+	}
+
+	parts, err := fakeplatform.Parts(reqs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		Run map[string]any `json:"run"`
+	}
+	if err := json.Unmarshal(parts["batch"], &env); err != nil {
+		t.Fatal(err)
+	}
+	pathLike := regexp.MustCompile(`^([/\\]|[A-Za-z]:[\\/])`)
+	for _, s := range stringsIn(env.Run) {
+		if pathLike.MatchString(s) {
+			t.Errorf("run metadata carries %q, which reads as a path; it must carry numbers, names and flags only", s)
+		}
+	}
+}
+
+// stringsIn lists every string value a decoded JSON document holds.
+func stringsIn(v any) []string {
+	switch v := v.(type) {
+	case string:
+		return []string{v}
+	case map[string]any:
+		var out []string
+		for _, inner := range v {
+			out = append(out, stringsIn(inner)...)
+		}
+		return out
+	case []any:
+		var out []string
+		for _, inner := range v {
+			out = append(out, stringsIn(inner)...)
+		}
+		return out
+	}
+	return nil
 }

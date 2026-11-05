@@ -39,7 +39,9 @@ func TestTheEnvelopeSerializesEveryContractFieldInOrder(t *testing.T) {
 		fmt.Sprintf(`{"record_id":"req-1","source":"proxy","project_id_hash":"hash-p1","upstream_origin":"official","endpoint":"/v1/messages","timestamp":"2026-08-03T10:00:00Z","offset":%d,"size":%d},`, items[0].Offset, items[0].Size) +
 		fmt.Sprintf(`{"record_id":%q,"source":"transcript","project_id_hash":"hash-p1","timestamp":"2026-08-03T10:00:00Z","offset":%d,"size":%d},`, seg.ID, items[1].Offset, items[1].Size) +
 		fmt.Sprintf(`{"record_id":%q,"source":"transcript","project_id_hash":"hash-p1","timestamp":"2026-08-03T10:01:00Z","offset":%d,"size":%d}],`, snap.ID, items[2].Offset, items[2].Size) +
-		`"run":{"recorded_today":3,"sse_degraded_today":0,"captures_dropped":0,"spool_usage_bytes":0,"spool_quota_bytes":0}}`
+		`"run":{"recorded_today":3,"sse_degraded_today":0,"captures_dropped":0,"spool_usage_bytes":0,"spool_quota_bytes":0,` +
+		`"proxy_uptime_seconds":0,"spool_oldest_record_age_seconds":0,"spool_waiting":{"rawcalls":0,"segments":0,"snapshots":0,"git_snapshots":0},` +
+		`"upload_failures_since_last_ack":0,"upload_last_failure_class":"","dropped_captures":{"reasons":null},"os":"","arch":"","build_modified":false}}`
 	if string(b.Envelope) != want {
 		t.Errorf("envelope:\n got %s\nwant %s", b.Envelope, want)
 	}

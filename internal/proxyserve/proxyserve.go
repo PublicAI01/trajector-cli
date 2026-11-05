@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -95,6 +96,10 @@ type Assembly struct {
 	// Home is the user's home directory, which reading holds a field
 	// naming a path against.
 	Home string
+	// BuildModified is whether this build's source tree had uncommitted
+	// changes when it was built, as the toolchain recorded. Each batch
+	// says so in its run metadata.
+	BuildModified bool
 }
 
 func (a Assembly) proxy() *proxylife.Proxy {
@@ -108,6 +113,31 @@ func (a Assembly) proxy() *proxylife.Proxy {
 // way.
 func OpenSpool(layout userdirs.Layout) (*spool.Spool, error) {
 	return spool.Create(layout.SpoolDir(), upload.LoadHandshake(layout.UploadDir()).SpoolQuotaBytes)
+}
+
+// oldestAgeSeconds is how long the oldest record waiting in sp has
+// waited, and zero for a spool holding none.
+func oldestAgeSeconds(sp *spool.Spool) int64 {
+	at, ok := sp.OldestEntry()
+	if !ok {
+		return 0
+	}
+	return max(int64(time.Since(at)/time.Second), 0)
+}
+
+// waiting counts the records sp holds, by kind. A spool that cannot be
+// listed counts as empty: the count is an observation that rides along
+// with an upload, and a failed observation must not hold the upload up.
+func waiting(sp *spool.Spool, logf func(format string, args ...any)) spool.Count {
+	days, err := sp.Summary()
+	if err != nil {
+		logf("proxy: warning: the spool could not be counted for the batch's run metadata: %v", err)
+	}
+	var c spool.Count
+	for _, d := range days {
+		c.Plus(d.Count)
+	}
+	return c
 }
 
 // Supervise runs the watchdog process: it keeps a proxy child alive and
@@ -155,6 +185,14 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		return fmt.Errorf("opening spool: %w", err)
 	}
 
+	// A record of dropped captures that cannot be read is said once here
+	// and then rewritten by the next capture given up; it holds no
+	// evidence worth refusing to count for.
+	dropped, err := apiproxy.OpenDropped(layout.DroppedCaptures())
+	if err != nil {
+		logf("proxy: warning: the record of dropped captures could not be read: %v", err)
+	}
+
 	// The uploader's run metadata reads the server's counters, and the
 	// server mounts the uploader's flush endpoint. The metadata side
 	// takes the deferred binding: it cannot run before the server serves
@@ -181,11 +219,18 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 		Run: func() batch.Run {
 			h := server.Health()
 			return batch.Run{
-				RecordedToday:    h.RecordedToday,
-				SSEDegradedToday: h.SSEDegradedToday,
-				CapturesDropped:  h.CapturesDropped,
-				SpoolUsageBytes:  sp.Usage(),
-				SpoolQuotaBytes:  sp.Quota(),
+				RecordedToday:               h.RecordedToday,
+				SSEDegradedToday:            h.SSEDegradedToday,
+				CapturesDropped:             h.CapturesDropped,
+				SpoolUsageBytes:             sp.Usage(),
+				SpoolQuotaBytes:             sp.Quota(),
+				ProxyUptimeSeconds:          h.UptimeSeconds,
+				SpoolOldestRecordAgeSeconds: oldestAgeSeconds(sp),
+				SpoolWaiting:                waiting(sp, logf),
+				DroppedCaptures:             dropped.Snapshot(),
+				OS:                          runtime.GOOS,
+				Arch:                        runtime.GOARCH,
+				BuildModified:               a.BuildModified,
 			}
 		},
 		Logf: logf,
@@ -241,13 +286,6 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 	internal.Handle(upload.FlushPath, uploader.Handler(apiproxy.ServiceName))
 	internal.Handle("POST "+apiproxy.ProgressPath, tail.handler())
 
-	// A record of dropped captures that cannot be read is said once here
-	// and then rewritten by the next capture given up; it holds no
-	// evidence worth refusing to count for.
-	dropped, err := apiproxy.OpenDropped(layout.DroppedCaptures())
-	if err != nil {
-		logf("proxy: warning: the record of dropped captures could not be read: %v", err)
-	}
 	server, err = apiproxy.New(apiproxy.Config{
 		Version:         a.Version,
 		Table:           a.Routes.Table(),

@@ -494,6 +494,8 @@ func (u *Uploader) noteAuthorizationRequired(authorizeURL, message string) {
 // pause that cannot be written is a pause nobody takes, which costs the
 // service another attempt but never costs the user a rawcall.
 func (u *Uploader) noteBackoff(reason Reason, notBefore time.Time) {
+	u.failedAttempts++
+	u.lastFailure = reason
 	u.noteRefusal(func(h *storedHandshake) {
 		h.startBackoff(reason, u.deps.Now().UTC())
 		h.NotBefore = notBefore

@@ -257,6 +257,16 @@ type Uploader struct {
 	refusals int
 	failures int
 
+	// failedAttempts counts every attempt since the last acknowledged
+	// upload that the service answered with a transient failure or
+	// that never reached it, whichever class the backoff gave it, and
+	// lastFailure is the class of the latest. They ride in the next
+	// batch's run metadata, so a reader of batches sees what the
+	// uploads between two acknowledgements met. Like the three above
+	// they are this process's own and an acknowledgement resets them.
+	failedAttempts int
+	lastFailure    Reason
+
 	// sent is what sent-blocks.json holds, read on first use. This
 	// process is the only one that adds to it; another process only
 	// makes it useless, through ForgetSentBlocks, which the holder
@@ -723,6 +733,16 @@ func (u *Uploader) discardUnreadablePending(raw []byte) error {
 	return nil
 }
 
+// run is the metadata the next batch carries: what the caller supplies
+// about the device, and what only the uploader knows about its own
+// attempts.
+func (u *Uploader) run() batch.Run {
+	r := u.deps.Run()
+	r.UploadFailuresSinceLastAck = u.failedAttempts
+	r.UploadLastFailureClass = string(u.lastFailure)
+	return r
+}
+
 // send builds, uploads, and settles one batch: on acknowledgement the
 // records leave the spool, the lease is settled, and the handshake is
 // applied. Failures leave the spool and the lease exactly as they were
@@ -745,7 +765,7 @@ func (u *Uploader) send(ctx context.Context, token string, l lease, entries spoo
 		return l.release()
 	}
 	holder := u.holder(token, LoadHandshake(u.deps.Dir).BlockRefsEpoch)
-	b, refused, err := batch.Build(l.id(), u.deps.Now(), u.deps.Version, entries, u.deps.Run(), u.blockPolicy(holder))
+	b, refused, err := batch.Build(l.id(), u.deps.Now(), u.deps.Version, entries, u.run(), u.blockPolicy(holder))
 	if err != nil {
 		u.noteAttempt(err)
 		return fmt.Errorf("upload: %w", err)
@@ -801,6 +821,7 @@ func (u *Uploader) send(ctx context.Context, token string, l lease, entries spoo
 	u.upgradeGate, u.authorizationGate, u.accountGate, u.credentialGate = Standing{}, Standing{}, Standing{}, Standing{}
 	u.refusedToken = ""
 	u.timeouts, u.refusals, u.failures = 0, 0, 0
+	u.failedAttempts, u.lastFailure = 0, Flowing
 
 	if err := l.settle(u.deps.Spool, b.Packed); err != nil {
 		return fmt.Errorf("upload: %w", err)

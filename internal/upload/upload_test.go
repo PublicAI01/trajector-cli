@@ -1966,3 +1966,43 @@ func TestTheLaterRefusalReplacesTheEarlierOne(t *testing.T) {
 		})
 	}
 }
+
+func TestEachBatchSaysHowManyUploadsFailedSinceTheLastAcknowledgementAndHow(t *testing.T) {
+	f := newFixture(t)
+	fails := func(status int) func(fakeplatform.Request) fakeplatform.Response {
+		return func(fakeplatform.Request) fakeplatform.Response {
+			return fakeplatform.JSON(status, map[string]any{"error": "down"})
+		}
+	}
+	acknowledges := fakeplatform.Acknowledges(platform.Handshake{})
+	answers := []func(fakeplatform.Request) fakeplatform.Response{fails(503), fails(429), acknowledges, fails(502), acknowledges}
+	var asked int
+	f.server.StubFunc("POST", "/v1/batches", func(r fakeplatform.Request) fakeplatform.Response {
+		asked++
+		return answers[min(asked, len(answers))-1](r)
+	})
+
+	f.storeRawcall(t, "req-1", f.now)
+	for range 3 {
+		f.uploader.Flush(t.Context(), true)
+	}
+	f.storeRawcall(t, "req-2", f.now)
+	for range 2 {
+		f.uploader.Flush(t.Context(), true)
+	}
+
+	reqs := f.server.Requests()
+	want := []struct {
+		failures int
+		class    string
+	}{{0, ""}, {1, "attempt_failed"}, {2, "rate_limited"}, {0, ""}, {1, "attempt_failed"}}
+	if len(reqs) != len(want) {
+		t.Fatalf("service saw %d requests, want %d", len(reqs), len(want))
+	}
+	for i, r := range reqs {
+		run := uploadedIndex(t, r).Run
+		if run.UploadFailuresSinceLastAck != want[i].failures || run.UploadLastFailureClass != want[i].class {
+			t.Errorf("batch %d says %d failures since the last acknowledgement, the last %q; want %d, %q", i+1, run.UploadFailuresSinceLastAck, run.UploadLastFailureClass, want[i].failures, want[i].class)
+		}
+	}
+}

@@ -24,6 +24,8 @@ func (m *Machine) assembly() proxyserve.Assembly {
 		ExecPath: m.deps.ExecPath,
 		Home:     m.deps.Home,
 		Addr:     m.deps.ProxyAddr,
+
+		BuildModified: m.deps.BuildModified,
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/batch"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/mediablock"
@@ -122,6 +125,15 @@ func decompress(tb testing.TB, data []byte) []byte {
 	return out
 }
 
+func marshal(t *testing.T, v any) string {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func parseIndex(t *testing.T, b batch.Batch) batch.Index {
 	t.Helper()
 	ix, err := batch.ParseIndex(b.Envelope)
@@ -227,11 +239,22 @@ func TestBuildPreservesThinkingSignatures(t *testing.T) {
 func TestBuildEnvelopeCarriesIdentityIndexAndRunMetadata(t *testing.T) {
 	rc := simpleRawcall(t, "req-1", "session-a", buildTime)
 	run := batch.Run{
-		RecordedToday:    7,
-		SSEDegradedToday: 2,
-		CapturesDropped:  1,
-		SpoolUsageBytes:  4096,
-		SpoolQuotaBytes:  2 << 30,
+		RecordedToday:               7,
+		SSEDegradedToday:            2,
+		CapturesDropped:             1,
+		SpoolUsageBytes:             4096,
+		SpoolQuotaBytes:             2 << 30,
+		ProxyUptimeSeconds:          3600,
+		SpoolOldestRecordAgeSeconds: 27720,
+		SpoolWaiting:                spool.Count{envelope.KindRawcall: 3, envelope.KindSegment: 1},
+		UploadFailuresSinceLastAck:  2,
+		UploadLastFailureClass:      "attempt_failed",
+		DroppedCaptures: apiproxy.DroppedRecord{Reasons: map[string]apiproxy.DroppedReason{
+			"spool full": {Count: 5, Bytes: 1 << 20, FirstAt: buildTime.Add(-time.Hour), LastAt: buildTime},
+		}},
+		OS:            "linux",
+		Arch:          "amd64",
+		BuildModified: true,
 	}
 	b, _, err := batch.Build("batch-42", buildTime, "1.2.3", rawcalls(rc), run, mediablock.Policy{})
 	if err != nil {
@@ -251,8 +274,8 @@ func TestBuildEnvelopeCarriesIdentityIndexAndRunMetadata(t *testing.T) {
 	if r.Source != "proxy" || r.ProjectIDHash != "hash-p1" || r.UpstreamOrigin != "official" || r.Endpoint != "/v1/messages" {
 		t.Fatalf("index metadata = %+v", r)
 	}
-	if ix.Run != run {
-		t.Fatalf("run metadata = %+v, want %+v", ix.Run, run)
+	if got, want := marshal(t, ix.Run), marshal(t, run); got != want {
+		t.Fatalf("run metadata = %s, want %s", got, want)
 	}
 	if ids := packedIDs(b); len(ids) != 1 || ids[0] != rc.ID {
 		t.Fatalf("packed ids = %v", ids)
@@ -674,5 +697,18 @@ func TestBuild_ARawcallIsScopedByTheSessionItsRecordStatesNotByTheIndex(t *testi
 				t.Fatalf("copies = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestPrivacyNamesEveryRunMetadataField(t *testing.T) {
+	privacy, err := os.ReadFile("../../PRIVACY.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for field := range reflect.TypeFor[batch.Run]().Fields() {
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if !bytes.Contains(privacy, []byte("`"+name+"`")) {
+			t.Errorf("PRIVACY.md does not name the run metadata field %q", name)
+		}
 	}
 }

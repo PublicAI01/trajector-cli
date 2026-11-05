@@ -37,3 +37,28 @@ func TestOnlyTheReleaseStampMakesAReleaseBuildWhateverVersionIsReported(t *testi
 		})
 	}
 }
+
+func TestOnlyATreeTheToolchainRecordedAsModifiedMakesAModifiedBuild(t *testing.T) {
+	withSettings := func(settings ...debug.BuildSetting) func() (*debug.BuildInfo, bool) {
+		return func() (*debug.BuildInfo, bool) {
+			return &debug.BuildInfo{Main: debug.Module{Version: "v0.3.7"}, Settings: settings}, true
+		}
+	}
+	cases := map[string]struct {
+		readBuildInfo func() (*debug.BuildInfo, bool)
+		modified      bool
+	}{
+		"uncommitted changes":         {withSettings(debug.BuildSetting{Key: "vcs.revision", Value: "9a59fd7"}, debug.BuildSetting{Key: "vcs.modified", Value: "true"}), true},
+		"a clean tree":                {withSettings(debug.BuildSetting{Key: "vcs.revision", Value: "9a59fd7"}, debug.BuildSetting{Key: "vcs.modified", Value: "false"}), false},
+		"no version control recorded": {withSettings(debug.BuildSetting{Key: "GOOS", Value: "linux"}), false},
+		"no build information at all": {func() (*debug.BuildInfo, bool) { return nil, false }, false},
+		"a value other than true":     {withSettings(debug.BuildSetting{Key: "vcs.modified", Value: "1"}), false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := resolveBuildModified(tc.readBuildInfo); got != tc.modified {
+				t.Errorf("resolveBuildModified = %v, want %v", got, tc.modified)
+			}
+		})
+	}
+}

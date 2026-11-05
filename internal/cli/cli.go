@@ -68,6 +68,29 @@ func buildVersion() (string, bool) {
 	return resolveVersion(version, releaseBuild, debug.ReadBuildInfo)
 }
 
+// buildModified is whether the toolchain recorded uncommitted changes
+// in the tree this build was made from. It is what the build says of
+// itself: a tree with no version control, and a build that asked the
+// toolchain not to record it, say nothing, and nothing checks the
+// answer.
+func buildModified() bool {
+	return resolveBuildModified(debug.ReadBuildInfo)
+}
+
+// resolveBuildModified is buildModified for a build info reader.
+func resolveBuildModified(readBuildInfo func() (*debug.BuildInfo, bool)) bool {
+	info, ok := readBuildInfo()
+	if !ok {
+		return false
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.modified" {
+			return setting.Value == "true"
+		}
+	}
+	return false
+}
+
 // resolveVersion is buildVersion for a version stamp, a release stamp,
 // and a build info reader. Only a release stamp of exactly "true" makes
 // a release build.
@@ -329,16 +352,17 @@ func openMachine(addr string, showsConfigErr bool) (*lifecycle.Machine, error) {
 	}
 	reported, release := buildVersion()
 	deps := lifecycle.Deps{
-		Layout:       env.layout,
-		PlatformURL:  env.platformURL,
-		Version:      reported,
-		ReleaseBuild: release,
-		ExecPath:     env.execPath,
-		Releases:     env.releasesURL,
-		AutoUpgrade:  env.autoUpgrade,
-		ProxyAddr:    env.proxyAddr,
-		Home:         env.home,
-		Getenv:       os.Getenv,
+		Layout:        env.layout,
+		PlatformURL:   env.platformURL,
+		Version:       reported,
+		ReleaseBuild:  release,
+		BuildModified: buildModified(),
+		ExecPath:      env.execPath,
+		Releases:      env.releasesURL,
+		AutoUpgrade:   env.autoUpgrade,
+		ProxyAddr:     env.proxyAddr,
+		Home:          env.home,
+		Getenv:        os.Getenv,
 	}
 	if !release {
 		if os.Getenv(RecordProxyStartEnv) != "" {

@@ -24,6 +24,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/mediablock"
 	"github.com/PublicAI01/trajector-cli/internal/redact"
@@ -31,14 +32,46 @@ import (
 )
 
 // Run is the capture runtime metadata one batch carries alongside its
-// records. All values are counters and gauges observed on this machine;
-// they ride along so no separate telemetry channel is needed.
+// records. Every value is a count, a size, a duration, a platform name
+// or a flag observed on this machine, never content and never a path;
+// they ride along so no separate telemetry channel is needed. Its
+// serialized layout is a product contract like the envelope's.
 type Run struct {
-	RecordedToday    int   `json:"recorded_today"`
-	SSEDegradedToday int   `json:"sse_degraded_today"`
-	CapturesDropped  int   `json:"captures_dropped"`
-	SpoolUsageBytes  int64 `json:"spool_usage_bytes"`
-	SpoolQuotaBytes  int64 `json:"spool_quota_bytes"`
+	// RecordedToday, SSEDegradedToday and CapturesDropped are the
+	// proxy's own counters: they start again with each proxy process,
+	// so a reader sets them against ProxyUptimeSeconds.
+	RecordedToday      int   `json:"recorded_today"`
+	SSEDegradedToday   int   `json:"sse_degraded_today"`
+	CapturesDropped    int   `json:"captures_dropped"`
+	SpoolUsageBytes    int64 `json:"spool_usage_bytes"`
+	SpoolQuotaBytes    int64 `json:"spool_quota_bytes"`
+	ProxyUptimeSeconds int   `json:"proxy_uptime_seconds"`
+	// SpoolOldestRecordAgeSeconds is the age of the oldest record still
+	// waiting in the spool when the batch was built, and SpoolWaiting
+	// counts the waiting records by kind. Both include the records of
+	// this batch, which leave the spool only once it is acknowledged.
+	SpoolOldestRecordAgeSeconds int64       `json:"spool_oldest_record_age_seconds"`
+	SpoolWaiting                spool.Count `json:"spool_waiting"`
+	// UploadFailuresSinceLastAck counts this uploader's attempts that
+	// failed since its last acknowledged upload, and
+	// UploadLastFailureClass names how the latest of them failed, in
+	// the words of the uploader's standing reasons. Both are empty right
+	// after an acknowledgement and, like the proxy's counters, start
+	// again with each proxy process.
+	UploadFailuresSinceLastAck int    `json:"upload_failures_since_last_ack"`
+	UploadLastFailureClass     string `json:"upload_last_failure_class"`
+	// DroppedCaptures is the device's durable account of the captures
+	// its proxies gave up on, by reason: the same record status, doctor
+	// and the diagnostic bundle read, so every reader learns the other's
+	// words. It is cumulative across proxy processes.
+	DroppedCaptures apiproxy.DroppedRecord `json:"dropped_captures"`
+	// OS and Arch name the platform this build runs on, as the Go
+	// toolchain names them. BuildModified is whether the build's source
+	// tree had uncommitted changes when it was built, as the toolchain
+	// recorded: what the build says of itself, checked by nothing.
+	OS            string `json:"os"`
+	Arch          string `json:"arch"`
+	BuildModified bool   `json:"build_modified"`
 }
 
 // Batch is one upload payload, ready for the wire.

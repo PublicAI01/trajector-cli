@@ -51,6 +51,10 @@ type Deps struct {
 	// source, however it was built and whatever Version it reports, never
 	// checks for a newer release, which is what PRIVACY.md promises.
 	ReleaseBuild bool
+	// BuildModified is whether this build's source tree had uncommitted
+	// changes when it was built, as the toolchain recorded. The proxy
+	// says so in each batch's run metadata.
+	BuildModified bool
 	// ExecPath is this binary, injected into session hooks, used to
 	// spawn the proxy, and replaced in place by upgrade.
 	ExecPath string
