@@ -304,7 +304,13 @@ type Config struct {
 	// MaxRecordBytes bounds how much of one exchange the recorder holds
 	// in memory. Zero selects defaultMaxRecordBytes.
 	MaxRecordBytes int64
-	Logf           func(format string, args ...any)
+	// Dropped is the durable account every capture given up is added
+	// to, by reason. Serve runs its writer and stops it on the way out,
+	// after the record queue, so a Serve that has returned has written
+	// every count it made. Nil counts in memory only, where nothing
+	// reads it.
+	Dropped *Dropped
+	Logf    func(format string, args ...any)
 	// Internal serves the composition root's own endpoints under the
 	// reserved prefix, after the proxy's built-ins. It is not part of
 	// the capture path: a mounted call may legitimately run for minutes
@@ -411,6 +417,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
+	if cfg.Dropped == nil {
+		cfg.Dropped = &Dropped{}
+	}
 	var secret [20]byte
 	if _, err := rand.Read(secret[:]); err != nil {
 		return nil, fmt.Errorf("apiproxy: generating the admin token: %w", err)
@@ -510,6 +519,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 		return err
 	}
 	defer s.removeAdminToken()
+	stopDropped := s.cfg.Dropped.start(s.cfg.Logf)
 	// Captures do not stop when ctx is canceled: they end with the
 	// server, when closeRecordQueue below closes the queue.
 	s.recordsDone.Go(func() { s.runRecordQueue(context.WithoutCancel(ctx)) })
@@ -562,6 +572,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	// Captures queued by requests that already finished get their own
 	// bounded window; none of it held the exchanges open.
 	s.closeRecordQueue(recordQueueDrainTimeout)
+	stopDropped()
 	if err == http.ErrServerClosed {
 		return nil
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/platform"
+	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 	"github.com/PublicAI01/trajector-cli/internal/tokenstore"
 	"github.com/PublicAI01/trajector-cli/internal/upload"
@@ -93,7 +94,7 @@ func DoctorStaleDiscoveryHook(f *Findings, err error) {
 // holds it, the quarantine it may be waiting in, every reason it is not
 // moving, and anything else the service last said.
 func DoctorData(f *Findings, d Diagnosis) {
-	doctorSpool(f, d.Spool)
+	doctorSpool(f, d)
 	doctorRejected(f, d)
 	doctorStandings(f, d.Standings, d.Uploads)
 	doctorService(f, d.Handshake)
@@ -116,7 +117,7 @@ func doctorTokenStore(f *Findings, ts TokenStoreState) {
 // signed-out state.
 const (
 	tokenStoreUnreadableHeadline = "the device token store could not be read"
-	tokenStoreUnreadableFix      = tokenstore.BackendEnv + "=file trajector login"
+	tokenStoreUnreadableFix      = tokenstore.BackendEnv + "=file " + fixLogin
 )
 
 func tokenStoreUnreadableWhy(err error) string {
@@ -255,24 +256,31 @@ func doctorEarlierSessions(f *Findings, d Diagnosis) {
 	f.Detailf("%s", earlierSessionsFix)
 }
 
-// doctorSpool verifies the capture spool accepts writes within quota.
-func doctorSpool(f *Findings, s SpoolState) {
+// doctorSpool verifies the capture spool accepts writes within quota,
+// and states what a full spool has refused so far.
+func doctorSpool(f *Findings, d Diagnosis) {
+	s := d.Spool
 	if s.OpenErr != nil {
 		f.Problemf("%s", spoolUnusableHeadline(s))
 		return
 	}
-	if s.WritableErr != nil {
-		if s.full() {
-			f.ProblemFix(spoolFullHeadline, spoolFullWhy, spoolFullFix)
-		} else {
-			f.Problemf("%s", spoolUnwritableHeadline(s.WritableErr))
-		}
+	if s.WritableErr != nil && s.full() {
+		// The problem carries what the full spool refused as its details.
+		f.take(spoolFullProblem(d))
 		f.Detailf("Spool: %s of %s used at %s.", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota), s.Dir)
 		return
 	}
-	f.OKf("capture spool writable (%s of %s used)", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota))
-	if s.Held.Records > 0 {
-		f.notef("%s", heldHeadline(s.Held))
+	if s.WritableErr != nil {
+		f.Problemf("%s", spoolUnwritableHeadline(s.WritableErr))
+		f.Detailf("Spool: %s of %s used at %s.", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota), s.Dir)
+	} else {
+		f.OKf("capture spool writable (%s of %s used)", platform.HumanBytes(s.Usage), platform.HumanBytes(s.Quota))
+		if s.Held.Records > 0 {
+			f.notef("%s", heldHeadline(s.Held))
+		}
+	}
+	for _, sentence := range droppedSentences(d.Dropped) {
+		f.notef("%s", sentence)
 	}
 }
 
@@ -409,13 +417,66 @@ func spoolUnwritableHeadline(err error) string {
 
 // The one writability refusal that has a way out of its own, in the
 // three parts every surface states it in: what is wrong, why nothing
-// records, and the one command that frees it. Both surfaces read these,
-// so the two cannot drift apart.
+// records, and the one command that frees it. Both surfaces read these
+// through spoolFullProblem, so the two cannot drift apart.
 const (
 	spoolFullHeadline = "recording is stopped: the capture spool is full"
 	spoolFullWhy      = "captured data fills the spool to its quota, so nothing more can be written"
 	spoolFullFix      = "trajector upload --force"
+	// spoolFullOutpacedWhy replaces the why, and the fix, where uploads
+	// are already running: the command that frees the spool is at work,
+	// and naming it would send the user to run what is running.
+	spoolFullOutpacedWhy = "captures arrive faster than this device uploads them, so the spool stays at its quota while uploads run"
 )
+
+// fixLogin is the command that pairs this device, the one way uploads
+// start on a device that is not signed in.
+const fixLogin = "trajector login"
+
+// uploadsRunning reports a device that is signed in and whose own proxy
+// holds the port with nothing holding its uploads back: what the spool
+// holds is leaving as fast as this device sends it.
+func uploadsRunning(d Diagnosis) bool {
+	return d.TokenStore.Paired && d.TokenStore.Err == nil &&
+		d.Proxy.Holder == proxylife.HolderOurs && len(d.Standings) == 0
+}
+
+// spoolFullProblem is the one problem both status and doctor state for
+// a full spool. Its remedy follows from why the spool stays full: a
+// device that is not signed in uploads nothing until it is, and its
+// remedy is the one that makes it signed in; uploads held back, or no
+// proxy to run them, leave a forced upload as the command that frees
+// it; uploads already running leave none. Under each, what the full
+// spool has refused so far is counted.
+func spoolFullProblem(d Diagnosis) line {
+	one := line{severity: severityError, text: spoolFullHeadline, why: spoolFullWhy, fix: spoolFullFix}
+	switch {
+	case d.TokenStore.Err != nil:
+		one.fix = tokenStoreUnreadableFix
+	case !d.TokenStore.Paired:
+		one.fix = fixLogin
+	case uploadsRunning(d):
+		one.why, one.fix = spoolFullOutpacedWhy, ""
+	}
+	one.details = droppedSentences(d.Dropped)
+	return one
+}
+
+// droppedSentences is what every surface says about the rawcalls a
+// full spool refused: since when, how many, and how recently. It says
+// nothing where none was refused, and says so where the account could
+// not be read, which must not present as none.
+func droppedSentences(d DroppedState) []string {
+	var out []string
+	if d.Err != nil {
+		out = append(out, fmt.Sprintf("The record of dropped captures could not be read: %v.", d.Err))
+	}
+	if r := d.SpoolFull(); r.Count > 0 {
+		out = append(out, fmt.Sprintf("Since %s, %d rawcall(s) (%s) were not recorded because the spool was full; the last at %s.",
+			r.FirstAt.UTC().Format(time.RFC3339), r.Count, platform.HumanBytes(r.Bytes), r.LastAt.UTC().Format(time.RFC3339)))
+	}
+	return out
+}
 
 // The three parts of what a quarantined batch asks of the user. The
 // headline counts them and is written beside this; the fix names the

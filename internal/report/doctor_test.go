@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/report"
@@ -235,6 +236,116 @@ func TestStatusAndDoctorPresentAFullSpoolAlike(t *testing.T) {
 		wants(t, surface, out,
 			"recording is stopped: the capture spool is full",
 			"fix:  trajector upload --force")
+	}
+}
+
+// refused is the account of a full spool that turned rawcalls away.
+func refused(count int) report.DroppedState {
+	return report.DroppedState{DroppedRecord: apiproxy.DroppedRecord{Reasons: map[string]apiproxy.DroppedReason{
+		"spool full": {
+			Count:   count,
+			Bytes:   3 << 20,
+			FirstAt: time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC),
+			LastAt:  time.Date(2026, 11, 2, 9, 30, 0, 0, time.UTC),
+		},
+		"capture deadline passed": {Count: 1, FirstAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)},
+	}}}
+}
+
+const refusedSentence = "Since 2026-10-22T08:00:00Z, 4395 rawcall(s) (3.0 MiB) were not recorded because the spool was full; the last at 2026-11-02T09:30:00Z."
+
+func TestStatusAndDoctorCountWhatAFullSpoolRefused(t *testing.T) {
+	d := device()
+	d.Spool = full()
+	d.Dropped = refused(4395)
+
+	_, doctorOut := doctorText(d)
+	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
+		wants(t, surface, out, "recording is stopped: the capture spool is full", refusedSentence)
+	}
+}
+
+func TestStatusAndDoctorNameNoForcedUploadWhereUploadsAlreadyRun(t *testing.T) {
+	d := device()
+	d.Spool = full()
+	d.Proxy = ours()
+	d.Dropped = refused(4395)
+
+	problems, doctorOut := doctorText(d)
+	if problems == 0 {
+		t.Fatalf("problems = 0 with a full spool, output:\n%s", doctorOut)
+	}
+	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
+		wants(t, surface, out,
+			"recording is stopped: the capture spool is full",
+			"why:  captures arrive faster than this device uploads them, so the spool stays at its quota while uploads run",
+			refusedSentence)
+		rejects(t, surface, out, "trajector upload --force")
+	}
+}
+
+func TestStatusAndDoctorNameSigningInWhereAFullSpoolHasNoUploadsToFreeIt(t *testing.T) {
+	d := device()
+	d.Spool = full()
+	d.Proxy = ours()
+	d.TokenStore = report.TokenStoreState{Paired: false}
+	d.Dropped = refused(4395)
+
+	_, doctorOut := doctorText(d)
+	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
+		wants(t, surface, out,
+			"recording is stopped: the capture spool is full",
+			"fix:  trajector login",
+			refusedSentence)
+		rejects(t, surface, out, "while uploads run", "trajector upload --force")
+	}
+}
+
+func TestStatusAndDoctorKeepTheForcedUploadWhileUploadsAreHeldBack(t *testing.T) {
+	d := device()
+	d.Spool = full()
+	d.Proxy = ours()
+	d.Standings = []upload.Standing{{Reason: upload.TimedOut}}
+
+	_, doctorOut := doctorText(d)
+	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
+		wants(t, surface, out, "fix:  trajector upload --force")
+		rejects(t, surface, out, "faster than this device uploads")
+	}
+}
+
+func TestStatusAndDoctorStillCountWhatAFullSpoolRefusedAfterItDrained(t *testing.T) {
+	d := device()
+	d.Dropped = refused(4395)
+
+	problems, doctorOut := doctorText(d)
+	if problems != 0 {
+		t.Errorf("problems = %d for a spool with room that refused rawcalls earlier, output:\n%s", problems, doctorOut)
+	}
+	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
+		wants(t, surface, out, refusedSentence)
+		rejects(t, surface, out, "the capture spool is full")
+	}
+}
+
+func TestStatusAndDoctorSayWhenTheRecordOfDroppedCapturesCannotBeRead(t *testing.T) {
+	d := device()
+	d.Dropped = report.DroppedState{Err: errors.New("unexpected end of JSON input")}
+
+	_, doctorOut := doctorText(d)
+	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
+		wants(t, surface, out, "The record of dropped captures could not be read: unexpected end of JSON input.")
+	}
+}
+
+func TestStatusAndDoctorCountWhatAFullSpoolRefusedWhileTheSpoolIsUnwritable(t *testing.T) {
+	d := device()
+	d.Spool.WritableErr = errors.New("permission denied")
+	d.Dropped = refused(4395)
+
+	_, doctorOut := doctorText(d)
+	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
+		wants(t, surface, out, "not writable, so recording is stopped", refusedSentence)
 	}
 }
 

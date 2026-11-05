@@ -172,6 +172,10 @@ func New(t *testing.T, opts ...Option) *Env {
 		t.Fatal(err)
 	}
 	e.spool = sp
+	dropped, err := apiproxy.OpenDropped(o.layout.DroppedCaptures())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	dialect := capture.Anthropic
 	dialect.OfficialUpstream = e.Upstream.URL()
@@ -184,6 +188,7 @@ func New(t *testing.T, opts ...Option) *Env {
 		Dialect:         dialect,
 		DefaultUpstream: e.Upstream.URL(),
 		Spool:           sp,
+		Dropped:         dropped,
 		IdleTimeout:     o.idle,
 		DrainTimeout:    o.drain,
 		ConnIdleTimeout: o.connIdle,

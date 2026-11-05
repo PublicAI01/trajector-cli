@@ -11,6 +11,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/harness/fakeupstream"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
@@ -203,6 +204,38 @@ func TestStatusWarnsWhenTheSpoolIsFull(t *testing.T) {
 	}
 	if first, _, _ := strings.Cut(out, "\n"); first != "Recording: STOPPED on this device (spool full)" {
 		t.Errorf("status opened with %q; a spool that takes no more stops every project on the device, and the line it opens with must not say otherwise", first)
+	}
+}
+
+func TestStatusCountsTheRawcallsAFullSpoolRefusedAndNamesNoForcedUploadWhileUploadsRun(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
+	e.sandbox.SeedRawcall("req-1", "hash-project", e.deps.Now())
+	e.startProxy(proxytest.WithFullSpool())
+	e.sandbox.GrantProject(proxytest.Grant{
+		Token:         "tok-proj",
+		ProjectIDHash: proxytest.ProjectIDHash(e.canonicalRoot()),
+		RootPath:      e.canonicalRoot(),
+		Upstream:      e.proxyEnv.Upstream.URL(),
+	})
+	e.proxyEnv.Upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_1"}`)})
+	e.proxyEnv.Post("/t/tok-proj/v1/messages", `{"m":1}`, nil)
+	e.proxyEnv.WaitHealthz(func(h proxytest.Health) bool { return h.CapturesDropped == 1 })
+	e.waitDroppedOnDisk(1)
+
+	out := e.statusOutput()
+	for _, want := range []string{
+		"Recording: STOPPED on this device (spool full)",
+		"captures arrive faster than this device uploads them",
+		"1 rawcall(s)",
+		"were not recorded because the spool was full",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status = %q, want it to contain %q", out, want)
+		}
+	}
+	if strings.Contains(out, "trajector upload --force") {
+		t.Errorf("status = %q names a forced upload while this device's own proxy is uploading as fast as it can", out)
 	}
 }
 
@@ -556,5 +589,27 @@ func TestStatusAndDoctorNameTheConsentRecordTheyCouldNotRead(t *testing.T) {
 	}
 	if !strings.Contains(e.stdout.String(), e.sandbox.ConsentPath()) {
 		t.Errorf("doctor = %q, want the consent record's own path named", e.stdout)
+	}
+}
+
+// waitDroppedOnDisk returns once the proxy's account of dropped
+// captures on disk counts n rawcalls refused by the full spool. The
+// proxy writes the account off the request path, so healthz can count a
+// capture before the file holds it.
+func (e *env) waitDroppedOnDisk(n int) {
+	e.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		rec, err := apiproxy.ReadDropped(e.layout().DroppedCaptures())
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		if rec.SpoolFull().Count >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("dropped captures on disk = %+v, want %d refused by the full spool", rec, n)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

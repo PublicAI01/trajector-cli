@@ -63,7 +63,7 @@ func deviceSection(d Diagnosis) *section {
 	case d.TokenStore.Paired:
 		s.linef("Signed in.")
 	default:
-		s.linef("Not signed in. Run `trajector login` to pair this device.")
+		s.linef("Not signed in. Run `%s` to pair this device.", fixLogin)
 	}
 	if d.Project.TableUnreadable != nil {
 		s.take(tableUnreadableProblem(d.Project.TableUnreadable))
@@ -184,7 +184,7 @@ func spoolSection(d Diagnosis) *section {
 	case d.Spool.WritableErr != nil:
 		s.linef("%s of %s used.", platform.HumanBytes(d.Spool.Usage), platform.HumanBytes(d.Spool.Quota))
 		if d.Spool.full() {
-			s.problem(spoolFullHeadline, spoolFullWhy, spoolFullFix)
+			s.take(spoolFullProblem(d))
 		} else {
 			s.problem(trimPeriod(spoolUnwritableHeadline(d.Spool.WritableErr)), "the spool refused a write, so nothing is recorded", fixDoctor)
 		}
@@ -193,6 +193,11 @@ func spoolSection(d Diagnosis) *section {
 	}
 	if d.Spool.OpenErr == nil && d.Spool.Held.Records > 0 {
 		s.linef("%s.", heldHeadline(d.Spool.Held))
+	}
+	if d.Spool.OpenErr == nil && !d.Spool.full() {
+		for _, sentence := range droppedSentences(d.Dropped) {
+			s.linef("%s", sentence)
+		}
 	}
 	return s
 }

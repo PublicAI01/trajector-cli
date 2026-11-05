@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
@@ -39,14 +40,20 @@ type diagnosisWire struct {
 	// the bundle was written on. It is the one number that says how
 	// much of this device records, which a bundle holding the current
 	// project alone cannot answer.
-	EnabledProjects int            `json:"enabled_projects"`
-	Project         projectWire    `json:"project"`
-	Proxy           proxyWire      `json:"proxy"`
-	Spool           spoolWire      `json:"spool"`
-	Uploads         upload.State   `json:"uploads"`
-	Rejected        []rejectedWire `json:"rejected"`
-	RejectedErr     string         `json:"rejected_err,omitempty"`
-	Handshake       any            `json:"handshake"`
+	EnabledProjects int         `json:"enabled_projects"`
+	Project         projectWire `json:"project"`
+	Proxy           proxyWire   `json:"proxy"`
+	Spool           spoolWire   `json:"spool"`
+	// DroppedCaptures is the proxy's durable account of the captures it
+	// gave up on, by reason, since the account began. Beside the run
+	// counters in Health, which begin at the proxy's start, it says since
+	// when and how much a full spool has refused.
+	DroppedCaptures    apiproxy.DroppedRecord `json:"dropped_captures"`
+	DroppedCapturesErr string                 `json:"dropped_captures_err,omitempty"`
+	Uploads            upload.State           `json:"uploads"`
+	Rejected           []rejectedWire         `json:"rejected"`
+	RejectedErr        string                 `json:"rejected_err,omitempty"`
+	Handshake          any                    `json:"handshake"`
 	// Standings is every reason uploads were held back when the bundle
 	// was written, omitted when they were flowing. Support reads it to
 	// tell a paused uploader apart from a broken one — both look like
@@ -353,13 +360,15 @@ func DiagnosisJSON(d Diagnosis) []byte {
 			Held:           heldWire(d.Spool.Held),
 			OldestRecordAt: d.Spool.OldestRecord,
 		},
-		Uploads:     d.Uploads,
-		Rejected:    rejected,
-		RejectedErr: errString(d.RejectedErr),
-		Handshake:   d.Handshake,
-		Standings:   d.Standings,
-		TokenStore:  tokenStoreWire{Paired: d.TokenStore.Paired, Err: errString(d.TokenStore.Err)},
-		Selfcheck:   selfcheckValue(d),
+		DroppedCaptures:    d.Dropped.DroppedRecord,
+		DroppedCapturesErr: errString(d.Dropped.Err),
+		Uploads:            d.Uploads,
+		Rejected:           rejected,
+		RejectedErr:        errString(d.RejectedErr),
+		Handshake:          d.Handshake,
+		Standings:          d.Standings,
+		TokenStore:         tokenStoreWire{Paired: d.TokenStore.Paired, Err: errString(d.TokenStore.Err)},
+		Selfcheck:          selfcheckValue(d),
 
 		StaleDiscoveryHook: d.StaleDiscoveryHook,
 	})

@@ -181,6 +181,10 @@ const (
 	abandonDeadline   = "capture deadline passed"
 	abandonEnvelope   = "envelope assembly failed"
 	abandonSpoolWrite = "spool write failed"
+	// abandonSpoolFull is kept apart from every other spool failure: it
+	// is the one a user can be told the cause of, and the one the
+	// durable account singles out.
+	abandonSpoolFull = "spool full"
 )
 
 // drop abandons the capture silently, for outcomes that are expected
@@ -197,6 +201,7 @@ func (r *recorder) drop() {
 func (r *recorder) abandonf(category string, format string, args ...any) {
 	r.mu.Lock()
 	already := r.dropped
+	observed := int64(r.req.Len() + r.resp.Len())
 	r.dropped = true
 	r.req.Reset()
 	r.resp.Reset()
@@ -204,6 +209,7 @@ func (r *recorder) abandonf(category string, format string, args ...any) {
 	if already {
 		return
 	}
+	r.s.cfg.Dropped.count(category, observed, time.Now().UTC())
 	r.s.stats.countDropped()
 	r.s.stats.recordError(timestamped("%s", category))
 	r.s.cfg.Logf(format, args...)
@@ -245,6 +251,10 @@ func (r *recorder) write(ctx context.Context) {
 			// after the user deleted it; dropping is what they asked for.
 			if errors.Is(err, spool.ErrDirGone) {
 				r.drop()
+				return
+			}
+			if errors.Is(err, spool.ErrQuotaExceeded) {
+				r.abandonf(abandonSpoolFull, "spooling rawcall: %v", err)
 				return
 			}
 			r.abandonf(abandonSpoolWrite, "spooling rawcall: %v", err)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
+	"github.com/PublicAI01/trajector-cli/internal/harness/fakeupstream"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
@@ -120,6 +122,80 @@ func TestServeReportsAPermissionRefusedBindAsItsOwnCause(t *testing.T) {
 	}
 	if !errors.Is(serveErr, os.ErrPermission) {
 		t.Errorf("Serve = %v, want the permission refusal preserved", serveErr)
+	}
+}
+
+// recordedExchange sends one exchange the served proxy records through
+// it, against a fake upstream the grant names.
+func (e *env) recordedExchange(upstream *fakeupstream.Server) {
+	e.t.Helper()
+	upstream.Enqueue(fakeupstream.Response{Body: []byte(`{"id":"msg_1"}`)})
+	req, err := http.NewRequestWithContext(e.t.Context(), http.MethodPost, "http://"+e.assembly.Addr+"/t/tok-proj/v1/messages", strings.NewReader(`{"m":1}`))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	resp, err := e.client.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		e.t.Fatalf("exchange through the served proxy = %d, want 200", resp.StatusCode)
+	}
+}
+
+// waitRefused waits until the durable account counts n rawcalls refused
+// by a full spool and returns it.
+func (e *env) waitRefused(n int) apiproxy.DroppedRecord {
+	e.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		rec, err := apiproxy.ReadDropped(e.assembly.Layout.DroppedCaptures())
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		if rec.SpoolFull().Count >= n {
+			return rec
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("dropped captures = %+v, want %d refused by the full spool", rec, n)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestServeKeepsTheCountOfRawcallsAFullSpoolRefusedAcrossRestarts(t *testing.T) {
+	e := newEnv(t)
+	e.sandbox.SeedHandshake(proxytest.Handshake{SpoolQuotaBytes: 1})
+	upstream := fakeupstream.New(t)
+	root := t.TempDir()
+	e.sandbox.GrantProject(proxytest.Grant{
+		Token:         "tok-proj",
+		ProjectIDHash: proxytest.ProjectIDHash(root),
+		RootPath:      root,
+		Upstream:      upstream.URL(),
+	})
+
+	served := e.serve(io.Discard, io.Discard)
+	e.waitHealthy()
+	e.recordedExchange(upstream)
+	first := e.waitRefused(1)
+	e.drain()
+	e.waitExit(served, 10*time.Second)
+
+	served = e.serve(io.Discard, io.Discard)
+	e.waitHealthy()
+	e.recordedExchange(upstream)
+	second := e.waitRefused(2)
+	e.drain()
+	e.waitExit(served, 10*time.Second)
+
+	got, want := second.SpoolFull(), first.SpoolFull()
+	if got.Count != 2 || !got.FirstAt.Equal(want.FirstAt) || got.LastAt.Before(want.LastAt) || got.Bytes <= want.Bytes {
+		t.Errorf("after a restart the account reads %+v, want the count and bytes to carry on from %+v with the same first refusal", got, want)
+	}
+	if n := len(e.sandbox.Rawcalls()); n != 0 {
+		t.Errorf("rawcalls = %d, want the full spool to hold none of them", n)
 	}
 }
 

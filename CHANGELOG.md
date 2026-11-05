@@ -35,6 +35,16 @@ All notable changes to trajector are documented here. The format follows
   uploaded twice. Before, the hand-over waited until the old proxy had
   uploaded everything, which on a large backlog took hours, and the
   upgrade only completed when the old proxy was stopped by hand.
+- `trajector status` and `trajector doctor` now count the calls a full
+  spool did not record: since when, how many, how many bytes, and when
+  the last one was refused. The count is kept in `dropped-captures.json`
+  in the state directory, so it survives proxy restarts, and the doctor
+  bundle carries it. When the spool is full while this device's own
+  proxy is uploading with nothing holding it back, both commands now say
+  that captures arrive faster than uploads leave, instead of recommending
+  `trajector upload --force`, which only runs what is already running.
+  On a device that is not signed in, where nothing uploads, they
+  recommend `trajector login` instead.
 
 ## [0.6.0] - 2026-10-23
 

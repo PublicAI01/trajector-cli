@@ -18,6 +18,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
@@ -169,6 +170,15 @@ func (s SessionFilesState) unreported() int { return s.Unregistered - s.Earlier 
 // in Recording.
 func (s SpoolState) full() bool { return errors.Is(s.WritableErr, spool.ErrQuotaExceeded) }
 
+// DroppedState is the proxy's durable account of the captures it gave
+// up on, as every surface reads it.
+type DroppedState struct {
+	apiproxy.DroppedRecord
+	// Err, when non-nil, is why the account could not be read; the
+	// record is then empty, which must never present as nothing dropped.
+	Err error
+}
+
 // TokenStoreState is the pairing state with its failure mode kept
 // apart: a token store that cannot be read is unknown, not signed out.
 type TokenStoreState struct {
@@ -231,8 +241,12 @@ type Diagnosis struct {
 	// only while nothing holds the port.
 	ProxyCannotStart bool
 	Spool            SpoolState
-	Uploads          upload.State
-	Rejected         []upload.RejectedBatch
+	// Dropped is what the proxies of this device gave up recording, by
+	// reason, since the account began. It is read from disk, so it is
+	// stated whether or not a proxy is running.
+	Dropped  DroppedState
+	Uploads  upload.State
+	Rejected []upload.RejectedBatch
 	// RejectedErr, when non-nil, means the quarantined batches could not
 	// be read; Rejected is then empty, which must never present as an
 	// empty quarantine.

@@ -241,12 +241,20 @@ func Serve(ctx context.Context, a Assembly, idle time.Duration, stdout, stderr i
 	internal.Handle(upload.FlushPath, uploader.Handler(apiproxy.ServiceName))
 	internal.Handle("POST "+apiproxy.ProgressPath, tail.handler())
 
+	// A record of dropped captures that cannot be read is said once here
+	// and then rewritten by the next capture given up; it holds no
+	// evidence worth refusing to count for.
+	dropped, err := apiproxy.OpenDropped(layout.DroppedCaptures())
+	if err != nil {
+		logf("proxy: warning: the record of dropped captures could not be read: %v", err)
+	}
 	server, err = apiproxy.New(apiproxy.Config{
 		Version:         a.Version,
 		Table:           a.Routes.Table(),
 		Dialect:         capture.Anthropic,
 		DefaultUpstream: capture.Anthropic.OfficialUpstream,
 		Spool:           sp,
+		Dropped:         dropped,
 		IdleTimeout:     idle,
 		Liveness:        tail.liveness,
 		Logf:            logf,

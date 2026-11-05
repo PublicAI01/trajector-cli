@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
@@ -130,6 +131,8 @@ func (m *Machine) diagnose(ctx context.Context, dir string, reading sessionFileR
 		d.Spool.Held = heldRecords(sp)
 	}
 
+	rec, err := apiproxy.ReadDropped(m.deps.Layout.DroppedCaptures())
+	d.Dropped = report.DroppedState{DroppedRecord: rec, Err: err}
 	d.Uploads = upload.LoadState(m.deps.Layout.UploadDir())
 	d.RejectedDir = m.deps.Layout.RejectedDir()
 	d.Rejected, d.RejectedErr = upload.ListRejected(d.RejectedDir)

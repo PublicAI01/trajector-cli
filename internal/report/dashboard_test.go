@@ -37,7 +37,7 @@ func TestStatusOnAFreshDevice(t *testing.T) {
 func TestStatusShowsAnEnabledProjectAndRunningProxy(t *testing.T) {
 	d := device()
 	d.Project = contributing()
-	d.Proxy = ours("testv")
+	d.Proxy = ours()
 	out := dashboard(d)
 
 	wants(t, "status", out,
@@ -431,11 +431,11 @@ func hooksWithout(subcommand string) claudesettings.InstalledHooks {
 }
 
 // ours is a verdict about a proxy of this device's own.
-func ours(version string) proxylife.Verdict {
+func ours() proxylife.Verdict {
 	return proxylife.Verdict{
 		Addr:   "127.0.0.1:41100",
 		Holder: proxylife.HolderOurs,
-		Health: apiproxy.Health{Service: apiproxy.ServiceName, Version: version, UptimeSeconds: 12},
+		Health: apiproxy.Health{Service: apiproxy.ServiceName, Version: "testv", UptimeSeconds: 12},
 	}
 }
 

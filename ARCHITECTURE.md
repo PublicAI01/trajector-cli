@@ -187,7 +187,14 @@ the request id, timestamps, project hash, upstream origin
 (official/third-party), and format hints, then written atomically into a
 day-partitioned spool with owner-only permissions, a sidecar index, and a
 bounded quota. A full spool stops recording — loudly, via status and doctor —
-and never evicts.
+and never evicts. A call that arrives while it is full is not recorded.
+The proxy counts every capture it gives up on, by reason — a full spool is
+one of them — in `dropped-captures.json` in the state directory, which
+outlives the proxy process; status and doctor show the full-spool count,
+and the doctor bundle carries all of it. Where the device's own proxy is
+uploading with nothing holding it back, status and doctor say that
+captures arrive faster than uploads leave instead of naming
+`trajector upload --force`.
 
 ## Redaction, batching, upload
 

@@ -21,7 +21,7 @@ import (
 func TestTheBundleSerializesEveryPartOfADiagnosis(t *testing.T) {
 	d := device()
 	d.Project = contributing()
-	d.Proxy = ours("testv")
+	d.Proxy = ours()
 	d.Spool.Usage = 4096
 	d.Rejected = []upload.RejectedBatch{{
 		BatchID: "b-poison",
@@ -36,9 +36,15 @@ func TestTheBundleSerializesEveryPartOfADiagnosis(t *testing.T) {
 		Upgradable:       true,
 	}}
 
+	d.Dropped = refused(7)
+
 	got := string(report.DiagnosisJSON(d))
 	wants(t, "diagnosis.json", got,
 		`"hooks_installed": true`,
+		`"dropped_captures"`,
+		`"spool full"`,
+		`"count": 7`,
+		`"first_at": "2026-10-22T08:00:00Z"`,
 		`"holder": "ours"`,
 		`"service": "trajector-proxy"`,
 		`"usage_bytes"`,
@@ -114,7 +120,7 @@ func TestTheBundleNamesTheHolderOfAPortHeldAgainstThisBuild(t *testing.T) {
 
 func TestTheBundleNamesTheBuildAndTheProxyItDiagnosed(t *testing.T) {
 	d := device()
-	d.Proxy = ours("testv")
+	d.Proxy = ours()
 	at := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
 
 	wants(t, "info.json", string(report.InfoJSON(d, at)),
