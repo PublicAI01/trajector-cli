@@ -8,6 +8,7 @@ require (
 	github.com/betterleaks/betterleaks v1.9.0
 	github.com/klauspost/compress v1.20.3
 	github.com/zalando/go-keyring v0.2.8
+	golang.org/x/sys v0.46.0
 	golang.org/x/text v0.43.0
 )
 
@@ -59,5 +60,4 @@ require (
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
 )

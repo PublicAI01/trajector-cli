@@ -123,7 +123,7 @@ var syncDir = flushDir
 // all. "Never a torn write" has to hold across a crash, not only across
 // a concurrent reader. 2026-08-20.
 func writeTemp(path string, data []byte, perm fs.FileMode) (string, error) {
-	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+tempMarker+"*")
+	f, err := createTemp(filepath.Dir(path), filepath.Base(path)+tempMarker)
 	if err != nil {
 		return "", err
 	}
@@ -136,7 +136,7 @@ func writeTemp(path string, data []byte, perm fs.FileMode) (string, error) {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Chmod(tmp, perm)
+		err = setTempPermissions(tmp, path, perm)
 	}
 	if err != nil {
 		os.Remove(tmp)

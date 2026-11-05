@@ -15,7 +15,6 @@ import (
 // Claude Code would have left one before the project was enabled.
 func earlierSessionFile(t *testing.T, e *clitest.Env, sid string) string {
 	t.Helper()
-	proxytest.RequireSessionSources(t)
 	dir := filepath.Join(e.Home(), "claude", "projects", discover.Encode(e.ProjectRoot()))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -72,7 +71,6 @@ func TestEnable_NoEarlierLeavesTheProjectsEarlierSessionsAlone(t *testing.T) {
 }
 
 func TestEnable_NoProxyFlagInstallsHooksWithoutABaseURL(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := clitest.New(t)
 	e.Paired()
 	p := e.StartProxy()

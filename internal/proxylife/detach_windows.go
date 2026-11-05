@@ -11,3 +11,9 @@ func detachAttr() *syscall.SysProcAttr {
 		HideWindow:    true,
 	}
 }
+
+const createNoWindow = 0x08000000
+
+func childAttr() *syscall.SysProcAttr {
+	return &syscall.SysProcAttr{CreationFlags: createNoWindow, HideWindow: true}
+}

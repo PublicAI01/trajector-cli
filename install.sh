@@ -54,21 +54,9 @@ detect_arch() {
 	esac
 }
 
-# no_windows_build says what is missing and exits non-zero: nothing was
-# installed, and a caller chaining off this script must see that. It
-# names WSL rather than an archive, because there is no archive to name
-# — releases stopped carrying Windows builds until that platform has
-# been tested end to end against the service.
-no_windows_build() {
-	say "trajector does not publish a Windows build yet."
-	say ""
-	say "Run it under WSL: install a Linux distribution, then run this"
-	say "same command inside it."
-	say "  https://learn.microsoft.com/windows/wsl/install"
-	say ""
-	say "Windows archives return once that platform is tested end to end;"
-	say "until then the releases page carries macOS and Linux only:"
-	say "  https://github.com/$REPO/releases"
+windows_installation() {
+	say "For native Windows, run install.ps1 from PowerShell."
+	say "  https://github.com/$REPO/blob/main/docs/windows.md#installation-and-upgrades"
 	exit 1
 }
 
@@ -237,7 +225,7 @@ main() {
 	os=$(detect_os)
 	arch=$(detect_arch)
 	if [ "$os" = windows ]; then
-		no_windows_build
+		windows_installation
 	fi
 	need_downloader
 

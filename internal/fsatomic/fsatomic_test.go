@@ -1,9 +1,12 @@
 package fsatomic_test
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -28,17 +31,18 @@ func TestMain(m *testing.M) {
 const writerPayloadSize = 4096
 
 // rewriteUntilDeadline rewrites args[0] with copies of args[1] until
-// the unix-millisecond deadline in args[2] passes, then prints how many
+// the unix-millisecond deadline received on stdin passes, then prints how many
 // writes landed. Any write error is fatal to this process: the test
 // spawning it asserts that concurrent writers never fail each other.
 func rewriteUntilDeadline(args []string) int {
-	if len(args) != 3 {
-		fmt.Fprintln(os.Stderr, "usage: writer <path> <fill> <deadline-ms>")
+	if len(args) != 2 {
+		fmt.Fprintln(os.Stderr, "usage: writer <path> <fill>")
 		return 2
 	}
 	path, fill := args[0], args[1]
-	ms, err := strconv.ParseInt(args[2], 10, 64)
-	if err != nil {
+	fmt.Fprintln(os.Stdout, "ready")
+	var ms int64
+	if _, err := fmt.Fscan(os.Stdin, &ms); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
@@ -59,20 +63,48 @@ func TestTwoProcessesRewritingOnePathNeverTearItOrFailEachOther(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
 	exe := procbin.Self(t, "writer")
-	deadline := time.Now().Add(2 * time.Second)
-	deadlineArg := strconv.FormatInt(deadline.UnixMilli(), 10)
-
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
 	fills := []string{"a", "b"}
 	writers := make([]*exec.Cmd, len(fills))
-	var stdout, stderr [2]bytes.Buffer
+	inputs := make([]io.WriteCloser, len(fills))
+	outputs := make([]*bufio.Reader, len(fills))
+	var stderr [2]bytes.Buffer
 	for i, fill := range fills {
-		cmd := exec.CommandContext(t.Context(), exe, path, fill, deadlineArg)
-		cmd.Stdout = &stdout[i]
+		cmd := exec.CommandContext(ctx, exe, path, fill)
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		inputs[i], err = cmd.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		outputs[i] = bufio.NewReader(stdout)
 		cmd.Stderr = &stderr[i]
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		})
 		writers[i] = cmd
+	}
+	for i, output := range outputs {
+		ready, err := output.ReadString('\n')
+		if err != nil || ready != "ready\n" {
+			t.Fatalf("writer %q did not become ready: %q, %v", fills[i], ready, err)
+		}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for _, input := range inputs {
+		if _, err := fmt.Fprintln(input, deadline.UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+		if err := input.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	reads := 0
@@ -100,13 +132,17 @@ func TestTwoProcessesRewritingOnePathNeverTearItOrFailEachOther(t *testing.T) {
 	}
 
 	for i, cmd := range writers {
+		reported, err := io.ReadAll(outputs[i])
+		if err != nil {
+			t.Errorf("writer %q output: %v", fills[i], err)
+		}
 		if err := cmd.Wait(); err != nil {
 			t.Errorf("writer %q failed: %v\n%s", fills[i], err, stderr[i].String())
 			continue
 		}
-		writes, err := strconv.Atoi(strings.TrimSpace(stdout[i].String()))
+		writes, err := strconv.Atoi(strings.TrimSpace(string(reported)))
 		if err != nil || writes == 0 {
-			t.Errorf("writer %q reported %q completed writes", fills[i], stdout[i].String())
+			t.Errorf("writer %q reported %q completed writes", fills[i], string(reported))
 		}
 	}
 

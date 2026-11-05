@@ -47,7 +47,7 @@ func hostArchive() string {
 func launch(t *testing.T, releases *fakereleases.Server, env map[string]string) (output string, code int) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		t.Skip("install.sh installs on macOS and Linux; Windows is told no build is published")
+		t.Skip("install.sh installs on macOS and Linux; Windows uses install.ps1")
 	}
 	if !haveDownloader() {
 		t.Skip("neither curl nor wget is available for the script to download with")
@@ -496,7 +496,7 @@ func TestAnInstallDirectoryAlreadyOnThePathIsNotCommentedOn(t *testing.T) {
 	}
 }
 
-func TestWindowsIsToldNoBuildIsPublishedAndDownloadsNothing(t *testing.T) {
+func TestWindowsIsDirectedToPowerShellWithoutDownloading(t *testing.T) {
 	releases := fakereleases.New(t)
 	releases.Publish(t, "0.2.0", []byte("two"))
 	dir := t.TempDir()
@@ -510,16 +510,10 @@ func TestWindowsIsToldNoBuildIsPublishedAndDownloadsNothing(t *testing.T) {
 	if code == 0 {
 		t.Error("install.sh exited 0 on Windows without installing anything")
 	}
-	// What a Windows user needs is the fact that there is no build and
-	// the one way to run trajector anyway. An archive name would be a
-	// download that 404s.
-	for _, want := range []string{"does not publish a Windows build", "WSL"} {
+	for _, want := range []string{"PowerShell", "install.ps1"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the Windows message does not mention %q:\n%s", want, out)
 		}
-	}
-	if strings.Contains(out, ".zip") {
-		t.Errorf("the Windows message names an archive that is not published:\n%s", out)
 	}
 	if got := releases.Downloads(); len(got) != 0 {
 		t.Errorf("the Windows branch downloaded %v", got)

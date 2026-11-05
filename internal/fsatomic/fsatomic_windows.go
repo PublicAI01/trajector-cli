@@ -8,6 +8,8 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
+
+	"github.com/PublicAI01/trajector-cli/internal/winpath"
 )
 
 // Constants the syscall package does not name.
@@ -42,7 +44,7 @@ func replaceCollision(err error) bool {
 // os.Open withholds, so a concurrent WriteFile can replace the file
 // while this handle is still reading the previous content.
 func openShared(path string) (*os.File, error) {
-	p, err := syscall.UTF16PtrFromString(path)
+	p, err := winpath.Pointer(path)
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
@@ -77,7 +79,7 @@ func renamePosix(oldpath, newpath string) error {
 	wrap := func(err error) error {
 		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: err}
 	}
-	src, err := syscall.UTF16PtrFromString(oldpath)
+	src, err := winpath.Pointer(oldpath)
 	if err != nil {
 		return wrap(err)
 	}

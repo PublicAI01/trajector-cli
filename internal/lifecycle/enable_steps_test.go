@@ -49,7 +49,6 @@ func truncatedLine() string {
 // for this project, with the given modification time.
 func (e *env) sessionFile(sid string, mtime time.Time) string {
 	e.t.Helper()
-	proxytest.RequireSessionSources(e.t)
 	dir := filepath.Join(e.sessionFilesRoot(), discover.Encode(e.canonicalRoot()))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		e.t.Fatal(err)
@@ -77,10 +76,7 @@ func (e *env) lockHooksInUserSettings() string {
 // temporary tree can be removed.
 func (e *env) readOnlyDir(dir string) {
 	e.t.Helper()
-	if err := os.Chmod(dir, 0o500); err != nil {
-		e.t.Fatal(err)
-	}
-	e.t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	restrictDirectory(e.t, dir, 0o500)
 }
 
 func (e *env) acceptCurrentAgreement() {
@@ -979,7 +975,6 @@ func TestEnable_RollsBackWhenSessionFilesCannotBeRegistered(t *testing.T) {
 }
 
 func TestEnable_FailsWhenTheProjectTreeCannotBeListed(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	if os.Geteuid() == 0 {
 		t.Skip("permissions do not bind root")
 	}
@@ -988,10 +983,7 @@ func TestEnable_FailsWhenTheProjectTreeCannotBeListed(t *testing.T) {
 	e.acceptCurrentAgreement()
 	e.stdin = ""
 	root := e.canonicalRoot()
-	if err := os.Chmod(root, 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(root, 0o755) })
+	restrictDirectory(t, root, 0)
 
 	err := e.machine().Enable(t.Context(), e.project, choices(proxytest.WithProxy), e.io())
 	if err == nil || !strings.Contains(err.Error(), "looking for this project's session files") {

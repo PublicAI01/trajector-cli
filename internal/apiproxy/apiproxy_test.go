@@ -582,7 +582,7 @@ func TestMountedCallDoesNotHoldTheProxyOpen(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	e := proxytest.New(t,
-		proxytest.WithIdleTimeout(100*time.Millisecond),
+		proxytest.WithIdleTimeout(time.Second),
 		proxytest.WithInternal(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			once.Do(func() { close(entered) })
 			<-release
@@ -591,9 +591,11 @@ func TestMountedCallDoesNotHoldTheProxyOpen(t *testing.T) {
 	defer close(release)
 
 	token := e.AdminToken()
+	requestDone := make(chan error, 1)
 	go func() {
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, e.BaseURL()+"/trajector/flush", nil)
 		if err != nil {
+			requestDone <- err
 			return
 		}
 		req.Header.Set(apiproxy.AdminHeader, token)
@@ -601,8 +603,15 @@ func TestMountedCallDoesNotHoldTheProxyOpen(t *testing.T) {
 		if err == nil {
 			resp.Body.Close()
 		}
+		requestDone <- err
 	}()
-	<-entered
+	select {
+	case <-entered:
+	case err := <-requestDone:
+		t.Fatalf("mounted request finished before entering its handler: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("mounted request did not enter its handler")
+	}
 
 	if err := e.WaitStopped(5 * time.Second); err != nil {
 		t.Errorf("Serve returned %v with a mounted call in flight, want a clean idle exit", err)

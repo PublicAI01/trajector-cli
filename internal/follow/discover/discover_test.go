@@ -1,12 +1,14 @@
 package discover
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -52,19 +54,8 @@ type tree struct {
 	root, configDir string
 }
 
-// requireSessionSources repeats what proxytest.RequireSessionSources
-// states for the tests that can reach the harness. This package is
-// below the harness and cannot import it.
-func requireSessionSources(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the session-file and git sources do not work on native Windows, which is no release target (proxytest.RequireSessionSources)")
-	}
-}
-
 func newTree(t *testing.T) tree {
 	t.Helper()
-	requireSessionSources(t)
 	return tree{root: canonicalTempDir(t), configDir: t.TempDir()}
 }
 
@@ -194,6 +185,9 @@ func TestWalk_DoesNotFollowSymbolicLinks(t *testing.T) {
 	outside := canonicalTempDir(t)
 	tr.session(t, outside, "s", time.Now())
 	if err := os.Symlink(outside, filepath.Join(tr.root, "link")); err != nil {
+		if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+			t.Skip("creating symbolic links requires Windows Developer Mode or the symbolic-link privilege")
+		}
 		t.Fatal(err)
 	}
 
@@ -284,8 +278,8 @@ func TestWalk_AmbiguousNameFailsClosed(t *testing.T) {
 }
 
 func TestWalk_NeverListsTheProjectsDirectory(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission bits do not bind root")
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("POSIX permission bits do not bind Windows or root")
 	}
 	t.Run("session files are found without listing permission", func(t *testing.T) {
 		tr := newTree(t)
@@ -360,6 +354,9 @@ func TestWalk_CollectsWorkflowAgentFilesOneLevelUnderWorkflows(t *testing.T) {
 	outside := canonicalTempDir(t)
 	writeFile(t, filepath.Join(outside, "agent-5.jsonl"))
 	if err := os.Symlink(outside, filepath.Join(runs, "wf_link")); err != nil {
+		if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+			t.Skip("creating symbolic links requires Windows Developer Mode or the symbolic-link privilege")
+		}
 		t.Fatal(err)
 	}
 
@@ -453,8 +450,8 @@ func TestOnlySessions_KeepsTheChosenSessionsWithTheirAgentFiles(t *testing.T) {
 }
 
 func TestOnlySessions_KeepsWhatTheSearchCouldNotCover(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission bits do not bind root")
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("POSIX permission bits do not bind Windows or root")
 	}
 	tr := newTree(t)
 	tr.session(t, tr.root, "s", time.Now())
@@ -476,8 +473,8 @@ func TestOnlySessions_KeepsWhatTheSearchCouldNotCover(t *testing.T) {
 }
 
 func TestWalk_ReportsDirectoriesItCouldNotList(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission bits do not bind root")
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("POSIX permission bits do not bind Windows or root")
 	}
 	tr := newTree(t)
 	closed := tr.mkdir(t, "closed")

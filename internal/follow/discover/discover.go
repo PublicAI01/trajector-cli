@@ -16,8 +16,7 @@
 // Known gaps, stated as facts: a directory reached through a spelling
 // variant on a case-insensitive file system, or a session whose
 // directory name was overridden through CLAUDE_CODE_PROJECT_DIR_NAME,
-// has a name this walk does not compute and is not found. Only rooted
-// POSIX paths are supported; Windows drive letters are not.
+// has a name this walk does not compute and is not found.
 package discover
 
 import (
@@ -196,7 +195,7 @@ func walk(root, configDir string, limit int) (Result, error) {
 			return nil
 		}
 		if !hashed {
-			matches := trie(name)
+			matches := trie(name, root)
 			if len(matches) != 1 || matches[0] != dir {
 				res.Gaps.Ambiguous = append(res.Gaps.Ambiguous, follow.Ambiguity{Dir: dir, Name: name, Matches: matches})
 				return nil

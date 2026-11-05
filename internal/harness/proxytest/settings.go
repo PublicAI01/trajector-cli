@@ -1,7 +1,9 @@
 package proxytest
 
 import (
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -82,6 +84,12 @@ type HookCommands = claudesettings.HookCommands
 // test drives the same list the machine does.
 func ProjectHooks(execPath string) HookCommands {
 	hooks := HookCommands{}
+	execPath = filepath.ToSlash(execPath)
+	if runtime.GOOS == "windows" {
+		execPath = "& '" + strings.ReplaceAll(execPath, "'", "''") + "'"
+	} else if strings.ContainsAny(execPath, " \t") {
+		execPath = `"` + execPath + `"`
+	}
 	for _, subcommand := range claudesettings.ProjectHookSubcommands() {
 		hooks[subcommand] = execPath + " hook " + subcommand
 	}

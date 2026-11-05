@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/harness/clitest"
-	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
 )
 
@@ -22,7 +21,6 @@ func deviceSection(t *testing.T, out string) string {
 }
 
 func TestStatusAndDoctorReportAChangedAgreementBeforeAnySessionHookRuns(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := clitest.New(t)
 	e.Paired()
 	p := e.StartProxy()

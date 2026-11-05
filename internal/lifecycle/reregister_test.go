@@ -70,7 +70,6 @@ func waitForTheSegmentToBeSent(t *testing.T, e *env) {
 }
 
 func TestEnableAfterASessionLeftTheProjectKeepsItsCursorAndSendsItsSegmentOnce(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	servedProxy(t, e)

@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
@@ -84,19 +85,9 @@ func appendFile(t *testing.T, path string, content string) {
 
 // replaceFile gives path a new inode with content, as a rewrite by
 // rename does.
-// requireSessionSources repeats what proxytest.RequireSessionSources
-// states for the tests that can reach the harness. This package is
-// below the harness and cannot import it.
-func requireSessionSources(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the session-file and git sources do not work on native Windows, which is no release target (proxytest.RequireSessionSources)")
-	}
-}
 
 func replaceFile(t *testing.T, path string, content string) {
 	t.Helper()
-	requireSessionSources(t)
 	tmp := path + ".new"
 	writeFile(t, tmp, content)
 	if err := os.Rename(tmp, path); err != nil {
@@ -991,6 +982,9 @@ func symlink(t *testing.T, target, link string) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, link); err != nil {
+		if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+			t.Skip("creating symbolic links requires Windows Developer Mode or the symbolic-link privilege")
+		}
 		t.Fatal(err)
 	}
 }
@@ -1095,10 +1089,9 @@ func TestRead_NeverWritesTheFile(t *testing.T) {
 }
 
 func TestRead_StatFailureIsReported(t *testing.T) {
-	requireSessionSources(t)
 	path := mainPath(t)
 	writeFile(t, path, userLine(1))
-	res, err := follow.Read(follow.File{Path: filepath.Join(path, "below-a-file")}, capture, follow.ReadOptions{Root: root})
+	res, err := follow.Read(follow.File{Path: path + "\x00"}, capture, follow.ReadOptions{Root: root})
 	if err == nil {
 		t.Fatalf("Read() = %+v, nil, want an error", res)
 	}

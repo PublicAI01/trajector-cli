@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
 
@@ -24,7 +23,6 @@ func (e *env) aSessionWithAnAgentFile() string {
 }
 
 func TestSessionProgressedMarksTheSessionFileHot(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.aProxylessTarget()
 	e.enableProject()
@@ -44,7 +42,6 @@ func TestSessionProgressedMarksTheSessionFileHot(t *testing.T) {
 }
 
 func TestSessionEndedMarksTheSessionFileCold(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.aProxylessTarget()
 	e.enableProject()
@@ -96,7 +93,6 @@ func (e *env) storedFileLabels() map[string]string {
 }
 
 func TestSessionProgressedOnTheLastStopTakesEveryAgentFileOfAWorkflowRun(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.aProxylessTarget()
 	e.enableProject()
@@ -125,7 +121,6 @@ func TestSessionProgressedOnTheLastStopTakesEveryAgentFileOfAWorkflowRun(t *test
 }
 
 func TestSessionProgressedTakesDozensOfAgentsAcrossSeveralRuns(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.aProxylessTarget()
 	e.enableProject()
@@ -153,7 +148,6 @@ func TestSessionProgressedTakesDozensOfAgentsAcrossSeveralRuns(t *testing.T) {
 }
 
 func TestSessionProgressedStoresEveryMessageOfAWorkflowRunAndNotItsJournal(t *testing.T) {
-	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.aProxylessTarget()
 	e.enableProject()

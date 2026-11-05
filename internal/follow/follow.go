@@ -405,7 +405,7 @@ func (r *Registry) Unregister(projectIDHash string) error {
 	}
 	err := os.Remove(r.path(projectIDHash))
 	if os.IsNotExist(err) {
-		return nil
+		return r.missingDirectoryError()
 	}
 	return err
 }
@@ -440,7 +440,7 @@ func (r *Registry) Remove(projectIDHash, path string) error {
 func (r *Registry) Projects() ([]string, error) {
 	entries, err := os.ReadDir(r.dir)
 	if os.IsNotExist(err) {
-		return []string{}, nil
+		return []string{}, r.missingDirectoryError()
 	}
 	if err != nil {
 		return nil, err
@@ -468,12 +468,26 @@ func (r *Registry) read(projectIDHash string) (registry, error) {
 	}
 	data, err := fsatomic.ReadFile(r.path(projectIDHash))
 	if os.IsNotExist(err) {
-		return registry{Version: version}, nil
+		return registry{Version: version}, r.missingDirectoryError()
 	}
 	if err != nil {
 		return registry{}, err
 	}
 	return parse(data)
+}
+
+func (r *Registry) missingDirectoryError() error {
+	info, err := os.Stat(r.dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("follow: registry path %q is not a directory", r.dir)
+	}
+	return nil
 }
 
 // checkProjectIDHash refuses a hash that could name anything but one

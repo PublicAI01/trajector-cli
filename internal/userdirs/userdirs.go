@@ -245,10 +245,10 @@ func Isolate(setenv func(key, value string), home string) {
 }
 
 // EnsureOwnerDir creates dir for trajector's own state. Everything
-// trajector stores is private to the user, so the mode is decided here
+// trajector stores is private to the user, so permissions are decided here
 // once, not by each package that happens to create a directory first.
 func EnsureOwnerDir(dir string) error {
-	return os.MkdirAll(dir, 0o700)
+	return ensureOwnerDir(dir)
 }
 
 // Roots lists every directory holding trajector files, deduplicated:

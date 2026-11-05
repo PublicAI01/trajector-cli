@@ -57,6 +57,7 @@ func superviseChild(ctx context.Context, cfg superviseConfig) error {
 			return err
 		}
 		cmd := exec.CommandContext(ctx, cfg.Command[0], cfg.Command[1:]...) //nolint:gosec // G204: the command is this binary's own path and flags, built by Supervise
+		cmd.SysProcAttr = childAttr()
 		cmd.Stdout = cfg.Stdout
 		cmd.Stderr = cfg.Stderr
 		// Ask the child to stop, and keep the kill only as the backstop

@@ -1,6 +1,9 @@
 package claudesettings
 
-import "testing"
+import (
+	"runtime"
+	"testing"
+)
 
 func TestWindowsSideClaude_ProjectMountOrSessionFilePathShape(t *testing.T) {
 	tests := []struct {
@@ -60,6 +63,9 @@ func TestWindowsSideClaude_ProjectMountOrSessionFilePathShape(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				tt.want = false // Native Windows can read its own session files.
+			}
 			if got := WindowsSideClaude(tt.projectRoot, tt.sessionFilePath); got != tt.want {
 				t.Errorf("WindowsSideClaude(%q, %q) = %v, want %v", tt.projectRoot, tt.sessionFilePath, got, tt.want)
 			}
