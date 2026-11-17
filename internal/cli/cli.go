@@ -211,6 +211,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return a.forgetCmd(args[1:])
 	case "upgrade":
 		return a.upgradeCmd(ctx, args[1:])
+	case "repo":
+		return a.repoCmd(ctx, args[1:])
 	case "hook":
 		return a.hookCmd(ctx, args[1:])
 	case proxylife.Command:
@@ -236,6 +238,8 @@ commands:
   upload       upload captured data now [--force]
   forget       delete one session's not-yet-uploaded records from this machine [<session-id>]
   upgrade      install the newest published release over this one
+  repo assess  print counts read from a git repository's history and paths;
+               sends nothing [<path>] [--json]
   version      print the trajector version
   proxy run    run the local proxy (internal; started automatically)
   hook         session hook entry points (internal; injected by enable)
@@ -368,15 +372,29 @@ func openMachine(addr string, showsConfigErr bool) (*lifecycle.Machine, error) {
 		if os.Getenv(RecordProxyStartEnv) != "" {
 			deps.Spawn = proxylife.RecordStartsIn(deps.Layout.ProxyLog())
 		}
-		if v := os.Getenv(NowEnv); v != "" {
-			at, err := time.Parse(time.RFC3339, v)
-			if err != nil {
-				return nil, fmt.Errorf("parsing %s: %w", NowEnv, err)
-			}
-			deps.Now = func() time.Time { return at }
-		}
+	}
+	at, pinned, err := pinnedNow()
+	if err != nil {
+		return nil, err
+	}
+	if pinned {
+		deps.Now = func() time.Time { return at }
 	}
 	return lifecycle.Open(deps), nil
+}
+
+// pinnedNow is the instant NowEnv pins the clock to, and whether it
+// pins one. Only a build that is not a release reads it.
+func pinnedNow() (time.Time, bool, error) {
+	v := os.Getenv(NowEnv)
+	if _, release := buildVersion(); release || v == "" {
+		return time.Time{}, false, nil
+	}
+	at, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parsing %s: %w", NowEnv, err)
+	}
+	return at, true, nil
 }
 
 // io hands the machine this invocation's streams.
