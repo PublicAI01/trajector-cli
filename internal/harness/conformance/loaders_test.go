@@ -30,6 +30,10 @@ var loaders = []struct {
 		c, err := conformance.LoadBlocks(dir)
 		return len(c), err
 	}},
+	{"repo-assessments", func(dir string) (int, error) {
+		c, err := conformance.LoadRepoAssessments(dir)
+		return len(c), err
+	}},
 }
 
 func writeFile(t *testing.T, path, content string) {

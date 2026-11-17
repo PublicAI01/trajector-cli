@@ -239,7 +239,9 @@ commands:
   forget       delete one session's not-yet-uploaded records from this machine [<session-id>]
   upgrade      install the newest published release over this one
   repo assess  print counts read from a git repository's history and paths;
-               sends nothing [<path>] [--json]
+               sends nothing [<path>] [--json]; --submit --preview=<file>
+               sends them with each commit's message and paths, after you
+               read it all and confirm
   version      print the trajector version
   proxy run    run the local proxy (internal; started automatically)
   hook         session hook entry points (internal; injected by enable)

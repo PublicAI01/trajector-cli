@@ -32,8 +32,9 @@ var plainReadFiles = map[string]bool{
 	"internal/harness/repotest/repotest.go": true,
 	// The shared contract fixtures are read-only test data kept outside
 	// this repository; nothing here writes them.
-	"internal/harness/conformance/conformance.go": true,
-	"internal/harness/conformance/blocks.go":      true,
+	"internal/harness/conformance/conformance.go":     true,
+	"internal/harness/conformance/blocks.go":          true,
+	"internal/harness/conformance/repoassessments.go": true,
 }
 
 // Reads of a path that WriteFile replaces must come through ReadFile:

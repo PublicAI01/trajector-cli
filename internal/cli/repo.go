@@ -13,13 +13,20 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/repoassess"
 )
 
-const repoUsage = "usage: trajector repo assess [<path>] [--json]"
+const repoUsage = `usage: trajector repo assess [<path>] [--json]
+       trajector repo assess [<path>] --submit --preview=<file> [--ownership=<answer>]
+              [--ever-public=<answer>] [--in-production=<answer>] [--ai-share=<answer>] [--yes]`
 
-const jsonFlag = "--json"
+const (
+	jsonFlag   = "--json"
+	submitFlag = "--submit"
+	yesFlag    = "--yes"
+)
 
 // repoCmd hosts the commands about a git repository the user names.
-// None of them needs this device to be paired or any project enabled,
-// and none reads or writes trajector's own state.
+// None of them needs any project enabled. Only --submit reads this
+// device's state: its pairing, and the repository assessment terms the
+// user accepted, which it records.
 func (a *app) repoCmd(ctx context.Context, args []string) int {
 	if code, answered := a.preparse(repoUsage, args[:min(1, len(args))], nil); answered {
 		return code
@@ -32,15 +39,29 @@ func (a *app) repoCmd(ctx context.Context, args []string) int {
 }
 
 // assessCmd prints the readout of one repository: the one that contains
-// the path given, or the working directory.
+// the path given, or the working directory. With --submit it then sends
+// that repository's submission, once the user has seen all of it and
+// confirmed.
 func (a *app) assessCmd(ctx context.Context, args []string) int {
 	args, asJSON := takeAnywhere(args, jsonFlag)
+	args, submit := takeAnywhere(args, submitFlag)
+	args, yes := takeAnywhere(args, yesFlag)
+	args, values, err := takeValues(args, submitValueFlags()...)
+	if err != nil {
+		return a.misused(err)
+	}
 	if code, answered := a.preparse(repoUsage, args, nil); answered {
 		return code
 	}
-	if len(args) > 1 {
+	if len(args) > 1 || submit && asJSON || !submit && (yes || len(values) > 0) {
 		fmt.Fprintln(a.stderr, repoUsage)
 		return 2
+	}
+	var plan submitPlan
+	if submit {
+		if plan, err = newSubmitPlan(values, yes); err != nil {
+			return a.misused(err)
+		}
 	}
 	dir := "."
 	if len(args) == 1 {
@@ -66,7 +87,10 @@ func (a *app) assessCmd(ctx context.Context, args []string) int {
 		return 0
 	}
 	printReadout(a.stdout, r)
-	return 0
+	if !submit {
+		return 0
+	}
+	return a.submitAssessment(ctx, dir, r, plan)
 }
 
 // readoutRow is one line of the printed readout: the field's JSON name,

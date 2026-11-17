@@ -5,8 +5,10 @@
 // It reads commit metadata, the names of the paths each commit changed,
 // and the path names of one tree. It reads no file content, writes
 // nothing, and sends nothing anywhere. Author identities are used only
-// to count authors; no name or email address leaves this package, and
-// neither does any path.
+// to count and number authors; no name or email address leaves this
+// package. A Readout holds no path; a Submission, which the user asks
+// for one repository at a time, holds each commit's message and changed
+// paths, masked by Encode.
 //
 // What a path holds (test, implementation code, other) is decided from
 // the path alone, by the rules in rules.go; ruleVersion names them.
@@ -109,6 +111,8 @@ var (
 	errNoCommits = errors.New("the repository has no commit on HEAD yet")
 	// errNoGit reports a machine where the git command cannot be found.
 	errNoGit = errors.New("git is not installed or not on PATH; the readout is computed with git")
+	// errTreeless reports a partial clone made without trees.
+	errTreeless = errors.New("this is a treeless partial clone (cloned with --filter=tree:<depth>): the paths each commit changed are not on this machine, and this command never fetches them. Clone the repository again without --filter, or with --filter=blob:none, and run this command in that clone")
 )
 
 // commandTimeout bounds each git command. Reading the full history of a
@@ -134,6 +138,9 @@ func Assess(ctx context.Context, dir string, now time.Time) (Readout, error) {
 	}
 	if _, err := g.output(ctx, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
 		return Readout{}, errNoCommits
+	}
+	if err := g.refuseTreeless(ctx); err != nil {
+		return Readout{}, err
 	}
 	cutoff := now.Unix()
 	r := Readout{RuleVersion: ruleVersion, AsOf: time.Unix(cutoff, 0).UTC(), Shallow: strings.TrimSpace(state) == "true"}
@@ -336,34 +343,69 @@ func round(x float64, digits int) float64 {
 // gitRepo runs git in one directory.
 type gitRepo struct{ dir string }
 
-// readOnlySubcommands are the git subcommands this package runs. Each
-// one only reads, so no argv assembled here can change the repository.
-var readOnlySubcommands = []string{"rev-parse", "rev-list", "log", "ls-tree"}
+// readOnlyCommands are the git commands this package runs, each named
+// by the leading arguments that make it one. Each one only reads, so no
+// argv assembled here can change the repository. config is allowed only
+// in its listing form, which never writes.
+var readOnlyCommands = [][]string{
+	{"rev-parse"},
+	{"rev-list"},
+	{"log"},
+	{"ls-tree"},
+	{"config", "-z", "--get-regexp"},
+}
+
+func readOnly(args []string) bool {
+	return slices.ContainsFunc(readOnlyCommands, func(prefix []string) bool {
+		return len(args) >= len(prefix) && slices.Equal(args[:len(prefix)], prefix)
+	})
+}
 
 // gitConfig is set on every command. Paths print as their bytes, not
 // quoted; no rename detection pairs paths; signature checks, which run
-// another program and print into the log, are off; and no file system
-// monitor is started.
+// another program and print into the log, are off; no file system
+// monitor is started; and no transport is allowed, so a partial clone
+// cannot fetch an object it lacks (see gitEnv).
 var gitConfig = []string{
 	"-c", "core.quotepath=off",
 	"-c", "diff.renames=false",
 	"-c", "log.showSignature=false",
 	"-c", "core.fsmonitor=false",
+	"-c", "protocol.allow=never",
 }
 
-// redirectingEnv are the variables that make git read a repository
-// other than the one dir is in.
-var redirectingEnv = []string{"GIT_DIR=", "GIT_WORK_TREE=", "GIT_COMMON_DIR="}
+// redirectingEnv are the variables that make git read another
+// repository, other objects or other refs than those of the repository
+// dir is in: its location (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR,
+// GIT_INDEX_FILE), its objects (GIT_OBJECT_DIRECTORY,
+// GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_QUARANTINE_PATH), its refs and
+// history (GIT_NAMESPACE, GIT_REPLACE_REF_BASE, GIT_NO_REPLACE_OBJECTS,
+// GIT_GRAFT_FILE, GIT_SHALLOW_FILE). Each is removed from the
+// environment of every command, and so are the two noNetworkEnv sets.
+var redirectingEnv = []string{
+	"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+	"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH",
+	"GIT_NAMESPACE", "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_GRAFT_FILE", "GIT_SHALLOW_FILE",
+}
+
+// noNetworkEnv keeps git off the network whatever its version and its
+// configuration. GIT_NO_LAZY_FETCH stops a partial clone from fetching
+// an object it lacks, in a git that knows the variable. An empty
+// GIT_ALLOW_PROTOCOL allows no transport at all, and overrides any
+// protocol.<name>.allow a configuration file sets, which
+// protocol.allow=never alone does not.
+var noNetworkEnv = []string{"GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL="}
 
 func (g gitRepo) command(ctx context.Context, args ...string) (*exec.Cmd, error) {
-	if len(args) == 0 || !slices.Contains(readOnlySubcommands, args[0]) {
-		return nil, fmt.Errorf("repoassess: git %q is not one of the read-only subcommands", strings.Join(args, " "))
+	if !readOnly(args) {
+		return nil, fmt.Errorf("repoassess: git %q is not one of the read-only commands", strings.Join(args, " "))
 	}
 	argv := append(append([]string{"-C", g.dir}, gitConfig...), args...)
 	cmd := exec.CommandContext(ctx, "git", argv...)
-	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return slices.ContainsFunc(redirectingEnv, func(prefix string) bool { return strings.HasPrefix(kv, prefix) })
-	})
+	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(redirectingEnv, name) || slices.ContainsFunc(noNetworkEnv, func(set string) bool { return strings.HasPrefix(set, name+"=") })
+	}), noNetworkEnv...)
 	return cmd, nil
 }
 
@@ -379,6 +421,20 @@ func (g gitRepo) output(ctx context.Context, args ...string) (string, error) {
 		return "", g.failure(ctx, args[0], err)
 	}
 	return string(out), nil
+}
+
+// refuseTreeless reports errTreeless for a partial clone whose filter
+// leaves out trees: git can list no commit's changed paths without
+// fetching them, and fetching is never allowed here.
+func (g gitRepo) refuseTreeless(ctx context.Context) error {
+	filters, err := g.config(ctx, `^(remote\..*\.partialclonefilter|core\.partialclonefilter)$`)
+	if err != nil {
+		return err
+	}
+	if slices.ContainsFunc(filters, func(kv [2]string) bool { return strings.HasPrefix(strings.TrimSpace(kv[1]), "tree:") }) {
+		return errTreeless
+	}
+	return nil
 }
 
 // failure names a git command that did not finish. What git printed on

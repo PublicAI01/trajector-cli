@@ -1,6 +1,7 @@
 // Package consent records the user's data-contribution decisions: the
-// accepted agreement version and each project's granted or denied
-// state. The store is the durable audit record of intent and the gate
+// accepted agreement version, each project's granted or denied state,
+// and the accepted version of the separate terms a repository
+// assessment is sent under. The store is the durable audit record of intent and the gate
 // enable checks before granting. It is a record, not a source: the
 // credentials a grant runs on — the project's token and upstream —
 // live only in the routing table, so this store can attest to a
@@ -36,6 +37,9 @@ type storeFile struct {
 	// Prompted lists the projects that have already seen the one-time
 	// onboarding hint, by hash only.
 	Prompted []string `json:"prompted,omitempty"`
+	// RepoTerms is the acceptance of RepoTermsText, apart from the
+	// agreement's own.
+	RepoTerms agreementRecord `json:"repo_assessment_terms,omitzero"`
 }
 
 type agreementRecord struct {

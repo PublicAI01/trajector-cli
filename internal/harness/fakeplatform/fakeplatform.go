@@ -1,6 +1,8 @@
 // Package fakeplatform is a scripted stand-in for the trajector service
 // API. Upload and pairing seam tests stub endpoints per method and path
-// and assert against the recorded requests. An accepted upload is
+// and assert against the recorded requests; a repository assessment is
+// stubbed with StoresRepoAssessment or AnswersRepoAssessment and read
+// back with RepoAssessmentBody. An accepted upload is
 // answered by Acknowledges, from a Handshake in the client's own wire
 // struct, or by Echoes, from a body a shared fixture gives verbatim;
 // both echo the batch id the upload carried.
@@ -8,6 +10,7 @@ package fakeplatform
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -382,4 +385,49 @@ func UploadedRecords(r Request) ([]byte, error) {
 		return nil, fmt.Errorf("fakeplatform: decompressing the record stream: %w", err)
 	}
 	return stream, nil
+}
+
+// repoAssessmentsPath is the endpoint a repository assessment is sent
+// to.
+const repoAssessmentsPath = "/v1/repo-assessments"
+
+// StoresRepoAssessment answers every repository assessment with a 200
+// that names id, as the service does when it stores one.
+func (s *Server) StoresRepoAssessment(id string) {
+	s.Stub(http.MethodPost, repoAssessmentsPath, JSON(http.StatusOK, map[string]string{"id": id}))
+}
+
+// AnswersRepoAssessment answers every repository assessment with resp.
+func (s *Server) AnswersRepoAssessment(resp Response) {
+	s.Stub(http.MethodPost, repoAssessmentsPath, resp)
+}
+
+// RepoAssessments returns the repository assessments received so far.
+func (s *Server) RepoAssessments() []Request {
+	var got []Request
+	for _, r := range s.Requests() {
+		if r.Method == http.MethodPost && r.URL == repoAssessmentsPath {
+			got = append(got, r)
+		}
+	}
+	return got
+}
+
+// RepoAssessmentBody decompresses the body of one recorded repository
+// assessment, which is always sent gzip-compressed. A body sent any
+// other way is an error.
+func RepoAssessmentBody(r Request) ([]byte, error) {
+	if enc := r.Header.Get("Content-Encoding"); enc != "gzip" {
+		return nil, fmt.Errorf("fakeplatform: repository assessment Content-Encoding is %q, not gzip", enc)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(r.Body))
+	if err != nil {
+		return nil, fmt.Errorf("fakeplatform: opening the repository assessment: %w", err)
+	}
+	defer zr.Close()
+	body, err := io.ReadAll(zr)
+	if err != nil {
+		return nil, fmt.Errorf("fakeplatform: decompressing the repository assessment: %w", err)
+	}
+	return body, nil
 }

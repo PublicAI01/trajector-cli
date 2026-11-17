@@ -319,6 +319,25 @@ func TestRepoAssess_ReadsTheWholeRepositoryWhereverItIsPointed(t *testing.T) {
 			t.Chdir(filepath.Join(r.dir, "web"))
 			return nil
 		}},
+		{"a path, whatever GIT_ variables point elsewhere", func(t *testing.T) []string {
+			t.Helper()
+			other := newAssessRepo(t)
+			other.commit(change{files: []string{"lib/other.py"}, day: 5})
+			gitDir := filepath.Join(other.dir, ".git")
+			for name, value := range map[string]string{
+				"GIT_DIR":                          gitDir,
+				"GIT_WORK_TREE":                    other.dir,
+				"GIT_COMMON_DIR":                   gitDir,
+				"GIT_INDEX_FILE":                   filepath.Join(gitDir, "index"),
+				"GIT_OBJECT_DIRECTORY":             filepath.Join(gitDir, "objects"),
+				"GIT_ALTERNATE_OBJECT_DIRECTORIES": filepath.Join(gitDir, "objects"),
+				"GIT_NAMESPACE":                    "elsewhere",
+				"GIT_SHALLOW_FILE":                 filepath.Join(gitDir, "shallow"),
+			} {
+				t.Setenv(name, value)
+			}
+			return []string{r.dir}
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
