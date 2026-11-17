@@ -125,6 +125,26 @@ sends, and how to turn it off, is in
 [PRIVACY.md](PRIVACY.md#what-leaves-your-machine) under "What leaves your
 machine".
 
+### Assessing a repository
+
+```sh
+trajector repo assess [<path>] [--json]
+trajector repo assess [<path>] --submit --preview=<file>
+```
+
+`repo assess` prints counts read from one git repository's history and file
+paths: commits, authors, commits that change tests and implementation
+together, languages, CI, manifests and lockfiles. It needs no enabled
+project and sends nothing. `--submit` sends that repository's readout,
+each commit's message and changed paths (masked on your machine; message
+lines that name a person are left out), and your
+answers to four questions to the trajector service, after it writes all of
+it to the preview file, shows its own terms, and asks you to confirm. The
+answers can also be given as flags (`--ownership=`, `--ever-public=`,
+`--in-production=`, `--ai-share=`), and `--yes` skips the confirmation once
+you have agreed to the terms. What it reads and sends is listed field by
+field in [PRIVACY.md](PRIVACY.md#repository-assessment).
+
 ## Releases and verification
 
 Every release is built by GitHub Actions from this repository and ships with
@@ -171,6 +191,7 @@ deleting the binary alone leaves the settings injections behind.
 | `internal/selfupdate` | Finding, verifying, and installing a newer published release over this one |
 | `internal/notice` | The lines this device leaves for its user's next command, each shown once |
 | `internal/semver` | The one version comparison: which release is newer, and which proxy a newer one may replace |
+| `internal/repoassess` | The readout of one git repository the user names, and the submission `repo assess --submit` sends about it |
 | `internal/cli` | argv, exit codes, and what the user reads |
 | `internal/harness` | Test doubles and sandboxes: a fake upstream, a fake service, a real proxy in a temp directory |
 | `internal/installscript` | Where `install.sh` is run end to end against a local release source |

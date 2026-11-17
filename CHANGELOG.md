@@ -6,6 +6,30 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `trajector repo assess [<path>]` prints a readout of one git
+  repository: counts read from its history and its file paths, such as
+  how many commits change tests and implementation code together. It
+  runs only read-only `git` commands, reads no file content, needs no
+  enabled project, and sends nothing. `--json` prints the same readout
+  as JSON.
+- `trajector repo assess --submit --preview=<file>` sends that readout,
+  the repository's first and current commit ids, the kind of host of
+  each remote, each commit's message and changed paths with their line
+  counts, and the answers to four questions to the trajector service.
+  Message lines that name a person (`Co-authored-by:`, `Signed-off-by:`
+  and the like) are left out, and messages and paths are masked for
+  secrets, email addresses and phone numbers on this machine first;
+  any other text of a message is sent as written. Before anything
+  is sent it writes all of it to the preview file, shows the repository
+  assessment terms (separate from the data agreement), and asks you to
+  confirm. If you answer that someone else owns the repository, or that
+  you are not sure, it sends nothing. The author names and email
+  addresses of commits, remote URLs, file content and diffs are never
+  sent. A shallow clone is not submitted. See
+  [PRIVACY.md](PRIVACY.md#repository-assessment).
+
 ### Changed
 
 - trajector now needs macOS 13 Ventura or later. Release binaries are

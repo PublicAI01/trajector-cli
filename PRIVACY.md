@@ -335,6 +335,10 @@ proxy, at least once in each project and UTC day — and a later copy goes
 up as the SHA-256 digest of its base64 content. The service puts each copy
 back in the data it delivers.
 
+A repository assessment that you send with `trajector repo assess
+--submit` is not a record and is not part of a batch; what it sends is in
+[Repository assessment](#repository-assessment).
+
 Contributed data is sold to third-party buyers and contributors are
 compensated. That fact is public by design; buyer identity and commercial
 terms are confidential, the sale itself is not. Records captured through a
@@ -383,6 +387,116 @@ and trajector never modifies or deletes them — not on `disable`, not on
 Deletion cannot reach copies already delivered to buyers, which stay under
 the license you granted, or anything already published in an open dataset.
 It reaches everything else.
+
+## Repository assessment
+
+`trajector repo assess [<path>]` describes one git repository that you name.
+It is not part of recording: it needs no enabled project, it runs only when
+you run it, and it has its own terms, separate from the data agreement. The
+current version of those terms is 2026-11-16. `trajector repo assess
+--submit` shows them in full and asks you to agree before it sends anything
+the first time, and again whenever the version changes; trajector records
+on this device which version you agreed to, and when. Agreeing to them does
+not agree to the data agreement, and the data agreement does not cover
+them.
+
+### What it reads on your machine
+
+It runs `git` in the repository with read-only commands. It reads the
+commit history reachable from `HEAD`, merges left out: each commit's id,
+author time, author name and email address, `Co-authored-by` trailers,
+message, and the paths it changed. It reads the path names of one tree. It
+does not open any file in the repository, and no `git` command it runs
+writes to it. Author names and email addresses are used only to count the
+authors and to give each one a number; they are not printed and not sent.
+
+Without `--submit`, nothing else is read, nothing is written, and nothing
+is sent: the command prints the readout and ends. `--json` prints the same
+readout as JSON.
+
+With `--submit`, it also reads:
+
+- the commit `HEAD` names and the repository's first (root) commit;
+- the URL of each remote from the repository's git configuration, only to
+  name the kind of host it is on, and whether the repository is a partial
+  clone;
+- for each changed path, the number of lines added and deleted, which `git`
+  computes from the file content. trajector reads only the two numbers. A
+  partial clone lacks the file content, and `git` would fetch it over the
+  network, so for a partial clone no line counts are computed: they are
+  sent as `null`.
+
+Reading the repository never goes to the network: every `git` command runs
+with no transport allowed, so not even a partial clone can fetch what it
+lacks. A partial clone made without trees (`--filter=tree:<depth>`) lacks the
+paths each commit changed, so the command refuses it and says so. A shallow
+clone gets a readout, marked incomplete; `--submit` refuses it before asking
+anything, because its history and its first commit are not all there.
+
+### What `--submit` sends
+
+Before anything is sent, `--submit` asks four questions, writes everything
+it would send to the file you name with `--preview=<file>`, shows the terms
+until you agree to them, and asks you to confirm. The file holds the
+request body as it is sent, indented for reading; it is never written over
+an existing file, and trajector does not delete it. If you answer the first
+question with "someone else owns it" or "I am not sure", the command stops
+there and sends nothing. With every answer given as a flag and `--yes`, the
+command asks nothing, and it refuses to run until you have agreed to the
+current terms once.
+
+The submission is one HTTPS request to the trajector service, gzip-compressed
+and authenticated by your device pairing token. It is sent once: if it does
+not go through, the command says why, and nothing is kept on your machine to
+send it again. It holds these fields:
+
+| Field | What it holds |
+|---|---|
+| `format` | The version of this layout |
+| `consent_version` | The version of the terms you agreed to |
+| `repo` | `root_commit`: the id of the repository's first commit (of several, the earliest); `head_commit`: the id of the commit `HEAD` names; `remote_hosts`: for each remote only the kind of host, one of `github`, `gitlab`, `bitbucket` or `other`, never the URL. If any of this code is public, these ids can identify it |
+| `declaration` | Your four answers: `ownership`, `ever_public`, `in_production`, `ai_share` |
+| `readout` | The readout the command printed: `rule_version`, `as_of`, `shallow`, `commits`, `first_commit`, `span_years`, `active_months`, `authors`, `authors_ge3`, `top_author_share`, `commits_by_year` (for each `year`, its number of `commits`), `commits_last3y`, `test_commits`, `src_commits`, `cochange`, `cochange_src1_5`, `cochange_src2p`, `cochange_last3y`, `adjacent_pairs`, `cochange_or_adj`, `cochange_rate`, `ci_commits`, `agent_commit_share`, `files`, `src_files`, `test_files`, `test_code_files`, `test_file_share`, `main_lang`, `main_lang_share`, `n_langs_10pct`, `has_ci`, `has_manifest`, `has_lock`, `manifest_lock_paired`, `has_docker`. Counts, shares, yes-or-no values, dates and a language name |
+| `commits` | `total`: how many commits there are; `truncated`: whether `items` leaves the oldest out; `items`: the commits, newest first, at most 20,000 |
+| each of `items` | `id`: the commit id; `authored_at`: the author time; `author`: a number that stands for the author in this submission; `agent`: whether a coding agent made or co-authored the commit; `message`: the **commit message**, without the lines that name a person (`Co-authored-by:`, `Signed-off-by:` and every other `<word>-by:` line, and `Cc:` lines), at most 2,000 bytes; `message_truncated`: whether it was cut; `paths`: the **changed file paths**, at most 200; `path_count`: how many paths the commit changed; `paths_truncated`: whether some were left out |
+| each of `paths` | `path`: the path relative to the repository root, at most 1,024 bytes; `added` and `deleted`: the number of lines, or `null` |
+
+Commit messages and paths pass the same local redaction as every other
+upload before they are cut to size: secrets, email addresses and phone
+numbers are masked by their form. Any other name, path, URL or word that
+someone wrote in a commit message is sent as it was written: redaction
+cannot know which of them are confidential to you. The preview file shows
+what remains.
+
+What the service does with a submission: it uses it to assess the repository
+and to decide whether to contact you about buying or licensing it, at the
+email address of your trajector account. Trajector may also use submissions
+in aggregate, in a form that identifies no repository and no person, to
+check and adjust how it assesses repositories. It uses a submission for
+nothing beyond these two uses. A submission gives no one any right to your
+code, and commits neither you nor trajector to anything.
+
+### What it never sends
+
+- File content and diffs. The only thing taken from file content is the two
+  line counts per path.
+- The author name and email address of any commit: each author is a number.
+- Message lines that name a person, such as `Co-authored-by:` and
+  `Signed-off-by:`. A name written anywhere else in a message is sent as
+  written.
+- Remote URLs and host names, other than the kind of host named above.
+- The location of the repository on your machine: every changed path is
+  relative to the repository root, and a path that is not is left out. A
+  path written in a commit message is sent as written.
+- Anything at all without `--submit`, and anything before you confirm.
+
+### Deleting a submission
+
+Email support@publicai.io from the email address of your trajector account,
+with the submission id the command printed or the repository's first commit
+id; that submission is deleted. If you ask us to close your trajector
+account, we delete all of your submissions. The preview file is yours: delete it as you would any
+other file.
 
 ## Questions
 
