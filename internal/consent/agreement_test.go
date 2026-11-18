@@ -16,15 +16,15 @@ import (
 // agreementVersionFloor is the version the terms before these carried.
 // A version that does not pass it leaves every earlier acceptance
 // current, so nobody is asked to reconfirm and the pause never fires.
-const agreementVersionFloor = "2026-10-13"
+const agreementVersionFloor = "2026-10-14"
 
 // The version, the agreement text, and PRIVACY.md state the same terms.
 // The three hashes below pin them to each other: changing any one of the
 // three without the other two fails the test.
 const (
-	pinnedAgreementVersionSHA256 = "cd3af2c65bc838d00637730aa75aa2389d0873d6dc560ca2017ccd9da51f1bc4"
-	pinnedAgreementTextSHA256    = "8f7b2b66c89d582915e86ff7e1090da6bc78069f2c2c65019730295383b546cf"
-	pinnedPrivacyMarkdownSHA256  = "609adf2e85786987b7cb97081ea65ea29206477908dd8a218bd7f47259508a65"
+	pinnedAgreementVersionSHA256 = "43db3cb95c2941e29ec982f2ece5013251a48de9e99763392a364919f1f2145e"
+	pinnedAgreementTextSHA256    = "24e1ffaa78b7f7b7d876bec8ccf9a19a3600a35ba96259a6b129a440e422afa3"
+	pinnedPrivacyMarkdownSHA256  = "881f76ee0e6a2634398bb8f71ad473538e4e82f314456b2de2850ef0cc7036a9"
 )
 
 const privacyMarkdownPath = "../../PRIVACY.md"

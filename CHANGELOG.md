@@ -56,7 +56,7 @@ All notable changes to trajector are documented here. The format follows
   deletion request cannot reach: copies already delivered, which stay
   under the license you granted, and anything already published in an
   open dataset. Everything else is deleted. The agreement version moves
-  to 2026-11-05, so `enable` asks once more.
+  to 2026-11-18, so `enable` asks once more.
 
 ## [0.6.1] - 2026-11-05
 
