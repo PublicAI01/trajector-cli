@@ -1,8 +1,8 @@
 module github.com/PublicAI01/trajector-cli
 
-go 1.26.0
+go 1.27.0
 
-toolchain go1.26.11
+toolchain go1.27.4
 
 require (
 	github.com/betterleaks/betterleaks v1.9.0
@@ -61,3 +61,8 @@ require (
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 )
+
+// Go 1.27 stops using the macOS and Windows certificate stores when SSL_CERT_FILE
+// or SSL_CERT_DIR is set. Claude Code does not read those variables, so the proxy
+// would then trust fewer roots than the client it forwards for.
+godebug x509sslcertoverrideplatform=0
