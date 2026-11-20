@@ -252,8 +252,10 @@ func sweepOrphans(path string) {
 }
 
 // StaleTempName reports whether name is a WriteFile temp — created
-// beside its target and renamed over it — old enough that no live
-// writer can still own it. sweepOrphans covers the paths this package
+// beside its target and renamed over it — old enough to be taken for a
+// dead writer's. A live writer slower than that is not told apart: a
+// caller that removes on this judgment makes that writer's WriteFile
+// fail on the missing temp. sweepOrphans covers the paths this package
 // rewrites under a lock; this predicate is for callers that write many
 // unlocked, individually named files into one directory and so have no
 // single base name to sweep. They supply the rest of the judgment: a

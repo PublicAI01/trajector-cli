@@ -233,7 +233,7 @@ func (r *recorder) write(ctx context.Context) {
 		// the user was told had been deleted. Withdrawal has to hold at
 		// the moment of writing. Dropping is silent because it is the
 		// expected outcome, not a failure. 2026-08-21.
-		if _, verdict := r.s.cfg.Table.Lookup(r.token); !verdict.Records() {
+		if !r.consentStands() {
 			r.drop()
 			return
 		}
@@ -246,7 +246,22 @@ func (r *recorder) write(ctx context.Context) {
 			r.abandonf(abandonEnvelope, "%v", err)
 			return
 		}
-		if err := r.s.cfg.Spool.Write(env); err != nil {
+		err = r.s.cfg.Spool.Write(env)
+		if errors.Is(err, spool.ErrTempRemoved) {
+			// The write was slow enough for another process to take its
+			// temp file for a leftover. The capture is still whole in
+			// memory, so it is written once more. One of the processes
+			// that sweep is a disable deleting this project's records,
+			// so consent is read again first: writing back what a
+			// withdrawal just removed would ship it.
+			r.s.cfg.Logf("spooling rawcall: %v; writing it once more", err)
+			if !r.consentStands() {
+				r.drop()
+				return
+			}
+			err = r.s.cfg.Spool.Write(env)
+		}
+		if err != nil {
 			// A spool that no longer creates its directory refuses only
 			// after the user deleted it; dropping is what they asked for.
 			if errors.Is(err, spool.ErrDirGone) {
@@ -262,6 +277,13 @@ func (r *recorder) write(ctx context.Context) {
 		}
 		r.s.stats.recorded(env.Garbled())
 	})
+}
+
+// consentStands reports whether the token this exchange arrived under
+// still records.
+func (r *recorder) consentStands() bool {
+	_, verdict := r.s.cfg.Table.Lookup(r.token)
+	return verdict.Records()
 }
 
 // observation snapshots what was seen. The captured bytes are copied so

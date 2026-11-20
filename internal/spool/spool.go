@@ -60,6 +60,13 @@ var ErrQuotaExceeded = errors.New("spool: quota exceeded")
 // StopCreatingDir. Nothing was written.
 var ErrDirGone = errors.New("spool: the spool directory is gone")
 
+// ErrTempRemoved reports a rawcall write that lost its temp file before
+// the rename: another handle took the file for a dead writer's leftover
+// while this writer was slower than the stale bound allows. See
+// sweepStaleTempsLocked. Nothing was written, and the same write may be
+// made again.
+var ErrTempRemoved = errors.New("spool: the write's temp file was removed")
+
 // indexName is the per-day sidecar index file name.
 const indexName = "index.jsonl"
 
@@ -210,11 +217,16 @@ func Open(dir string, quota int64) (*Spool, error) {
 // records to explain them.
 //
 // Only aged temps are taken, so a live writer's transient — which
-// exists for milliseconds — is never in reach. And only names no reader
-// would open: storableRequestID permits dots, so an id may legitimately
-// contain ".tmp-", but such a record still ends in ".json". The filter
-// here is exactly the inverse of rawcallFiles', which is the point —
-// what readers cannot see is what nothing else will ever reclaim.
+// normally exists for milliseconds — is out of reach. Age is all another
+// process can judge by: where the system removes a file that is still
+// open, a writer whose flush outlasts the bound loses its temp to a
+// sweep in another process, and Write then reports ErrTempRemoved.
+//
+// And only names no reader would open are taken: storableRequestID
+// permits dots, so an id may legitimately contain ".tmp-", but such a
+// record still ends in ".json". The filter here is exactly the inverse
+// of rawcallFiles', which is the point — what readers cannot see is what
+// nothing else will ever reclaim.
 //
 // Record files are written the same way and stranded the same way, so
 // every slot is swept.
@@ -475,6 +487,11 @@ func (s *Spool) Write(env envelope.Envelope) error {
 		return err
 	}
 	if err := fsatomic.WriteFile(final, data, 0o600); err != nil {
+		// WriteFile names only the day directory and its own temp, so
+		// with the directory still there the missing name is the temp.
+		if _, statErr := os.Stat(dayDir); vanished(err) && statErr == nil {
+			return fmt.Errorf("%w: %w", ErrTempRemoved, err)
+		}
 		return err
 	}
 	s.usage += int64(len(data)) - replaced

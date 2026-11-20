@@ -4,6 +4,17 @@ All notable changes to trajector are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- A call is no longer left out of the recording because writing it to
+  disk took more than 10 seconds. Before, another trajector process
+  (each Claude Code hook starts one) could take the file still being
+  written for the leftover of a proxy that had crashed, and delete it;
+  the call was then not recorded. The proxy now writes the call again,
+  unless the project was disabled in the meantime.
+
 ## [0.7.0] - 2026-11-18
 
 ### Added
@@ -1151,6 +1162,7 @@ Hardened ahead of the tag:
 - State files are replaced and read atomically on every platform,
   Windows rename collisions included.
 
+[Unreleased]: https://github.com/PublicAI01/trajector-cli/compare/v0.7.0...HEAD
 [0.7.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/PublicAI01/trajector-cli/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/PublicAI01/trajector-cli/compare/v0.5.0...v0.6.0
