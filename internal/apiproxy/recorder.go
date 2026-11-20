@@ -175,16 +175,28 @@ func (r *recorder) absorb(buf *bytes.Buffer, complete *bool, p []byte, eof bool)
 // leave through a diagnostic surface. The full message goes to the
 // proxy's own log.
 const (
-	abandonQueueFull  = "capture queue full"
-	abandonPanic      = "recording panicked"
-	abandonOverLimit  = "capture limit exceeded"
-	abandonDeadline   = "capture deadline passed"
-	abandonEnvelope   = "envelope assembly failed"
-	abandonSpoolWrite = "spool write failed"
-	// abandonSpoolFull is kept apart from every other spool failure: it
-	// is the one a user can be told the cause of, and the one the
-	// durable account singles out.
+	abandonQueueFull = "capture queue full"
+	abandonPanic     = "recording panicked"
+	abandonOverLimit = "capture limit exceeded"
+	abandonDeadline  = "capture deadline passed"
+	abandonEnvelope  = "envelope assembly failed"
+	// abandonSpoolFull is the spool's own refusal: the quota is reached.
+	// The durable account singles it out, and a user can be told its
+	// cause.
 	abandonSpoolFull = "spool full"
+
+	// The spool tried to write and the operating system refused. Each
+	// kind of refusal has its own category, so a count says where to
+	// look; see spoolWriteReason. abandonSpoolWrite is what is left: an
+	// error none of the others names.
+	abandonDiskFull        = "disk full"
+	abandonTempRemoved     = "spool temp file removed"
+	abandonSpoolMissing    = "spool path missing"
+	abandonSpoolPermission = "spool permission denied"
+	abandonOpenFiles       = "too many open files"
+	abandonReadOnly        = "read-only file system"
+	abandonDiskIO          = "disk io error"
+	abandonSpoolWrite      = "spool write failed"
 )
 
 // drop abandons the capture silently, for outcomes that are expected
@@ -268,11 +280,7 @@ func (r *recorder) write(ctx context.Context) {
 				r.drop()
 				return
 			}
-			if errors.Is(err, spool.ErrQuotaExceeded) {
-				r.abandonf(abandonSpoolFull, "spooling rawcall: %v", err)
-				return
-			}
-			r.abandonf(abandonSpoolWrite, "spooling rawcall: %v", err)
+			r.abandonf(spoolWriteReason(err), "spooling rawcall: %v", err)
 			return
 		}
 		r.s.stats.recorded(env.Garbled())

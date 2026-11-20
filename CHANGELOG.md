@@ -6,6 +6,23 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The account of calls the proxy did not record
+  (`dropped-captures.json`, also in the diagnostic bundle and in the
+  counters each upload carries) names the cause of a failed write to the
+  spool. Before, every such failure except a full spool was counted as
+  "spool write failed". The causes now counted apart are: the disk was
+  full, the file being written was removed, the spool's path was
+  missing, permission was denied, too many files were open, the file
+  system was read-only, and the disk reported a read or write error.
+  Counts made by an earlier release stay under their old name.
+- `trajector status` and `trajector doctor` say how many calls were not
+  recorded because the disk that holds the spool had no space left,
+  since when, and when the last one was. A full disk is not a full
+  spool: the spool's own limit (2 GiB by default) may be far from
+  reached.
+
 ### Fixed
 
 - A call is no longer left out of the recording because writing it to

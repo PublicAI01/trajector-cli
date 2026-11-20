@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/platform"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -257,7 +258,7 @@ func doctorEarlierSessions(f *Findings, d Diagnosis) {
 }
 
 // doctorSpool verifies the capture spool accepts writes within quota,
-// and states what a full spool has refused so far.
+// and states the rawcalls a full spool or a full disk has cost so far.
 func doctorSpool(f *Findings, d Diagnosis) {
 	s := d.Spool
 	if s.OpenErr != nil {
@@ -462,18 +463,29 @@ func spoolFullProblem(d Diagnosis) line {
 	return one
 }
 
-// droppedSentences is what every surface says about the rawcalls a
-// full spool refused: since when, how many, and how recently. It says
-// nothing where none was refused, and says so where the account could
-// not be read, which must not present as none.
+// droppedSentences is what every surface says about the rawcalls that
+// were not recorded for a cause the user can act on — a full spool, a
+// full disk: since when, how many, and how recently. It says nothing
+// where none was refused, and says so where the account could not be
+// read, which must not present as none.
 func droppedSentences(d DroppedState) []string {
 	var out []string
 	if d.Err != nil {
 		out = append(out, fmt.Sprintf("The record of dropped captures could not be read: %v.", d.Err))
 	}
-	if r := d.SpoolFull(); r.Count > 0 {
-		out = append(out, fmt.Sprintf("Since %s, %d rawcall(s) (%s) were not recorded because the spool was full; the last at %s.",
-			r.FirstAt.UTC().Format(time.RFC3339), r.Count, platform.HumanBytes(r.Bytes), r.LastAt.UTC().Format(time.RFC3339)))
+	for _, refused := range []struct {
+		apiproxy.DroppedReason
+		because string
+	}{
+		{d.SpoolFull(), "the spool was full"},
+		{d.DiskFull(), "the disk that holds the spool had no space left"},
+	} {
+		if refused.Count == 0 {
+			continue
+		}
+		out = append(out, fmt.Sprintf("Since %s, %d rawcall(s) (%s) were not recorded because %s; the last at %s.",
+			refused.FirstAt.UTC().Format(time.RFC3339), refused.Count, platform.HumanBytes(refused.Bytes),
+			refused.because, refused.LastAt.UTC().Format(time.RFC3339)))
 	}
 	return out
 }

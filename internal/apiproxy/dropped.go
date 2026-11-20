@@ -41,6 +41,11 @@ type DroppedReason struct {
 // late.
 func (r DroppedRecord) SpoolFull() DroppedReason { return r.Reasons[abandonSpoolFull] }
 
+// DiskFull is the account of the rawcalls the spool could not write
+// because the disk under it, or the user's allowance on it, had no
+// space left, with the spool's own quota not reached.
+func (r DroppedRecord) DiskFull() DroppedReason { return r.Reasons[abandonDiskFull] }
+
 // Dropped keeps the DroppedRecord of one device current on disk. It
 // counts in memory and leaves the disk to one writer of its own: a
 // capture can be given up on a request goroutine, and while the spool
