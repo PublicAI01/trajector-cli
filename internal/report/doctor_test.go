@@ -265,6 +265,25 @@ func TestStatusAndDoctorCountWhatAFullSpoolRefused(t *testing.T) {
 	}
 }
 
+func TestStatusAndDoctorCountWhatAFullDiskRefused(t *testing.T) {
+	d := device()
+	d.Dropped = report.DroppedState{Reasons: map[string]apiproxy.DroppedReason{
+		"disk full": {
+			Count:   46,
+			Bytes:   50 << 20,
+			FirstAt: time.Date(2026, 11, 19, 6, 39, 0, 0, time.UTC),
+			LastAt:  time.Date(2026, 11, 19, 6, 51, 0, 0, time.UTC),
+		},
+	}}
+
+	_, doctorOut := doctorText(d)
+	for surface, out := range map[string]string{"status": dashboard(d), "doctor": doctorOut} {
+		wants(t, surface, out,
+			"Since 2026-11-19T06:39:00Z, 46 rawcall(s) (50.0 MiB) were not recorded because the disk that holds the spool had no space left; the last at 2026-11-19T06:51:00Z.")
+		rejects(t, surface, out, "because the spool was full")
+	}
+}
+
 func TestStatusAndDoctorNameNoForcedUploadWhereUploadsAlreadyRun(t *testing.T) {
 	d := device()
 	d.Spool = full()

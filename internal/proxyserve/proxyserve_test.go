@@ -618,14 +618,16 @@ func TestServeTellsTheDeviceStateInEachBatchAndNoPathWithIt(t *testing.T) {
 	}
 }
 
-// stringsIn lists every string value a decoded JSON document holds.
+// stringsIn lists every string a decoded JSON document holds, object
+// keys included.
 func stringsIn(v any) []string {
 	switch v := v.(type) {
 	case string:
 		return []string{v}
 	case map[string]any:
 		var out []string
-		for _, inner := range v {
+		for key, inner := range v {
+			out = append(out, key)
 			out = append(out, stringsIn(inner)...)
 		}
 		return out
