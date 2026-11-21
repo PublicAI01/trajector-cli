@@ -39,11 +39,13 @@ func (m *Machine) disableProject(projectDir string, streams IO) (withdrawal, err
 	// the steps below stop traffic before they delete records, so a
 	// disable interrupted in between — Ctrl-C, an unremovable file, a
 	// lock that timed out — leaves exactly this state with the project's
-	// rawcalls still spooled. The uploader does not consult consent, so
-	// the next flush would ship data already withdrawn, and until
-	// 2026-08-14 this returned early past the purge, which made rerunning
-	// a no-op. Only the consent-changing steps are skipped now; the purge
-	// runs either way and stays silent when there is nothing to delete.
+	// rawcalls still spooled. The uploader holds back only what the
+	// consent store calls withdrawn, and an interrupted disable may not
+	// have written that yet, so the next flush could ship data already
+	// withdrawn, and until 2026-08-14 this returned early past the
+	// purge, which made rerunning a no-op. Only the consent-changing
+	// steps are skipped now; the purge runs either way and stays silent
+	// when there is nothing to delete.
 	if !st.Injected && !st.Enabled {
 		// A recorded setting write can outlive the rest of a withdrawal the
 		// same way spooled rawcalls can — an earlier disable that failed to

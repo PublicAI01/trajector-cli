@@ -240,9 +240,11 @@ func (r *recorder) write(ctx context.Context) {
 		// decided when its request begins and written when its response
 		// body closes, minutes later. A disable in between revokes the
 		// token and deletes the project's spooled records — and a capture
-		// landing after that deletion is never looked at again, because
-		// the uploader does not consult consent, so it would ship data
-		// the user was told had been deleted. Withdrawal has to hold at
+		// landing after that deletion stays on disk, where the user was
+		// told it had been deleted. The uploader deletes it unsent when
+		// it meets it, but only if the consent store then reads as
+		// withdrawn: a project enabled again before then, or a store
+		// that cannot be read, has it sent. Withdrawal has to hold at
 		// the moment of writing. Dropping is silent because it is the
 		// expected outcome, not a failure. 2026-08-21.
 		if !r.consentStands() {
@@ -264,8 +266,8 @@ func (r *recorder) write(ctx context.Context) {
 			// temp file for a leftover. The capture is still whole in
 			// memory, so it is written once more. One of the processes
 			// that sweep is a disable deleting this project's records,
-			// so consent is read again first: writing back what a
-			// withdrawal just removed would ship it.
+			// so consent is read again first, to keep what a withdrawal
+			// just removed off the disk.
 			r.s.cfg.Logf("spooling rawcall: %v; writing it once more", err)
 			if !r.consentStands() {
 				r.drop()

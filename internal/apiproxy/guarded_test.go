@@ -39,10 +39,10 @@ func withdrawnTable(upstream string) string {
 // and acted on when the exchange ends, and for a streamed message those
 // are minutes apart. `trajector disable` in between revokes the token
 // and deletes the project's spooled records — but a capture that lands
-// after that deletion is never looked at again, because the uploader
-// does not consult consent, so it uploads data the user was told had
-// been deleted. Until 2026-08-21 the verdict was only ever read at the
-// start.
+// after that deletion stays on disk, where the user was told it had
+// been deleted, and is sent if the project is enabled again before the
+// uploader meets it. Until 2026-08-21 the verdict was only ever read at
+// the start.
 //
 // The second exchange is the barrier: captures are written by one
 // goroutine in the order they were queued, so once tok-other's record

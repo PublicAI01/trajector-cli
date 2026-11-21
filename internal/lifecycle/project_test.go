@@ -390,8 +390,10 @@ func rejectedRecordFor(t *testing.T, projectIDHash string) []byte {
 // interrupted after the grant is revoked can be finished by rerunning
 // it. Traffic is stopped before records are deleted, so a failure in
 // between leaves a project that looks untouched to the early "nothing to
-// do" check while its rawcalls are still on disk — and the uploader does
-// not consult consent, so they would ship on the next flush.
+// do" check while its rawcalls are still on disk — and the uploader
+// holds back only what the consent store calls withdrawn, which such a
+// disable may not have written yet, so they could ship on the next
+// flush.
 func TestDisableRerunFinishesAnInterruptedWithdrawal(t *testing.T) {
 	e := newEnv(t)
 	e.startProxy()
