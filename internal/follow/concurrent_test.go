@@ -18,7 +18,8 @@ import (
 
 func TestMain(m *testing.M) {
 	os.Exit(procbin.Main(m, map[string]func(args []string) int{
-		"hold": holdWhileReading,
+		"hold":            holdWhileReading,
+		"die-once-stored": dieOnceStored,
 	}))
 }
 
