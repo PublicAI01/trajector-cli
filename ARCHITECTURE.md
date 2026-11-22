@@ -101,9 +101,12 @@ looked at until a hook names it again, with one exception: a proxy
 that starts reads the agent files of workflow runs that still hold
 unread lines. The registry marks those files so that an earlier
 version never reads them, and a session may end while such a version
-is the one running. Each read starts from where the last left off, so
-a run killed before it advances a cursor simply reads the same bytes
-again, and the spool absorbs the repeat by record id. A
+is the one running. Each read starts from where the last left off, and
+notes where the segment it read ends before it stores the segment. A
+run that is killed, or fails, before it advances the cursor is followed
+by one that reads that same segment again, to the noted end and no
+further, so the spool absorbs the repeat by record id; what the file
+gained in the meantime goes into the next segment. A
 file whose session moves to a directory consent does not cover stays
 registered: what the session writes while it is outside is passed over
 and never stored, in its main file and in its agent files alike, and a

@@ -403,6 +403,7 @@ func (r *Registry) Unregister(projectIDHash string) error {
 	if err := checkProjectIDHash(projectIDHash); err != nil {
 		return err
 	}
+	r.dropBounds(projectIDHash)
 	err := os.Remove(r.path(projectIDHash))
 	if os.IsNotExist(err) {
 		return nil
@@ -422,6 +423,7 @@ func (r *Registry) Remove(projectIDHash, path string) error {
 	if _, err := os.Stat(r.dir); os.IsNotExist(err) {
 		return nil
 	}
+	r.dropBound(projectIDHash, path)
 	return fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
 		reg, err := parse(old)
 		if err != nil {

@@ -4,6 +4,19 @@ All notable changes to trajector are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Lines of a session file are no longer left out of the recording when
+  trajector could not save how far it had read the file. Before, a read
+  whose position could not be saved (the write failed, or the process
+  was stopped first) was repeated later from the same position. If the
+  file had grown by then, the repeat held more lines than the first
+  read, the spool kept the first, and the position moved past the lines
+  only the repeat held. Now the repeat reads exactly what the first
+  read did, and the lines the file gained since are read after it.
+
 ## [0.7.1] - 2026-11-21
 
 ### Changed

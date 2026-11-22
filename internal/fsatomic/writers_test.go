@@ -18,6 +18,11 @@ var plainWriteFiles = map[string]bool{
 	// and its own on the way out. A reader that finds one gone reads it
 	// as no proxy to talk to.
 	"internal/apiproxy/apiproxy.go": true,
+	// A segment bound is written through fsatomic and withdrawn by an
+	// unlink once the cursor is written past the segment: its absence
+	// is the state "no segment was handed over past the cursor", which
+	// its reader already reads.
+	"internal/follow/bound.go": true,
 	// Unregistering drops the whole registry file a project owns; a
 	// project with no registry file is an unregistered project.
 	"internal/follow/follow.go": true,

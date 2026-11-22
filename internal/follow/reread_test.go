@@ -160,6 +160,48 @@ func TestReader_LinesReadAgainAfterTheCursorCouldNotBeWrittenAreStored(t *testin
 	}
 }
 
+func TestReader_AFileRewrittenAfterTheCursorCouldNotBeWrittenIsStoredUnderTheNextIndex(t *testing.T) {
+	registryDir := filepath.Join(t.TempDir(), "follow")
+	registry := follow.Open(registryDir)
+	path := mainPath(t)
+	lines := sixLines()
+	writeFile(t, path, strings.Join(lines[:3], ""))
+	mustRegister(t, registry, project, path)
+	kept := keptOnDisk{dir: t.TempDir()}
+
+	readWithTheCursorUnwritable(t, registry, registryDir, path, kept)
+	replaceFile(t, path, strings.Join(lines[3:], ""))
+	readerWith(registry, kept.store).Advance(path)
+
+	if got := kept.lines(t); !slices.Equal(got, lines) {
+		t.Errorf("stored lines = %q\nwant the lines stored before the rewrite, then the rewritten file: %q", got, lines)
+	}
+	if f := registeredEntry(t, registry, path); f.NextSegment != 2 {
+		t.Errorf("cursor = %+v, want the rewritten file stored under index 1, after the segment the store held", f)
+	}
+}
+
+func TestRegistry_UnregisterLeavesNothingOfAReadWhoseCursorCouldNotBeWritten(t *testing.T) {
+	registryDir := filepath.Join(t.TempDir(), "follow")
+	registry := follow.Open(registryDir)
+	path := mainPath(t)
+	writeFile(t, path, userLine(1))
+	mustRegister(t, registry, project, path)
+	readWithTheCursorUnwritable(t, registry, registryDir, path, keptOnDisk{dir: t.TempDir()})
+
+	if err := registry.Unregister(project); err != nil {
+		t.Fatal(err)
+	}
+
+	left, err := os.ReadDir(registryDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range left {
+		t.Errorf("%s is still in the registry directory, want nothing of an unregistered project", e.Name())
+	}
+}
+
 func TestReader_LinesReadAgainAfterAReaderDiedBeforeWritingTheCursorAreStored(t *testing.T) {
 	registryDir := filepath.Join(t.TempDir(), "follow")
 	registry := follow.Open(registryDir)

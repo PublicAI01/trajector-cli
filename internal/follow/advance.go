@@ -62,9 +62,13 @@ type Reader struct {
 // Each round runs under the entry's lock, and the cursor it starts
 // from is the one the registry holds once the lock is taken, never one
 // the caller or an earlier round read before. Two reads from one
-// cursor make two records with one id and different lines; the store
-// keeps the first, and the cursor the second one writes can pass lines
-// that only the discarded one held. An entry another reader holds is
+// cursor make two records with one id; the store keeps the first, and
+// were the second one longer, the cursor it writes would pass lines
+// that only the discarded one held. So a round that reads a segment
+// leaves the segment's bound before it asks the store, and a round
+// that finds a bound left for its cursor — the cursor write failed, or
+// the reader died before it — reads the same segment again and
+// nothing past it. An entry another reader holds is
 // left to it: its cursor stays where that reader puts it. A holder
 // that a reader in this process gave up on reads one round more once
 // it lets go, so lines written before that reader left are read by the
@@ -138,13 +142,37 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 	if err != nil {
 		return true, false
 	}
-	res, err := readObserved(f, st, capture, rd.Options, outside)
+	left, stands := rd.Registry.bound(rd.ProjectIDHash, f)
+	again := stands && left.holds(st)
+	var res ReadResult
+	switch {
+	case again:
+		res, err = left.readAgain(f, st, capture, rd.Options)
+	case stands:
+		// The store may hold a segment under the index the bound
+		// names, read from bytes the file no longer holds. This read
+		// is not that segment, so it takes the index after it.
+		from := f
+		from.NextSegment = left.Segment + 1
+		res, err = readObserved(from, st, capture, rd.Options, outside)
+	default:
+		res, err = readObserved(f, st, capture, rd.Options, outside)
+	}
 	if err != nil {
 		// A file that could not be read this time — a metadata file
 		// caught mid-write, say — keeps its cursor and is read again
 		// in the next run. The project's other files still make
 		// progress.
 		return true, false
+	}
+	bound, bounded := boundOf(f, st, res)
+	if bounded && (!stands || bound != left) {
+		if err := rd.Registry.keepBound(rd.ProjectIDHash, f.Path, bound); err != nil {
+			// A segment whose bound is not on disk is not handed to
+			// the store: nothing would tell the next read where it
+			// ended.
+			return true, false
+		}
 	}
 	switch rd.Store(res) {
 	case Held:
@@ -165,7 +193,12 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 	if err := rd.Registry.Update(rd.ProjectIDHash, f, res.File); err != nil {
 		return true, false
 	}
-	return true, res.More
+	if stands || bounded {
+		rd.Registry.dropBound(rd.ProjectIDHash, f.Path)
+	}
+	// A segment read again ends where it ended before, and what the
+	// file gained since waits past it.
+	return true, res.More || (again && st.Size > left.End)
 }
 
 // sessionOutside reports whether the session the agent file at path
