@@ -5,10 +5,10 @@ go 1.27.0
 toolchain go1.27.4
 
 require (
-	github.com/betterleaks/betterleaks v1.9.0
-	github.com/klauspost/compress v1.20.3
+	github.com/betterleaks/betterleaks v1.10.1
+	github.com/klauspost/compress v1.20.4
 	github.com/zalando/go-keyring v0.2.8
-	golang.org/x/text v0.43.0
+	golang.org/x/text v0.44.0
 )
 
 require (
@@ -58,7 +58,7 @@ require (
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa // indirect
-	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 )
 
