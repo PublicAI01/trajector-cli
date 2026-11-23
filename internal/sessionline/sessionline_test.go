@@ -53,7 +53,7 @@ func TestTextIsTheLineAsItWas(t *testing.T) {
 func TestFieldsReadsWhatTheFormatStates(t *testing.T) {
 	t.Parallel()
 	const line = `{"type":"assistant","subtype":"api_error","entrypoint":"cli",` +
-		`"relocatedCwd":"/srv/work/project-beta","isSidechain":true,"apiBlockIndex":3,` +
+		`"cwd":"/srv/work/project-alpha","relocatedCwd":"/srv/work/project-beta","isSidechain":true,"apiBlockIndex":3,` +
 		`"agentId":"a1","toolUseId":"toolu_1","parentAgentId":"a0","parentSessionId":"sid-0",` +
 		`"attachment":{"type":"environment"},"message":{"id":"msg_1","role":"assistant"}}`
 	parsed, ok := sessionline.Parse([]byte(line))
@@ -67,6 +67,7 @@ func TestFieldsReadsWhatTheFormatStates(t *testing.T) {
 		Type:            "assistant",
 		Subtype:         "api_error",
 		LaunchSurface:   "cli",
+		Cwd:             "/srv/work/project-alpha",
 		RelocatedCwd:    "/srv/work/project-beta",
 		MessageID:       "msg_1",
 		AttachmentType:  "environment",

@@ -60,6 +60,8 @@ type Fields struct {
 	Subtype string
 	// LaunchSurface is how Claude Code was started.
 	LaunchSurface string
+	// Cwd is the working directory the line was written in.
+	Cwd string
 	// RelocatedCwd is the directory a session moved to.
 	RelocatedCwd string
 	// MessageID names the API message the line belongs to.
@@ -110,6 +112,7 @@ func (l Line) Fields() Fields {
 		Type            string      `json:"type"`
 		Subtype         string      `json:"subtype"`
 		LaunchSurface   string      `json:"entrypoint"`
+		Cwd             string      `json:"cwd"`
 		RelocatedCwd    string      `json:"relocatedCwd"`
 		AgentID         string      `json:"agentId"`
 		ToolUseID       string      `json:"toolUseId"`
@@ -135,6 +138,7 @@ func (l Line) Fields() Fields {
 		Type:            doc.Type,
 		Subtype:         doc.Subtype,
 		LaunchSurface:   doc.LaunchSurface,
+		Cwd:             doc.Cwd,
 		RelocatedCwd:    doc.RelocatedCwd,
 		MessageID:       doc.Message.ID,
 		AttachmentType:  doc.Attachment.Type,
