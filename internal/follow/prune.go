@@ -10,15 +10,18 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 )
 
-// gone reports whether the file at path is gone for good: the
-// directory that held it is still there, and the file is not. It is
-// the one judgment of that, for every caller that drops an entry for
-// it. A directory that is gone as well says nothing about the file: a
+// gone reports whether the file at path is gone for good: the file is
+// not there, and the directory that holds its session's main file is.
+// It is the one judgment of that, for every caller that drops an entry
+// for it. For a main file that directory is the one that held it; an
+// agent file lies further down, in the session's own directory, which
+// goes with the session when the session is removed. A directory of
+// main files that is gone as well says nothing about the file: a
 // volume that is not mounted, or a configuration directory moved
-// away, takes the directory with it, and the file may come back with
+// away, takes that directory with it, and the file may come back with
 // it. A file or a directory that cannot be looked at is still there.
 func gone(path string) bool {
-	info, err := os.Stat(filepath.Dir(path))
+	info, err := os.Stat(filepath.Dir(SessionOf(path)))
 	if err != nil || !info.IsDir() {
 		return false
 	}
