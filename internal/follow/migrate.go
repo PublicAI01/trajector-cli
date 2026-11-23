@@ -117,6 +117,8 @@ func parseEarlier(data []byte) (earlierRegistry, error) {
 // halfway, and does nothing to a project already in this layout or
 // with no registry. It is how every reader but a session hook gets a
 // project it can read: a hook never migrates and never waits for one.
+// An entry whose session is cold and whose file is gone is not
+// carried over: nothing would read it again.
 //
 // One process migrates a project at a time. A project another process
 // is migrating is refused with ErrMigrationPending, for the caller to
@@ -388,17 +390,36 @@ func (r *Registry) finish(projectIDHash string) error {
 	return nil
 }
 
-// carryOver is step 5: it makes an entry for every element of reg, the
-// heat of every session a hook named, and the told mark of every
-// session that was told, and replaces none of them that stands
-// already, but for an entry that does not parse. Nothing reads the
-// project while it is halfway, so what stands was made by an earlier
-// try of this step. The files are not flushed one by one; step 6
-// flushes them all.
+// carryOver is step 5: it makes an entry for every element of reg but
+// the cold ones whose file is gone, the heat of every session a hook
+// named, and the told mark of every session that was told, and
+// replaces none of them that stands already, but for an entry that
+// does not parse. A session none of whose entries is made gets neither
+// heat nor a told mark. Nothing reads the project while it is halfway,
+// so what stands was made by an earlier try of this step. The files are
+// not flushed one by one; step 6 flushes them all.
 func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
 	latest := map[string]earlierEntry{}
+	told := map[string]bool{}
 	for _, old := range reg.Files {
+		session := SessionOf(old.Path)
+		if old.later(latest[session]) {
+			latest[session] = old
+		}
+		if old.Told && old.MainSession() {
+			told[session] = true
+		}
+	}
+	now := time.Now()
+	carried := map[string]string{}
+	for _, old := range reg.Files {
+		session := SessionOf(old.Path)
 		e := old.carried()
+		warm := e.File
+		warm.LastEvent, warm.PID = latest[session].LastEvent, latest[session].PID
+		if e.readable() && warm.prunable(now, ProcessAlive) {
+			continue
+		}
 		if b, ok := r.earlierBound(projectIDHash, old.Path); ok {
 			e.Bound = &b
 		}
@@ -409,21 +430,23 @@ func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
 		if err := carryEntry(r.entryPath(projectIDHash, old.Path), data); err != nil {
 			return err
 		}
-		if old.later(latest[SessionOf(old.Path)]) {
-			latest[SessionOf(old.Path)] = old
-		}
-		if old.Told && old.MainSession() {
-			if _, err := r.tell(projectIDHash, old.Path); err != nil {
+		carried[session] = old.Path
+	}
+	for session, path := range carried {
+		if told[session] {
+			if _, err := r.tell(projectIDHash, path); err != nil {
 				return err
 			}
 		}
-	}
-	for _, old := range latest {
-		data, err := encode(heat{LastEvent: old.LastEvent, PID: old.PID})
+		h, ok := latest[session]
+		if !ok {
+			continue
+		}
+		data, err := encode(heat{LastEvent: h.LastEvent, PID: h.PID})
 		if err != nil {
 			return err
 		}
-		if err := placeNew(r.sessionPath(projectIDHash, old.Path, heatExt), data, false); err != nil {
+		if err := placeNew(r.sessionPath(projectIDHash, path, heatExt), data, false); err != nil {
 			return err
 		}
 	}
