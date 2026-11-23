@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -253,5 +254,49 @@ func TestPrune_LeavesARegistryNotMigratedYetAndOneThatIsNotThere(t *testing.T) {
 	}
 	if removed, err := r.Prune("ffff0000", time.Now(), noProcess); err != nil || removed != 0 {
 		t.Errorf("Prune() of a project with no registry = %d, %v, want nothing removed", removed, err)
+	}
+}
+
+// sessionsWithAgentFiles registers, in r, two sessions with an agent
+// file and an agent file of a workflow run each: one whose session
+// directory was removed with the session from a directory still there,
+// and one in a directory that is not there. It returns the paths of
+// the second session.
+func sessionsWithAgentFiles(t *testing.T) (removed, unmounted []string) {
+	t.Helper()
+	sessions := t.TempDir()
+	of := func(main string) []string {
+		return []string{
+			main,
+			agentOf(main, "agent-a.jsonl"),
+			filepath.Join(strings.TrimSuffix(main, ".jsonl"), "subagents", "workflows", "wf_1", "agent-w.jsonl"),
+		}
+	}
+	removed = of(filepath.Join(sessions, "removed.jsonl"))
+	for _, path := range removed {
+		writeFile(t, path, userLine(1))
+	}
+	if err := os.RemoveAll(strings.TrimSuffix(removed[0], ".jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(removed[0]); err != nil {
+		t.Fatal(err)
+	}
+	unmounted = of(filepath.Join(sessions, "unmounted", "u.jsonl"))
+	slices.Sort(unmounted)
+	return removed, unmounted
+}
+
+func TestPrune_RemovesTheAgentEntriesOfASessionRemovedWithItsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	removed, unmounted := sessionsWithAgentFiles(t)
+	mustRegister(t, r, project, slices.Concat(removed, unmounted)...)
+
+	if n := prune(t, r); n != len(removed) {
+		t.Errorf("Prune() removed %d entries, want the %d of the session removed", n, len(removed))
+	}
+	if paths, err := r.Paths(project); err != nil || !slices.Equal(paths, unmounted) {
+		t.Errorf("Paths() = %q, %v\nwant the entries of the session whose main file's directory is not there: %q", paths, err, unmounted)
 	}
 }

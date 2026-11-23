@@ -751,3 +751,27 @@ func removeAll(t *testing.T, paths []string) {
 		}
 	}
 }
+
+func TestMigrate_LeavesBehindTheAgentEntriesOfASessionRemovedWithItsDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "follow")
+	removed, unmounted := sessionsWithAgentFiles(t)
+	var reg registryv1.Registry
+	for _, path := range slices.Concat(removed, unmounted) {
+		reg.Files = append(reg.Files, registryv1.Entry{Path: path, Offset: 1, NextSegment: 1})
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := registryv1.Write(dir, project, reg); err != nil {
+		t.Fatal(err)
+	}
+	r := follow.Open(dir)
+
+	if err := r.Migrate(project); err != nil {
+		t.Fatalf("Migrate() = %v", err)
+	}
+
+	if paths, err := r.Paths(project); err != nil || !slices.Equal(paths, unmounted) {
+		t.Errorf("Paths() = %q, %v\nwant the entries of the session whose main file's directory is not there: %q", paths, err, unmounted)
+	}
+}
