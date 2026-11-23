@@ -632,3 +632,113 @@ func TestMigrate_LeavesAProjectInThisLayoutAsItIs(t *testing.T) {
 		t.Errorf("Migrate() changed a registry in this layout:\n%s", diff)
 	}
 }
+
+func TestMigrate_LeavesBehindTheColdEntriesWhoseFileIsGone(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "follow")
+	sessions := t.TempDir()
+	at := func(name string) string { return filepath.Join(sessions, name) }
+	kept, keptAgent := at("kept.jsonl"), agentOf(at("kept.jsonl"), "agent-k.jsonl")
+	gone := at("gone.jsonl")
+	mainGone, agentKept := at("main-gone.jsonl"), agentOf(at("main-gone.jsonl"), "agent-m.jsonl")
+	unmounted := filepath.Join(sessions, "unmounted", "u.jsonl")
+	hot := at("hot.jsonl")
+	later := at("later.jsonl")
+	for _, path := range []string{kept, keptAgent, agentKept} {
+		writeFile(t, path, userLine(1))
+	}
+	const cold = "2026-11-01T09:00:00Z"
+	recent := time.Now().UTC().Format(time.RFC3339)
+	signals := drift.Signals{AssistantLines: 4}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := registryv1.Write(dir, project, registryv1.Registry{
+		Files: []registryv1.Entry{
+			{Path: kept, Offset: 1, NextSegment: 1, LastEvent: cold, Told: true},
+			{Path: keptAgent, Offset: 2, NextSegment: 1},
+			{Path: gone, Offset: 3, NextSegment: 1, LastEvent: cold, Told: true},
+			{Path: mainGone, Offset: 4, NextSegment: 1, LastEvent: cold, Told: true},
+			{Path: agentKept, Offset: 5, NextSegment: 1},
+			{Path: unmounted, Offset: 6, NextSegment: 1},
+			{Path: hot, Offset: 7, NextSegment: 1, LastEvent: recent},
+			{Path: later, Offset: 8, NextSegment: 1, Retired: "kept-for-later"},
+		},
+		Signals: signals,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := follow.Open(dir)
+
+	if err := r.Migrate(project); err != nil {
+		t.Fatalf("Migrate() = %v", err)
+	}
+
+	want := slices.Sorted(slices.Values([]string{kept, keptAgent, agentKept, unmounted, hot, later}))
+	if paths, err := r.Paths(project); err != nil || !slices.Equal(paths, want) {
+		t.Errorf("Paths() = %q, %v\nwant %q: every entry but the cold ones whose file is gone from a directory still there", paths, err, want)
+	}
+	for _, mark := range []string{".heat", ".told"} {
+		if _, err := os.Stat(sessionFileOf(dir, gone, mark)); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s of a session with no entry carried: stat = %v, want none", mark, err)
+		}
+		if _, err := os.Stat(sessionFileOf(dir, mainGone, mark)); err != nil {
+			t.Errorf("%s of a session whose agent file is carried: stat = %v, want it there", mark, err)
+		}
+	}
+	if got, err := r.Signals(project); err != nil || got.AssistantLines != signals.AssistantLines {
+		t.Errorf("Signals() = %+v, %v, want the project's %+v", got, err, signals)
+	}
+}
+
+func TestMigrate_KeepsEveryEntryOfALargeRegistryWhoseFileIsThere(t *testing.T) {
+	n := largeRegistryEntries()
+	dir := filepath.Join(t.TempDir(), "follow")
+	reg, kept := largeRegistryWithFilesGone(t, n)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := registryv1.Write(dir, project, reg); err != nil {
+		t.Fatal(err)
+	}
+	r := follow.Open(dir)
+
+	if err := r.Migrate(project); err != nil {
+		t.Fatalf("Migrate() = %v", err)
+	}
+
+	if paths, err := r.Paths(project); err != nil || !slices.Equal(paths, kept) {
+		t.Errorf("Paths() lists %d entries, %v, want the %d of %d whose file is there", len(paths), err, len(kept), n)
+	}
+}
+
+// largeRegistryWithFilesGone is an earlier registry of n cold entries,
+// twenty to a session, whose files lie in one directory, and the paths,
+// sorted, of the entries whose file is still there: every fifth file is
+// gone, and so is every file of every seventh session.
+func largeRegistryWithFilesGone(t *testing.T, n int) (registryv1.Registry, []string) {
+	t.Helper()
+	sessions := t.TempDir()
+	var reg registryv1.Registry
+	var kept []string
+	for i := range n {
+		session := filepath.Join(sessions, fmt.Sprintf("s%03d.jsonl", i/20))
+		path := session
+		if i%20 != 0 {
+			path = agentOf(session, fmt.Sprintf("agent-%02d.jsonl", i%20))
+		}
+		writeFile(t, path, userLine(1))
+		reg.Files = append(reg.Files, registryv1.Entry{
+			Path: path, Size: 10, Offset: 10, NextSegment: 1, MessageIDs: []string{fmt.Sprintf("msg_%d", i)},
+		})
+		if i%5 == 0 || (i/20)%7 == 0 {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		kept = append(kept, path)
+	}
+	slices.Sort(kept)
+	return reg, kept
+}
