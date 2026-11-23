@@ -530,6 +530,50 @@ func TestMigrate_EmptiesAProjectDirectoryLeftBesideAnEarlierProjectFile(t *testi
 	}
 }
 
+func TestMigrate_RewritesFromItsCopyOnlyTheEntriesAnEarlierTryLeftUnreadable(t *testing.T) {
+	dir := t.TempDir()
+	empty, partial, whole := abs(t, "empty.jsonl"), abs(t, "partial.jsonl"), abs(t, "whole.jsonl")
+	if err := registryv1.LeaveHalfway(dir, project, registryv1.Registry{Files: []registryv1.Entry{
+		{Path: empty, Offset: 11, NextSegment: 2, MessageIDs: []string{"e1"}},
+		{Path: partial, Offset: 22, NextSegment: 3, MessageIDs: []string{"p1"}},
+		{Path: whole, Offset: 33, NextSegment: 4, MessageIDs: []string{"w1"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, entryFileOf(dir, empty), "")
+	writeFile(t, entryFileOf(dir, partial), `{"path":`+strconv.Quote(partial)+`,"offset":2`)
+	standing := `{"path":` + strconv.Quote(whole) + `,"inode":0,"size":0,"offset":99,"next_segment":9,"message_ids":["w9"]}`
+	writeFile(t, entryFileOf(dir, whole), standing)
+	r := follow.Open(dir)
+
+	if err := r.Migrate(project); err != nil {
+		t.Fatalf("Migrate() = %v", err)
+	}
+
+	files, err := r.Files(project)
+	if err != nil {
+		t.Fatalf("Files() = %v", err)
+	}
+	got := map[string]follow.File{}
+	for _, f := range files {
+		got[f.Path] = f
+	}
+	for _, want := range []follow.File{
+		{Path: empty, Offset: 11, NextSegment: 2, MessageIDs: []string{"e1"}},
+		{Path: partial, Offset: 22, NextSegment: 3, MessageIDs: []string{"p1"}},
+	} {
+		if f := got[want.Path]; f.Offset != want.Offset || f.NextSegment != want.NextSegment || !slices.Equal(f.MessageIDs, want.MessageIDs) {
+			t.Errorf("entry of %s = %+v, want the cursor of the copy: %+v", filepath.Base(want.Path), f, want)
+		}
+	}
+	if data, err := os.ReadFile(entryFileOf(dir, whole)); err != nil || string(data) != standing {
+		t.Errorf("entry of whole.jsonl = %q, %v, want the one that stood left as it was", data, err)
+	}
+	if n, err := r.Unreadable(project); err != nil || n != 0 {
+		t.Errorf("Unreadable() = %d, %v, want 0", n, err)
+	}
+}
+
 func TestRegisterAll_EmptiesAProjectDirectoryLeftWithoutAProjectFile(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "follow")
 	left, registered := abs(t, "left.jsonl"), abs(t, "registered.jsonl")
