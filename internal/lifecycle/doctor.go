@@ -346,11 +346,10 @@ func (m *Machine) resumeAfterCleanRescan() (bool, error) {
 // reading. A registry that cannot be read cannot show that the reason
 // is gone, so it answers yes and the pause stays.
 func (m *Machine) stillStops(reader sessionread.Reader, g routing.Grant, now time.Time) bool {
-	files, err := m.registry.Files(g.ProjectIDHash)
+	hot, err := m.registry.HotFiles(g.ProjectIDHash, now, follow.ProcessAlive)
 	if err != nil {
 		return true
 	}
-	hot, _ := follow.Split(files, now, follow.ProcessAlive)
 	return reader.Stops(sessionread.ProjectOf(g), hot)
 }
 

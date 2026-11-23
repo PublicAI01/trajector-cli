@@ -161,21 +161,21 @@ func (f File) Attended(alive func(pid int) bool) bool {
 	return f.Retired == "" && f.PID > 0 && alive(f.PID)
 }
 
-// Group lists the entries of files that belong to the same session as
+// group lists the entries of files that belong to the same session as
 // path, in the order given. Heat is a property of the session, not of
 // one of its files: a hook names the main file, but the turn it
 // reports may have been a subagent's, written to an agent file no
 // hook ever names. Marking one file of a session marks them all, and
 // what is read on a hook's word is the whole group.
-func Group(files []File, path string) []File {
+func group(files []File, path string) []File {
 	session := SessionOf(path)
-	group := []File{}
+	members := []File{}
 	for _, f := range files {
 		if SessionOf(f.Path) == session {
-			group = append(group, f)
+			members = append(members, f)
 		}
 	}
-	return group
+	return members
 }
 
 // SessionOf names the session a path belongs to: the session's own
@@ -194,19 +194,6 @@ func SessionOf(path string) string {
 		return name
 	}
 	return path
-}
-
-// Split parts files into the hot ones and the cold ones, each in the
-// order given.
-func Split(files []File, now time.Time, alive func(pid int) bool) (hot, cold []File) {
-	for _, f := range files {
-		if f.Hot(now, alive) {
-			hot = append(hot, f)
-		} else {
-			cold = append(cold, f)
-		}
-	}
-	return hot, cold
 }
 
 // Retirement is why an entry's cursor can never advance again. Its
@@ -337,4 +324,12 @@ func (f File) Behind(st Stat) int64 {
 		return 0
 	}
 	return st.Size - f.Offset
+}
+
+// LeftToRead reports whether a read of f, given st, has anything to
+// do: bytes past the cursor, a file that is not the one the cursor
+// describes, or a file that is gone. A read of a file it answers false
+// for finds nothing new.
+func (f File) LeftToRead(st Stat) bool {
+	return f.React(st) != Continue || f.Behind(st) > 0
 }

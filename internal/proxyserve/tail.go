@@ -114,23 +114,24 @@ func (t *tailer) progress(ev apiproxy.Progress) bool {
 	if !ok {
 		return false
 	}
-	files, err := t.reader.Registry.Files(ev.ProjectIDHash)
+	batch, err := t.reader.Registry.SessionFiles(ev.ProjectIDHash, ev.Path)
 	if err != nil {
 		return false
 	}
-	batch := follow.Group(files, ev.Path)
 	found := false
+	paths := make([]string, 0, len(batch))
 	for _, f := range batch {
 		found = found || f.Path == ev.Path
 		if f.Attended(t.alive) {
 			t.setAttended(true)
 		}
+		paths = append(paths, f.Path)
 	}
 	if !found {
 		return false
 	}
 	t.touch(t.reader.Now())
-	t.reader.Read(project, batch)
+	t.reader.Read(project, paths)
 	t.nudge.ask(ev.End)
 	return true
 }
@@ -143,7 +144,9 @@ func (t *tailer) progress(ev apiproxy.Progress) bool {
 // it cooled any; the flush that makes due is the caller's.
 //
 // onStart marks the sweep a proxy runs on its way in, which also reads
-// the cold entries that readLeftBehind picks out.
+// the cold entries that readLeftBehind picks out. Both looks at a
+// project share one listing of its registry: the entries readLeftBehind
+// reads are cold, so reading them changes none of the hot ones.
 func (t *tailer) sweep(onStart bool) (read, cooled bool) {
 	now := t.reader.Now()
 	projects, err := t.reader.Registry.Projects()
@@ -160,31 +163,33 @@ func (t *tailer) sweep(onStart bool) (read, cooled bool) {
 		if err != nil {
 			continue
 		}
-		hot, cold := follow.Split(files, now, t.alive)
-		if onStart && t.readLeftBehind(project, cold) {
+		if onStart && t.readLeftBehind(project, files, now) {
 			read = true
 		}
-		for _, f := range hot {
+		for _, f := range files {
+			if !f.Hot(now, t.alive) {
+				continue
+			}
 			st, err := follow.StatFile(f.Path)
 			if err != nil {
 				continue
 			}
-			grew := f.React(st) != follow.Continue || f.Behind(st) > 0
+			grew := f.LeftToRead(st)
 			switch {
 			case f.Attended(t.alive):
 				attended = true
 				if grew {
 					t.touch(now)
-					t.reader.Read(project, []follow.File{f})
+					t.reader.Read(project, []string{f.Path})
 					read = true
 				}
 			case grew:
 				t.touch(now)
 				_ = t.reader.Registry.Warm(hash, f.Path, 0, now)
-				t.reader.Read(project, []follow.File{f})
+				t.reader.Read(project, []string{f.Path})
 				read = true
 			case f.QuietFor(now) >= coolGrace:
-				t.reader.Read(project, []follow.File{f})
+				t.reader.Read(project, []string{f.Path})
 				_ = t.reader.Registry.Cool(hash, f.Path)
 				cooled = true
 			}
@@ -194,23 +199,23 @@ func (t *tailer) sweep(onStart bool) (read, cooled bool) {
 	return read, cooled
 }
 
-// readLeftBehind reads the cold entries kept from earlier builds that
-// have lines left to read, and reports whether it read any. A session
-// that ended while an earlier build was the resident process is cold,
-// and that build never read these entries, so the first sweep of this
-// one is the read they are owed. Every other cold file stays unread
-// until a hook names it again.
-func (t *tailer) readLeftBehind(project sessionread.Project, cold []follow.File) bool {
+// readLeftBehind reads, of a project's registered files, the cold
+// entries kept from earlier builds that have lines left to read, and
+// reports whether it read any. A session that ended while an earlier
+// build was the resident process is cold, and that build never read
+// these entries, so the first sweep of this one is the read they are
+// owed. Every other cold file stays unread until a hook names it again.
+func (t *tailer) readLeftBehind(project sessionread.Project, files []follow.File, now time.Time) bool {
 	read := false
-	for _, f := range cold {
-		if !f.KeptFromEarlierBuilds() {
+	for _, f := range files {
+		if !f.KeptFromEarlierBuilds() || f.Hot(now, t.alive) {
 			continue
 		}
 		st, err := follow.StatFile(f.Path)
-		if err != nil || (f.React(st) == follow.Continue && f.Behind(st) == 0) {
+		if err != nil || !f.LeftToRead(st) {
 			continue
 		}
-		t.reader.Read(project, []follow.File{f})
+		t.reader.Read(project, []string{f.Path})
 		read = true
 	}
 	return read

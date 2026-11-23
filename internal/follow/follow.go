@@ -242,6 +242,39 @@ func (r *Registry) Entries(projectIDHash string) ([]File, error) {
 	return entries, nil
 }
 
+// File is the entry projectIDHash still reads for path. ok is false
+// for a path that is not registered, and for one Files would not list.
+func (r *Registry) File(projectIDHash, path string) (f File, ok bool, err error) {
+	f, ok, err = r.entry(projectIDHash, path)
+	if err != nil || !ok || f.Retired != "" {
+		return File{}, false, err
+	}
+	return f, true, nil
+}
+
+// SessionFiles lists the files projectIDHash still reads that belong to
+// the session path belongs to, ordered by path: the main file and the
+// agent files kept under it. A session with no registered file has
+// none.
+func (r *Registry) SessionFiles(projectIDHash, path string) ([]File, error) {
+	files, err := r.Files(projectIDHash)
+	if err != nil {
+		return nil, err
+	}
+	return group(files, path), nil
+}
+
+// HotFiles lists the files projectIDHash still reads whose session is
+// hot at now, ordered by path. alive answers whether a process id
+// names a running process.
+func (r *Registry) HotFiles(projectIDHash string, now time.Time, alive func(pid int) bool) ([]File, error) {
+	files, err := r.Files(projectIDHash)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(files, func(f File) bool { return !f.Hot(now, alive) }), nil
+}
+
 // Update writes what reading of to.Path reached — the fields a reader
 // owns, as advancedTo names them — onto its entry, but only while the
 // entry's cursor still stands where from says. An entry whose Offset

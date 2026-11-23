@@ -112,7 +112,11 @@ func (m *Machine) ReadSessionFiles(ctx context.Context, projectDir string, strea
 		return
 	}
 	project := sessionread.Project{Token: st.Token, Hash: st.Hash, Root: st.Root, Shape: st.Shape}
-	m.reader(sp).Read(project, m.sessionFiles(st.Hash).Files)
+	var paths []string
+	for _, f := range m.sessionFiles(st.Hash).Files {
+		paths = append(paths, f.Path)
+	}
+	m.reader(sp).Read(project, paths)
 }
 
 // injectionValue names, for a record, what this client did with the

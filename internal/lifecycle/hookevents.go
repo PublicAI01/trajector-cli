@@ -6,7 +6,6 @@ import (
 
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/report"
-	"github.com/PublicAI01/trajector-cli/internal/sessionline"
 )
 
 // A session's hooks are the only entry into this device from inside a
@@ -212,18 +211,11 @@ func (m *Machine) tellReasoning(cwd string, hook HookInput) (LaunchSurface, bool
 	if report.Recording(m.recordingFacts(st)).StoppedDeviceWide() {
 		return SurfaceUnknown, false
 	}
-	files, err := m.registry.Files(st.Hash)
+	f, _, err := m.registry.File(st.Hash, filepath.Clean(hook.SessionPath))
 	if err != nil {
 		return SurfaceUnknown, false
 	}
-	path := filepath.Clean(hook.SessionPath)
-	var read sessionline.ReasoningBlocks
-	stated := ""
-	for _, f := range files {
-		if f.Path == path {
-			read, stated = f.Reasoning(), f.LaunchSurface
-		}
-	}
+	read, stated := f.Reasoning(), f.LaunchSurface
 	if read.Empty == 0 || read.Empty <= read.WithText {
 		return SurfaceUnknown, false
 	}

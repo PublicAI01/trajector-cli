@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -50,19 +51,58 @@ func TestFile_HotWhileItsProcessRunsOrAHookNamedItWithinADay(t *testing.T) {
 	}
 }
 
-func TestSplitPartsTheHotFilesFromTheCold(t *testing.T) {
-	now := time.Now()
-	files := []follow.File{
-		{Path: "/a", LastEvent: now.Format(time.RFC3339)},
-		{Path: "/b"},
-		{Path: "/c", PID: 1},
+func TestFile_LeftToReadWhenItGrewWasReplacedOrIsGone(t *testing.T) {
+	read := follow.File{Inode: 7, Size: 100, Offset: 100}
+	for _, tc := range []struct {
+		name string
+		stat follow.Stat
+		want bool
+	}{
+		{"unchanged", follow.Stat{Exists: true, Inode: 7, Size: 100}, false},
+		{"grew", follow.Stat{Exists: true, Inode: 7, Size: 150}, true},
+		{"grew on a system with no inode", follow.Stat{Exists: true, Size: 150}, true},
+		{"replaced", follow.Stat{Exists: true, Inode: 8, Size: 100}, true},
+		{"shrank", follow.Stat{Exists: true, Inode: 7, Size: 40}, true},
+		{"gone", follow.Stat{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := read.LeftToRead(tc.stat); got != tc.want {
+				t.Errorf("LeftToRead() = %v, want %v", got, tc.want)
+			}
+		})
 	}
-	hot, cold := follow.Split(files, now, func(pid int) bool { return pid == 1 })
-	if len(hot) != 2 || hot[0].Path != "/a" || hot[1].Path != "/c" {
-		t.Errorf("hot = %+v, want /a and /c", hot)
+}
+
+func TestRegistry_HotFilesListsTheFilesOfHotSessionsOnly(t *testing.T) {
+	r := follow.Open(t.TempDir())
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	named := abs(t, "named.jsonl")
+	namedAgent := abs(t, "named/subagents/agent-x.jsonl")
+	quiet := abs(t, "quiet.jsonl")
+	running := abs(t, "running.jsonl")
+	gone := abs(t, "gone.jsonl")
+	mustRegister(t, r, project, named, namedAgent, quiet, running, gone)
+	for path, pid := range map[string]int{named: 0, running: 1, gone: 7} {
+		at := now.Add(-48 * time.Hour)
+		if path == named {
+			at = now.Add(-time.Hour)
+		}
+		if err := r.Warm(project, path, pid, at); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if len(cold) != 1 || cold[0].Path != "/b" {
-		t.Errorf("cold = %+v, want /b", cold)
+
+	hot, err := r.HotFiles(project, now, func(pid int) bool { return pid == 1 })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	for _, f := range hot {
+		got = append(got, f.Path)
+	}
+	if want := []string{named, namedAgent, running}; !slices.Equal(got, want) {
+		t.Errorf("HotFiles() = %q, want %q", got, want)
 	}
 }
 
@@ -179,26 +219,61 @@ func TestRegistry_WarmOfAnAgentFileMarksItsMainFile(t *testing.T) {
 	}
 }
 
-func TestGroupHoldsASessionsFilesAndNoOthers(t *testing.T) {
+func TestRegistry_SessionFilesHoldsASessionsFilesAndNoOthers(t *testing.T) {
+	r := follow.Open(t.TempDir())
 	main := abs(t, "s.jsonl")
 	agent := abs(t, "s/subagents/agent-x.jsonl")
-	files := []follow.File{
-		{Path: main},
-		{Path: agent},
-		{Path: abs(t, "s/subagents/agent-x.meta.json")},
-		{Path: abs(t, "s/subagents/workflows/wf_1/agent-y.jsonl")},
-		{Path: abs(t, "other.jsonl")},
-		{Path: abs(t, "other/subagents/agent-x.jsonl")},
-		{Path: abs(t, "other/subagents/workflows/wf_1/agent-y.jsonl")},
-	}
-	for _, path := range []string{main, agent, files[3].Path} {
-		got := follow.Group(files, path)
-		if len(got) != 4 || got[0].Path != main {
-			t.Errorf("Group(_, %q) = %+v, want the main file and its three agent files", filepath.Base(path), got)
+	meta := abs(t, "s/subagents/agent-x.meta.json")
+	inRun := abs(t, "s/subagents/workflows/wf_1/agent-y.jsonl")
+	mustRegister(t, r, project, main, agent, meta, inRun,
+		abs(t, "other.jsonl"),
+		abs(t, "other/subagents/agent-x.jsonl"),
+		abs(t, "other/subagents/workflows/wf_1/agent-y.jsonl"))
+	want := []string{main, agent, meta, inRun}
+	slices.Sort(want)
+
+	for _, path := range []string{main, agent, inRun} {
+		files, err := r.SessionFiles(project, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, f := range files {
+			got = append(got, f.Path)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("SessionFiles(_, %q) = %q, want the main file and its three agent files", filepath.Base(path), got)
 		}
 	}
-	if got := follow.Group(files, abs(t, "gone.jsonl")); len(got) != 0 {
-		t.Errorf("Group(_, an unregistered session) = %+v, want none", got)
+	if got, err := r.SessionFiles(project, abs(t, "gone.jsonl")); err != nil || len(got) != 0 {
+		t.Errorf("SessionFiles(_, an unregistered session) = %+v, %v, want none", got, err)
+	}
+}
+
+func TestRegistry_FileIsTheEntryFilesListsForAPath(t *testing.T) {
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	path := abs(t, "a.jsonl")
+	retired := abs(t, "b.jsonl")
+	mustRegister(t, r, project, path, retired)
+	retireInFile(t, dir, retired, "a-reason-of-a-later-build")
+	advanced := follow.File{Path: path, Inode: 7, Size: 10, Offset: 10, NextSegment: 2, MessageIDs: []string{"msg_a"}}
+	if err := r.Update(project, follow.File{Path: path}, advanced); err != nil {
+		t.Fatal(err)
+	}
+
+	f, ok, err := r.File(project, path)
+	if err != nil || !ok || !sameFile(f, advanced) {
+		t.Errorf("File(_, a) = %+v, %v, %v, want the advanced entry", f, ok, err)
+	}
+	if _, ok, err := r.File(project, abs(t, "c.jsonl")); err != nil || ok {
+		t.Errorf("File(_, an unregistered path) = %v, %v, want not found", ok, err)
+	}
+	if _, ok, err := r.File(project, retired); err != nil || ok {
+		t.Errorf("File(_, an entry Files does not list) = %v, %v, want not found", ok, err)
+	}
+	if _, ok, err := follow.Open(t.TempDir()).File(project, path); err != nil || ok {
+		t.Errorf("File() of a project with no registry = %v, %v, want not found", ok, err)
 	}
 }
 
