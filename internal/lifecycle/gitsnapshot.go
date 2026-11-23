@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/gitsnapshot"
 	"github.com/PublicAI01/trajector-cli/internal/report"
@@ -100,7 +101,7 @@ func (*Machine) observedDir(st report.ProjectStatus, hook HookInput) (dir, subpa
 	if hook.Cwd == "" {
 		return st.Root, "", true
 	}
-	if subpath, ok = projectPosition(st.Root, hook.Cwd); !ok {
+	if subpath, ok = consent.ProjectPosition(st.Root, hook.Cwd); !ok {
 		return "", "", false
 	}
 	return hook.Cwd, subpath, true

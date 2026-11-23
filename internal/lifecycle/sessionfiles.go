@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
@@ -203,29 +202,6 @@ func (m *Machine) sessionFiles(projectIDHash string) registryContents {
 // A session directory outside the root, or a working directory that
 // cannot be resolved, has no position and yields "".
 func projectSubpath(root, cwd string) string {
-	subpath, _ := projectPosition(root, cwd)
+	subpath, _ := consent.ProjectPosition(root, cwd)
 	return subpath
-}
-
-// projectPosition reports where dir sits relative to the project root,
-// with forward slashes and "" at the root itself, and false when dir is
-// outside the root or cannot be resolved. The two answers are kept
-// apart because "at the root" and "not in the project" are the same
-// empty string and opposite decisions.
-func projectPosition(root, dir string) (string, bool) {
-	if dir == "" {
-		return "", false
-	}
-	canonical, err := consent.CanonicalRoot(dir)
-	if err != nil {
-		return "", false
-	}
-	rel, err := filepath.Rel(root, canonical)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-	if rel == "." {
-		return "", true
-	}
-	return filepath.ToSlash(rel), true
 }
