@@ -1,11 +1,14 @@
 package follow_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +120,54 @@ func TestReader_AdvancesTheCursorOnlyOnceEveryRecordIsStored(t *testing.T) {
 	first, second := segmentLines(t, a.handed[0]), segmentLines(t, a.handed[1])
 	if len(second) != 1 || len(first) != len(second) || first[0] != second[0] {
 		t.Errorf("lines handed = %v then %v, want the held read offered again unchanged", first, second)
+	}
+}
+
+func TestReader_LeavesTheRegistryUntouchedWhenNoEntryGainedAnything(t *testing.T) {
+	a := newAdvancing(t)
+	main := mainPath(t)
+	paths := []string{main}
+	writeFile(t, main, userLine(1))
+	for i := range 157 {
+		agent := filepath.Join(strings.TrimSuffix(main, ".jsonl"), "subagents", fmt.Sprintf("agent-a%d.jsonl", i))
+		writeFile(t, agent, userLine(1))
+		paths = append(paths, agent)
+	}
+	if err := a.registry.RegisterAll(project, paths, ""); err != nil {
+		t.Fatal(err)
+	}
+	a.answer = follow.Stored
+	for _, path := range paths {
+		a.reader.Advance(path)
+	}
+	registryFile := filepath.Join(a.dir, project+".json")
+	before, err := os.Stat(registryFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(registryFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a.reader.ReadAt = a.reader.ReadAt.Add(time.Hour)
+	for _, path := range paths {
+		a.reader.Advance(path)
+	}
+
+	after, err := os.Stat(registryFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := os.ReadFile(registryFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) || !bytes.Equal(content, again) {
+		t.Errorf("registry file was rewritten by %d entries that gained nothing, want it left as it was", len(paths))
+	}
+	if f := a.entry(main); f.ReadAt != readRunAt {
+		t.Errorf("read_at = %q, want the time of the read that last found something, %q", f.ReadAt, readRunAt)
 	}
 }
 

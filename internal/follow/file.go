@@ -3,6 +3,7 @@ package follow
 import (
 	"math"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,9 +38,10 @@ type File struct {
 	// such a pass as an ordinary read, and sends again the lines of
 	// those ids that it meets.
 	BeforeRewrite []string `json:"before_rewrite,omitempty"`
-	// ReadAt is when the file was last read, in RFC 3339, and absent
-	// for a file never read. The reader writes it with the cursor; the
-	// registry only keeps it.
+	// ReadAt is when a read of the file last found something new, in
+	// RFC 3339, and absent for a file never read. The reader writes it
+	// with the cursor, and a read that finds nothing new writes
+	// neither; the registry only keeps it.
 	ReadAt string `json:"read_at,omitempty"`
 	// Retired is why this file is no longer read, and is absent for a
 	// file still read. An entry gains it instead of leaving the
@@ -121,6 +123,17 @@ func (f File) advancedTo(read File) File {
 	f.EmptyReasoningBlocks, f.ReasoningBlocksWithText = read.EmptyReasoningBlocks, read.ReasoningBlocksWithText
 	f.LaunchSurface = read.LaunchSurface
 	return f
+}
+
+// changedBy reports whether advancedTo(read) differs from f in any
+// field but ReadAt: whether a read that ended at read found anything
+// the entry does not already say. It names the same fields advancedTo
+// takes.
+func (f File) changedBy(read File) bool {
+	return f.Inode != read.Inode || f.Size != read.Size || f.Offset != read.Offset || f.NextSegment != read.NextSegment ||
+		!slices.Equal(f.MessageIDs, read.MessageIDs) || !slices.Equal(f.BeforeRewrite, read.BeforeRewrite) ||
+		f.Retired != read.Retired || f.Outside != read.Outside ||
+		f.Reasoning() != read.Reasoning() || f.LaunchSurface != read.LaunchSurface
 }
 
 // hotWindow is how long a hook event keeps a file hot on its own,
@@ -249,8 +262,9 @@ func (f File) MainSession() bool {
 // for its first reading from one whose reading is merely up to date.
 func (f File) NeverRead() bool { return f.NextSegment == 0 && f.Offset == 0 }
 
-// LastRead is when the file was last read. A file never read, and one
-// whose time was not written in the layout's own form, has none. It is
+// LastRead is when a read of the file last found something new. A file
+// never read, and one whose time was not written in the layout's own
+// form, has none. It is
 // the one reading of ReadAt, as the reader is the one writer of it.
 func (f File) LastRead() (time.Time, bool) {
 	at, err := time.Parse(readAtLayout, f.ReadAt)

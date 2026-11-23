@@ -45,8 +45,9 @@ type Reader struct {
 	// Store lands the records of one read and reports what became of
 	// them. It is the one judge of whether a cursor may move.
 	Store func(ReadResult) Storing
-	// ReadAt is the time this run records on every cursor it moves.
-	// The zero time leaves the entry's own time as it was.
+	// ReadAt is the time this run records on every cursor it writes. A
+	// read that finds nothing new writes no cursor. The zero time leaves
+	// the entry's own time as it was.
 	ReadAt time.Time
 }
 
@@ -185,8 +186,14 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 		_ = rd.Registry.Remove(rd.ProjectIDHash, f.Path)
 		return true, false
 	}
-	// The cursor carries when it was last moved, so a surface can say
-	// when a file was last read without a clock of its own.
+	if !f.changedBy(res.File) {
+		// The entry already says everything this read found. Writing it
+		// anyway would rewrite the registry once per entry each time a
+		// session's files are looked at, and most of them gain nothing.
+		return true, false
+	}
+	// The cursor carries when a read last found something new, so a
+	// surface can say so without a clock of its own.
 	if !rd.ReadAt.IsZero() {
 		res.File.ReadAt = rd.ReadAt.UTC().Format(readAtLayout)
 	}
