@@ -639,7 +639,7 @@ func TestLayout_FilesOfAKindThisBuildDoesNotKnowAreIgnored(t *testing.T) {
 	r := follow.Open(dir)
 	main := abs(t, "s.jsonl")
 	mustRegister(t, r, project, main)
-	for _, name := range []string{"later.kind", "x.json.tmp-1", "migrating.v1"} {
+	for _, name := range []string{"later.kind", "x.json.tmp-1", "y.json.new-1"} {
 		if err := os.WriteFile(filepath.Join(projectDirOf(dir), name), []byte(`{"path":"/elsewhere"}`), 0o600); err != nil {
 			t.Fatal(err)
 		}

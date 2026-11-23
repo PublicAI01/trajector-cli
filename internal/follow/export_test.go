@@ -2,6 +2,7 @@ package follow
 
 import (
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -26,4 +27,19 @@ func MoveCursor(r *Registry, projectIDHash string, from, to File) error {
 	}
 	defer held.unlock()
 	return held.advance(from, to, drift.Signals{})
+}
+
+// DieAfterMigrationStep has this process killed as soon as step of a
+// migration is done, as a process killed between two steps is.
+func DieAfterMigrationStep(step int) {
+	afterMigrationStep = func(done int) {
+		if done != step {
+			return
+		}
+		self, err := os.FindProcess(os.Getpid())
+		if err == nil {
+			_ = self.Kill()
+		}
+		select {}
+	}
 }

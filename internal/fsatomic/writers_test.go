@@ -30,6 +30,11 @@ var plainWriteFiles = map[string]bool{
 	// Cooling a session unlinks its heat: no heat is the state "no hook
 	// named the session", which its reader already reads.
 	"internal/follow/heat.go": true,
+	// Removing the copy a migration works from is the state "migration
+	// complete": a reader that finds it gone reads the project as
+	// migrated. The entry locks and bounds the earlier layout left
+	// beside the project file are read by nothing of this layout.
+	"internal/follow/migrate.go": true,
 	// Rolling a project file back to "it did not exist" is an unlink.
 	// The other half of the same rollback, restoring content, goes
 	// through fsatomic.

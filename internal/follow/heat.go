@@ -59,9 +59,9 @@ func (r *Registry) warmed(projectIDHash string, f File, seen map[string]heat) Fi
 }
 
 // registered refuses a path that is not registered, as an update to it
-// is.
+// is, and a project whose migration is not finished.
 func (r *Registry) registered(projectIDHash, path string) error {
-	if err := checkProjectIDHash(projectIDHash); err != nil {
+	if _, _, err := r.readProject(projectIDHash); err != nil {
 		return err
 	}
 	if _, err := os.Lstat(r.entryPath(projectIDHash, path)); os.IsNotExist(err) {
@@ -122,6 +122,12 @@ func (r *Registry) Tell(projectIDHash, path string) (first bool, err error) {
 	if err := r.registered(projectIDHash, path); err != nil {
 		return false, err
 	}
+	return r.tell(projectIDHash, path)
+}
+
+// tell creates the told mark of the session path belongs to, and
+// reports whether this call created it.
+func (r *Registry) tell(projectIDHash, path string) (first bool, err error) {
 	mark, err := os.OpenFile(r.sessionPath(projectIDHash, path, toldExt), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if os.IsExist(err) {
 		return false, nil

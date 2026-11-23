@@ -55,7 +55,9 @@
 // know one of the names does not list, read, warm, rewrite, or remove
 // the entry, and reads the rest of the project. A change of the whole
 // layout raises "version": a build that meets one it does not know
-// stops reading the project, and names the build it needs.
+// stops reading the project, and names the build it needs. A project
+// in the layout before this one is read by Migrate alone, which brings
+// it to this one.
 //
 // Reading is a function of one registered entry and the file on disk:
 // Read consumes the complete lines a file gained since its cursor and
@@ -344,12 +346,14 @@ func (r *Registry) TellReasoning(projectIDHash string, at time.Time) (first bool
 }
 
 // Unregister removes projectIDHash's registry: its project directory,
-// every entry and cursor in it, and its project file. A project that
-// has no registry is already unregistered.
+// every entry and cursor in it, and its project file, in whichever
+// layout it is. A project that has no registry is already
+// unregistered.
 func (r *Registry) Unregister(projectIDHash string) error {
 	if err := checkProjectIDHash(projectIDHash); err != nil {
 		return err
 	}
+	r.dropEarlierFiles(projectIDHash)
 	if err := os.RemoveAll(r.projectDir(projectIDHash)); err != nil {
 		return err
 	}
@@ -427,7 +431,8 @@ func digest(s string) string {
 }
 
 // readProject is projectIDHash's project file. ok is false for a
-// project that has none.
+// project that has none. A project whose migration is not finished is
+// refused with ErrMigrationPending.
 func (r *Registry) readProject(projectIDHash string) (p projectFile, ok bool, err error) {
 	if err := checkProjectIDHash(projectIDHash); err != nil {
 		return projectFile{}, false, err
@@ -439,18 +444,31 @@ func (r *Registry) readProject(projectIDHash string) (p projectFile, ok bool, er
 	if err != nil {
 		return projectFile{}, false, err
 	}
-	p, err = parseProject(data)
-	return p, err == nil, err
+	if p, err = parseProject(data); err != nil {
+		return projectFile{}, false, err
+	}
+	if at, err := r.halfwayOrSettled(projectIDHash); err != nil || at == halfway {
+		return projectFile{}, false, cmp.Or(err, fmt.Errorf("%w (its migration is not finished)", ErrMigrationPending))
+	}
+	return p, true, nil
 }
 
 // updateProject rewrites projectIDHash's project file with change
 // applied, under the project lock. A project with no project file gets
-// one when create is set, and is refused otherwise.
+// one when create is set, and is refused otherwise. A project directory
+// that stands without a project file is what an earlier build's
+// disable left; it is emptied before the project file is created, so
+// nothing in it is read as an entry of the new registration.
 func (r *Registry) updateProject(projectIDHash string, create bool, change func(*projectFile) error) error {
 	return fsatomic.Update(r.projectPath(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
 		p := projectFile{Version: version, NeedsBuild: needsBuild}
 		if old == nil && !create {
 			return nil, ErrNotRegistered
+		}
+		if old == nil {
+			if err := os.RemoveAll(r.projectDir(projectIDHash)); err != nil {
+				return nil, err
+			}
 		}
 		if old != nil {
 			var err error
@@ -474,6 +492,8 @@ func parseProject(data []byte) (projectFile, error) {
 	switch {
 	case p.Version == version:
 		return p, nil
+	case p.Version == earlierVersion:
+		return projectFile{}, fmt.Errorf("%w (registry version %d)", ErrMigrationPending, p.Version)
 	case p.Version > version && p.NeedsBuild != "":
 		return projectFile{}, fmt.Errorf("follow: registry version %d needs trajector %s or later", p.Version, p.NeedsBuild)
 	default:

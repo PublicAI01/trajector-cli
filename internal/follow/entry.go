@@ -1,7 +1,6 @@
 package follow
 
 import (
-	"cmp"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -71,9 +70,7 @@ func readEntryFile(file string) (entryFile, error) {
 
 // create writes e as a new entry, and leaves an entry that is there
 // already as it is, readable or not: a registration never replaces an
-// entry. The file is staged under another name and linked into place,
-// so it appears whole or not at all, and the link fails rather than
-// replace a file another registration put there first.
+// entry.
 func (r *Registry) create(projectIDHash string, e entryFile) error {
 	target := r.entryPath(projectIDHash, e.Path)
 	if _, err := os.Lstat(target); err == nil {
@@ -83,19 +80,35 @@ func (r *Registry) create(projectIDHash string, e entryFile) error {
 	if err != nil {
 		return err
 	}
+	return placeNew(target, data, true)
+}
+
+// placeNew puts data at target unless a file stands there already. The
+// file is staged under another name and linked into place, so it
+// appears whole or not at all, and the link fails rather than replace a
+// file another writer put there first. flush makes the content durable
+// before it is linked; a caller that flushes many files at once later
+// leaves it unset.
+func placeNew(target string, data []byte, flush bool) error {
+	if _, err := os.Lstat(target); err == nil {
+		return nil
+	}
 	staged, err := os.CreateTemp(filepath.Dir(target), filepath.Base(target)+".new-*")
 	if err != nil {
 		return err
 	}
 	_, werr := staged.Write(data)
-	serr := staged.Sync()
-	cerr := staged.Close()
-	if err := cmp.Or(werr, serr, cerr); err == nil {
-		err = os.Link(staged.Name(), target)
-		if errors.Is(err, fs.ErrExist) {
-			err = nil
+	if werr == nil && flush {
+		werr = staged.Sync()
+	}
+	if cerr := staged.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Link(staged.Name(), target)
+		if errors.Is(werr, fs.ErrExist) {
+			werr = nil
 		}
-		werr = err
 	}
 	_ = os.Remove(staged.Name())
 	return werr

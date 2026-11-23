@@ -21,6 +21,8 @@ func TestMain(m *testing.M) {
 	os.Exit(procbin.Main(m, map[string]func(args []string) int{
 		"hold":            holdWhileReading,
 		"die-once-stored": dieOnceStored,
+		"migrate-and-die": migrateAndDie,
+		"migrate":         migrateOnce,
 	}))
 }
 
