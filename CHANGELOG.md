@@ -6,6 +6,49 @@ All notable changes to trajector are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- trajector keeps its record of the session files it reads, and of how
+  far it has read each, in a new layout: one small file for each
+  session file, where there was one file for the whole project. Before,
+  every hook and every read rewrote that one file, one at a time. In a
+  project with many sessions and a long history the file grew to
+  several megabytes, and a hook could wait many seconds for its turn.
+  Now a read writes only the file of the session file it read, and a
+  hook no longer waits behind the reads of other sessions.
+- The first time this release needs a project, it moves the project's
+  record to the new layout. An upgrade starts a background process
+  that does so for each enabled project; otherwise the proxy,
+  `trajector status`, `trajector doctor` or `trajector enable` does,
+  whichever comes first. A Claude Code hook never does it and never
+  waits for it, and `trajector doctor bundle` does not either: the
+  bundle leaves the record as it finds it and says that it waits for
+  the move. How far each file was read carries over, so nothing is
+  recorded a second time. A project with thousands of session files
+  can take ten seconds or more, longer on a slow disk; its session
+  files are read once the move is done.
+- A release before this one does not read a project in the new layout.
+  If you go back to an earlier release, it stops recording from the
+  session files of every project this release has moved. It leaves the
+  record as it is, except that `trajector disable` there still removes
+  the record of the project it disables. Calls through the proxy are
+  recorded as before. `trajector status` of the earlier release says
+  that it cannot read the record and points to `trajector doctor`; the
+  way back is to upgrade again, which continues from where reading
+  stopped. There is no move back to the old layout.
+- The record no longer keeps a session file that Claude Code has
+  deleted and whose session is no longer running. Such a file is left
+  out when a project is moved to the new layout, and is dropped when an
+  upgrade finishes and when `trajector doctor` runs. A file that is
+  still on disk stays in the record. So does a file whose whole
+  directory cannot be reached, as on a volume that is not mounted:
+  before, the next read dropped it, and the file was read from its
+  start again once it was back.
+- `trajector status` and `trajector doctor` say how many files of the
+  record cannot be read, when there are any. The session file such a
+  file stands for is not read. The diagnostic bundle carries the same
+  count.
+
 ### Fixed
 
 - Lines of a session file are no longer left out of the recording when

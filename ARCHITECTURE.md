@@ -99,9 +99,9 @@ within the last day), for a hook that was disabled, a proxy that started
 late, or a session killed before its last hook. A cold file is never
 looked at until a hook names it again, with one exception: a proxy
 that starts reads the agent files of workflow runs that still hold
-unread lines. The registry marks those files so that an earlier
-version never reads them, and a session may end while such a version
-is the one running. Each read starts from where the last left off, and
+unread lines. A version released before those files were known never
+read them, and a session may have ended while such a version was the
+one running. Each read starts from where the last left off, and
 notes where the segment it read ends before it stores the segment. A
 run that is killed, or fails, before it advances the cursor is followed
 by one that reads that same segment again, to the noted end and no
@@ -119,6 +119,50 @@ hold a move into the project that does not say where the session came
 from; the lines before it are kept only when they state the directory
 they were written in and every such directory is covered. Enabling the project again does not read the file
 from its start, so its lines are never stored and sent a second time.
+
+The registry of the files being read is kept per project, in a project
+file and a directory beside it. Each file read has an entry of its
+own, which holds how far the file has been read; each session has a
+small file that says when it was last named: by a hook, by the proxy
+process when the session's file grew, or by `trajector enable` for a
+file not read yet. A read holds
+the lock of the one entry it reads and writes that entry and no other,
+twice for a segment it stores: where the segment ends, then the cursor
+past it. A read that finds nothing new writes nothing. A hook adds the
+entries that are missing and refreshes the session's file, and waits
+for no read. The project file is rewritten rarely, under a lock of its
+own, which a read takes only when it removes its entry.
+
+The layout has a number, kept in the project file. A version that
+meets a number it does not know stops reading that project's session
+files and changes nothing in the registry, with one exception:
+`trajector disable` removes the project's registry whatever its
+layout. The project file names the lowest version that reads it. Releases before 0.8.0 kept one file per
+project, and they stop in this way when they meet the layout above,
+for example after a downgrade. A version that meets the earlier layout
+migrates the project before it reads it, once, and the cursors carry
+over, so no line is read a second time. Every process migrates but
+two. A session hook that meets a project not yet migrated starts a
+one-shot process, which does, and returns. The session file the hook
+was told about is not lost meanwhile: the hook leaves a small file that
+names it in the project directory, and the migration registers it. An
+entry the earlier layout kept for the same file stays as it is, so the
+file is not read from its start again. The finish of an upgrade
+starts that process too: the version that installed this one stops the
+finish after thirty seconds, and a migration writes every entry,
+however long that takes. A migration that is interrupted is finished
+by the next process that needs the project. An entry can also name
+what a version must know to read it; a version that does not know it
+leaves that one entry alone, with the agent files of its session, and
+reads the rest. A file is gone for good when it is not there and the
+directory that held its session still is. An entry whose file is gone
+for good, in a session that is not running, is not carried over by a
+migration, and such entries are removed when an upgrade finishes and
+when `trajector doctor` runs; a read that finds its own file gone for
+good removes the entry at once. An entry whose file is still there is
+never removed, and neither is one whose directory is out of reach with
+it, as on a volume that is not mounted: registering the file again
+would read it from its start.
 
 ## Upgrading itself
 
