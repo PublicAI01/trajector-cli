@@ -58,6 +58,21 @@ func assistantLine(id string, block int, text string) string {
 	return fmt.Sprintf(`{"type":"assistant","cwd":%q,"sessionId":%q,"apiBlockIndex":%d,"message":{"id":%q,"role":"assistant","content":[{"type":"text","text":%q}]}}`+"\n", root, sessionID, block, id, text)
 }
 
+// writtenIn restates lines as written in dir instead of in root.
+func writtenIn(dir, lines string) string {
+	return strings.ReplaceAll(lines, fmt.Sprintf(`"cwd":%q`, root), fmt.Sprintf(`"cwd":%q`, dir))
+}
+
+// queuedLine and lastPromptLine are lines that state no working
+// directory, as a session file holds them around a prompt.
+func queuedLine() string {
+	return fmt.Sprintf(`{"type":"queue-operation","operation":"enqueue","sessionId":%q}`+"\n", sessionID)
+}
+
+func lastPromptLine() string {
+	return fmt.Sprintf(`{"type":"last-prompt","lastPrompt":"u1","sessionId":%q}`+"\n", sessionID)
+}
+
 func relocatedLine(cwd string) string {
 	return fmt.Sprintf(`{"type":"relocated","sessionId":%q,"relocatedCwd":%q}`+"\n", sessionID, cwd)
 }
@@ -563,7 +578,7 @@ func TestReader_AnAgentMetadataFileWrittenWhileItsSessionIsOutsideIsNeverSnapsho
 }
 
 func TestRead_RelocatedIntoConsentStartsAfterThatLine(t *testing.T) {
-	outside := userLine(1) + assistantLine("msg_out", 0, "o")
+	outside := writtenIn("/elsewhere", userLine(1)+assistantLine("msg_out", 0, "o"))
 	in := relocatedLine(root)
 	after := userLine(2) + assistantLine("msg_in", 0, "i")
 	tests := []struct {
@@ -824,16 +839,92 @@ func TestReader_AnAgentMetadataFileWrittenWhileItsSessionIsBelowTheRootIsSnapsho
 	}
 }
 
-func TestRead_AFirstReadKeepsOnlyWhatFollowsAMoveBelowTheRoot(t *testing.T) {
-	path := mainPath(t)
-	move := relocatedLine(filepath.Join(root, "sub"))
-	writeFile(t, path, userLine(1)+move+userLine(2))
-	res := read(t, follow.File{Path: path})
-	if res.File.Outside {
-		t.Errorf("Outside = true after a move to a subdirectory, want false")
+func TestRead_AFirstReadKeepsWhatASessionWroteInsideBeforeItsFirstMove(t *testing.T) {
+	below := filepath.Join(root, "apps", "api")
+	tests := []struct {
+		name     string
+		from, to string
+	}{
+		{name: "the line names the directory the session is already in", from: root, to: root},
+		{name: "from the root to a directory below it", from: root, to: below},
+		{name: "from a directory below the root to the root", from: below, to: root},
 	}
-	wantLines(t, res, userLine(2))
-	wantCursor(t, res.File, int64(len(userLine(1)+move+userLine(2))), 1)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := mainPath(t)
+			opening := queuedLine() + writtenIn(tt.from, userLine(1)) + lastPromptLine()
+			move := relocatedLine(tt.to)
+			writeFile(t, path, opening+move+userLine(2))
+
+			res := read(t, follow.File{Path: path})
+
+			if res.File.Outside {
+				t.Error("Outside = true, want the session inside")
+			}
+			wantLines(t, res, queuedLine(), writtenIn(tt.from, userLine(1)), lastPromptLine(), move, userLine(2))
+			wantCursor(t, res.File, int64(len(opening+move+userLine(2))), 1)
+		})
+	}
+}
+
+func TestRead_AFirstReadLetsGoWhatPrecedesAMoveIntoTheProject(t *testing.T) {
+	tests := []struct {
+		name   string
+		before string
+	}{
+		{name: "every line before it was written elsewhere", before: queuedLine() + writtenIn("/elsewhere", userLine(1)) + lastPromptLine()},
+		{name: "one line before it was written elsewhere", before: userLine(1) + writtenIn("/elsewhere", userLine(3)) + userLine(4)},
+		{name: "no line before it states where it was written", before: queuedLine() + lastPromptLine()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := mainPath(t)
+			move := relocatedLine(root)
+			writeFile(t, path, tt.before+move+userLine(2))
+
+			res := read(t, follow.File{Path: path})
+
+			if res.File.Outside {
+				t.Error("Outside = true, want the session inside after the move")
+			}
+			wantLines(t, res, userLine(2))
+			wantCursor(t, res.File, int64(len(tt.before+move+userLine(2))), 1)
+		})
+	}
+}
+
+func TestReader_AnAgentFileReadBeforeItsMainFileFollowsWhereTheSessionWas(t *testing.T) {
+	tests := []struct {
+		name   string
+		before string
+		want   []string
+	}{
+		{name: "the session was inside before its first move", before: userLine(1), want: []string{userLine(11)}},
+		{name: "the session was elsewhere before its first move", before: writtenIn("/elsewhere", userLine(1))},
+	}
+	for _, place := range agentPlaces {
+		for _, tt := range tests {
+			t.Run(place.name+"/"+tt.name, func(t *testing.T) {
+				a := newAdvancing(t)
+				main := mainPath(t)
+				agent := agentPath(main, place.dir)
+				writeFile(t, main, tt.before+relocatedLine(root)+userLine(2))
+				writeFile(t, agent, userLine(11))
+				a.register(main, "")
+				a.register(agent, "")
+
+				a.reader.Advance(agent)
+
+				var got []string
+				for _, res := range a.handed {
+					got = append(got, segmentLines(t, res)...)
+				}
+				if !slices.Equal(got, tt.want) {
+					t.Errorf("agent lines kept before the main file was read = %q, want %q", got, tt.want)
+				}
+			})
+		}
+	}
 }
 
 func TestRead_SignatureBytesSurvive(t *testing.T) {

@@ -57,7 +57,7 @@ func TestRead_LinesNotKeptAreNotCounted(t *testing.T) {
 	})
 	t.Run("written before a move into consent", func(t *testing.T) {
 		path := mainPath(t)
-		writeFile(t, path, reasoningLine("msg_a", "", "sdk-cli")+relocatedLine(root)+reasoningLine("msg_b", "x", "cli"))
+		writeFile(t, path, writtenIn("/elsewhere", reasoningLine("msg_a", "", "sdk-cli"))+relocatedLine(root)+reasoningLine("msg_b", "x", "cli"))
 		res := read(t, follow.File{Path: path})
 		wantReasoning(t, res.File, sessionline.ReasoningBlocks{WithText: 1}, "cli")
 	})

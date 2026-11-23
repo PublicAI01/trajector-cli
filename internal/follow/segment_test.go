@@ -155,7 +155,7 @@ func TestReader_ARewriteReadInSeveralSegmentsSendsNoSeenMessageAgain(t *testing.
 
 func TestRead_LinesBeforeAMoveIntoConsentStayUnsentPastTheBound(t *testing.T) {
 	path := mainPath(t)
-	outside := sizedLine("msg_out1", 5<<20) + sizedLine("msg_out2", 5<<20)
+	outside := writtenIn("/elsewhere", sizedLine("msg_out1", 5<<20)+sizedLine("msg_out2", 5<<20))
 	after := userLine(2) + assistantLine("msg_in", 0, "i")
 	writeFile(t, path, outside+relocatedLine(root)+after)
 
@@ -166,6 +166,36 @@ func TestRead_LinesBeforeAMoveIntoConsentStayUnsentPastTheBound(t *testing.T) {
 		t.Error("More = true, want the file read to its end")
 	}
 	wantCursor(t, res.File, int64(len(outside+relocatedLine(root)+after)), 1, "msg_in")
+}
+
+func TestRead_LinesPastTheBoundSayWhereTheSessionWasBeforeAMoveIntoConsent(t *testing.T) {
+	path := mainPath(t)
+	before := sizedLine("msg_in", 5<<20) + writtenIn("/elsewhere", sizedLine("msg_out", 5<<20))
+	after := userLine(2) + assistantLine("msg_after", 0, "i")
+	writeFile(t, path, before+relocatedLine(root)+after)
+
+	res := read(t, follow.File{Path: path})
+
+	wantSegment(t, res, userLine(2), assistantLine("msg_after", 0, "i"))
+	wantCursor(t, res.File, int64(len(before+relocatedLine(root)+after)), 1, "msg_after")
+}
+
+func TestRead_LinesWrittenInsideBeforeAMoveInsideAreSentPastTheBound(t *testing.T) {
+	path := mainPath(t)
+	first, second := sizedLine("msg_in1", 5<<20), sizedLine("msg_in2", 5<<20)
+	move := relocatedLine(root)
+	writeFile(t, path, first+second+move+userLine(2))
+
+	res := read(t, follow.File{Path: path})
+
+	wantSegment(t, res, first)
+	if !res.More {
+		t.Fatal("More = false, want the lines past the bound left for the next read")
+	}
+	wantCursor(t, res.File, int64(len(first)), 1, "msg_in1")
+	next := read(t, res.File)
+	wantSegment(t, next, second, move, userLine(2))
+	wantCursor(t, next.File, int64(len(first+second+move+userLine(2))), 2, "msg_in1", "msg_in2")
 }
 
 func TestReader_SendsNoLineWrittenOutsideConsentAcrossSegments(t *testing.T) {
