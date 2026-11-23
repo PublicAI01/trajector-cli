@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/consent"
+	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/proxylife"
 	"github.com/PublicAI01/trajector-cli/internal/proxyserve"
 	"github.com/PublicAI01/trajector-cli/internal/routing"
@@ -243,30 +244,57 @@ func (m *Machine) VerifyUpgrade(ctx context.Context) error {
 	return nil
 }
 
-// migrateRegistries migrates the registry of every enabled project
-// whose registry is in the layout before this build's. A project it
-// could not migrate does not fail the upgrade, which would have the
-// install finished again and again for it: every reader but a session
-// hook migrates the project it reads, so the next one does it.
-func (m *Machine) migrateRegistries() {
-	grants, err := m.routes.All()
-	if err != nil {
-		return
+// settleRegistries migrates the registry of every enabled project
+// whose registry is in the layout before this build's, and then prunes
+// it of the entries whose session file is gone. It is for a command
+// the user waits for, which no one stops: a migration writes every
+// entry and takes as long as that takes. Neither step fails the
+// caller: every reader but a session hook migrates the project it
+// reads, so the next one does it, and a registry left unpruned costs
+// only time.
+func (m *Machine) settleRegistries() {
+	for _, g := range m.enabledGrants() {
+		_ = m.registry.Migrate(g.ProjectIDHash)
+		_, _ = m.registry.Prune(g.ProjectIDHash, m.deps.Now(), follow.ProcessAlive)
 	}
-	for _, g := range grants {
-		if !g.Revoked {
-			_ = m.registry.Migrate(g.ProjectIDHash)
+}
+
+// settleRegistriesApart prunes the registry of every enabled project,
+// and has the one-shot reader started for each project whose registry
+// waits for its migration, which migrates it and reads it. It is for
+// the finish of an upgrade, which the build that installed this one
+// stops after a time of its own choosing: a migration stopped there
+// would hold the project against every reader until its lock grew
+// old, so none is run here. Nothing fails the caller, as in
+// settleRegistries.
+func (m *Machine) settleRegistriesApart(ctx context.Context) {
+	for _, g := range m.enabledGrants() {
+		_, err := m.registry.Prune(g.ProjectIDHash, m.deps.Now(), follow.ProcessAlive)
+		if errors.Is(err, follow.ErrMigrationPending) {
+			_ = m.spawnReader(ctx, g.RootPath)
 		}
 	}
 }
 
+// enabledGrants is the grant of every enabled project, and none when
+// the routing table cannot be read.
+func (m *Machine) enabledGrants() []routing.Grant {
+	grants, err := m.routes.All()
+	if err != nil {
+		return nil
+	}
+	return slices.DeleteFunc(grants, func(g routing.Grant) bool { return g.Revoked })
+}
+
 // FinishUpgrade is what this build does once an older build has
-// committed the install of it. It first brings the session file
-// registry of each enabled project to this build's layout
-// (migrateRegistries), then completes the injection of each enabled
-// project that lacks a hook this release installs
+// committed the install of it. It completes the injection of each
+// enabled project that lacks a hook this release installs
 // (completeEnabledProjects), then leaves the user's next command the
-// lines that say what happened and what it asks of them. Those are
+// lines that say what happened and what it asks of them, and last
+// settles the session file registry of each enabled project
+// (settleRegistriesApart). The registries come last because the build
+// that runs this stops it after a time of its own, and the lines and
+// the hooks are what the user is owed first. Those lines are
 // that this build is installed; in how many projects it completed the
 // hooks, when it did in any; that the data agreement changed with it,
 // when this device accepted an earlier one; and what a pause still
@@ -281,8 +309,8 @@ func (m *Machine) migrateRegistries() {
 // project it could not complete fails it once the lines are left, so
 // the install stays unfinished and is finished again. Running it again
 // adds nothing that still waits.
-func (m *Machine) FinishUpgrade(context.Context) error {
-	m.migrateRegistries()
+func (m *Machine) FinishUpgrade(ctx context.Context) error {
+	defer m.settleRegistriesApart(ctx)
 	completed, repairErr := m.completeEnabledProjects()
 	lines := []string{upgradedNotice(m.deps.Version)}
 	if completed > 0 {

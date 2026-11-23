@@ -112,6 +112,11 @@ func (m *Machine) doctorOpen(ctx context.Context, dir string, reading sessionFil
 	// While an upgrade is running the files beside the binary are its
 	// own, and the sweep leaves them to it.
 	selfupdate.SweepResidue(m.installation())
+	// Each enabled project's registry is migrated and pruned of the
+	// entries whose session file is gone, as an upgrade does. That is
+	// housekeeping too, swept without a finding, and before the
+	// diagnosis, so the counts it states are what is left.
+	m.settleRegistries()
 
 	// A pause that waits for a build other than the one that set it is
 	// lifted here: doctor is the command the user is told to run once

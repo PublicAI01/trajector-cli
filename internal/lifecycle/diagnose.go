@@ -332,9 +332,8 @@ func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFile
 // counts above come from what this build reads, which is a different
 // question.
 //
-// It registers nothing — registering is enable's and the session hooks'
-// alone, and a run that diagnoses must leave the state it diagnosed as
-// it found it.
+// It registers nothing: registering is enable's and the session hooks'
+// alone.
 func (m *Machine) readProjectTree(state report.SessionFilesState, st report.ProjectStatus) report.SessionFilesState {
 	paths, err := m.registry.Paths(st.Hash)
 	if err != nil {

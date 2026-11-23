@@ -38,10 +38,6 @@ func TestFinishUpgradeRemovesTheEntriesOfSessionFilesThatAreGone(t *testing.T) {
 	kept := e.putSessionFile("-work-sample/kept.jsonl", firstLine)
 	e.registerFile(root, kept, "")
 	e.registerGone(root, "-work-sample/gone.jsonl")
-	e.enabledElsewhere("tok-other", proxytest.WithProxy)
-	otherKept := e.putSessionFile("-work-other/kept.jsonl", firstLine)
-	otherGone := filepath.Join(filepath.Dir(otherKept), "gone.jsonl")
-	e.sandbox.LeaveEarlierRegistry("hash-tok-other", proxytest.EarlierRegistry{Files: []proxytest.EarlierEntry{{Path: otherKept}, {Path: otherGone}}})
 	e.brokenRegistryElsewhere()
 
 	if err := e.machine().FinishUpgrade(t.Context()); err != nil {
@@ -51,8 +47,24 @@ func TestFinishUpgradeRemovesTheEntriesOfSessionFilesThatAreGone(t *testing.T) {
 	if paths := e.sandbox.RegisteredPaths(proxytest.ProjectIDHash(root)); !slices.Equal(paths, []string{kept}) {
 		t.Errorf("registered = %q, want only the session file that is there", paths)
 	}
-	if paths := e.sandbox.RegisteredPaths("hash-tok-other"); !slices.Equal(paths, []string{otherKept}) {
-		t.Errorf("registered in the migrated project = %q, want only the session file that is there", paths)
+}
+
+func TestDoctorKeepsTheEntryOfASessionAHookJustNamedThoughItsFileIsGone(t *testing.T) {
+	e := newEnv(t)
+	e.enableProject()
+	e.injectWithProxy()
+	root := e.canonicalRoot()
+	running := e.putSessionFile("-work-sample/running.jsonl", firstLine)
+	e.registerFile(root, running, "")
+	e.sandbox.NameSession(proxytest.ProjectIDHash(root), running, e.deps.Now())
+	if err := os.Remove(running); err != nil {
+		t.Fatal(err)
+	}
+
+	e.doctor()
+
+	if paths := e.sandbox.RegisteredPaths(proxytest.ProjectIDHash(root)); !slices.Equal(paths, []string{running}) {
+		t.Errorf("registered = %q, want the entry of the session a hook named a moment ago left to its reader", paths)
 	}
 }
 

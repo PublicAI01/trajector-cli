@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
 	"github.com/PublicAI01/trajector-cli/internal/lifecycle"
 )
@@ -38,6 +39,12 @@ func (e *env) wantMigratedWithItsCursor(root, path string, offset int64) {
 	if len(files) != 1 || files[0].Path != path || files[0].Offset < offset {
 		e.t.Errorf("registered = %+v, want the earlier entry of %s with its cursor at %d or past it", files, path, offset)
 	}
+}
+
+// oneShotReaderOf is the command line of the one-shot reader of
+// project, as a spawned trajector records it.
+func oneShotReaderOf(project string) string {
+	return strings.Join(claudesettings.HookArgv(claudesettings.HookRead, project), " ")
 }
 
 const (
@@ -80,7 +87,7 @@ func TestAHookLeavesARegistryWaitingForItsMigrationAndStartsAReader(t *testing.T
 			if after := e.sandbox.RegistryOnDisk(proxytest.ProjectIDHash(root)); after != before {
 				t.Errorf("registry after the hook =\n%s\nwant it as it was, nothing registered or marked hot:\n%s", after, before)
 			}
-			if args, _ := trajector.AwaitRun(10 * time.Second); args != "hook read "+e.project {
+			if args, _ := trajector.AwaitRun(10 * time.Second); args != oneShotReaderOf(e.project) {
 				t.Errorf("the hook started %q, want the one-shot reader of the project", args)
 			}
 		})
@@ -224,27 +231,30 @@ func TestEnableMigratesARegistryAnEarlierBuildLeftBeforeItRegisters(t *testing.T
 	e.wantMigratedWithItsCursor(root, main, info.Size())
 }
 
-func TestFinishUpgradeMigratesTheRegistryOfEveryEnabledProject(t *testing.T) {
+func TestFinishUpgradeLeavesAnEarlierRegistryToAReaderItStarts(t *testing.T) {
+	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
+	trajector := proxytest.InstalledTrajector(t, e.deps.Home)
+	e.deps.ExecPath = trajector.Path()
 	e.enableProject()
 	root := e.canonicalRoot()
 	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", firstLine)
 	e.leaveEarlierRegistry(root, main, int64(len(firstLine)))
-	e.enabledElsewhere("tok-other", proxytest.WithProxy)
-	other := e.putSessionFile("-work-other/1a2b3c4d.jsonl", firstLine)
-	e.sandbox.LeaveEarlierRegistry("hash-tok-other", proxytest.EarlierRegistry{Files: []proxytest.EarlierEntry{{Path: other}}})
 	e.enabledElsewhere("tok-broken", proxytest.WithProxy)
 	broken := filepath.Join(e.layout().FollowDir(), "hash-tok-broken.json")
 	if err := os.WriteFile(broken, []byte(`{"version":1,"files":[`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	before := e.sandbox.RegistryOnDisk(proxytest.ProjectIDHash(root))
 
 	if err := e.machine().FinishUpgrade(t.Context()); err != nil {
-		t.Errorf("FinishUpgrade() = %v, want a project it could not migrate left to the next reader", err)
+		t.Errorf("FinishUpgrade() = %v, want a project that waits for its migration left to a reader", err)
 	}
 
-	e.wantMigratedWithItsCursor(root, main, int64(len(firstLine)))
-	if v := e.sandbox.RegistryVersion("hash-tok-other"); v != 2 {
-		t.Errorf("registry version of the other project = %d, want 2", v)
+	if after := e.sandbox.RegistryOnDisk(proxytest.ProjectIDHash(root)); after != before {
+		t.Errorf("registry after the finish =\n%s\nwant it as it was: the build that runs the finish stops it after a time of its own, and a migration stopped there holds the project\n%s", after, before)
+	}
+	if args, _ := trajector.AwaitRun(10 * time.Second); args != oneShotReaderOf(root) {
+		t.Errorf("the finish started %q, want the one-shot reader of the project, which migrates it", args)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
@@ -36,6 +37,16 @@ func (s *Sandbox) RegisterSessionFile(projectIDHash, path, subpath string) {
 	s.t.Helper()
 	if err := s.registry().RegisterAll(projectIDHash, []string{path}, subpath); err != nil {
 		s.t.Fatal(err)
+	}
+}
+
+// NameSession records that a session hook named the session path
+// belongs to at at, as a hook of a session whose process it could not
+// tell does.
+func (s *Sandbox) NameSession(projectIDHash, path string, at time.Time) {
+	s.t.Helper()
+	if err := s.registry().Warm(projectIDHash, path, 0, at); err != nil {
+		s.t.Fatalf("name the session of %s: %v", path, err)
 	}
 }
 
