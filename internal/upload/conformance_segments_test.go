@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/conformance"
@@ -49,15 +50,15 @@ func TestSegmentFixturesMatchHowThisClientCutsAFile(t *testing.T) {
 				ProjectIDHash: projectIDHash,
 				Options:       follow.ReadOptions{Root: filepath.Dir(path)},
 				Capture:       recordCapture(time.Now(), projectIDHash),
-				Store: func(res follow.ReadResult) follow.Storing {
+				Store: func(res follow.ReadResult) (follow.Storing, drift.Signals) {
 					for _, seg := range res.Segments {
 						if err := f.spool.WriteSegment(seg); err != nil {
 							t.Error(err)
-							return follow.NotStored
+							return follow.NotStored, drift.Signals{}
 						}
 					}
 					made = append(made, res.Segments...)
-					return follow.Stored
+					return follow.Stored, drift.Signals{}
 				},
 			}
 

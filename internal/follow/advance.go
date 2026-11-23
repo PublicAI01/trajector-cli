@@ -3,6 +3,7 @@ package follow
 import (
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 )
 
@@ -19,10 +20,14 @@ const (
 	NotStored
 	// Held: this read's records are not stored, the cursor must stay,
 	// and no further entry of the project is read in this run. It is
-	// the answer for a condition that holds for every entry alike —
-	// no room left to store in, or content that this build must not
-	// store.
+	// the answer for a condition that holds for every entry alike, such
+	// as no room left to store in.
 	Held
+	// Paused: as Held, for content that this build must not store. What
+	// the store noticed about that content is kept all the same: it is
+	// what says why reading stopped, and no cursor write follows to
+	// carry it.
+	Paused
 )
 
 // Reader advances the cursors of one project's registered entries. It
@@ -43,8 +48,12 @@ type Reader struct {
 	// entry that produced it; the rest is the caller's to fill.
 	Capture envelope.Capture
 	// Store lands the records of one read and reports what became of
-	// them. It is the one judge of whether a cursor may move.
-	Store func(ReadResult) Storing
+	// them, and what it noticed about the lines they hold. It is the one
+	// judge of whether a cursor may move. What it noticed is kept with
+	// the cursor in one write when the records are Stored, kept alone
+	// when they are Paused, and dropped otherwise: the same lines are
+	// read again, and noticed again, by the read that stores them.
+	Store func(ReadResult) (Storing, drift.Signals)
 	// ReadAt is the time this run records on every cursor it writes. A
 	// read that finds nothing new writes no cursor. The zero time leaves
 	// the entry's own time as it was.
@@ -175,7 +184,13 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 			return true, false
 		}
 	}
-	switch rd.Store(res) {
+	storing, noticed := rd.Store(res)
+	switch storing {
+	case Paused:
+		if noticed.Any() {
+			_ = rd.Registry.notice(rd.ProjectIDHash, f.Path, noticed)
+		}
+		return false, false
 	case Held:
 		return false, false
 	case NotStored:
@@ -186,7 +201,7 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 		_ = rd.Registry.Remove(rd.ProjectIDHash, f.Path)
 		return true, false
 	}
-	if !f.changedBy(res.File) {
+	if !f.changedBy(res.File) && !noticed.Any() {
 		// The entry already says everything this read found. Writing it
 		// anyway would rewrite the registry once per entry each time a
 		// session's files are looked at, and most of them gain nothing.
@@ -197,7 +212,7 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 	if !rd.ReadAt.IsZero() {
 		res.File.ReadAt = rd.ReadAt.UTC().Format(readAtLayout)
 	}
-	if err := rd.Registry.Update(rd.ProjectIDHash, f, res.File); err != nil {
+	if err := rd.Registry.Update(rd.ProjectIDHash, f, res.File, noticed); err != nil {
 		return true, false
 	}
 	if stands || bounded {

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/procbin"
 )
@@ -92,14 +93,14 @@ func (s *firstWriterWins) holds(line string) bool {
 }
 
 // readerWith is a reader of project's entries in registry whose store
-// is store.
+// is store, and which notices nothing about the lines it stores.
 func readerWith(registry *follow.Registry, store func(follow.ReadResult) follow.Storing) follow.Reader {
 	return follow.Reader{
 		Registry:      registry,
 		ProjectIDHash: project,
 		Options:       follow.ReadOptions{Root: root},
 		Capture:       capture,
-		Store:         store,
+		Store:         func(res follow.ReadResult) (follow.Storing, drift.Signals) { return store(res), drift.Signals{} },
 	}
 }
 

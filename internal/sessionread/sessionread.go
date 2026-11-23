@@ -82,7 +82,7 @@ func (rd Reader) Read(p Project, paths []string) bool {
 			ProjectIDHash: p.Hash,
 			Injection:     InjectionValue(p.Shape),
 		},
-		Store:  func(res follow.ReadResult) follow.Storing { return rd.store(p, res) },
+		Store:  func(res follow.ReadResult) (follow.Storing, drift.Signals) { return rd.store(p, res) },
 		ReadAt: now,
 	}
 	for _, path := range paths {
@@ -140,17 +140,19 @@ func stopsIn(f follow.File, capture envelope.Capture, location redact.SessionLoc
 // store holds what one read produced against the shape this build
 // masks and reads by, and then lands its records in the spool. It is
 // the whole of what storing means here, and the reader moves a cursor
-// only on the answer it gives.
-func (rd Reader) store(p Project, res follow.ReadResult) follow.Storing {
-	pause, held, err := rd.inspectSegments(p, res.Segments)
+// only on the answer it gives. What the read noticed goes back to the
+// reader with the answer, which keeps it in the registry with the
+// cursor.
+func (rd Reader) store(p Project, res follow.ReadResult) (follow.Storing, drift.Signals) {
+	pause, held, noticed, err := rd.inspectSegments(p, res.Segments)
 	if err != nil {
-		return follow.NotStored
+		return follow.NotStored, drift.Signals{}
 	}
 	if pause {
 		// Nothing of this read is stored: the same lines are met again
 		// by whichever build reads next, and only one that can mask
 		// them may store them.
-		return follow.Held
+		return follow.Paused, noticed
 	}
 	full, err := storeRecords(rd.Spool, res, held)
 	switch {
@@ -159,45 +161,45 @@ func (rd Reader) store(p Project, res follow.ReadResult) follow.Storing {
 		// reader. This file and every one after it is read again once
 		// space returns; no record is repeated, because storing is
 		// idempotent by id.
-		return follow.Held
+		return follow.Held, drift.Signals{}
 	case err != nil:
-		return follow.NotStored
+		return follow.NotStored, drift.Signals{}
 	}
-	return follow.Stored
+	return follow.Stored, noticed
 }
 
 // inspectSegments holds each segment's lines against the shape this
-// build masks and reads by, before anything is stored, and keeps what
-// it noticed with the project's registry, and in the reader log the
-// part of it the scan calls unexpected. It reports the two outcomes a
-// finding can have. A reader that contradicted itself pauses the run
-// and recording device-wide until a different build reads the files:
-// nothing it handed over can be trusted. A segment carrying a field
-// this build cannot mask is named in held: that one segment stays on
-// this machine, and every other segment of the read is stored and
-// uploaded as usual. This is the one place a line's fields are read
-// before the spool, so it is where the shape is checked; the reader
-// itself interprets nothing, and what a finding is called is stated
-// where the scan happens, not here. A registry or a log that cannot be
+// build masks and reads by, before anything is stored, and keeps in the
+// reader log the part of what it noticed that the scan calls
+// unexpected. It reports the two outcomes a finding can have, and
+// everything it noticed. A reader that contradicted itself pauses the
+// run and recording device-wide until a different build reads the
+// files: nothing it handed over can be trusted. A segment carrying a
+// field this build cannot mask is named in held: that one segment
+// stays on this machine, and every other segment of the read is stored
+// and uploaded as usual. This is the one place a line's fields are
+// read before the spool, so it is where the shape is checked; the
+// reader itself interprets nothing, and what a finding is called is
+// stated where the scan happens, not here. A log that cannot be
 // written is let go: what was noticed is worth keeping and never worth
 // stopping a read for.
-func (rd Reader) inspectSegments(p Project, segments []envelope.Segment) (pause bool, held map[string]bool, err error) {
+func (rd Reader) inspectSegments(p Project, segments []envelope.Segment) (pause bool, held map[string]bool, noticed drift.Signals, err error) {
 	location := rd.location(p)
 	for _, seg := range segments {
 		found, err := drift.Scan([]byte(seg.Lines), location)
 		if err != nil {
-			return false, nil, err
+			return false, nil, drift.Signals{}, err
 		}
 		if !found.Any() {
 			continue
 		}
-		_ = rd.Registry.AddSignals(p.Hash, found)
+		noticed = noticed.Add(found)
 		if found.Unexpected() {
 			_ = drift.AppendLog(rd.ReaderLog, rd.Now().UTC().Format(time.RFC3339), p.Hash, found)
 		}
 		if found.Stop() {
 			_ = rd.Routes.PauseByBuild(routing.PauseRedactionDrift, rd.Version)
-			return true, nil, nil
+			return true, nil, noticed, nil
 		}
 		if keepsHere(found) {
 			if held == nil {
@@ -206,7 +208,7 @@ func (rd Reader) inspectSegments(p Project, segments []envelope.Segment) (pause 
 			held[seg.RecordID] = true
 		}
 	}
-	return false, held, nil
+	return false, held, noticed, nil
 }
 
 // location is where the sessions of p ran, as every reading of their

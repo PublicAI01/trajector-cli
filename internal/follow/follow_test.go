@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
 
@@ -70,7 +71,7 @@ func TestRegistry_RegisterKeepsExistingCursors(t *testing.T) {
 	path := abs(t, "a.jsonl")
 	mustRegister(t, r, project, path)
 	advanced := follow.File{Path: path, Inode: 7, Size: 10, Offset: 10, NextSegment: 2, MessageIDs: []string{"msg_a"}}
-	if err := r.Update(project, follow.File{Path: path}, advanced); err != nil {
+	if err := r.Update(project, follow.File{Path: path}, advanced, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 	mustRegister(t, r, project, path)
@@ -104,7 +105,7 @@ func TestRegistry_RejectsProjectHashesThatCouldEscapeTheDirectory(t *testing.T) 
 		if err := r.RegisterAll(hash, []string{path}, ""); err == nil {
 			t.Errorf("RegisterAll(%q) = nil, want refused", hash)
 		}
-		if err := r.Update(hash, follow.File{Path: path}, follow.File{Path: path}); err == nil {
+		if err := r.Update(hash, follow.File{Path: path}, follow.File{Path: path}, drift.Signals{}); err == nil {
 			t.Errorf("Update(%q) = nil, want refused", hash)
 		}
 		if err := r.Unregister(hash); err == nil {
@@ -227,7 +228,7 @@ func TestRegistry_ReadsAnEntryAnEarlierBuildRetiredForLeavingAsOutside(t *testin
 	path := abs(t, "a.jsonl")
 	mustRegister(t, r, project, path)
 	left := follow.File{Path: path, Inode: 7, Size: 90, Offset: 90, NextSegment: 1, MessageIDs: []string{"msg_a"}}
-	if err := r.Update(project, follow.File{Path: path}, left); err != nil {
+	if err := r.Update(project, follow.File{Path: path}, left, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 	retireInFile(t, dir, path, "relocated")
@@ -305,7 +306,7 @@ func TestRegistry_AnAgentFileOfAWorkflowRunIsHiddenOnDiskAndReadHere(t *testing.
 	}
 
 	read := follow.File{Path: inRun, Inode: 3, Size: 40, Offset: 40, NextSegment: 1, MessageIDs: []string{"msg_b"}}
-	if err := r.Update(project, follow.File{Path: inRun}, read); err != nil {
+	if err := r.Update(project, follow.File{Path: inRun}, read, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := retirementsOnDisk(t, dir)[inRun]; got != "nested-agent-file" {
@@ -319,14 +320,14 @@ func TestRegistry_AnAgentFileOfAWorkflowRunOutsideIsWrittenAsRelocated(t *testin
 	inRun := abs(t, filepath.Join("sid", "subagents", "workflows", "wf_1", "agent-b.jsonl"))
 	mustRegister(t, r, project, inRun)
 	outside := follow.File{Path: inRun, Offset: 10, Outside: true}
-	if err := r.Update(project, follow.File{Path: inRun}, outside); err != nil {
+	if err := r.Update(project, follow.File{Path: inRun}, outside, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := retirementsOnDisk(t, dir)[inRun]; got != "relocated" {
 		t.Fatalf("retirement on disk while outside = %q, want relocated", got)
 	}
 	back := follow.File{Path: inRun, Offset: 20}
-	if err := r.Update(project, outside, back); err != nil {
+	if err := r.Update(project, outside, back, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := retirementsOnDisk(t, dir)[inRun]; got != "nested-agent-file" {
@@ -435,12 +436,12 @@ func TestRegistry_UpdateFromACursorThatMovedChangesNothing(t *testing.T) {
 	mustRegister(t, r, project, path)
 	start := follow.File{Path: path}
 	moved := follow.File{Path: path, Inode: 7, Size: 10, Offset: 10, NextSegment: 1, MessageIDs: []string{"msg_a"}}
-	if err := r.Update(project, start, moved); err != nil {
+	if err := r.Update(project, start, moved, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 
 	late := follow.File{Path: path, Inode: 7, Size: 30, Offset: 30, NextSegment: 1, MessageIDs: []string{"msg_b"}}
-	if err := r.Update(project, start, late); err == nil {
+	if err := r.Update(project, start, late, drift.Signals{}); err == nil {
 		t.Error("Update from a cursor that moved = nil, want an error")
 	}
 	files, err := r.Files(project)
@@ -458,11 +459,11 @@ func TestRegistry_UpdateReplacesTheCursor(t *testing.T) {
 	a, b := abs(t, "a.jsonl"), abs(t, "b.jsonl")
 	mustRegister(t, r, project, a, b)
 	first := follow.File{Path: a, Inode: 11, Size: 300, Offset: 300, NextSegment: 1, MessageIDs: []string{"msg_a", "msg_b"}}
-	if err := r.Update(project, follow.File{Path: a}, first); err != nil {
+	if err := r.Update(project, follow.File{Path: a}, first, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 	second := follow.File{Path: a, Inode: 12, Size: 40, Offset: 40, NextSegment: 2, MessageIDs: []string{"msg_c"}}
-	if err := r.Update(project, first, second); err != nil {
+	if err := r.Update(project, first, second, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -523,7 +524,7 @@ func TestRegistry_UpdateUnregisteredFails(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := follow.Open(t.TempDir())
 			tt.setup(t, r)
-			err := r.Update(project, follow.File{}, follow.File{Path: abs(t, "a.jsonl"), Offset: 5})
+			err := r.Update(project, follow.File{}, follow.File{Path: abs(t, "a.jsonl"), Offset: 5}, drift.Signals{})
 			if !errors.Is(err, follow.ErrNotRegistered) {
 				t.Errorf("Update() = %v, want ErrNotRegistered", err)
 			}
@@ -630,7 +631,7 @@ func TestRegistry_FilePermissionsAreOwnerOnly(t *testing.T) {
 		t.Fatalf("Open created the directory: stat = %v", err)
 	}
 	mustRegister(t, r, project, abs(t, "a.jsonl"))
-	if err := r.Update(project, follow.File{}, follow.File{Path: abs(t, "a.jsonl"), Offset: 1}); err != nil {
+	if err := r.Update(project, follow.File{}, follow.File{Path: abs(t, "a.jsonl"), Offset: 1}, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -682,7 +683,7 @@ func TestRegistry_UnknownVersionIsAnError(t *testing.T) {
 			if err := r.RegisterAll(project, []string{path}, ""); err == nil {
 				t.Error("RegisterAll() = nil, want refused")
 			}
-			if err := r.Update(project, follow.File{Path: path}, follow.File{Path: path}); err == nil {
+			if err := r.Update(project, follow.File{Path: path}, follow.File{Path: path}, drift.Signals{}); err == nil {
 				t.Error("Update() = nil, want refused")
 			}
 			got, err := os.ReadFile(filepath.Join(dir, project+".json"))

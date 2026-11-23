@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
 
@@ -111,7 +112,7 @@ func TestRegistry_WarmAndCoolLeaveTheCursorAlone(t *testing.T) {
 	path := abs(t, "a.jsonl")
 	mustRegister(t, r, project, path)
 	advanced := follow.File{Path: path, Inode: 7, Size: 10, Offset: 10, NextSegment: 2, MessageIDs: []string{"msg_a"}}
-	if err := r.Update(project, follow.File{Path: path}, advanced); err != nil {
+	if err := r.Update(project, follow.File{Path: path}, advanced, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
@@ -258,7 +259,7 @@ func TestRegistry_FileIsTheEntryFilesListsForAPath(t *testing.T) {
 	mustRegister(t, r, project, path, retired)
 	retireInFile(t, dir, retired, "a-reason-of-a-later-build")
 	advanced := follow.File{Path: path, Inode: 7, Size: 10, Offset: 10, NextSegment: 2, MessageIDs: []string{"msg_a"}}
-	if err := r.Update(project, follow.File{Path: path}, advanced); err != nil {
+	if err := r.Update(project, follow.File{Path: path}, advanced, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 

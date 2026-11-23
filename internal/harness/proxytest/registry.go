@@ -77,7 +77,7 @@ func (s *Sandbox) RewindCursor(projectIDHash, path string) {
 	from := s.registered(projectIDHash, path)
 	f := from
 	f.Offset, f.Size, f.Inode, f.NextSegment, f.MessageIDs = 0, 0, 0, 0, nil
-	if err := s.registry().Update(projectIDHash, from, f); err != nil {
+	if err := s.registry().Update(projectIDHash, from, f, drift.Signals{}); err != nil {
 		s.t.Fatal(err)
 	}
 }
@@ -149,11 +149,32 @@ func (s *Sandbox) ProjectsWithRegistry() []string {
 }
 
 // AddSignals accumulates what a reading run noticed, as the run itself
-// would have recorded it.
+// would have recorded it: a reader keeps what its store noticed with
+// the cursor of the file it read. The file read here is a stand-in,
+// empty and registered only for this read, and its entry is removed
+// afterwards, so the project's entries are as they were.
 func (s *Sandbox) AddSignals(projectIDHash string, more Signals) {
 	s.t.Helper()
-	if err := s.registry().AddSignals(projectIDHash, more); err != nil {
+	dir := s.t.TempDir()
+	standIn := filepath.Join(dir, "signals-stand-in.jsonl")
+	if err := fsatomic.WriteFile(standIn, nil, 0o600); err != nil {
 		s.t.Fatal(err)
+	}
+	if err := s.registry().RegisterAll(projectIDHash, []string{standIn}, ""); err != nil {
+		s.t.Fatal(err)
+	}
+	reader := follow.Reader{
+		Registry:      s.registry(),
+		ProjectIDHash: projectIDHash,
+		Options:       follow.ReadOptions{Root: dir},
+		Store:         func(follow.ReadResult) (follow.Storing, Signals) { return follow.Stored, more },
+	}
+	reader.Advance(standIn)
+	if err := s.registry().Remove(projectIDHash, standIn); err != nil {
+		s.t.Fatal(err)
+	}
+	if !s.Signals(projectIDHash).Any() && more.Any() {
+		s.t.Fatal("proxytest: the stand-in read kept no signals")
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
@@ -382,7 +383,7 @@ func TestStartSweepCoolsAQuietFileAndSendsTheSpoolAtOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	to := follow.File{Path: quiet, Inode: st.Inode, Size: st.Size, Offset: st.Size, NextSegment: 1, ReadAt: "2026-01-01T00:00:00Z"}
-	if err := e.registry().Update(hash, from, to); err != nil {
+	if err := e.registry().Update(hash, from, to, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.registry().Warm(hash, quiet, 0, time.Now().Add(-time.Hour)); err != nil {
@@ -469,7 +470,7 @@ func TestStartSweepLeavesAColdWorkflowAgentFileReadToItsEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	to := follow.File{Path: readToEnd, Inode: st.Inode, Size: st.Size, Offset: st.Size, NextSegment: 1, ReadAt: "2026-01-01T00:00:00Z"}
-	if err := e.registry().Update(hash, from, to); err != nil {
+	if err := e.registry().Update(hash, from, to, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 	e.cool(hash, main)

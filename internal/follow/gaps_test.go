@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
 
@@ -71,7 +72,7 @@ func TestRegistry_UpdateKeepsWhenAFileWasRead(t *testing.T) {
 	if err := r.RegisterAll(project, []string{path}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Update(project, follow.File{Path: path}, follow.File{Path: path, Offset: 3, ReadAt: "2026-09-10T08:30:00Z"}); err != nil {
+	if err := r.Update(project, follow.File{Path: path}, follow.File{Path: path, Offset: 3, ReadAt: "2026-09-10T08:30:00Z"}, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 

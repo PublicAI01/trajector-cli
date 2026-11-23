@@ -170,33 +170,20 @@ func (r *Registry) Gaps(projectIDHash string) (Gaps, error) {
 	return *reg.Gaps, nil
 }
 
-// AddSignals sums what one read noticed into projectIDHash's registry.
-// A project with no registry gets one: what was noticed about a
-// project's files outlives the entries for the files themselves. What
-// a signal holds is drift's to name; the registry only keeps the sum.
-func (r *Registry) AddSignals(projectIDHash string, more drift.Signals) error {
-	if err := checkProjectIDHash(projectIDHash); err != nil {
-		return err
+// addSignals sums what one read noticed into reg. What was noticed
+// about a project's files outlives the entries for the files
+// themselves. What a signal holds is drift's to name; the registry
+// only keeps the sum.
+func (reg *registry) addSignals(more drift.Signals) {
+	var sum drift.Signals
+	if reg.Signals != nil {
+		sum = *reg.Signals
 	}
-	if err := userdirs.EnsureOwnerDir(r.dir); err != nil {
-		return err
+	sum = sum.Add(more)
+	reg.Signals = nil
+	if sum.Any() {
+		reg.Signals = &sum
 	}
-	return fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
-		reg, err := parse(old)
-		if err != nil {
-			return nil, err
-		}
-		var sum drift.Signals
-		if reg.Signals != nil {
-			sum = *reg.Signals
-		}
-		sum = sum.Add(more)
-		reg.Signals = nil
-		if sum.Any() {
-			reg.Signals = &sum
-		}
-		return encode(reg)
-	})
 }
 
 // Signals reports everything the reader noticed about projectIDHash's
@@ -281,8 +268,33 @@ func (r *Registry) HotFiles(projectIDHash string, now time.Time, alive func(pid 
 // or NextSegment moved since from was read is left as it is, and
 // Update fails: to was made from a cursor that is no longer the
 // entry's, and writing it would put the cursor past lines that no
-// record of the other reader holds.
-func (r *Registry) Update(projectIDHash string, from, to File) error {
+// record of the other reader holds. What the read that reached to
+// noticed is kept in the same write: the cursor and the counts of the
+// lines it passed land together or not at all.
+func (r *Registry) Update(projectIDHash string, from, to File, noticed drift.Signals) error {
+	return r.writeEntry(projectIDHash, to.Path, func(reg *registry, i int) error {
+		if cur := reg.Files[i]; cur.Offset != from.Offset || cur.NextSegment != from.NextSegment {
+			return errCursorMoved
+		}
+		reg.Files[i] = reg.Files[i].advancedTo(to)
+		reg.addSignals(noticed)
+		return nil
+	})
+}
+
+// notice keeps what a read of path noticed and leaves the cursor where
+// it is. It is for a read whose findings stop reading before any of
+// its records is stored: no cursor write follows to carry them.
+func (r *Registry) notice(projectIDHash, path string, noticed drift.Signals) error {
+	return r.writeEntry(projectIDHash, path, func(reg *registry, _ int) error {
+		reg.addSignals(noticed)
+		return nil
+	})
+}
+
+// writeEntry rewrites projectIDHash's registry with change applied to
+// the entry registered for path, the i-th of reg.Files.
+func (r *Registry) writeEntry(projectIDHash, path string, change func(reg *registry, i int) error) error {
 	if err := checkProjectIDHash(projectIDHash); err != nil {
 		return err
 	}
@@ -294,14 +306,13 @@ func (r *Registry) Update(projectIDHash string, from, to File) error {
 		if err != nil {
 			return nil, err
 		}
-		i, ok := find(reg.Files, to.Path)
+		i, ok := find(reg.Files, path)
 		if !ok {
 			return nil, ErrNotRegistered
 		}
-		if cur := reg.Files[i]; cur.Offset != from.Offset || cur.NextSegment != from.NextSegment {
-			return nil, errCursorMoved
+		if err := change(&reg, i); err != nil {
+			return nil, err
 		}
-		reg.Files[i] = reg.Files[i].advancedTo(to)
 		return encode(reg)
 	})
 }

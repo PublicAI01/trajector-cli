@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
 
@@ -24,6 +25,7 @@ type advancing struct {
 	registry *follow.Registry
 	reader   follow.Reader
 	answer   follow.Storing
+	noticed  drift.Signals
 	handed   []follow.ReadResult
 }
 
@@ -42,9 +44,9 @@ func newAdvancing(t *testing.T) *advancing {
 		ProjectIDHash: project,
 		Options:       follow.ReadOptions{Root: root},
 		Capture:       capture,
-		Store: func(res follow.ReadResult) follow.Storing {
+		Store: func(res follow.ReadResult) (follow.Storing, drift.Signals) {
 			a.handed = append(a.handed, res)
-			return a.answer
+			return a.answer, a.noticed
 		},
 		ReadAt: at,
 	}
@@ -294,11 +296,11 @@ func TestReader_KeepsTheHeatAHookWroteWhileTheFileWasRead(t *testing.T) {
 			writeFile(t, path, tc.content)
 			a.register(path, "")
 			at := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
-			a.reader.Store = func(follow.ReadResult) follow.Storing {
+			a.reader.Store = func(follow.ReadResult) (follow.Storing, drift.Signals) {
 				if err := a.registry.Warm(project, path, 42, at); err != nil {
 					t.Fatal(err)
 				}
-				return follow.Stored
+				return follow.Stored, drift.Signals{}
 			}
 
 			a.reader.Advance(path)
@@ -326,7 +328,7 @@ func TestReader_ReadsOnFromWhereAnEarlierBuildRetiredASessionThatLeft(t *testing
 	writeFile(t, path, kept+out)
 	a.register(path, "")
 	left := follow.File{Path: path, Size: int64(len(kept + out)), Offset: int64(len(kept + out)), NextSegment: 1, MessageIDs: []string{"m1"}}
-	if err := a.registry.Update(project, follow.File{Path: path}, left); err != nil {
+	if err := a.registry.Update(project, follow.File{Path: path}, left, drift.Signals{}); err != nil {
 		t.Fatal(err)
 	}
 	retireInFile(t, a.dir, path, "relocated")
