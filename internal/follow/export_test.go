@@ -43,3 +43,13 @@ func DieAfterMigrationStep(step int) {
 		select {}
 	}
 }
+
+// BeforePruneLocks has every Prune in this test binary call at with the
+// path of each entry it would remove, just before it takes the entry's
+// lock, until t ends.
+func BeforePruneLocks(t testing.TB, at func(path string)) {
+	t.Helper()
+	was := beforePruneLock
+	beforePruneLock = at
+	t.Cleanup(func() { beforePruneLock = was })
+}

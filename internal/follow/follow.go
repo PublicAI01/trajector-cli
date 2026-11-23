@@ -396,7 +396,13 @@ func (r *Registry) Remove(projectIDHash, path string) error {
 			return err
 		}
 	}
-	err = os.Remove(r.entryPath(projectIDHash, path))
+	return r.dropEntry(projectIDHash, path)
+}
+
+// dropEntry removes the entry file of path. An entry removed already is
+// removed.
+func (r *Registry) dropEntry(projectIDHash, path string) error {
+	err := os.Remove(r.entryPath(projectIDHash, path))
 	if os.IsNotExist(err) {
 		return nil
 	}

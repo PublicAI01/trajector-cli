@@ -27,8 +27,10 @@ var plainWriteFiles = map[string]bool{
 	// is an unregistered project, and a path with no entry file is not
 	// registered.
 	"internal/follow/follow.go": true,
-	// Cooling a session unlinks its heat: no heat is the state "no hook
-	// named the session", which its reader already reads.
+	// Cooling a session unlinks its heat, and pruning its last entry
+	// unlinks its heat and its told mark: no heat is the state "no hook
+	// named the session", and no told mark is a session not told yet,
+	// which their readers already read.
 	"internal/follow/heat.go": true,
 	// Removing the copy a migration works from is the state "migration
 	// complete": a reader that finds it gone reads the project as

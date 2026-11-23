@@ -2,6 +2,7 @@ package follow
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
@@ -137,4 +138,16 @@ func (r *Registry) tell(projectIDHash, path string) (first bool, err error) {
 	}
 	err = mark.Close()
 	return err == nil, err
+}
+
+// dropSessionMarks removes the heat and the told mark of the session
+// path belongs to. A mark that is not there is removed.
+func (r *Registry) dropSessionMarks(projectIDHash, path string) error {
+	var errs []error
+	for _, ext := range []string{heatExt, toldExt} {
+		if err := os.Remove(r.sessionPath(projectIDHash, path, ext)); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }

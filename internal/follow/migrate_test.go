@@ -694,7 +694,8 @@ func TestMigrate_LeavesBehindTheColdEntriesWhoseFileIsGone(t *testing.T) {
 func TestMigrate_KeepsEveryEntryOfALargeRegistryWhoseFileIsThere(t *testing.T) {
 	n := largeRegistryEntries()
 	dir := filepath.Join(t.TempDir(), "follow")
-	reg, kept := largeRegistryWithFilesGone(t, n)
+	reg, kept, gone := largeRegistryWithFilesGone(t, n)
+	removeAll(t, gone)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -714,13 +715,13 @@ func TestMigrate_KeepsEveryEntryOfALargeRegistryWhoseFileIsThere(t *testing.T) {
 
 // largeRegistryWithFilesGone is an earlier registry of n cold entries,
 // twenty to a session, whose files lie in one directory, and the paths,
-// sorted, of the entries whose file is still there: every fifth file is
-// gone, and so is every file of every seventh session.
-func largeRegistryWithFilesGone(t *testing.T, n int) (registryv1.Registry, []string) {
+// sorted, of the entries whose files are still there and of those whose
+// files are gone: every fifth file, and every file of every seventh
+// session. The files that are gone are on disk until removeAll removes
+// them.
+func largeRegistryWithFilesGone(t *testing.T, n int) (reg registryv1.Registry, kept, gone []string) {
 	t.Helper()
 	sessions := t.TempDir()
-	var reg registryv1.Registry
-	var kept []string
 	for i := range n {
 		session := filepath.Join(sessions, fmt.Sprintf("s%03d.jsonl", i/20))
 		path := session
@@ -732,13 +733,21 @@ func largeRegistryWithFilesGone(t *testing.T, n int) (registryv1.Registry, []str
 			Path: path, Size: 10, Offset: 10, NextSegment: 1, MessageIDs: []string{fmt.Sprintf("msg_%d", i)},
 		})
 		if i%5 == 0 || (i/20)%7 == 0 {
-			if err := os.Remove(path); err != nil {
-				t.Fatal(err)
-			}
-			continue
+			gone = append(gone, path)
+		} else {
+			kept = append(kept, path)
 		}
-		kept = append(kept, path)
 	}
 	slices.Sort(kept)
-	return reg, kept
+	return reg, kept, gone
+}
+
+// removeAll removes every file of paths.
+func removeAll(t *testing.T, paths []string) {
+	t.Helper()
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
