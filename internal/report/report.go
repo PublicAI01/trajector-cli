@@ -143,6 +143,10 @@ type SessionFilesState struct {
 	// says no hook of trajector's reported them. It is zero when
 	// nothing walked.
 	Unregistered int
+	// UnreadableEntries counts the registry's entry files that could
+	// not be read. The session file each one follows is not read while
+	// it stands, and nothing it holds is shown.
+	UnreadableEntries int
 	// Earlier is how many of the unregistered sessions were written
 	// before the project was enabled. They went through no hook
 	// because there was nothing to hook them yet, which is a different

@@ -368,8 +368,18 @@ func sessionFileLines(s SessionFilesState) []string {
 			s.Sessions, lastRead, platform.HumanBytes(s.BytesBehind)))
 	}
 	lines = append(lines, outsideLines(s.Outside)...)
+	if s.UnreadableEntries > 0 {
+		lines = append(lines, unreadableEntriesLine(s.UnreadableEntries))
+	}
 	lines = append(lines, gapLines(s.Gaps)...)
 	return append(lines, spellingVariantsNotice)
+}
+
+// unreadableEntriesLine is the one sentence status and doctor use for
+// the registry's entry files that could not be read. It gives a count
+// and never a name: the name of an entry file is a digest of a path.
+func unreadableEntriesLine(entries int) string {
+	return fmt.Sprintf("Not read: %d entry file(s) of this project's session file registry could not be read, so the session file(s) they follow are not read.", entries)
 }
 
 // outsideLines counts the sessions that are outside the directories

@@ -65,6 +65,8 @@ const (
 	treeLimitLine        = "This project's directory tree has more than 50000 directories, so the count above is incomplete."
 	workspaceTrustLine   = "This workspace is not trusted yet; accept the trust dialog in Claude Code."
 	spellingLine         = "Sessions started under another spelling of this project's path"
+	// unreadableEntriesLine is said for three entry files.
+	unreadableEntriesLine = "Not read: 3 entry file(s) of this project's session file registry could not be read, so the session file(s) they follow are not read."
 )
 
 func TestStatusStatesEverySessionFileFact(t *testing.T) {
@@ -125,6 +127,16 @@ func TestStatusStatesEverySessionFileFact(t *testing.T) {
 			want:  []string{"Not looked at: /home/dev/sample-project/locked could not be listed, nor anything below it."},
 		},
 		{
+			name:  "entry files of the registry that cannot be read",
+			state: report.SessionFilesState{Sessions: 2, UnreadableEntries: 3},
+			want:  []string{unreadableEntriesLine},
+		},
+		{
+			name:   "every entry file of the registry read",
+			state:  report.SessionFilesState{Sessions: 2},
+			reject: []string{"Not read:"},
+		},
+		{
 			name:   "a registry that cannot be read",
 			state:  report.SessionFilesState{Err: errors.New("permission denied")},
 			want:   []string{"warning: the session file registry could not be read: permission denied. Run `trajector doctor`."},
@@ -139,6 +151,16 @@ func TestStatusStatesEverySessionFileFact(t *testing.T) {
 			rejects(t, "status", out, tc.reject...)
 		})
 	}
+}
+
+func TestDoctorStatesTheEntryFilesOfTheRegistryThatCannotBeRead(t *testing.T) {
+	for _, d := range []report.Diagnosis{enabledDevice(), walked(enabledDevice(), 0)} {
+		d.SessionFiles.UnreadableEntries = 3
+		_, out := doctorProjectText(d)
+		wants(t, "doctor", out, unreadableEntriesLine)
+	}
+	_, out := doctorProjectText(walked(enabledDevice(), 0))
+	rejects(t, "doctor", out, "Not read:")
 }
 
 func TestStatusSaysNothingAboutSessionFilesOfAProjectNotEnabled(t *testing.T) {

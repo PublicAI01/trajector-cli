@@ -40,7 +40,7 @@
 // ends, and stands only between the two writes of that read. An entry
 // is created whole or not at all, and a registration never replaces
 // one. An entry file that does not parse is passed over, and never read
-// from its start again.
+// from its start again; Unreadable counts such files.
 //
 // A heat file is {"last_event":"<RFC 3339>","pid":<n>}, rewritten whole
 // by the last hook to name the session. A told mark is an empty file:
@@ -76,6 +76,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -271,9 +272,10 @@ func (r *Registry) Files(projectIDHash string) ([]File, error) {
 // caller holding a search of the project's tree against the registry
 // asks for: an entry a later build needs is registered, and calling its
 // path unregistered would ask the user to register what is registered
-// already.
+// already. An entry file that does not parse names no path; Unreadable
+// counts it.
 func (r *Registry) Paths(projectIDHash string) ([]string, error) {
-	_, entries, err := r.listAll(projectIDHash)
+	_, entries, _, err := r.listAll(projectIDHash)
 	if err != nil {
 		return nil, err
 	}
@@ -282,6 +284,15 @@ func (r *Registry) Paths(projectIDHash string) ([]string, error) {
 		paths = append(paths, e.Path)
 	}
 	return paths, nil
+}
+
+// Unreadable counts the entry files of projectIDHash's registry that
+// could not be read or do not parse. Such a file is passed over by
+// every other reading, and the file it is the entry of is not read, so
+// a surface states the count; nothing it holds is shown.
+func (r *Registry) Unreadable(projectIDHash string) (int, error) {
+	_, _, unreadable, err := r.listAll(projectIDHash)
+	return unreadable, err
 }
 
 // File is the entry projectIDHash reads for path. ok is false for a
@@ -504,39 +515,42 @@ func parseProject(data []byte) (projectFile, error) {
 // list is projectIDHash's project file and every entry of it this
 // build reads, ordered by path.
 func (r *Registry) list(projectIDHash string) (projectFile, []entryFile, error) {
-	p, entries, err := r.listAll(projectIDHash)
+	p, entries, _, err := r.listAll(projectIDHash)
 	return p, slices.DeleteFunc(entries, func(e entryFile) bool { return !e.readable() }), err
 }
 
 // listAll is projectIDHash's project file and every entry of it,
-// ordered by path. An entry file that vanished since the directory was
-// listed, or that does not parse, is passed over.
-func (r *Registry) listAll(projectIDHash string) (projectFile, []entryFile, error) {
-	p, _, err := r.readProject(projectIDHash)
+// ordered by path, and how many entry files could not be read. An
+// entry file that vanished since the directory was listed is passed
+// over.
+func (r *Registry) listAll(projectIDHash string) (p projectFile, entries []entryFile, unreadable int, err error) {
+	p, _, err = r.readProject(projectIDHash)
 	if err != nil {
-		return projectFile{}, nil, err
+		return projectFile{}, nil, 0, err
 	}
 	dir := r.projectDir(projectIDHash)
 	names, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
-		return p, nil, nil
+		return p, nil, 0, nil
 	}
 	if err != nil {
-		return projectFile{}, nil, err
+		return projectFile{}, nil, 0, err
 	}
-	var entries []entryFile
 	for _, name := range names {
 		if name.IsDir() || filepath.Ext(name.Name()) != jsonExt {
 			continue
 		}
 		e, err := readEntryFile(filepath.Join(dir, name.Name()))
-		if err != nil {
-			continue
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+		case err != nil:
+			unreadable++
+		default:
+			entries = append(entries, e)
 		}
-		entries = append(entries, e)
 	}
 	slices.SortFunc(entries, func(a, b entryFile) int { return cmp.Compare(a.Path, b.Path) })
-	return p, entries, nil
+	return p, entries, unreadable, nil
 }
 
 // checkProjectIDHash refuses a hash that could name anything but one

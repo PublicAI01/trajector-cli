@@ -213,6 +213,9 @@ func doctorSessionFiles(f *Findings, d Diagnosis) {
 		f.Problemf("the session file registry could not be read: %v", s.Err)
 		return
 	}
+	if s.UnreadableEntries > 0 {
+		f.warnf("%s", unreadableEntriesLine(s.UnreadableEntries))
+	}
 	if s.WalkErr != nil {
 		f.Problemf("could not look for this project's session files: %v", s.WalkErr)
 		return

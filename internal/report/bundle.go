@@ -196,6 +196,9 @@ type sessionFilesWire struct {
 	// Outside counts the sessions outside the directories consent
 	// covers. Where they went is not named.
 	Outside int `json:"outside"`
+	// UnreadableEntries counts the registry's entry files that could
+	// not be read.
+	UnreadableEntries int `json:"unreadable_entries"`
 }
 
 type proxyWire struct {
@@ -348,6 +351,8 @@ func DiagnosisJSON(d Diagnosis) []byte {
 				Unregistered: d.SessionFiles.Unregistered,
 				Earlier:      d.SessionFiles.Earlier,
 				Outside:      d.SessionFiles.Outside,
+
+				UnreadableEntries: d.SessionFiles.UnreadableEntries,
 			},
 		},
 		Proxy: proxy,

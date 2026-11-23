@@ -284,3 +284,12 @@ func (s *Sandbox) NeedALaterBuild(projectIDHash, path, need string) {
 		s.t.Fatal(err)
 	}
 }
+
+// BreakRegistryEntry replaces path's entry with bytes that do not
+// parse, as a write cut short leaves it.
+func (s *Sandbox) BreakRegistryEntry(projectIDHash, path string) {
+	s.t.Helper()
+	if err := fsatomic.WriteFile(s.entryFile(projectIDHash, path), []byte(`{"path":`), 0o600); err != nil {
+		s.t.Fatal(err)
+	}
+}
