@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/PublicAI01/trajector-cli/internal/consent"
 	"github.com/PublicAI01/trajector-cli/internal/envelope"
 	"github.com/PublicAI01/trajector-cli/internal/sessionline"
 )
@@ -66,10 +67,11 @@ var droppedTypes = map[string]bool{
 // ReadOptions says which directories consent covers, so a session that
 // moves between directories is read only while it sits in one of them.
 type ReadOptions struct {
-	// Root is the project directory consent covers.
+	// Root is the project directory consent covers, in canonical form.
 	Root string
 	// Authorized reports whether consent covers the directory a session
-	// moved to. Nil means exactly Root and nothing else.
+	// moved to. Nil means Root and every directory below it, as
+	// consent.ProjectPosition places them.
 	Authorized func(dir string) bool
 }
 
@@ -77,7 +79,10 @@ func (o ReadOptions) authorized() func(dir string) bool {
 	if o.Authorized != nil {
 		return o.Authorized
 	}
-	return func(dir string) bool { return dir == o.Root }
+	return func(dir string) bool {
+		_, inside := consent.ProjectPosition(o.Root, dir)
+		return inside
+	}
 }
 
 // ReadResult is what one observation of a registered file produced.

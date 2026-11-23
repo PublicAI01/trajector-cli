@@ -16,6 +16,15 @@ All notable changes to trajector are documented here. The format follows
   read, the spool kept the first, and the position moved past the lines
   only the repeat held. Now the repeat reads exactly what the first
   read did, and the lines the file gained since are read after it.
+- A session that moves into a directory below the project root, such
+  as a subdirectory or a worktree under `.claude/worktrees/`, is still
+  recorded. Before, every move away from the root itself counted as a
+  move out of the project: nothing the session wrote after it was kept,
+  in its own file or in its agents' files, until it moved back to the
+  root. A session that started in that same directory was recorded all
+  along. A move to a directory outside the root is still not recorded,
+  also when a link below the root leads there. A session an earlier
+  release counted as moved out stays so until its next move.
 
 ## [0.7.1] - 2026-11-21
 

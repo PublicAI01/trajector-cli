@@ -16,10 +16,17 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
 
-const (
-	root      = "/p"
-	sessionID = "sid-main"
-)
+const sessionID = "sid-main"
+
+// root is a project root that is on no disk, absolute on the system the
+// tests run on, which is the form consent keeps a root in.
+var root = func() string {
+	abs, err := filepath.Abs(filepath.FromSlash("/p"))
+	if err != nil {
+		panic(err)
+	}
+	return abs
+}()
 
 var capture = envelope.Capture{
 	ClientVersion: "0.1.0",
@@ -817,14 +824,16 @@ func TestReader_AnAgentMetadataFileWrittenWhileItsSessionIsBelowTheRootIsSnapsho
 	}
 }
 
-func TestRead_AuthorizedDefaultsToTheRootAlone(t *testing.T) {
+func TestRead_AFirstReadKeepsOnlyWhatFollowsAMoveBelowTheRoot(t *testing.T) {
 	path := mainPath(t)
-	writeFile(t, path, userLine(1)+relocatedLine(root+"/sub")+userLine(2))
+	move := relocatedLine(filepath.Join(root, "sub"))
+	writeFile(t, path, userLine(1)+move+userLine(2))
 	res := read(t, follow.File{Path: path})
-	if !res.File.Outside {
-		t.Errorf("Outside = false after a move to a subdirectory, want true")
+	if res.File.Outside {
+		t.Errorf("Outside = true after a move to a subdirectory, want false")
 	}
-	wantLines(t, res, userLine(1))
+	wantLines(t, res, userLine(2))
+	wantCursor(t, res.File, int64(len(userLine(1)+move+userLine(2))), 1)
 }
 
 func TestRead_SignatureBytesSurvive(t *testing.T) {

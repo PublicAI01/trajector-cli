@@ -106,7 +106,10 @@ notes where the segment it read ends before it stores the segment. A
 run that is killed, or fails, before it advances the cursor is followed
 by one that reads that same segment again, to the noted end and no
 further, so the spool absorbs the repeat by record id; what the file
-gained in the meantime goes into the next segment. A
+gained in the meantime goes into the next segment. Consent covers
+the project root and every directory below it, so a session that
+moves from one of them to another is read as before; a directory
+reached through a link that leads out of the root is not covered. A
 file whose session moves to a directory consent does not cover stays
 registered: what the session writes while it is outside is passed over
 and never stored, in its main file and in its agent files alike, and a
