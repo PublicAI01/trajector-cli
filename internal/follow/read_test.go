@@ -631,6 +631,192 @@ func TestRead_RelocatedWithinConsentContinues(t *testing.T) {
 	}
 }
 
+// projectOnDisk makes a project root and a directory beside it, and
+// returns both in the form consent keeps a root in.
+func projectOnDisk(t *testing.T) (projectRoot, beside string) {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectRoot, beside = filepath.Join(base, "project"), filepath.Join(base, "elsewhere")
+	for _, dir := range []string{projectRoot, beside} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return projectRoot, beside
+}
+
+func TestRead_ASessionThatMovesBelowTheRootStaysInside(t *testing.T) {
+	tests := []struct {
+		name   string
+		below  string
+		exists bool
+	}{
+		{name: "a directory below the root", below: filepath.Join("apps", "api"), exists: true},
+		{name: "a worktree below the root", below: filepath.Join(".claude", "worktrees", "feature"), exists: true},
+		{name: "a directory below the root that no longer exists", below: "gone"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projectRoot, _ := projectOnDisk(t)
+			cwd := filepath.Join(projectRoot, tt.below)
+			if tt.exists {
+				if err := os.MkdirAll(cwd, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			opts := follow.ReadOptions{Root: projectRoot}
+			path := mainPath(t)
+			writeFile(t, path, userLine(1))
+			first, err := follow.Read(follow.File{Path: path}, capture, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			move := relocatedLine(cwd)
+			appendFile(t, path, move+userLine(2))
+
+			res, err := follow.Read(first.File, capture, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.File.Outside {
+				t.Errorf("Outside = true after a move to %q, want the session still inside %q", cwd, projectRoot)
+			}
+			wantLines(t, res, move, userLine(2))
+			wantCursor(t, res.File, int64(len(userLine(1)+move+userLine(2))), 2)
+		})
+	}
+}
+
+func TestRead_ASessionThatMovesOutOfTheRootIsOutside(t *testing.T) {
+	tests := []struct {
+		name string
+		cwd  func(t *testing.T, projectRoot, beside string) string
+	}{
+		{
+			name: "a directory beside the root",
+			cwd:  func(_ *testing.T, _, beside string) string { return beside },
+		},
+		{
+			name: "a directory whose name starts with the root's",
+			cwd:  func(_ *testing.T, projectRoot, _ string) string { return projectRoot + "-worktree" },
+		},
+		{
+			name: "a link below the root that leads out of it",
+			cwd: func(t *testing.T, projectRoot, beside string) string {
+				t.Helper()
+				requireSessionSources(t)
+				link := filepath.Join(projectRoot, "vendor")
+				symlink(t, beside, link)
+				return link
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projectRoot, beside := projectOnDisk(t)
+			cwd := tt.cwd(t, projectRoot, beside)
+			opts := follow.ReadOptions{Root: projectRoot}
+			path := mainPath(t)
+			writeFile(t, path, userLine(1))
+			first, err := follow.Read(follow.File{Path: path}, capture, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			appendFile(t, path, relocatedLine(cwd)+userLine(2))
+
+			res, err := follow.Read(first.File, capture, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !res.File.Outside {
+				t.Errorf("Outside = false after a move to %q, want the session outside %q", cwd, projectRoot)
+			}
+			wantLines(t, res)
+		})
+	}
+}
+
+func TestReader_AnAgentFileIsReadWhileItsSessionIsBelowTheRoot(t *testing.T) {
+	tests := []struct {
+		name  string
+		order func(main, agent string) []string
+		want  func(move string) []string
+	}{
+		{
+			name:  "main file first",
+			order: func(main, agent string) []string { return []string{main, agent} },
+			want:  func(move string) []string { return []string{move, userLine(2), userLine(12)} },
+		},
+		{
+			name:  "agent file first",
+			order: func(main, agent string) []string { return []string{agent, main} },
+			want:  func(move string) []string { return []string{userLine(12), move, userLine(2)} },
+		},
+	}
+	for _, place := range agentPlaces {
+		for _, tt := range tests {
+			t.Run(place.name+"/"+tt.name, func(t *testing.T) {
+				a := newAdvancing(t)
+				main := mainPath(t)
+				agent := agentPath(main, place.dir)
+				writeFile(t, main, userLine(1))
+				writeFile(t, agent, userLine(11))
+				a.register(main, "")
+				a.register(agent, "")
+				a.reader.Advance(main)
+				a.reader.Advance(agent)
+				a.handed = nil
+
+				move := relocatedLine(filepath.Join(root, "apps", "api"))
+				appendFile(t, main, move+userLine(2))
+				appendFile(t, agent, userLine(12))
+				for _, p := range tt.order(main, agent) {
+					a.reader.Advance(p)
+				}
+
+				var got []string
+				for _, res := range a.handed {
+					got = append(got, segmentLines(t, res)...)
+				}
+				if want := tt.want(move); !slices.Equal(got, want) {
+					t.Errorf("lines kept after the session moved below the root = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestReader_AnAgentMetadataFileWrittenWhileItsSessionIsBelowTheRootIsSnapshotted(t *testing.T) {
+	for _, place := range agentPlaces {
+		t.Run(place.name, func(t *testing.T) {
+			a := newAdvancing(t)
+			main := mainPath(t)
+			meta := strings.TrimSuffix(agentPath(main, place.dir), ".jsonl") + ".meta.json"
+			writeFile(t, main, userLine(1))
+			a.register(main, "")
+			a.register(meta, "")
+			a.reader.Advance(main)
+			appendFile(t, main, relocatedLine(filepath.Join(root, "apps", "api")))
+			a.reader.Advance(main)
+			a.handed = nil
+			writeFile(t, meta, `{"agentType":"a","description":"written below the root"}`)
+
+			a.reader.Advance(meta)
+
+			snapshots := 0
+			for _, res := range a.handed {
+				snapshots += len(res.Snapshots)
+			}
+			if snapshots != 1 {
+				t.Errorf("snapshots = %d, want the one the file held while its session was below the root", snapshots)
+			}
+		})
+	}
+}
+
 func TestRead_AuthorizedDefaultsToTheRootAlone(t *testing.T) {
 	path := mainPath(t)
 	writeFile(t, path, userLine(1)+relocatedLine(root+"/sub")+userLine(2))
