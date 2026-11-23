@@ -72,15 +72,11 @@ func readEntryFile(file string) (entryFile, error) {
 // already as it is, readable or not: a registration never replaces an
 // entry.
 func (r *Registry) create(projectIDHash string, e entryFile) error {
-	target := r.entryPath(projectIDHash, e.Path)
-	if _, err := os.Lstat(target); err == nil {
-		return nil
-	}
 	data, err := encode(e)
 	if err != nil {
 		return err
 	}
-	return placeNew(target, data, true)
+	return placeNew(r.entryPath(projectIDHash, e.Path), data, true)
 }
 
 // placeNew puts data at target unless a file stands there already. The

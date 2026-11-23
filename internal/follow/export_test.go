@@ -62,3 +62,6 @@ func AfterMigrationSteps(t testing.TB, at func(step int)) {
 	afterMigrationStep = at
 	t.Cleanup(func() { afterMigrationStep = was })
 }
+
+// PlaceNew puts data at target as a new entry file is put there.
+func PlaceNew(target string, data []byte) error { return placeNew(target, data, true) }

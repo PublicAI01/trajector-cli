@@ -37,20 +37,26 @@
 // field names only, so a surface can state it without opening a session
 // file; it is kept in the form drift gives it and summed by drift's own
 // arithmetic. Bound is where the segment a read handed to the store
-// ends, and stands only between the two writes of that read. An entry
+// ends. It stands until a write of the cursor drops it: between the two
+// writes of a read whose segment is stored, and from read to read
+// while the segment waits to be stored. An entry
 // is created whole or not at all, and a registration never replaces
 // one. An entry file that does not parse is passed over, and never read
 // from its start again; Unreadable counts such files.
 //
 // A heat file is {"last_event":"<RFC 3339>","pid":<n>}, rewritten whole
-// by the last hook to name the session. A told mark is an empty file:
+// when a hook or the resident process names the session, and no more
+// often than once a minute by one process. A told mark is an empty file:
 // the call that creates it is the one that tells.
 //
 // A change to the layout is one of three kinds. One that only adds a
 // key or a kind of file moves nothing: every writer of an entry or of
 // the project file writes back the keys it does not know, and a file in
 // the project directory whose extension a build does not know is
-// ignored. An entry that a build must know more to read correctly
+// ignored. That holds for the keys of the file itself, not for a key
+// added inside signals, gaps, or bound, which a build that does not
+// know it drops when it rewrites the member: a key that must outlive
+// every writer is added to the file itself. An entry that a build must know more to read correctly
 // lists what it needs, by name, under "needs": a build that does not
 // know one of the names does not list, read, warm, rewrite, or remove
 // the entry, and reads the rest of the project. A change of the whole

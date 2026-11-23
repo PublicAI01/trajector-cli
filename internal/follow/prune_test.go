@@ -300,3 +300,23 @@ func TestPrune_RemovesTheAgentEntriesOfASessionRemovedWithItsDirectory(t *testin
 		t.Errorf("Paths() = %q, %v\nwant the entries of the session whose main file's directory is not there: %q", paths, err, unmounted)
 	}
 }
+
+func TestPrune_KeepsTheEntriesOfASessionWhoseProcessStillRuns(t *testing.T) {
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	path := filepath.Join(t.TempDir(), "running.jsonl")
+	mustRegister(t, r, project, path)
+	if err := r.Warm(project, path, 4242, longAgo); err != nil {
+		t.Fatal(err)
+	}
+	before := snap(t, entryFileOf(dir, path))
+
+	removed, err := r.Prune(project, time.Now(), func(pid int) bool { return pid == 4242 })
+
+	if err != nil || removed != 0 {
+		t.Errorf("Prune() = %d, %v, want nothing removed while the session's process runs", removed, err)
+	}
+	if !before.same(t, entryFileOf(dir, path)) {
+		t.Error("the entry was removed or rewritten, want it left to the session's reader")
+	}
+}

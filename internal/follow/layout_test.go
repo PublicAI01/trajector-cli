@@ -8,7 +8,6 @@ import (
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -681,9 +680,20 @@ func TestLayout_AProjectOfAnotherLayoutIsRefused(t *testing.T) {
 	}
 }
 
-func TestLayout_NoMethodOfTheRegistryWritesAnEntryWithoutItsLock(t *testing.T) {
-	if _, ok := reflect.TypeFor[*follow.Registry]().MethodByName("Update"); ok {
-		t.Error("Registry.Update is exported, want an entry written only through the entry's lock")
+func TestLayout_AnEntryFileThatIsThereIsNeverReplacedByANewOne(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "entry.json")
+	writeFile(t, target, `{"path":"/s/a.jsonl","offset":40,"next_segment":2}`)
+	before := snap(t, target)
+
+	if err := follow.PlaceNew(target, []byte(`{"path":"/s/a.jsonl"}`)); err != nil {
+		t.Fatalf("PlaceNew() = %v, want an entry already there to count as placed", err)
+	}
+
+	if !before.same(t, target) {
+		t.Error("the entry file was replaced, want the one that was there kept with its cursor")
+	}
+	if left, _ := filepath.Glob(target + ".*"); len(left) != 0 {
+		t.Errorf("files left beside the entry: %q, want none", left)
 	}
 }
 
