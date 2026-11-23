@@ -9,10 +9,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
+	"github.com/PublicAI01/trajector-cli/internal/harness/registryv1"
+	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
 // RegisteredFile is one file an enabled project reads and how far it
@@ -181,6 +184,77 @@ func (s *Sandbox) Signals(projectIDHash string) Signals {
 		s.t.Fatal(err)
 	}
 	return got
+}
+
+// EarlierRegistry and EarlierEntry are a project's registry and one of
+// its entries as builds before the per-entry layout wrote them.
+type (
+	EarlierRegistry = registryv1.Registry
+	EarlierEntry    = registryv1.Entry
+)
+
+// LeaveEarlierRegistry puts a project's registry on disk as a build
+// before the per-entry layout left it.
+func (s *Sandbox) LeaveEarlierRegistry(projectIDHash string, reg EarlierRegistry) {
+	s.t.Helper()
+	if err := userdirs.EnsureOwnerDir(s.layout.FollowDir()); err != nil {
+		s.t.Fatal(err)
+	}
+	if err := registryv1.Write(s.layout.FollowDir(), projectIDHash, reg); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// LeaveRegistryHalfwayMigrated puts a project's registry on disk as a
+// migration from reg killed right after it rewrote the project file
+// leaves it.
+func (s *Sandbox) LeaveRegistryHalfwayMigrated(projectIDHash string, reg EarlierRegistry) {
+	s.t.Helper()
+	if err := userdirs.EnsureOwnerDir(s.layout.FollowDir()); err != nil {
+		s.t.Fatal(err)
+	}
+	if err := registryv1.LeaveHalfway(s.layout.FollowDir(), projectIDHash, reg); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// MigratingElsewhere holds, until the test ends or release is called,
+// the locks a process in the middle of migrating a project holds: the
+// migration's own and the project file's.
+func (s *Sandbox) MigratingElsewhere(projectIDHash string) (release func()) {
+	s.t.Helper()
+	migration, err := registryv1.HoldMigration(s.layout.FollowDir(), projectIDHash)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	projectFile, err := registryv1.HoldProjectFile(s.layout.FollowDir(), projectIDHash)
+	if err != nil {
+		migration()
+		s.t.Fatal(err)
+	}
+	release = sync.OnceFunc(func() {
+		projectFile()
+		migration()
+	})
+	s.t.Cleanup(release)
+	return release
+}
+
+// RegistryVersion is the layout version a project's project file
+// states.
+func (s *Sandbox) RegistryVersion(projectIDHash string) int {
+	s.t.Helper()
+	data, err := fsatomic.ReadFile(filepath.Join(s.layout.FollowDir(), projectIDHash+".json"))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	var head struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &head); err != nil {
+		s.t.Fatalf("project file %s: %v", data, err)
+	}
+	return head.Version
 }
 
 // entryFile is the file a project's registry keeps path's entry in.
