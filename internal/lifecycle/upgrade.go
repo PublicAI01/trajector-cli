@@ -243,9 +243,28 @@ func (m *Machine) VerifyUpgrade(ctx context.Context) error {
 	return nil
 }
 
+// migrateRegistries migrates the registry of every enabled project
+// whose registry is in the layout before this build's. A project it
+// could not migrate does not fail the upgrade, which would have the
+// install finished again and again for it: every reader but a session
+// hook migrates the project it reads, so the next one does it.
+func (m *Machine) migrateRegistries() {
+	grants, err := m.routes.All()
+	if err != nil {
+		return
+	}
+	for _, g := range grants {
+		if !g.Revoked {
+			_ = m.registry.Migrate(g.ProjectIDHash)
+		}
+	}
+}
+
 // FinishUpgrade is what this build does once an older build has
-// committed the install of it. It first completes the injection of
-// each enabled project that lacks a hook this release installs
+// committed the install of it. It first brings the session file
+// registry of each enabled project to this build's layout
+// (migrateRegistries), then completes the injection of each enabled
+// project that lacks a hook this release installs
 // (completeEnabledProjects), then leaves the user's next command the
 // lines that say what happened and what it asks of them. Those are
 // that this build is installed; in how many projects it completed the
@@ -263,6 +282,7 @@ func (m *Machine) VerifyUpgrade(ctx context.Context) error {
 // the install stays unfinished and is finished again. Running it again
 // adds nothing that still waits.
 func (m *Machine) FinishUpgrade(context.Context) error {
+	m.migrateRegistries()
 	completed, repairErr := m.completeEnabledProjects()
 	lines := []string{upgradedNotice(m.deps.Version)}
 	if completed > 0 {

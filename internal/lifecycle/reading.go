@@ -78,19 +78,32 @@ func (m *Machine) readEarlierSessions(ctx context.Context, st report.ProjectStat
 // ReadSessionFiles reads the files registered for a project once, on
 // behalf of the session that just ran, and exits. It is the body of the
 // detached process a session hook starts when no resident process is
-// up to read on the hook's word: it hands every registered entry of
-// the project to one reader, and what the reader consumes is stored
-// in the spool. It never blocks a session — the hook released it — and
-// it says nothing: its streams are the null device, it reports no
-// outcome, and a failure to read one file is left behind so the next
-// file, and the next run, still make progress.
+// up to read on the hook's word. It never blocks a session — the hook
+// released it — and it says nothing: its streams are the null device,
+// and it reports no outcome.
 //
-// A project that is not enabled, or whose injection was removed, is
-// nothing to read: no injection stands, so no session of Claude Code's
-// ran under one. Past that the resident process is brought up on the
-// way out, whatever the run itself does: it is the one flusher, and it
-// drains whatever the spool holds — the records just written, and any
-// a previous run left behind because no flusher was up to send them.
+// For a project that is enabled and whose injection stands, one run
+// does three things, in this order:
+//   - it migrates the project's registry to this build's layout. A
+//     caller that may not wait for a migration starts this process to
+//     have it done. A registry this run cannot migrate, or one another
+//     process is migrating, is not read this time.
+//   - it hands every registered entry of the project to one reader, and
+//     what the reader consumes is stored in the spool. A failure to read
+//     one file is left behind so the next file, and the next run, still
+//     make progress.
+//   - it brings the resident process up on the way out, whatever the
+//     read did: it is the one flusher, and it drains whatever the spool
+//     holds — the records just written, and any a previous run left
+//     behind because no flusher was up to send them.
+//
+// A spool that cannot be opened ends the run before the migration;
+// the resident process is still brought up.
+//
+// A project that is not enabled, or whose injection was removed, gets
+// none of the three: no injection stands, so no session of Claude
+// Code's ran under one, and its registry waits for the resident process
+// or a command to migrate it.
 //
 // A project the routing table does not clear is nothing to read
 // either: the reader asks the table the same question the proxy asks

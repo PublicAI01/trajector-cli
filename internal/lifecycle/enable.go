@@ -450,8 +450,15 @@ func (m *Machine) confirmHooksWillRun(streams IO, root string, shape routing.Sha
 // its entry as it is: enable finds its file again, because it is still
 // on disk, but registering it again changes nothing. Such a path is
 // counted as registered already, which is what it is.
+//
+// A registry in the layout before this build's is migrated first, and
+// one another process is migrating fails the run: nothing can be
+// registered in it until that migration is done.
 func (m *Machine) registerEarlierSessions(st report.ProjectStatus, found discover.Result, ledger *enableLedger) (registered int, toRead []string, err error) {
 	projectIDHash := st.Hash
+	if err := m.registry.Migrate(projectIDHash); err != nil {
+		return 0, nil, err
+	}
 	projects, err := m.registry.Projects()
 	if err != nil {
 		return 0, nil, err

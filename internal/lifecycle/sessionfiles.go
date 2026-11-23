@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -133,8 +134,17 @@ func (m *Machine) registerSessionFile(cwd string, hook HookInput) (registered bo
 // registered is nothing to read, and a failure of any step stays
 // here: the session must not learn what the hook did, and the
 // registry is where the outcome is read afterwards.
+//
+// A project whose registry is waiting for its migration is neither
+// registered in nor marked: a hook never migrates and never waits for
+// a migration. The one-shot reader is started for it instead, which
+// migrates the project if nobody else is, and reads it.
 func (m *Machine) followSession(ctx context.Context, cwd string, hook HookInput, ended bool) {
 	registered, err := m.registerSessionFile(cwd, hook)
+	if errors.Is(err, follow.ErrMigrationPending) {
+		_ = m.spawnReader(ctx, cwd)
+		return
+	}
 	if err != nil || !registered {
 		return
 	}
@@ -181,7 +191,14 @@ type registryContents struct {
 // every file from its beginning again. Withdrawal on disable is the
 // exception and keeps its own failure: it changes the registry, so it
 // must not report that it took back what it could not reach.
+//
+// A registry in the layout before this build's is migrated first, as
+// every reader but a session hook does. One another process is
+// migrating is read as one that cannot be read, this time.
 func (m *Machine) sessionFiles(projectIDHash string) registryContents {
+	if err := m.registry.Migrate(projectIDHash); err != nil {
+		return registryContents{Err: err}
+	}
 	files, err := m.registry.Files(projectIDHash)
 	if err != nil {
 		return registryContents{Err: err}
