@@ -43,24 +43,6 @@ type File struct {
 	// with the cursor, and a read that finds nothing new writes
 	// neither; the registry only keeps it.
 	ReadAt string `json:"read_at,omitempty"`
-	// Retired is why this file is no longer read, and is absent for a
-	// file still read. An entry gains it instead of leaving the
-	// registry, so that a later registration of the same path knows
-	// the file is not to be read from its start again.
-	//
-	// The field was added to a layout that already stood, and it is
-	// the only compatibility rule this layout needs: every other field
-	// keeps its name and its meaning, a registry written without the
-	// field holds no retired entry, and a build that does not know the
-	// field reads a retired entry as one still to read.
-	//
-	// This build retires no entry for good. Two retirements are written
-	// for entries it still reads, and both are read back as no
-	// retirement: "relocated" is read as Outside, and "nested-agent-file"
-	// marks an entry for an agent file of a workflow run (see
-	// KeptFromEarlierBuilds). A retirement this build does not know
-	// stays as it is.
-	Retired Retirement `json:"retired,omitempty"`
 	// Outside records that the session moved to a directory consent
 	// does not cover and has not come back. The reader moves the
 	// cursor past what the session writes there and keeps none of it,
@@ -68,29 +50,16 @@ type File struct {
 	// a rewrite of the file does not bring it back. It is set from the
 	// file's own lines only. An agent file holds no relocated line, and
 	// is read as outside while its session's main file is.
-	//
-	// It has no key of its own on disk. The on-disk form of outside is
-	// the retirement an earlier build wrote, "relocated", so an earlier
-	// build never reads on past the line that took the session out: it
-	// reads the entry as retired and leaves it alone. The cursor that
-	// build left sits just past that line, so an entry it retired
-	// reads here as outside and continues from there.
-	Outside bool `json:"-"`
-	// LastEvent is when a session hook last named this file, in RFC
-	// 3339, and absent for a file no hook named since it was
+	Outside bool `json:"outside,omitzero"`
+	// LastEvent is when a session hook last named this file's session,
+	// in RFC 3339, and absent for a session no hook named since it was
 	// registered. PID is the process the session runs in, as the hook
-	// that named the file reported it, and 0 when unknown. Together
-	// they say whether the file is hot: one a session is writing right
-	// now, worth observing between hooks. Both are local state like
-	// the cursor and never leave the registry.
-	LastEvent string `json:"last_event,omitempty"`
-	PID       int    `json:"pid,omitzero"`
-	// Told records that this session was already told, on a hook of
-	// its own, that the device stopped recording. It is written once
-	// per session and never read back into a cursor: a session that
-	// hears the same line on every turn stops reading it, so the
-	// notice is worth exactly one turn of the user's attention.
-	Told bool `json:"told,omitzero"`
+	// reported it, and 0 when unknown. Together they say whether the
+	// file is hot: one a session is writing right now, worth observing
+	// between hooks. They are the heat of the session, read with the
+	// entry and kept apart from it, and never leave this device.
+	LastEvent string `json:"-"`
+	PID       int    `json:"-"`
 	// EmptyReasoningBlocks and ReasoningBlocksWithText count the
 	// reasoning blocks of the assistant lines read from this file and
 	// kept: those whose reasoning field is empty, and those whose field
@@ -111,15 +80,15 @@ func (f File) Reasoning() sessionline.ReasoningBlocks {
 
 // advancedTo is f with the fields a reader owns taken from read: where
 // reading stands, what it consumed, when it last moved, where the
-// session is, what the kept lines said about reasoning and the launch
-// surface, and why reading stopped for good. Every other field has a writer of its own — the
-// registration, the hooks that mark a session hot or cold, the notice
-// that a session was told — and an entry a reader writes back keeps
-// those as they stand now, not as they stood when the read began.
+// session is, and what the kept lines said about reasoning and the
+// launch surface. Every other field has a writer of its own — the
+// registration, the hooks that mark a session hot or cold — and an
+// entry a reader writes back keeps those as they stand now, not as
+// they stood when the read began.
 func (f File) advancedTo(read File) File {
 	f.Inode, f.Size, f.Offset, f.NextSegment = read.Inode, read.Size, read.Offset, read.NextSegment
 	f.MessageIDs, f.BeforeRewrite = read.MessageIDs, read.BeforeRewrite
-	f.ReadAt, f.Retired, f.Outside = read.ReadAt, read.Retired, read.Outside
+	f.ReadAt, f.Outside = read.ReadAt, read.Outside
 	f.EmptyReasoningBlocks, f.ReasoningBlocksWithText = read.EmptyReasoningBlocks, read.ReasoningBlocksWithText
 	f.LaunchSurface = read.LaunchSurface
 	return f
@@ -132,7 +101,7 @@ func (f File) advancedTo(read File) File {
 func (f File) changedBy(read File) bool {
 	return f.Inode != read.Inode || f.Size != read.Size || f.Offset != read.Offset || f.NextSegment != read.NextSegment ||
 		!slices.Equal(f.MessageIDs, read.MessageIDs) || !slices.Equal(f.BeforeRewrite, read.BeforeRewrite) ||
-		f.Retired != read.Retired || f.Outside != read.Outside ||
+		f.Outside != read.Outside ||
 		f.Reasoning() != read.Reasoning() || f.LaunchSurface != read.LaunchSurface
 }
 
@@ -145,9 +114,10 @@ const hotWindow = 24 * time.Hour
 // far as the registry can tell: the process the last hook reported is
 // alive, or a hook named the file within the last day. A cold file is
 // never observed between hooks; a hook naming it again makes it hot.
-// alive answers whether a process id names a running process.
+// A file outside is never hot: a hook naming it has it read all the
+// same. alive answers whether a process id names a running process.
 func (f File) Hot(now time.Time, alive func(pid int) bool) bool {
-	if f.Retired != "" {
+	if f.Outside {
 		return false
 	}
 	if f.PID > 0 && alive(f.PID) {
@@ -169,9 +139,10 @@ func (f File) QuietFor(now time.Time) time.Duration {
 }
 
 // Attended reports whether the process the last hook reported for f
-// is still running. A file with no process is unattended.
+// is still running. A file with no process, and a file outside, is
+// unattended.
 func (f File) Attended(alive func(pid int) bool) bool {
-	return f.Retired == "" && f.PID > 0 && alive(f.PID)
+	return !f.Outside && f.PID > 0 && alive(f.PID)
 }
 
 // group lists the entries of files that belong to the same session as
@@ -209,40 +180,10 @@ func SessionOf(path string) string {
 	return path
 }
 
-// Retirement is why an entry's cursor can never advance again. Its
-// values are written to the registry, so they are part of the layout.
-//
-// A build lists no entry that carries a retirement, counts none as
-// hot, and reads none, whatever the value, and writes back a value it
-// does not know as it found it. That is what lets a value hide an
-// entry from builds that would read it wrongly: such a value is
-// written to the registry for as long as the entry exists, and a
-// build reads the entry as one not retired only when it knows the
-// place the entry's path names, never from the value alone.
-type Retirement string
-
-// relocated is the retirement earlier builds wrote for a session that
-// moved to a directory consent does not cover, and the on-disk form of
-// Outside in this one.
-const relocated Retirement = "relocated"
-
-// nestedAgentFile is the retirement written for every entry whose path
-// is an agent file in a workflow run directory. A build that does not
-// know that place takes such a file for the main file of a session
-// named after the agent; the retirement keeps that build from reading
-// it at all. It is never removed, and this build reads the entry as
-// one not retired when the path is at a place it knows: the same
-// value written for a place a later build adds hides the entry from
-// this build as well. While the entry is Outside it is written as
-// relocated instead; a build that reads relocated as Outside then
-// lists it.
-const nestedAgentFile Retirement = "nested-agent-file"
-
-// KeptFromEarlierBuilds reports whether f is hidden on disk from the
-// builds that do not know where it is kept: an agent file of a
-// workflow run. Only a build that knows the place reads it, so what
-// was written to it while such a build was the one reading is still
-// unread when this build takes over, whatever its heat says.
+// KeptFromEarlierBuilds reports whether f is a file that builds which
+// do not know where it is kept never read: an agent file of a workflow
+// run. What was written to it while such a build was the one reading
+// is still unread when this build takes over, whatever its heat says.
 func (f File) KeptFromEarlierBuilds() bool {
 	_, _, at := agentFileOf(f.Path)
 	return at == inWorkflowRun

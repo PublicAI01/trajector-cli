@@ -1,14 +1,11 @@
 package follow_test
 
 import (
-	"encoding/json"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
 
@@ -38,12 +35,12 @@ func TestRegistry_GapsAreKeptWithTheRegistry(t *testing.T) {
 	if len(files) != 0 {
 		t.Errorf("Files = %v, want a registry that holds gaps and no files", files)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, project+".json"))
+	raw, err := os.ReadFile(projectFileOf(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"version":1`) || !strings.Contains(string(raw), `"gaps":{"truncated":true`) {
-		t.Errorf("registry file = %s, want version 1 with a gaps object", raw)
+	if !strings.Contains(string(raw), `"version":2`) || !strings.Contains(string(raw), `"gaps":{"truncated":true`) {
+		t.Errorf("project file = %s, want version 2 with a gaps object", raw)
 	}
 
 	if err := r.SetGaps(project, follow.Gaps{}); err != nil {
@@ -52,9 +49,9 @@ func TestRegistry_GapsAreKeptWithTheRegistry(t *testing.T) {
 	if got, _ := r.Gaps(project); got.Any() {
 		t.Errorf("Gaps after a search that covered everything = %+v, want none", got)
 	}
-	raw, _ = os.ReadFile(filepath.Join(dir, project+".json"))
+	raw, _ = os.ReadFile(projectFileOf(dir))
 	if strings.Contains(string(raw), "gaps") {
-		t.Errorf("registry file = %s, want no gaps key once nothing is uncovered", raw)
+		t.Errorf("project file = %s, want no gaps key once nothing is uncovered", raw)
 	}
 }
 
@@ -65,14 +62,14 @@ func TestRegistry_GapsOfAnUnknownProjectAreNone(t *testing.T) {
 	}
 }
 
-func TestRegistry_UpdateKeepsWhenAFileWasRead(t *testing.T) {
+func TestRegistry_ACursorWriteKeepsWhenAFileWasRead(t *testing.T) {
 	dir := t.TempDir()
 	r := follow.Open(dir)
 	path := abs(t, "s.jsonl")
 	if err := r.RegisterAll(project, []string{path}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Update(project, follow.File{Path: path}, follow.File{Path: path, Offset: 3, ReadAt: "2026-09-10T08:30:00Z"}, drift.Signals{}); err != nil {
+	if err := follow.MoveCursor(r, project, follow.File{Path: path}, follow.File{Path: path, Offset: 3, ReadAt: "2026-09-10T08:30:00Z"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,25 +78,17 @@ func TestRegistry_UpdateKeepsWhenAFileWasRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	if files[0].ReadAt != "2026-09-10T08:30:00Z" {
-		t.Errorf("ReadAt = %q, want the time the update carried", files[0].ReadAt)
+		t.Errorf("ReadAt = %q, want the time the cursor write carried", files[0].ReadAt)
 	}
-	raw, _ := os.ReadFile(filepath.Join(dir, project+".json"))
-	var stored struct {
-		Files []map[string]json.RawMessage `json:"files"`
-	}
-	if err := json.Unmarshal(raw, &stored); err != nil {
-		t.Fatal(err)
-	}
-	if string(stored.Files[0]["read_at"]) != `"2026-09-10T08:30:00Z"` {
-		t.Errorf("stored entry = %s, want read_at written", raw)
+	if got := string(keysOf(t, entryFileOf(dir, path))["read_at"]); got != `"2026-09-10T08:30:00Z"` {
+		t.Errorf("stored read_at = %s, want it written", got)
 	}
 
 	other := abs(t, "never-read.jsonl")
 	if err := r.RegisterAll(project, []string{other}, ""); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ = os.ReadFile(filepath.Join(dir, project+".json"))
-	if strings.Count(string(raw), "read_at") != 1 {
-		t.Errorf("registry file = %s, want no read_at on a file never read", raw)
+	if entry := keysOf(t, entryFileOf(dir, other)); entry["read_at"] != nil {
+		t.Errorf("entry of a file never read = %v, want no read_at", entry)
 	}
 }

@@ -1,22 +1,12 @@
 package follow
 
-import (
-	"encoding/json/v2"
-	"os"
-	"path/filepath"
-
-	"github.com/PublicAI01/trajector-cli/internal/envelope"
-	"github.com/PublicAI01/trajector-cli/internal/fsatomic"
-)
-
-// boundExt names the file that holds one entry's segment bound, beside
-// the entry's lock.
-const boundExt = ".bound"
+import "github.com/PublicAI01/trajector-cli/internal/envelope"
 
 // segmentBound is where the segment one read handed to the store ends.
-// It is written before the store is asked and removed once the cursor
-// is written past the segment. While it stands and the cursor has not
-// moved, the store may hold the segment already, and the store keeps
+// It is written into the entry before the store is asked, and taken
+// out in the write that moves the cursor past the segment. While it
+// stands and the cursor has not moved, the store may hold the segment
+// already, and the store keeps
 // the first segment it is given under an index: a later read from the
 // same cursor that held more lines would lose them. So the next read
 // of the entry takes the same bytes again and nothing past them, and
@@ -76,49 +66,4 @@ func (b segmentBound) readAgain(f File, st Stat, capture envelope.Capture, opts 
 		res.Reaction = Rewrite
 	}
 	return readLines(res, Stat{Exists: true, Inode: st.Inode, Size: b.End}, capture, opts, false)
-}
-
-// boundPath names the bound of one entry beside the entry's lock.
-func (r *Registry) boundPath(projectIDHash, path string) string {
-	return r.entryLockPath(projectIDHash, path) + boundExt
-}
-
-// bound is the segment bound left for f that still stands for its
-// cursor. A bound that cannot be read is no bound.
-func (r *Registry) bound(projectIDHash string, f File) (b segmentBound, ok bool) {
-	data, err := fsatomic.ReadFile(r.boundPath(projectIDHash, f.Path))
-	if err != nil {
-		return segmentBound{}, false
-	}
-	if err := json.Unmarshal(data, &b); err != nil {
-		return segmentBound{}, false
-	}
-	return b, b.standsFor(f)
-}
-
-// keepBound writes b as the bound of path's entry.
-func (r *Registry) keepBound(projectIDHash, path string, b segmentBound) error {
-	data, err := json.Marshal(b)
-	if err != nil {
-		return err
-	}
-	return fsatomic.WriteFile(r.boundPath(projectIDHash, path), data, 0o600)
-}
-
-// dropBound removes the bound of path's entry. One left behind is
-// harmless: it no longer stands for the cursor.
-func (r *Registry) dropBound(projectIDHash, path string) {
-	_ = os.Remove(r.boundPath(projectIDHash, path))
-}
-
-// dropBounds removes the bound of every entry of projectIDHash, and
-// what a writer of one left behind when it died mid-write.
-func (r *Registry) dropBounds(projectIDHash string) {
-	bounds, err := filepath.Glob(filepath.Join(r.dir, projectIDHash+".*"+boundExt+"*"))
-	if err != nil {
-		return
-	}
-	for _, bound := range bounds {
-		_ = os.Remove(bound)
-	}
 }

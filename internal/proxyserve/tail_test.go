@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
-	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/fakeplatform"
 	"github.com/PublicAI01/trajector-cli/internal/harness/proxytest"
@@ -377,15 +376,7 @@ func TestStartSweepCoolsAQuietFileAndSendsTheSpoolAtOnce(t *testing.T) {
 	e.service.StubFunc("POST", "/v1/batches", fakeplatform.Acknowledges(platform.Handshake{}))
 	hash := e.enabledProject()
 	quiet := e.sessionFile(hash, "quiet.jsonl", sessionLine)
-	from := e.entry(hash, quiet)
-	st, err := follow.StatFile(quiet)
-	if err != nil {
-		t.Fatal(err)
-	}
-	to := follow.File{Path: quiet, Inode: st.Inode, Size: st.Size, Offset: st.Size, NextSegment: 1, ReadAt: "2026-01-01T00:00:00Z"}
-	if err := e.registry().Update(hash, from, to, drift.Signals{}); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.ReadToItsEnd(hash, filepath.Dir(quiet), quiet)
 	if err := e.registry().Warm(hash, quiet, 0, time.Now().Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -464,15 +455,7 @@ func TestStartSweepLeavesAColdWorkflowAgentFileReadToItsEnd(t *testing.T) {
 	}
 	readToEnd := place("wf_1")
 	unread := place("wf_2")
-	from := e.entry(hash, readToEnd)
-	st, err := follow.StatFile(readToEnd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	to := follow.File{Path: readToEnd, Inode: st.Inode, Size: st.Size, Offset: st.Size, NextSegment: 1, ReadAt: "2026-01-01T00:00:00Z"}
-	if err := e.registry().Update(hash, from, to, drift.Signals{}); err != nil {
-		t.Fatal(err)
-	}
+	e.sandbox.ReadToItsEnd(hash, filepath.Dir(main), readToEnd)
 	e.cool(hash, main)
 	before := e.entry(hash, readToEnd)
 

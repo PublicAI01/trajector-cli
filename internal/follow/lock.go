@@ -1,8 +1,6 @@
 package follow
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"path/filepath"
 	"sync"
 	"time"
@@ -32,16 +30,18 @@ const entryLockStale = 2 * time.Minute
 var entryLockWait = 2 * time.Second
 
 // lockEntry takes the lock that makes one read of path — read, store,
-// write the cursor back — the only one on this device. ok is false
-// when another reader still holds the entry after wait. unlock lets
-// the entry go, and reports whether a reader in this process gave up
-// waiting for it while it was held.
+// write the cursor back — the only one on this device, and hands back
+// the one way to write the entry. ok is false when another reader
+// still holds the entry after wait.
 //
 // Readers in one process wait on each other here before they contend
 // for the lock file, so a live reader in this process is never judged
 // stale by another one in it. The lock file is what readers in other
 // processes contend for.
-func (r *Registry) lockEntry(projectIDHash, path string, wait time.Duration) (unlock func() (abandoned bool), ok bool) {
+func (r *Registry) lockEntry(projectIDHash, path string, wait time.Duration) (held *heldEntry, ok bool) {
+	if checkProjectIDHash(projectIDHash) != nil {
+		return nil, false
+	}
 	deadline := time.Now().Add(wait)
 	target := r.entryLockPath(projectIDHash, path)
 	release, ok := inProcess.lock(target, deadline)
@@ -53,18 +53,15 @@ func (r *Registry) lockEntry(projectIDHash, path string, wait time.Duration) (un
 		release()
 		return nil, false
 	}
-	return func() bool {
+	return &heldEntry{registry: r, projectIDHash: projectIDHash, path: path, release: func() bool {
 		unlockFile()
 		return release()
-	}, true
+	}}, true
 }
 
-// entryLockPath names the lock of one entry beside its project's
-// registry. The name holds a digest of the path and not the path, so
-// the directory listing tells no more than the registry does.
+// entryLockPath names the lock of one entry beside the entry's file.
 func (r *Registry) entryLockPath(projectIDHash, path string) string {
-	sum := sha256.Sum256([]byte(path))
-	return filepath.Join(r.dir, projectIDHash+"."+hex.EncodeToString(sum[:16]))
+	return filepath.Join(r.projectDir(projectIDHash), digest(path))
 }
 
 // inProcess holds the entries a reader in this process is reading now.

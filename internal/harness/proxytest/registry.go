@@ -1,11 +1,11 @@
 package proxytest
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
@@ -56,74 +56,66 @@ func (s *Sandbox) RegisteredPaths(projectIDHash string) []string {
 	return paths
 }
 
-// RegistryFile reports a project's registry file byte for byte, so a
-// test can show that a read-only surface wrote nothing to it. A
-// surface that may mark sessions hot is checked through
-// RegisteredFiles instead: marking rewrites the file.
-func (s *Sandbox) RegistryFile(projectIDHash string) []byte {
+// RegistryOnDisk reports a project's registry as it stands on disk,
+// every file of it by name and byte for byte, so a test can show that
+// a read-only surface wrote nothing to it. A surface that may mark
+// sessions hot is checked through RegisteredFiles instead: marking
+// writes the heat of a session.
+func (s *Sandbox) RegistryOnDisk(projectIDHash string) string {
 	s.t.Helper()
-	data, err := fsatomic.ReadFile(filepath.Join(s.layout.FollowDir(), projectIDHash+".json"))
-	if err != nil {
+	var dump strings.Builder
+	add := func(name string) {
+		data, err := fsatomic.ReadFile(filepath.Join(s.layout.FollowDir(), name))
+		if err != nil {
+			s.t.Fatal(err)
+		}
+		fmt.Fprintf(&dump, "%s\n%s\n", name, data)
+	}
+	add(projectIDHash + ".json")
+	entries, err := os.ReadDir(filepath.Join(s.layout.FollowDir(), projectIDHash))
+	if err != nil && !os.IsNotExist(err) {
 		s.t.Fatal(err)
 	}
-	return data
+	for _, e := range entries {
+		add(filepath.Join(projectIDHash, e.Name()))
+	}
+	return dump.String()
 }
 
-// RewindCursor puts one entry back to where a reader killed after it
-// stored a segment but before it advanced the cursor left it: the file
-// is still registered, and nothing counts as read from it.
+// RewindCursor puts one entry back to where a reader that kept no
+// segment bound left it when it was killed after it stored a segment
+// but before it advanced the cursor: the file is still registered,
+// under the subpath it had, and nothing counts as read from it.
 func (s *Sandbox) RewindCursor(projectIDHash, path string) {
 	s.t.Helper()
-	from := s.registered(projectIDHash, path)
-	f := from
-	f.Offset, f.Size, f.Inode, f.NextSegment, f.MessageIDs = 0, 0, 0, 0, nil
-	if err := s.registry().Update(projectIDHash, from, f, drift.Signals{}); err != nil {
+	was := s.registered(projectIDHash, path)
+	if err := s.registry().Remove(projectIDHash, path); err != nil {
+		s.t.Fatal(err)
+	}
+	if err := s.registry().RegisterAll(projectIDHash, []string{path}, was.Subpath); err != nil {
 		s.t.Fatal(err)
 	}
 }
 
-// RetireAsAnEarlierBuild writes one entry as builds before this one
-// left a session that moved out of the project: the cursor stands just
-// past the first relocated line of the session file, and the entry
-// carries "retired": "relocated". Those builds retired an entry only
-// once they had read past that line, so the file must hold one. The
-// registry file name and the retirement are spelled here as those
-// builds spelled them: what is simulated is bytes on disk, and a
-// rename in this build must not move them.
-func (s *Sandbox) RetireAsAnEarlierBuild(projectIDHash, path string) {
+// ReadToItsEnd moves one entry's cursor to the end of its file as a
+// reader does, with consent covering root, and stores nothing of what
+// it read: what a test needs is an entry read before, not its records.
+func (s *Sandbox) ReadToItsEnd(projectIDHash, root, path string) {
 	s.t.Helper()
-	content, err := fsatomic.ReadFile(path)
+	s.registered(projectIDHash, path)
+	reader := follow.Reader{
+		Registry:      s.registry(),
+		ProjectIDHash: projectIDHash,
+		Options:       follow.ReadOptions{Root: root},
+		Store:         func(follow.ReadResult) (follow.Storing, Signals) { return follow.Stored, Signals{} },
+	}
+	reader.Advance(path)
+	st, err := follow.StatFile(path)
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	offset, found := 0, false
-	for line := range bytes.Lines(content) {
-		offset += len(line)
-		if found = bytes.Contains(line, []byte(`"type":"relocated"`)); found {
-			break
-		}
-	}
-	if !found {
-		s.t.Fatalf("%s holds no relocated line for an earlier build to have read past", path)
-	}
-	file := filepath.Join(s.layout.FollowDir(), projectIDHash+".json")
-	err = fsatomic.Update(file, 0o600, func(old []byte) ([]byte, error) {
-		var reg map[string]any
-		if err := json.Unmarshal(old, &reg); err != nil {
-			return nil, err
-		}
-		files, _ := reg["files"].([]any)
-		for _, f := range files {
-			if entry, ok := f.(map[string]any); ok && entry["path"] == path {
-				entry["offset"], entry["size"] = offset, len(content)
-				entry["retired"] = "relocated"
-				return json.Marshal(reg)
-			}
-		}
-		return nil, fmt.Errorf("no file registered at %s", path)
-	})
-	if err != nil {
-		s.t.Fatal(err)
+	if f := s.registered(projectIDHash, path); f.Offset != st.Size {
+		s.t.Fatalf("proxytest: %s read to offset %d of %d", path, f.Offset, st.Size)
 	}
 }
 

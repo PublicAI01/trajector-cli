@@ -1,10 +1,8 @@
 package follow_test
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -77,20 +75,19 @@ func (a *advancing) entry(path string) follow.File {
 	return follow.File{}
 }
 
-// stored is every entry the registry file holds, listed or not.
-func (a *advancing) stored() []map[string]json.RawMessage {
+// stored is every entry file the project directory holds, listed or
+// not, member by member.
+func (a *advancing) stored() []map[string]jsontext.Value {
 	a.t.Helper()
-	raw, err := os.ReadFile(filepath.Join(a.dir, project+".json"))
+	files, err := filepath.Glob(filepath.Join(projectDirOf(a.dir), "*.json"))
 	if err != nil {
 		a.t.Fatal(err)
 	}
-	var reg struct {
-		Files []map[string]json.RawMessage `json:"files"`
+	var entries []map[string]jsontext.Value
+	for _, file := range files {
+		entries = append(entries, keysOf(a.t, file))
 	}
-	if err := json.Unmarshal(raw, &reg); err != nil {
-		a.t.Fatal(err)
-	}
-	return reg.Files
+	return entries
 }
 
 func TestReader_AdvancesTheCursorOnlyOnceEveryRecordIsStored(t *testing.T) {
@@ -142,14 +139,13 @@ func TestReader_LeavesTheRegistryUntouchedWhenNoEntryGainedAnything(t *testing.T
 	for _, path := range paths {
 		a.reader.Advance(path)
 	}
-	registryFile := filepath.Join(a.dir, project+".json")
-	before, err := os.Stat(registryFile)
-	if err != nil {
-		t.Fatal(err)
+	written := []string{projectFileOf(a.dir)}
+	for _, path := range paths {
+		written = append(written, entryFileOf(a.dir, path))
 	}
-	content, err := os.ReadFile(registryFile)
-	if err != nil {
-		t.Fatal(err)
+	before := make([]snapshot, len(written))
+	for i, file := range written {
+		before[i] = snap(t, file)
 	}
 
 	a.reader.ReadAt = a.reader.ReadAt.Add(time.Hour)
@@ -157,16 +153,14 @@ func TestReader_LeavesTheRegistryUntouchedWhenNoEntryGainedAnything(t *testing.T
 		a.reader.Advance(path)
 	}
 
-	after, err := os.Stat(registryFile)
-	if err != nil {
-		t.Fatal(err)
+	rewritten := 0
+	for i, file := range written {
+		if !before[i].same(t, file) {
+			rewritten++
+		}
 	}
-	again, err := os.ReadFile(registryFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !os.SameFile(before, after) || !bytes.Equal(content, again) {
-		t.Errorf("registry file was rewritten by %d entries that gained nothing, want it left as it was", len(paths))
+	if rewritten != 0 {
+		t.Errorf("%d registry files were rewritten by %d entries that gained nothing, want each left as it was", rewritten, len(paths))
 	}
 	if f := a.entry(main); f.ReadAt != readRunAt {
 		t.Errorf("read_at = %q, want the time of the read that last found something, %q", f.ReadAt, readRunAt)
@@ -199,11 +193,11 @@ func TestReader_ReadsOnAfterASessionLeftTheProject(t *testing.T) {
 	a.reader.Advance(path)
 
 	f := a.entry(path)
-	if !f.Outside || f.Retired != "" {
+	if !f.Outside {
 		t.Fatalf("entry = %+v, want it listed and outside", f)
 	}
-	if stored := a.stored(); len(stored) != 1 || string(stored[0]["retired"]) != `"relocated"` || stored[0]["outside"] != nil {
-		t.Errorf("registry file holds %v, want the entry outside written as retired relocated and no outside key", stored)
+	if stored := a.stored(); len(stored) != 1 || string(stored[0]["outside"]) != "true" || stored[0]["retired"] != nil {
+		t.Errorf("project directory holds %v, want the entry written as outside", stored)
 	}
 	a.register(path, "")
 	if again := a.entry(path); again.Offset != f.Offset || !again.Outside {
@@ -223,8 +217,8 @@ func TestReader_ReadsOnAfterASessionLeftTheProject(t *testing.T) {
 	if f := a.entry(path); f.Outside {
 		t.Errorf("entry = %+v, want it inside after the session came back", f)
 	}
-	if stored := a.stored(); len(stored) != 1 || stored[0]["retired"] != nil || stored[0]["outside"] != nil {
-		t.Errorf("registry file holds %v, want no retirement once the session came back", stored)
+	if stored := a.stored(); len(stored) != 1 || stored[0]["outside"] != nil {
+		t.Errorf("project directory holds %v, want the entry no longer outside once the session came back", stored)
 	}
 }
 
@@ -238,7 +232,7 @@ func TestReader_DropsTheEntryOfAFileThatVanished(t *testing.T) {
 		t.Error("Advance = false, want the project's next entry still read")
 	}
 	if stored := a.stored(); len(stored) != 0 {
-		t.Errorf("registry file holds %v, want the entry gone with the file", stored)
+		t.Errorf("project directory holds %v, want the entry gone with the file", stored)
 	}
 }
 
@@ -307,31 +301,29 @@ func TestReader_KeepsTheHeatAHookWroteWhileTheFileWasRead(t *testing.T) {
 
 			stored := a.stored()
 			if len(stored) != 1 {
-				t.Fatalf("registry file holds %v, want one entry", stored)
+				t.Fatalf("project directory holds %v, want one entry", stored)
 			}
-			entry := stored[0]
-			if string(entry["offset"]) != strconv.Itoa(len(tc.content)) {
-				t.Errorf("offset = %s, want the cursor past what was read", entry["offset"])
+			if string(stored[0]["offset"]) != strconv.Itoa(len(tc.content)) {
+				t.Errorf("offset = %s, want the cursor past what was read", stored[0]["offset"])
 			}
-			if string(entry["pid"]) != "42" || string(entry["last_event"]) != `"`+at.Format(time.RFC3339)+`"` {
-				t.Errorf("entry = %v, want the heat the hook wrote while the file was read", entry)
+			if f := a.entry(path); f.PID != 42 || f.LastEvent != at.Format(time.RFC3339) {
+				t.Errorf("entry = %+v, want the heat the hook wrote while the file was read", f)
 			}
 		})
 	}
 }
 
-func TestReader_ReadsOnFromWhereAnEarlierBuildRetiredASessionThatLeft(t *testing.T) {
+func TestReader_ReadsOnFromAnEntryLeftOutside(t *testing.T) {
 	a := newAdvancing(t)
 	path := mainPath(t)
 	kept := assistantLine("m1", 0, "hello")
 	out := relocatedLine("/elsewhere/entirely")
 	writeFile(t, path, kept+out)
 	a.register(path, "")
-	left := follow.File{Path: path, Size: int64(len(kept + out)), Offset: int64(len(kept + out)), NextSegment: 1, MessageIDs: []string{"m1"}}
-	if err := a.registry.Update(project, follow.File{Path: path}, left, drift.Signals{}); err != nil {
+	left := follow.File{Path: path, Size: int64(len(kept + out)), Offset: int64(len(kept + out)), NextSegment: 1, MessageIDs: []string{"m1"}, Outside: true}
+	if err := follow.MoveCursor(a.registry, project, follow.File{Path: path}, left); err != nil {
 		t.Fatal(err)
 	}
-	retireInFile(t, a.dir, path, "relocated")
 	appendFile(t, path, userLine(1)+relocatedLine(root)+userLine(2))
 	a.answer = follow.Stored
 
@@ -342,7 +334,7 @@ func TestReader_ReadsOnFromWhereAnEarlierBuildRetiredASessionThatLeft(t *testing
 	}
 	wantLines(t, a.handed[0], userLine(2))
 	stored := a.stored()
-	if len(stored) != 1 || stored[0]["retired"] != nil || stored[0]["outside"] != nil {
-		t.Errorf("registry file holds %v, want the entry neither retired nor outside", stored)
+	if len(stored) != 1 || stored[0]["outside"] != nil {
+		t.Errorf("project directory holds %v, want the entry no longer outside", stored)
 	}
 }

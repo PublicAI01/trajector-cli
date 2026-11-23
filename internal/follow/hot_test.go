@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
 
@@ -42,7 +41,7 @@ func TestFile_HotWhileItsProcessRunsOrAHookNamedItWithinADay(t *testing.T) {
 		{"named two days ago", follow.File{LastEvent: stamp(48 * time.Hour)}, false},
 		{"named two days ago but its process runs", follow.File{LastEvent: stamp(48 * time.Hour), PID: 42}, true},
 		{"its process is gone and it was named two days ago", follow.File{LastEvent: stamp(48 * time.Hour), PID: 7}, false},
-		{"retired", follow.File{LastEvent: stamp(time.Hour), PID: 42, Retired: "a-reason-of-a-later-build"}, false},
+		{"outside", follow.File{LastEvent: stamp(time.Hour), PID: 42, Outside: true}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.file.Hot(now, alive); got != tc.want {
@@ -112,7 +111,7 @@ func TestRegistry_WarmAndCoolLeaveTheCursorAlone(t *testing.T) {
 	path := abs(t, "a.jsonl")
 	mustRegister(t, r, project, path)
 	advanced := follow.File{Path: path, Inode: 7, Size: 10, Offset: 10, NextSegment: 2, MessageIDs: []string{"msg_a"}}
-	if err := r.Update(project, follow.File{Path: path}, advanced, drift.Signals{}); err != nil {
+	if err := follow.MoveCursor(r, project, follow.File{Path: path}, advanced); err != nil {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
@@ -255,11 +254,11 @@ func TestRegistry_FileIsTheEntryFilesListsForAPath(t *testing.T) {
 	dir := t.TempDir()
 	r := follow.Open(dir)
 	path := abs(t, "a.jsonl")
-	retired := abs(t, "b.jsonl")
-	mustRegister(t, r, project, path, retired)
-	retireInFile(t, dir, retired, "a-reason-of-a-later-build")
+	marked := abs(t, "b.jsonl")
+	mustRegister(t, r, project, path, marked)
+	setKey(t, entryFileOf(dir, marked), "needs", `["a-later-layout-feature"]`)
 	advanced := follow.File{Path: path, Inode: 7, Size: 10, Offset: 10, NextSegment: 2, MessageIDs: []string{"msg_a"}}
-	if err := r.Update(project, follow.File{Path: path}, advanced, drift.Signals{}); err != nil {
+	if err := follow.MoveCursor(r, project, follow.File{Path: path}, advanced); err != nil {
 		t.Fatal(err)
 	}
 
@@ -270,7 +269,7 @@ func TestRegistry_FileIsTheEntryFilesListsForAPath(t *testing.T) {
 	if _, ok, err := r.File(project, abs(t, "c.jsonl")); err != nil || ok {
 		t.Errorf("File(_, an unregistered path) = %v, %v, want not found", ok, err)
 	}
-	if _, ok, err := r.File(project, retired); err != nil || ok {
+	if _, ok, err := r.File(project, marked); err != nil || ok {
 		t.Errorf("File(_, an entry Files does not list) = %v, %v, want not found", ok, err)
 	}
 	if _, ok, err := follow.Open(t.TempDir()).File(project, path); err != nil || ok {

@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 )
 
@@ -71,7 +70,7 @@ func TestRegistry_RegisterKeepsExistingCursors(t *testing.T) {
 	path := abs(t, "a.jsonl")
 	mustRegister(t, r, project, path)
 	advanced := follow.File{Path: path, Inode: 7, Size: 10, Offset: 10, NextSegment: 2, MessageIDs: []string{"msg_a"}}
-	if err := r.Update(project, follow.File{Path: path}, advanced, drift.Signals{}); err != nil {
+	if err := follow.MoveCursor(r, project, follow.File{Path: path}, advanced); err != nil {
 		t.Fatal(err)
 	}
 	mustRegister(t, r, project, path)
@@ -105,8 +104,8 @@ func TestRegistry_RejectsProjectHashesThatCouldEscapeTheDirectory(t *testing.T) 
 		if err := r.RegisterAll(hash, []string{path}, ""); err == nil {
 			t.Errorf("RegisterAll(%q) = nil, want refused", hash)
 		}
-		if err := r.Update(hash, follow.File{Path: path}, follow.File{Path: path}, drift.Signals{}); err == nil {
-			t.Errorf("Update(%q) = nil, want refused", hash)
+		if err := r.Warm(hash, path, 0, time.Now()); err == nil {
+			t.Errorf("Warm(%q) = nil, want refused", hash)
 		}
 		if err := r.Unregister(hash); err == nil {
 			t.Errorf("Unregister(%q) = nil, want refused", hash)
@@ -164,110 +163,7 @@ func TestRegistry_FilesAreOrderedByPath(t *testing.T) {
 	}
 }
 
-// retireInFile writes a retirement onto the entry for path the way a
-// build that writes it would: straight into the registry file.
-func retireInFile(t *testing.T, dir, path string, why follow.Retirement) {
-	t.Helper()
-	file := filepath.Join(dir, project+".json")
-	data, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var reg map[string]any
-	if err := json.Unmarshal(data, &reg); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range reg["files"].([]any) {
-		if entry := f.(map[string]any); entry["path"] == path {
-			entry["retired"] = string(why)
-		}
-	}
-	if data, err = json.Marshal(reg); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(file, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestRegistry_EntriesListsRetiredFilesThatFilesLeavesOut(t *testing.T) {
-	dir := t.TempDir()
-	r := follow.Open(dir)
-	a, b := abs(t, "a.jsonl"), abs(t, "b.jsonl")
-	mustRegister(t, r, project, a, b)
-	const later follow.Retirement = "a-reason-of-a-later-build"
-	retireInFile(t, dir, b, later)
-
-	files, err := r.Files(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, err := r.Entries(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(files) != 1 || files[0].Path != a {
-		t.Errorf("Files() = %+v, want only %q", files, a)
-	}
-	var got []string
-	for _, f := range entries {
-		got = append(got, f.Path)
-	}
-	if want := []string{a, b}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Entries() paths = %v, want %v", got, want)
-	}
-	if entries[1].Retired != later {
-		t.Errorf("Entries()[1] = %+v, want the retirement it was given", entries[1])
-	}
-}
-
-func TestRegistry_ReadsAnEntryAnEarlierBuildRetiredForLeavingAsOutside(t *testing.T) {
-	dir := t.TempDir()
-	r := follow.Open(dir)
-	path := abs(t, "a.jsonl")
-	mustRegister(t, r, project, path)
-	left := follow.File{Path: path, Inode: 7, Size: 90, Offset: 90, NextSegment: 1, MessageIDs: []string{"msg_a"}}
-	if err := r.Update(project, follow.File{Path: path}, left, drift.Signals{}); err != nil {
-		t.Fatal(err)
-	}
-	retireInFile(t, dir, path, "relocated")
-
-	files, err := r.Files(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files) != 1 || !sameFile(files[0], left) || !files[0].Outside || files[0].Retired != "" {
-		t.Errorf("Files() = %+v, want the entry listed outside, with the cursor the earlier build left", files)
-	}
-}
-
-// retirementsOnDisk reads the retirement each entry of the registry
-// file carries, by path, as a build that does not decode the layout
-// through this package would see it.
-func retirementsOnDisk(t *testing.T, dir string) map[string]string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, project+".json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var reg struct {
-		Files []struct {
-			Path    string `json:"path"`
-			Retired string `json:"retired"`
-		} `json:"files"`
-	}
-	if err := json.Unmarshal(data, &reg); err != nil {
-		t.Fatal(err)
-	}
-	got := map[string]string{}
-	for _, f := range reg.Files {
-		got[f.Path] = f.Retired
-	}
-	return got
-}
-
-func TestRegistry_AnAgentFileOfAWorkflowRunIsHiddenOnDiskAndReadHere(t *testing.T) {
+func TestRegistry_AnAgentFileOfAWorkflowRunIsListedAndHotWithItsSession(t *testing.T) {
 	dir := t.TempDir()
 	r := follow.Open(dir)
 	main := abs(t, "sid.jsonl")
@@ -277,11 +173,11 @@ func TestRegistry_AnAgentFileOfAWorkflowRunIsHiddenOnDiskAndReadHere(t *testing.
 	if err := r.RegisterAll(project, []string{main, flat, inRun, inRunMeta}, ""); err != nil {
 		t.Fatal(err)
 	}
-
-	want := map[string]string{main: "", flat: "", inRun: "nested-agent-file", inRunMeta: "nested-agent-file"}
-	if got := retirementsOnDisk(t, dir); !reflect.DeepEqual(got, want) {
-		t.Errorf("retirements on disk = %v, want %v", got, want)
+	now := time.Now()
+	if err := r.Warm(project, main, 0, now); err != nil {
+		t.Fatal(err)
 	}
+
 	files, err := r.Files(project)
 	if err != nil {
 		t.Fatal(err)
@@ -289,99 +185,17 @@ func TestRegistry_AnAgentFileOfAWorkflowRunIsHiddenOnDiskAndReadHere(t *testing.
 	if len(files) != 4 {
 		t.Fatalf("Files() = %+v, want every entry listed", files)
 	}
-	now := time.Now()
-	if err := r.Warm(project, main, 0, now); err != nil {
-		t.Fatal(err)
-	}
-	if files, err = r.Files(project); err != nil {
-		t.Fatal(err)
-	}
 	for _, f := range files {
-		if f.Retired != "" || !f.Hot(now, func(int) bool { return false }) {
-			t.Errorf("%s = %+v, want read here as an entry not retired, hot with its session", filepath.Base(f.Path), f)
+		if !f.Hot(now, func(int) bool { return false }) {
+			t.Errorf("%s = %+v, want hot with its session", filepath.Base(f.Path), f)
 		}
 		if got, want := f.KeptFromEarlierBuilds(), f.Path == inRun || f.Path == inRunMeta; got != want {
 			t.Errorf("%s: KeptFromEarlierBuilds() = %v, want %v", filepath.Base(f.Path), got, want)
 		}
-	}
-
-	read := follow.File{Path: inRun, Inode: 3, Size: 40, Offset: 40, NextSegment: 1, MessageIDs: []string{"msg_b"}}
-	if err := r.Update(project, follow.File{Path: inRun}, read, drift.Signals{}); err != nil {
-		t.Fatal(err)
-	}
-	if got := retirementsOnDisk(t, dir)[inRun]; got != "nested-agent-file" {
-		t.Errorf("retirement on disk after a read = %q, want it kept", got)
-	}
-}
-
-func TestRegistry_AnAgentFileOfAWorkflowRunOutsideIsWrittenAsRelocated(t *testing.T) {
-	dir := t.TempDir()
-	r := follow.Open(dir)
-	inRun := abs(t, filepath.Join("sid", "subagents", "workflows", "wf_1", "agent-b.jsonl"))
-	mustRegister(t, r, project, inRun)
-	outside := follow.File{Path: inRun, Offset: 10, Outside: true}
-	if err := r.Update(project, follow.File{Path: inRun}, outside, drift.Signals{}); err != nil {
-		t.Fatal(err)
-	}
-	if got := retirementsOnDisk(t, dir)[inRun]; got != "relocated" {
-		t.Fatalf("retirement on disk while outside = %q, want relocated", got)
-	}
-	back := follow.File{Path: inRun, Offset: 20}
-	if err := r.Update(project, outside, back, drift.Signals{}); err != nil {
-		t.Fatal(err)
-	}
-	if got := retirementsOnDisk(t, dir)[inRun]; got != "nested-agent-file" {
-		t.Errorf("retirement on disk after coming back = %q, want nested-agent-file", got)
-	}
-}
-
-// keepsARetirementThroughEveryWrite registers marked beside another
-// file, writes why onto marked as the build that knows the value would,
-// and checks after each kind of write this build makes that marked is
-// still carried with why on disk and is not listed.
-func keepsARetirementThroughEveryWrite(t *testing.T, marked string, why follow.Retirement) {
-	t.Helper()
-	dir := t.TempDir()
-	r := follow.Open(dir)
-	other := abs(t, "other.jsonl")
-	mustRegister(t, r, project, other, marked)
-	retireInFile(t, dir, marked, why)
-
-	writes := []struct {
-		name  string
-		write func() error
-	}{
-		{"Warm of another entry", func() error { return r.Warm(project, other, 0, time.Now()) }},
-		{"Cool of the entry", func() error { return r.Cool(project, marked) }},
-		{"SetGaps", func() error { return r.SetGaps(project, follow.Gaps{Truncated: true}) }},
-		{"RegisterAll of a new path", func() error {
-			return r.RegisterAll(project, []string{marked, abs(t, "new.jsonl")}, "")
-		}},
-	}
-	for _, w := range writes {
-		if err := w.write(); err != nil {
-			t.Fatalf("%s: %v", w.name, err)
-		}
-		if got := retirementsOnDisk(t, dir)[marked]; got != string(why) {
-			t.Errorf("after %s: retirement on disk = %q, want %q as it was found", w.name, got, why)
-		}
-		files, err := r.Files(project)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if slices.ContainsFunc(files, func(f follow.File) bool { return f.Path == marked }) {
-			t.Errorf("after %s: Files() lists %s, want it left out", w.name, filepath.Base(marked))
+		if entry := keysOf(t, entryFileOf(dir, f.Path)); entry["retired"] != nil {
+			t.Errorf("%s on disk = %v, want no retirement", filepath.Base(f.Path), entry)
 		}
 	}
-}
-
-func TestRegistry_ARetirementThisBuildDoesNotKnowIsWrittenBackAsFound(t *testing.T) {
-	keepsARetirementThroughEveryWrite(t, abs(t, "b.jsonl"), "future")
-}
-
-func TestRegistry_AMarkedEntryAtAPlaceThisBuildDoesNotKnowStaysHidden(t *testing.T) {
-	unknownPlace := abs(t, filepath.Join("sid", "subagents", "workflows", "run-1", "agent-x.jsonl"))
-	keepsARetirementThroughEveryWrite(t, unknownPlace, "nested-agent-file")
 }
 
 func TestRegistry_RegisterAllWritesNothingWhenEveryPathIsRegistered(t *testing.T) {
@@ -391,22 +205,20 @@ func TestRegistry_RegisterAllWritesNothingWhenEveryPathIsRegistered(t *testing.T
 	if err := r.RegisterAll(project, paths, "sub"); err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(dir, project+".json")
-	before, err := os.Stat(file)
-	if err != nil {
-		t.Fatal(err)
+	written := []string{projectFileOf(dir), entryFileOf(dir, paths[0]), entryFileOf(dir, paths[1])}
+	before := make([]snapshot, len(written))
+	for i, file := range written {
+		before[i] = snap(t, file)
 	}
 
 	if err := r.RegisterAll(project, paths, "other"); err != nil {
 		t.Fatal(err)
 	}
 
-	after, err := os.Stat(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !os.SameFile(before, after) {
-		t.Error("the registry file was replaced, want nothing written for paths already registered")
+	for i, file := range written {
+		if !before[i].same(t, file) {
+			t.Errorf("%s was replaced, want nothing written for paths already registered", filepath.Base(file))
+		}
 	}
 	files, err := r.Files(project)
 	if err != nil {
@@ -425,24 +237,24 @@ func TestRegistry_RegisterAllOfNoPathCreatesNoRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, project+".json")); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("registry file: stat error = %v, want it not created", err)
+	if _, err := os.Stat(projectFileOf(dir)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("project file: stat error = %v, want it not created", err)
 	}
 }
 
-func TestRegistry_UpdateFromACursorThatMovedChangesNothing(t *testing.T) {
+func TestRegistry_ACursorWriteFromACursorThatMovedChangesNothing(t *testing.T) {
 	r := follow.Open(t.TempDir())
 	path := abs(t, "a.jsonl")
 	mustRegister(t, r, project, path)
 	start := follow.File{Path: path}
 	moved := follow.File{Path: path, Inode: 7, Size: 10, Offset: 10, NextSegment: 1, MessageIDs: []string{"msg_a"}}
-	if err := r.Update(project, start, moved, drift.Signals{}); err != nil {
+	if err := follow.MoveCursor(r, project, start, moved); err != nil {
 		t.Fatal(err)
 	}
 
 	late := follow.File{Path: path, Inode: 7, Size: 30, Offset: 30, NextSegment: 1, MessageIDs: []string{"msg_b"}}
-	if err := r.Update(project, start, late, drift.Signals{}); err == nil {
-		t.Error("Update from a cursor that moved = nil, want an error")
+	if err := follow.MoveCursor(r, project, start, late); err == nil {
+		t.Error("a cursor write from a cursor that moved = nil, want an error")
 	}
 	files, err := r.Files(project)
 	if err != nil {
@@ -453,17 +265,17 @@ func TestRegistry_UpdateFromACursorThatMovedChangesNothing(t *testing.T) {
 	}
 }
 
-func TestRegistry_UpdateReplacesTheCursor(t *testing.T) {
+func TestRegistry_ACursorWriteReplacesTheCursor(t *testing.T) {
 	dir := t.TempDir()
 	r := follow.Open(dir)
 	a, b := abs(t, "a.jsonl"), abs(t, "b.jsonl")
 	mustRegister(t, r, project, a, b)
 	first := follow.File{Path: a, Inode: 11, Size: 300, Offset: 300, NextSegment: 1, MessageIDs: []string{"msg_a", "msg_b"}}
-	if err := r.Update(project, follow.File{Path: a}, first, drift.Signals{}); err != nil {
+	if err := follow.MoveCursor(r, project, follow.File{Path: a}, first); err != nil {
 		t.Fatal(err)
 	}
 	second := follow.File{Path: a, Inode: 12, Size: 40, Offset: 40, NextSegment: 2, MessageIDs: []string{"msg_c"}}
-	if err := r.Update(project, first, second, drift.Signals{}); err != nil {
+	if err := follow.MoveCursor(r, project, first, second); err != nil {
 		t.Fatal(err)
 	}
 
@@ -475,37 +287,31 @@ func TestRegistry_UpdateReplacesTheCursor(t *testing.T) {
 		t.Errorf("Files() = %+v, want [%+v {Path:%s}]", files, second, b)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(dir, project+".json"))
+	raw, err := os.ReadFile(entryFileOf(dir, a))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var stored struct {
-		Version int `json:"version"`
-		Files   []struct {
-			Path        string   `json:"path"`
-			Inode       uint64   `json:"inode"`
-			Size        int64    `json:"size"`
-			Offset      int64    `json:"offset"`
-			NextSegment int      `json:"next_segment"`
-			MessageIDs  []string `json:"message_ids"`
-		} `json:"files"`
+		Path        string   `json:"path"`
+		Inode       uint64   `json:"inode"`
+		Size        int64    `json:"size"`
+		Offset      int64    `json:"offset"`
+		NextSegment int      `json:"next_segment"`
+		MessageIDs  []string `json:"message_ids"`
 	}
 	if err := json.Unmarshal(raw, &stored); err != nil {
-		t.Fatalf("registry file %s: %v", raw, err)
+		t.Fatalf("entry file %s: %v", raw, err)
 	}
-	if stored.Version != 1 || len(stored.Files) != 2 {
-		t.Fatalf("registry file = %s, want version 1 with 2 files", raw)
+	if stored.Path != a || stored.Inode != 12 || stored.Size != 40 || stored.Offset != 40 ||
+		stored.NextSegment != 2 || !slices.Equal(stored.MessageIDs, []string{"msg_c"}) {
+		t.Errorf("stored entry = %+v, want %+v", stored, second)
 	}
-	if got := stored.Files[0]; got.Path != a || got.Inode != 12 || got.Size != 40 || got.Offset != 40 ||
-		got.NextSegment != 2 || !slices.Equal(got.MessageIDs, []string{"msg_c"}) {
-		t.Errorf("stored entry = %+v, want %+v", got, second)
-	}
-	if got := stored.Files[1]; got.MessageIDs == nil {
-		t.Errorf("stored zero-cursor entry = %s, want message_ids as an array", raw)
+	if got := string(keysOf(t, entryFileOf(dir, b))["message_ids"]); got != "[]" {
+		t.Errorf("stored zero-cursor entry message_ids = %s, want an empty array", got)
 	}
 }
 
-func TestRegistry_UpdateUnregisteredFails(t *testing.T) {
+func TestReader_AdvanceOfAPathNotRegisteredRegistersNothing(t *testing.T) {
 	tests := []struct {
 		name  string
 		setup func(t *testing.T, r *follow.Registry)
@@ -524,13 +330,17 @@ func TestRegistry_UpdateUnregisteredFails(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := follow.Open(t.TempDir())
 			tt.setup(t, r)
-			err := r.Update(project, follow.File{}, follow.File{Path: abs(t, "a.jsonl"), Offset: 5}, drift.Signals{})
-			if !errors.Is(err, follow.ErrNotRegistered) {
-				t.Errorf("Update() = %v, want ErrNotRegistered", err)
+			path := mainPath(t)
+			writeFile(t, path, userLine(1))
+			reader := readerWith(r, func(follow.ReadResult) follow.Storing {
+				t.Error("the store was handed a read of a path not registered")
+				return follow.Stored
+			})
+			if !reader.Advance(path) {
+				t.Error("Advance() = false, want the project's next entry still read")
 			}
-			ok, _ := registered(r, abs(t, "a.jsonl"))
-			if ok {
-				t.Error("a failed Update registered the path")
+			if ok, _ := registered(r, path); ok {
+				t.Error("Advance of a path not registered registered it")
 			}
 		})
 	}
@@ -541,9 +351,9 @@ func TestRegistry_UnregisterRemovesProjectFile(t *testing.T) {
 	r := follow.Open(dir)
 	mustRegister(t, r, project, abs(t, "a.jsonl"))
 	mustRegister(t, r, "other", abs(t, "a.jsonl"))
-	file := filepath.Join(dir, project+".json")
+	file := projectFileOf(dir)
 	if _, err := os.Stat(file); err != nil {
-		t.Fatalf("registry file before Unregister: %v", err)
+		t.Fatalf("project file before Unregister: %v", err)
 	}
 
 	for i := range 2 {
@@ -552,7 +362,10 @@ func TestRegistry_UnregisterRemovesProjectFile(t *testing.T) {
 		}
 	}
 	if _, err := os.Stat(file); !os.IsNotExist(err) {
-		t.Errorf("registry file after Unregister: stat = %v, want not exist", err)
+		t.Errorf("project file after Unregister: stat = %v, want not exist", err)
+	}
+	if _, err := os.Stat(projectDirOf(dir)); !os.IsNotExist(err) {
+		t.Errorf("project directory after Unregister: stat = %v, want not exist", err)
 	}
 	files, err := r.Files(project)
 	if err != nil || len(files) != 0 {
@@ -630,29 +443,34 @@ func TestRegistry_FilePermissionsAreOwnerOnly(t *testing.T) {
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("Open created the directory: stat = %v", err)
 	}
-	mustRegister(t, r, project, abs(t, "a.jsonl"))
-	if err := r.Update(project, follow.File{}, follow.File{Path: abs(t, "a.jsonl"), Offset: 1}, drift.Signals{}); err != nil {
+	path := abs(t, "a.jsonl")
+	mustRegister(t, r, project, path)
+	if err := follow.MoveCursor(r, project, follow.File{}, follow.File{Path: path, Offset: 1}); err != nil {
 		t.Fatal(err)
 	}
 
-	dirInfo, err := os.Stat(dir)
-	if err != nil {
-		t.Fatal(err)
+	for _, d := range []string{dir, projectDirOf(dir)} {
+		dirInfo, err := os.Stat(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := dirInfo.Mode().Perm(); perm != 0o700 {
+			t.Errorf("%s mode = %o, want 700", filepath.Base(d), perm)
+		}
+		entries, _ := os.ReadDir(d)
+		for _, e := range entries {
+			if strings.Contains(e.Name(), ".tmp") || strings.Contains(e.Name(), ".new") || strings.HasSuffix(e.Name(), ".lock") {
+				t.Errorf("transient file left behind: %s", e.Name())
+			}
+		}
 	}
-	if perm := dirInfo.Mode().Perm(); perm != 0o700 {
-		t.Errorf("directory mode = %o, want 700", perm)
-	}
-	fileInfo, err := os.Stat(filepath.Join(dir, project+".json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := fileInfo.Mode().Perm(); perm != 0o600 {
-		t.Errorf("registry file mode = %o, want 600", perm)
-	}
-	entries, _ := os.ReadDir(dir)
-	for _, e := range entries {
-		if strings.Contains(e.Name(), ".tmp") || strings.HasSuffix(e.Name(), ".lock") {
-			t.Errorf("transient file left behind: %s", e.Name())
+	for _, file := range []string{projectFileOf(dir), entryFileOf(dir, path)} {
+		fileInfo, err := os.Stat(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := fileInfo.Mode().Perm(); perm != 0o600 {
+			t.Errorf("%s mode = %o, want 600", filepath.Base(file), perm)
 		}
 	}
 }
@@ -662,14 +480,15 @@ func TestRegistry_UnknownVersionIsAnError(t *testing.T) {
 		name string
 		raw  string
 	}{
-		{name: "newer version", raw: `{"version":2,"files":[]}`},
+		{name: "newer version", raw: `{"version":3}`},
+		{name: "earlier version", raw: `{"version":1,"files":[]}`},
 		{name: "missing version", raw: `{"files":[]}`},
-		{name: "not json", raw: `{"version":1,`},
+		{name: "not json", raw: `{"version":2,`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, project+".json"), []byte(tt.raw), 0o600); err != nil {
+			if err := os.WriteFile(projectFileOf(dir), []byte(tt.raw), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			r := follow.Open(dir)
@@ -683,12 +502,12 @@ func TestRegistry_UnknownVersionIsAnError(t *testing.T) {
 			if err := r.RegisterAll(project, []string{path}, ""); err == nil {
 				t.Error("RegisterAll() = nil, want refused")
 			}
-			if err := r.Update(project, follow.File{Path: path}, follow.File{Path: path}, drift.Signals{}); err == nil {
-				t.Error("Update() = nil, want refused")
+			if _, _, err := r.File(project, path); err == nil {
+				t.Error("File() = nil error, want refused")
 			}
-			got, err := os.ReadFile(filepath.Join(dir, project+".json"))
+			got, err := os.ReadFile(projectFileOf(dir))
 			if err != nil || string(got) != tt.raw {
-				t.Errorf("registry file = %q, %v, want left as %q", got, err, tt.raw)
+				t.Errorf("project file = %q, %v, want left as %q", got, err, tt.raw)
 			}
 		})
 	}

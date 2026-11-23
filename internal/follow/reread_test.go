@@ -90,7 +90,7 @@ func dieOnceStored(args []string) int {
 // that time has passed.
 func expireEntryLocks(t *testing.T, registryDir string) {
 	t.Helper()
-	locks, err := filepath.Glob(filepath.Join(registryDir, "*.lock"))
+	locks, err := filepath.Glob(filepath.Join(registryDir, project, "*.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,12 +117,13 @@ func readTwiceMore(t *testing.T, registry *follow.Registry, path string, lines [
 	reader.Advance(path)
 }
 
-// readWithTheCursorUnwritable reads path once with the registry file
-// out of reach while the cursor is written: the read is stored and the
-// cursor stays where it was.
+// readWithTheCursorUnwritable reads path once with its entry file out
+// of reach while the cursor is written: the read is stored, the cursor
+// stays where it was, and the entry keeps the bound written before the
+// store was asked.
 func readWithTheCursorUnwritable(t *testing.T, registry *follow.Registry, registryDir, path string, kept keptOnDisk) {
 	t.Helper()
-	registryFile := filepath.Join(registryDir, project+".json")
+	registryFile := entryFileOf(registryDir, path)
 	away := registryFile + ".away"
 	unwritable := readerWith(registry, func(res follow.ReadResult) follow.Storing {
 		answer := kept.store(res)

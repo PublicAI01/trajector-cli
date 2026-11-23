@@ -21,15 +21,16 @@ const (
 	sessionMarker      = "sid-MARKER"
 )
 
-// registryFile is the project's registry file as it stands on disk.
+// registryFile is the project's registry as it stands on disk.
 func (e *env) registryFile() string {
 	e.t.Helper()
-	return string(e.sandbox.RegistryFile(proxytest.ProjectIDHash(e.canonicalRoot())))
+	return e.sandbox.RegistryOnDisk(proxytest.ProjectIDHash(e.canonicalRoot()))
 }
 
 // checkNoCursorMovedAndNothingRegistered fails the test if a surface
 // that may mark the project's sessions hot did more to the registry
-// than that: it registered a path, retired an entry or moved a cursor.
+// than that: it registered a path, moved a cursor or moved a session
+// outside.
 func (e *env) checkNoCursorMovedAndNothingRegistered(surface string, before []proxytest.RegisteredFile) {
 	e.t.Helper()
 	after := e.registeredFiles(e.canonicalRoot())
@@ -38,7 +39,7 @@ func (e *env) checkNoCursorMovedAndNothingRegistered(surface string, before []pr
 	}
 	for i, f := range after {
 		was := before[i]
-		if f.Path != was.Path || f.Retired != was.Retired {
+		if f.Path != was.Path || f.Outside != was.Outside {
 			e.t.Errorf("registry entry after %s = %+v, was %+v", surface, f, was)
 		}
 		if f.NextSegment != was.NextSegment || f.Offset != was.Offset || !slices.Equal(f.MessageIDs, was.MessageIDs) {
@@ -266,7 +267,7 @@ func TestDoctorSaysTheSessionFilesCouldNotBePutBackOnTheReadingPath(t *testing.T
 	e.startProxy(res.handler())
 	e.enable(proxytest.WithProxy)
 	e.registeredButNeverRead()
-	e.readOnlyDir(e.layout().FollowDir())
+	e.readOnlyDir(filepath.Join(e.layout().FollowDir(), proxytest.ProjectIDHash(e.canonicalRoot())))
 	e.stdout.Reset()
 
 	problems, out := e.doctor()
@@ -282,7 +283,7 @@ func TestDoctorSaysTheSessionFilesCouldNotBePutBackOnTheReadingPath(t *testing.T
 	}
 }
 
-func TestDoctorDoesNotCountASessionFileAnEarlierBuildRetiredAsUnregistered(t *testing.T) {
+func TestDoctorDoesNotCountASessionFileReadAsOutsideAsUnregistered(t *testing.T) {
 	e := newEnv(t)
 	var res resident
 	e.startProxy(res.handler())
@@ -290,7 +291,10 @@ func TestDoctorDoesNotCountASessionFileAnEarlierBuildRetiredAsUnregistered(t *te
 	path := e.sessionFile(sessionMarker+"-1", e.deps.Now().Add(-48*time.Hour))
 	appendLine(t, path, `{"type":"relocated","relocatedCwd":"/elsewhere/entirely"}`)
 	e.registerFile(e.canonicalRoot(), path, "")
-	e.sandbox.RetireAsAnEarlierBuild(e.status().Hash, path)
+	e.sandbox.ReadToItsEnd(e.status().Hash, e.canonicalRoot(), path)
+	if got := e.registeredFiles(e.canonicalRoot()); len(got) != 1 || !got[0].Outside {
+		t.Fatalf("registry = %+v, want the entry read outside", got)
+	}
 	e.stdout.Reset()
 
 	_, out := e.doctor()
@@ -298,14 +302,14 @@ func TestDoctorDoesNotCountASessionFileAnEarlierBuildRetiredAsUnregistered(t *te
 	status := e.statusOutput()
 
 	if !strings.Contains(out, "every session file of this project is registered") {
-		t.Errorf("doctor = %q, want an entry an earlier build retired counted as registered", out)
+		t.Errorf("doctor = %q, want an entry outside counted as registered", out)
 	}
 	for _, unwanted := range []string{"predate its grant", "to register them", "could not determine why"} {
 		if strings.Contains(out, unwanted) {
-			t.Errorf("doctor = %q, want no %q about a file an earlier build retired", out, unwanted)
+			t.Errorf("doctor = %q, want no %q about a file read outside", out, unwanted)
 		}
 		if strings.Contains(status, unwanted) {
-			t.Errorf("status = %q, want no %q about a file an earlier build retired", status, unwanted)
+			t.Errorf("status = %q, want no %q about a file read outside", status, unwanted)
 		}
 	}
 }

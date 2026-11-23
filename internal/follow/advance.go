@@ -75,8 +75,8 @@ type Reader struct {
 // cursor make two records with one id; the store keeps the first, and
 // were the second one longer, the cursor it writes would pass lines
 // that only the discarded one held. So a round that reads a segment
-// leaves the segment's bound before it asks the store, and a round
-// that finds a bound left for its cursor — the cursor write failed, or
+// writes the segment's bound into the entry before it asks the store,
+// and a round that finds a bound left for its cursor — the cursor write failed, or
 // the reader died before it — reads the same segment again and
 // nothing past it. An entry another reader holds is
 // left to it: its cursor stays where that reader puts it. A holder
@@ -88,6 +88,9 @@ type Reader struct {
 // what one holder may keep it for is one segment, not one file — and,
 // in a round from byte 0 that meets the segment bound before any
 // relocated line, one pass over the rest of the file to find one.
+//
+// No round takes the project's lock: a round writes its own entry and
+// nothing else, and only the reader that holds an entry writes it.
 //
 // An entry whose file vanished leaves the registry: its cursor can
 // never advance again and no search finds the file to register it a
@@ -115,27 +118,28 @@ func (rd Reader) Advance(path string) bool {
 // while the round held it, and the file may have grown past what the
 // round observed.
 func (rd Reader) round(path string) (next, more bool) {
-	unlock, ok := rd.Registry.lockEntry(rd.ProjectIDHash, path, entryLockWait)
+	held, ok := rd.Registry.lockEntry(rd.ProjectIDHash, path, entryLockWait)
 	if !ok {
 		return true, false
 	}
 	defer func() {
-		if unlock() && next {
+		if held.unlock() && next {
 			more = true
 		}
 	}()
-	return rd.roundHeld(path)
+	return rd.roundHeld(held)
 }
 
-// roundHeld is the part of round that runs under the entry's lock.
-func (rd Reader) roundHeld(path string) (next, more bool) {
-	f, ok, err := rd.Registry.entry(rd.ProjectIDHash, path)
-	if err != nil || !ok {
+// roundHeld is the part of round that runs under the entry's lock. It
+// writes the entry at most twice: the bound of the segment it read
+// before the store is asked, and the cursor past it once the store
+// kept it.
+func (rd Reader) roundHeld(held *heldEntry) (next, more bool) {
+	cur, ok, err := held.read()
+	if err != nil || !ok || !cur.readable() {
 		return true, false
 	}
-	if f.Retired != "" {
-		return true, false
-	}
+	f := cur.File
 	capture := rd.Capture
 	capture.ProjectSubpath = f.Subpath
 	// The agent file is observed before its main file is looked at. A
@@ -152,7 +156,7 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 	if err != nil {
 		return true, false
 	}
-	left, stands := rd.Registry.bound(rd.ProjectIDHash, f)
+	left, stands := cur.standingBound()
 	again := stands && left.holds(st)
 	var res ReadResult
 	switch {
@@ -177,7 +181,7 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 	}
 	bound, bounded := boundOf(f, st, res)
 	if bounded && (!stands || bound != left) {
-		if err := rd.Registry.keepBound(rd.ProjectIDHash, f.Path, bound); err != nil {
+		if err := held.keepBound(bound); err != nil {
 			// A segment whose bound is not on disk is not handed to
 			// the store: nothing would tell the next read where it
 			// ended.
@@ -188,7 +192,7 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 	switch storing {
 	case Paused:
 		if noticed.Any() {
-			_ = rd.Registry.notice(rd.ProjectIDHash, f.Path, noticed)
+			_ = held.notice(noticed)
 		}
 		return false, false
 	case Held:
@@ -203,8 +207,8 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 	}
 	if !f.changedBy(res.File) && !noticed.Any() {
 		// The entry already says everything this read found. Writing it
-		// anyway would rewrite the registry once per entry each time a
-		// session's files are looked at, and most of them gain nothing.
+		// anyway would rewrite one entry file each time a session's
+		// files are looked at, and most of them gain nothing.
 		return true, false
 	}
 	// The cursor carries when a read last found something new, so a
@@ -212,11 +216,8 @@ func (rd Reader) roundHeld(path string) (next, more bool) {
 	if !rd.ReadAt.IsZero() {
 		res.File.ReadAt = rd.ReadAt.UTC().Format(readAtLayout)
 	}
-	if err := rd.Registry.Update(rd.ProjectIDHash, f, res.File, noticed); err != nil {
+	if err := held.advance(f, res.File, noticed); err != nil {
 		return true, false
-	}
-	if stands || bounded {
-		rd.Registry.dropBound(rd.ProjectIDHash, f.Path)
 	}
 	// A segment read again ends where it ended before, and what the
 	// file gained since waits past it.
@@ -231,9 +232,9 @@ func (rd Reader) sessionOutside(path string) (bool, error) {
 	if _, file := identify(path); file == "" {
 		return false, nil
 	}
-	main, ok, err := rd.Registry.entry(rd.ProjectIDHash, SessionOf(path)+linesExt)
-	if err != nil || !ok {
+	main, ok, err := rd.Registry.readEntry(rd.ProjectIDHash, SessionOf(path)+linesExt)
+	if err != nil || !ok || !main.readable() {
 		return false, err
 	}
-	return sessionWasOutside(main, rd.Options)
+	return sessionWasOutside(main.File, rd.Options)
 }

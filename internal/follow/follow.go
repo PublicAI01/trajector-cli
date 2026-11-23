@@ -2,33 +2,60 @@
 // enabled project, and how far each has been read. The layout is a
 // documented product contract:
 //
-//	<dir>/<project-id-hash>.json            one registry per enabled project
-//	<dir>/<project-id-hash>.<digest>.lock   held while one of its files is read
+//	<dir>/<project-id-hash>.json        the project file
+//	<dir>/<project-id-hash>.json.lock   held while the project file is rewritten
+//	<dir>/<project-id-hash>/            the project directory
+//	    <path-digest>.json              one entry per file read
+//	    <path-digest>.lock              held while that file is read
+//	    <session-digest>.heat           when a hook last named the session
+//	    <session-digest>.told           the session was told recording stopped
 //
-// A registry is one JSON object: {"version":1,"files":[...]}, each
-// element carrying path, inode, size, offset, next_segment, and
-// message_ids, and optionally read_at, subpath, retired, last_event,
-// pid, told, before_rewrite, empty_reasoning_blocks,
-// reasoning_blocks_with_text, and launch_surface. A session that moved to a directory
-// consent does not cover is written as retired "relocated", the form
-// an earlier build wrote: an earlier build then never reads on past
-// the line that took the session out. An agent file of a workflow run
-// is written as retired "nested-agent-file", so that a build which
-// does not know that place never reads it. The path
-// is the entry's identity. Inode, size, and offset describe the file as it
-// was last observed locally: they steer reading and never leave it.
-// An optional "gaps" object records what the one-time search for the
-// project's earlier files could not cover, so a later reading of the
-// registry can say so without searching again. An optional "signals"
-// object accumulates what the reader noticed about the shape of the
-// lines it read, as counts and field names only, so a surface can
-// state it without opening a session file; it is kept in the form
-// drift gives it and summed by drift's own arithmetic. An optional
-// "reasoning_told_on" names the UTC day, as YYYY-MM-DD, on which a
-// session of the project was last told that most of its reasoning
-// blocks carry no text. Directories
-// are 0700 and files 0600: the paths alone reveal what the user works
-// on.
+// A path digest is the first 16 bytes of the SHA-256 of the file's
+// path, in hex, and a session digest is the same of the session's name
+// as SessionOf gives it: the names tell no more than the files do.
+// Directories are 0700 and files 0600: the paths alone reveal what the
+// user works on.
+//
+// The project file is one JSON object: "version", the layout, which is
+// 2; "needs_build", the lowest trajector build that reads the layout;
+// and optionally "gaps", what the one-time search for the project's
+// earlier files could not cover, so a later reading can say so without
+// searching again; "reasoning_told_on", the UTC day, as YYYY-MM-DD, on
+// which a session of the project was last told that most of its
+// reasoning blocks carry no text; and "signals", what reading noticed
+// about entries since removed.
+//
+// An entry file is one JSON object carrying path, inode, size, offset,
+// next_segment, and message_ids, and optionally subpath, read_at,
+// before_rewrite, outside, empty_reasoning_blocks,
+// reasoning_blocks_with_text, launch_surface, signals, bound, and
+// needs. The path is the entry's identity. Inode, size, and offset
+// describe the file as it was last observed locally: they steer reading
+// and never leave it. Outside is true while the session is in a
+// directory consent does not cover. Signals is what the reader noticed
+// about the shape of the lines it read from the file, as counts and
+// field names only, so a surface can state it without opening a session
+// file; it is kept in the form drift gives it and summed by drift's own
+// arithmetic. Bound is where the segment a read handed to the store
+// ends, and stands only between the two writes of that read. An entry
+// is created whole or not at all, and a registration never replaces
+// one. An entry file that does not parse is passed over, and never read
+// from its start again.
+//
+// A heat file is {"last_event":"<RFC 3339>","pid":<n>}, rewritten whole
+// by the last hook to name the session. A told mark is an empty file:
+// the call that creates it is the one that tells.
+//
+// A change to the layout is one of three kinds. One that only adds a
+// key or a kind of file moves nothing: every writer of an entry or of
+// the project file writes back the keys it does not know, and a file in
+// the project directory whose extension a build does not know is
+// ignored. An entry that a build must know more to read correctly
+// lists what it needs, by name, under "needs": a build that does not
+// know one of the names does not list, read, warm, rewrite, or remove
+// the entry, and reads the rest of the project. A change of the whole
+// layout raises "version": a build that meets one it does not know
+// stops reading the project, and names the build it needs.
 //
 // Reading is a function of one registered entry and the file on disk:
 // Read consumes the complete lines a file gained since its cursor and
@@ -40,13 +67,16 @@ package follow
 
 import (
 	"cmp"
-	"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
+	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -55,13 +85,19 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/userdirs"
 )
 
-// version is the registry layout written by this package. A registry
-// carrying any other version is refused rather than interpreted: a
-// cursor read under the wrong layout would silently skip or repeat
+// version is the registry layout written by this package. A project
+// file carrying any other version is refused rather than interpreted:
+// a cursor read under the wrong layout would silently skip or repeat
 // content.
-const version = 1
+const version = 2
 
-const registryExt = ".json"
+// needsBuild is the lowest trajector build that reads the layout this
+// package writes. Every project file this build creates names it, so a
+// later build that meets the layout and does not know it can say which
+// build is needed.
+const needsBuild = "0.8.0"
+
+const jsonExt = ".json"
 
 // ErrNotRegistered reports an update to a path the project never
 // registered, or to a project without a registry.
@@ -79,28 +115,33 @@ type Registry struct{ dir string }
 // The directory is created, owner-only, by the first registration.
 func Open(dir string) *Registry { return &Registry{dir: dir} }
 
-type registry struct {
-	Version int            `json:"version"`
-	Files   []File         `json:"files"`
-	Gaps    *Gaps          `json:"gaps,omitempty"`
-	Signals *drift.Signals `json:"signals,omitempty"`
-	// ReasoningToldOn is the UTC day, as YYYY-MM-DD, on which a session
-	// of the project was last told that its reasoning blocks carry no
-	// text. It belongs to the project, not to a session: the line is
-	// worth one turn of the user's attention a day, however many
-	// sessions run.
+// projectFile is what the project file holds.
+type projectFile struct {
+	Version    int    `json:"version"`
+	NeedsBuild string `json:"needs_build,omitempty"`
+	Gaps       *Gaps  `json:"gaps,omitempty"`
+	// ReasoningToldOn belongs to the project, not to a session: the
+	// line is worth one turn of the user's attention a day, however
+	// many sessions run.
 	ReasoningToldOn string `json:"reasoning_told_on,omitempty"`
+	// Signals is what reading noticed in entries since removed: what
+	// was noticed about a project's files outlives the entries for the
+	// files themselves.
+	Signals *drift.Signals `json:"signals,omitempty"`
+	// Unknown holds the members this build does not know, written back
+	// as they were found.
+	Unknown jsontext.Value `json:",embed"`
 }
 
 // RegisterAll adds each of paths to projectIDHash's registry with a
 // zero cursor, recording where the session ran relative to the project
-// root, in one write. Registering a path that is already registered
-// changes nothing, its subpath included: the first registration of a
-// session's file is the one that knows where it ran. A retired entry
-// is registered already, so registering its path again does not read
-// the file over. When every path is registered already, nothing is
-// written. Each path must be absolute: it is the entry's identity
-// across processes with different working directories.
+// root. Registering a path that is already registered changes nothing,
+// its subpath included: the first registration of a session's file is
+// the one that knows where it ran. When every path is registered
+// already, nothing is written. Each path must be absolute: it is the
+// entry's identity across processes with different working
+// directories. The first registration of a project creates its project
+// file.
 func (r *Registry) RegisterAll(projectIDHash string, paths []string, subpath string) error {
 	for _, path := range paths {
 		if !filepath.IsAbs(path) {
@@ -110,26 +151,33 @@ func (r *Registry) RegisterAll(projectIDHash string, paths []string, subpath str
 	if err := checkProjectIDHash(projectIDHash); err != nil {
 		return err
 	}
+	if len(paths) == 0 {
+		return nil
+	}
+	if err := r.ensureProject(projectIDHash); err != nil {
+		return err
+	}
+	if err := userdirs.EnsureOwnerDir(r.projectDir(projectIDHash)); err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if err := r.create(projectIDHash, entryFile{Path: path, Subpath: subpath}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureProject creates projectIDHash's project file when it has none,
+// and refuses a project file of another layout.
+func (r *Registry) ensureProject(projectIDHash string) error {
+	if _, ok, err := r.readProject(projectIDHash); err != nil || ok {
+		return err
+	}
 	if err := userdirs.EnsureOwnerDir(r.dir); err != nil {
 		return err
 	}
-	return fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
-		reg, err := parse(old)
-		if err != nil {
-			return nil, err
-		}
-		added := false
-		for _, path := range paths {
-			if _, ok := find(reg.Files, path); !ok {
-				reg.Files = append(reg.Files, File{Path: path, Subpath: subpath})
-				added = true
-			}
-		}
-		if !added {
-			return nil, fsatomic.ErrUnchanged
-		}
-		return encode(reg)
-	})
+	return r.updateProject(projectIDHash, true, func(*projectFile) error { return fsatomic.ErrUnchanged })
 }
 
 // SetGaps records what the latest search for projectIDHash's earlier
@@ -143,16 +191,12 @@ func (r *Registry) SetGaps(projectIDHash string, gaps Gaps) error {
 	if err := userdirs.EnsureOwnerDir(r.dir); err != nil {
 		return err
 	}
-	return fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
-		reg, err := parse(old)
-		if err != nil {
-			return nil, err
-		}
-		reg.Gaps = nil
+	return r.updateProject(projectIDHash, true, func(p *projectFile) error {
+		p.Gaps = nil
 		if gaps.Any() {
-			reg.Gaps = &gaps
+			p.Gaps = &gaps
 		}
-		return encode(reg)
+		return nil
 	})
 }
 
@@ -160,87 +204,90 @@ func (r *Registry) SetGaps(projectIDHash string, gaps Gaps) error {
 // files left uncovered. A project with no registry, or one whose
 // search covered everything, has no gaps.
 func (r *Registry) Gaps(projectIDHash string) (Gaps, error) {
-	reg, err := r.read(projectIDHash)
-	if err != nil {
+	p, _, err := r.readProject(projectIDHash)
+	if err != nil || p.Gaps == nil {
 		return Gaps{}, err
 	}
-	if reg.Gaps == nil {
-		return Gaps{}, nil
-	}
-	return *reg.Gaps, nil
+	return *p.Gaps, nil
 }
 
-// addSignals sums what one read noticed into reg. What was noticed
-// about a project's files outlives the entries for the files
-// themselves. What a signal holds is drift's to name; the registry
-// only keeps the sum.
-func (reg *registry) addSignals(more drift.Signals) {
-	var sum drift.Signals
-	if reg.Signals != nil {
-		sum = *reg.Signals
+// plus is what sum holds with more added, and nil when that is nothing.
+// What a signal holds is drift's to name; the registry only keeps the
+// sum.
+func plus(sum *drift.Signals, more drift.Signals) *drift.Signals {
+	var total drift.Signals
+	if sum != nil {
+		total = *sum
 	}
-	sum = sum.Add(more)
-	reg.Signals = nil
-	if sum.Any() {
-		reg.Signals = &sum
+	total = total.Add(more)
+	if !total.Any() {
+		return nil
 	}
+	return &total
 }
 
 // Signals reports everything the reader noticed about projectIDHash's
-// files so far. A project with no registry, or one whose reads noticed
-// nothing, has none.
+// files so far: what each entry this build reads noticed, and what the
+// entries removed since noticed. A project with no registry, or one
+// whose reads noticed nothing, has none.
 func (r *Registry) Signals(projectIDHash string) (drift.Signals, error) {
-	reg, err := r.read(projectIDHash)
+	p, entries, err := r.list(projectIDHash)
 	if err != nil {
 		return drift.Signals{}, err
 	}
-	if reg.Signals == nil {
+	sum := p.Signals
+	for _, e := range entries {
+		if e.Signals != nil {
+			sum = plus(sum, *e.Signals)
+		}
+	}
+	if sum == nil {
 		return drift.Signals{}, nil
 	}
-	return *reg.Signals, nil
+	return *sum, nil
 }
 
-// Files lists the files projectIDHash still reads, ordered by path. A
-// project with no registry has no files. A retired entry is not
-// listed: nothing is left to read of it, and it is kept only so that
-// registering its path again does not read the file over. What the
-// registry holds, retirements and all, is Entries.
+// Files lists the files projectIDHash reads, ordered by path, each with
+// the heat of its session. A project with no registry has no files. An
+// entry that needs what this build does not know is not listed, and
+// neither is an entry file that does not parse.
 func (r *Registry) Files(projectIDHash string) ([]File, error) {
-	entries, err := r.Entries(projectIDHash)
+	_, entries, err := r.list(projectIDHash)
 	if err != nil {
 		return nil, err
 	}
-	return slices.DeleteFunc(entries, func(f File) bool { return f.Retired != "" }), nil
+	files := make([]File, 0, len(entries))
+	heats := map[string]heat{}
+	for _, e := range entries {
+		files = append(files, r.warmed(projectIDHash, e.File, heats))
+	}
+	return files, nil
 }
 
-// Entries lists every entry projectIDHash's registry holds, ordered
-// by path, the retired ones included. It is what a caller holding a
-// search of the project's tree against the registry asks for: a
-// retired path is registered, so calling it unregistered would ask
-// the user to register what is registered already. What is still
-// read is Files.
+// Entries lists every entry projectIDHash's registry holds that this
+// build reads, ordered by path. It is what a caller holding a search
+// of the project's tree against the registry asks for. This layout
+// keeps no entry this build reads and does not list, so it is the same
+// set as Files.
 func (r *Registry) Entries(projectIDHash string) ([]File, error) {
-	reg, err := r.read(projectIDHash)
-	if err != nil {
-		return nil, err
-	}
-	entries := append([]File{}, reg.Files...)
-	slices.SortFunc(entries, func(a, b File) int { return cmp.Compare(a.Path, b.Path) })
-	return entries, nil
+	return r.Files(projectIDHash)
 }
 
-// File is the entry projectIDHash still reads for path. ok is false
-// for a path that is not registered, and for one Files would not list.
+// File is the entry projectIDHash reads for path. ok is false for a
+// path that is not registered, and for one Files would not list.
 func (r *Registry) File(projectIDHash, path string) (f File, ok bool, err error) {
-	f, ok, err = r.entry(projectIDHash, path)
-	if err != nil || !ok || f.Retired != "" {
+	if _, _, err := r.readProject(projectIDHash); err != nil {
 		return File{}, false, err
 	}
-	return f, true, nil
+	e, ok, err := r.readEntry(projectIDHash, path)
+	if err != nil || !ok || !e.readable() {
+		return File{}, false, err
+	}
+	return r.warmed(projectIDHash, e.File, nil), true, nil
 }
 
-// SessionFiles lists the files projectIDHash still reads that belong to
-// the session path belongs to, ordered by path: the main file and the
+// SessionFiles lists the files projectIDHash reads that belong to the
+// session path belongs to, ordered by path: the main file and the
 // agent files kept under it. A session with no registered file has
 // none.
 func (r *Registry) SessionFiles(projectIDHash, path string) ([]File, error) {
@@ -251,162 +298,15 @@ func (r *Registry) SessionFiles(projectIDHash, path string) ([]File, error) {
 	return group(files, path), nil
 }
 
-// HotFiles lists the files projectIDHash still reads whose session is
-// hot at now, ordered by path. alive answers whether a process id
-// names a running process.
+// HotFiles lists the files projectIDHash reads whose session is hot at
+// now, ordered by path. alive answers whether a process id names a
+// running process.
 func (r *Registry) HotFiles(projectIDHash string, now time.Time, alive func(pid int) bool) ([]File, error) {
 	files, err := r.Files(projectIDHash)
 	if err != nil {
 		return nil, err
 	}
 	return slices.DeleteFunc(files, func(f File) bool { return !f.Hot(now, alive) }), nil
-}
-
-// Update writes what reading of to.Path reached — the fields a reader
-// owns, as advancedTo names them — onto its entry, but only while the
-// entry's cursor still stands where from says. An entry whose Offset
-// or NextSegment moved since from was read is left as it is, and
-// Update fails: to was made from a cursor that is no longer the
-// entry's, and writing it would put the cursor past lines that no
-// record of the other reader holds. What the read that reached to
-// noticed is kept in the same write: the cursor and the counts of the
-// lines it passed land together or not at all.
-func (r *Registry) Update(projectIDHash string, from, to File, noticed drift.Signals) error {
-	return r.writeEntry(projectIDHash, to.Path, func(reg *registry, i int) error {
-		if cur := reg.Files[i]; cur.Offset != from.Offset || cur.NextSegment != from.NextSegment {
-			return errCursorMoved
-		}
-		reg.Files[i] = reg.Files[i].advancedTo(to)
-		reg.addSignals(noticed)
-		return nil
-	})
-}
-
-// notice keeps what a read of path noticed and leaves the cursor where
-// it is. It is for a read whose findings stop reading before any of
-// its records is stored: no cursor write follows to carry them.
-func (r *Registry) notice(projectIDHash, path string, noticed drift.Signals) error {
-	return r.writeEntry(projectIDHash, path, func(reg *registry, _ int) error {
-		reg.addSignals(noticed)
-		return nil
-	})
-}
-
-// writeEntry rewrites projectIDHash's registry with change applied to
-// the entry registered for path, the i-th of reg.Files.
-func (r *Registry) writeEntry(projectIDHash, path string, change func(reg *registry, i int) error) error {
-	if err := checkProjectIDHash(projectIDHash); err != nil {
-		return err
-	}
-	if _, err := os.Stat(r.dir); os.IsNotExist(err) {
-		return ErrNotRegistered
-	}
-	return fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
-		reg, err := parse(old)
-		if err != nil {
-			return nil, err
-		}
-		i, ok := find(reg.Files, path)
-		if !ok {
-			return nil, ErrNotRegistered
-		}
-		if err := change(&reg, i); err != nil {
-			return nil, err
-		}
-		return encode(reg)
-	})
-}
-
-// entry is the registered entry for path as the registry holds it now,
-// retired or not. ok is false for a path that is not registered.
-func (r *Registry) entry(projectIDHash, path string) (f File, ok bool, err error) {
-	reg, err := r.read(projectIDHash)
-	if err != nil {
-		return File{}, false, err
-	}
-	i, ok := find(reg.Files, path)
-	if !ok {
-		return File{}, false, nil
-	}
-	return reg.Files[i], true, nil
-}
-
-// Warm records that a session hook named path at at, from the process
-// pid, so the session reads as hot from now on. A pid of 0 keeps the
-// process the entries already carry: a hook that cannot tell which
-// process runs the session must not erase one that could. A path
-// that is not registered is refused, as an update to it is.
-func (r *Registry) Warm(projectIDHash, path string, pid int, at time.Time) error {
-	return r.mark(projectIDHash, path, func(f *File) {
-		f.LastEvent = at.UTC().Format(readAtLayout)
-		if pid > 0 {
-			f.PID = pid
-		}
-	})
-}
-
-// Cool records that the session writing path is over: the session
-// reads as cold until a hook names it again. A path that is not
-// registered is refused, as an update to it is.
-func (r *Registry) Cool(projectIDHash, path string) error {
-	return r.mark(projectIDHash, path, func(f *File) {
-		f.LastEvent = ""
-		f.PID = 0
-	})
-}
-
-// mark changes the whole session path belongs to — its main file and
-// the agent files registered beside it — in place, leaving every
-// cursor as the reader left it. It is how the hot state is written,
-// and there are two rules in it. The cursor and the heat have
-// different writers, and neither may take the other's fields back in
-// time. The heat belongs to the session and not to one of its files,
-// so one mark covers the group in one write: a hook names the main
-// file only, and an agent file marked on its own would stay cold for
-// good.
-func (r *Registry) mark(projectIDHash, path string, change func(*File)) error {
-	if err := checkProjectIDHash(projectIDHash); err != nil {
-		return err
-	}
-	if _, err := os.Stat(r.dir); os.IsNotExist(err) {
-		return ErrNotRegistered
-	}
-	return fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
-		reg, err := parse(old)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := find(reg.Files, path); !ok {
-			return nil, ErrNotRegistered
-		}
-		session := SessionOf(path)
-		for i := range reg.Files {
-			if SessionOf(reg.Files[i].Path) == session {
-				change(&reg.Files[i])
-			}
-		}
-		return encode(reg)
-	})
-}
-
-// Tell records that the session path belongs to has been told the
-// device stopped recording, and reports whether this call is the one
-// that recorded it. A session already told is answered false, so the
-// caller says nothing a second time. The whole session group is
-// marked, because a session is told once however many of its files
-// exist. A path that is not registered is refused, as an update to it
-// is.
-func (r *Registry) Tell(projectIDHash, path string) (first bool, err error) {
-	err = r.mark(projectIDHash, path, func(f *File) {
-		// Only the file the hook named decides. An agent file
-		// registered after the session was told would otherwise
-		// arrive untold and earn the session a second notice.
-		if f.Path == path && !f.Told {
-			first = true
-		}
-		f.Told = true
-	})
-	return first && err == nil, err
 }
 
 // TellReasoning records that a session of projectIDHash was told, on
@@ -423,32 +323,28 @@ func (r *Registry) TellReasoning(projectIDHash string, at time.Time) (first bool
 		return false, ErrNotRegistered
 	}
 	day := at.UTC().Format(time.DateOnly)
-	err = fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
-		if old == nil {
-			return nil, ErrNotRegistered
+	err = r.updateProject(projectIDHash, false, func(p *projectFile) error {
+		if p.ReasoningToldOn == day {
+			return fsatomic.ErrUnchanged
 		}
-		reg, err := parse(old)
-		if err != nil {
-			return nil, err
-		}
-		if reg.ReasoningToldOn == day {
-			return nil, fsatomic.ErrUnchanged
-		}
-		reg.ReasoningToldOn = day
+		p.ReasoningToldOn = day
 		first = true
-		return encode(reg)
+		return nil
 	})
 	return first && err == nil, err
 }
 
-// Unregister removes projectIDHash's registry, cursors included. A
-// project that has no registry is already unregistered.
+// Unregister removes projectIDHash's registry: its project directory,
+// every entry and cursor in it, and its project file. A project that
+// has no registry is already unregistered.
 func (r *Registry) Unregister(projectIDHash string) error {
 	if err := checkProjectIDHash(projectIDHash); err != nil {
 		return err
 	}
-	r.dropBounds(projectIDHash)
-	err := os.Remove(r.path(projectIDHash))
+	if err := os.RemoveAll(r.projectDir(projectIDHash)); err != nil {
+		return err
+	}
+	err := os.Remove(r.projectPath(projectIDHash))
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -456,33 +352,35 @@ func (r *Registry) Unregister(projectIDHash string) error {
 }
 
 // Remove drops one file's entry from projectIDHash's registry, leaving
-// the project's other entries in place. A path that is not registered,
-// or a project with no registry, is already in the wanted state. It is
-// how a caller drops a file that is gone for good: nothing is left to
-// read of it, and no search of the project finds it again.
+// the project's other entries in place, and keeps what reading the
+// file noticed in the project file. A path that is not registered, or
+// a project with no registry, is already in the wanted state; an entry
+// that needs what this build does not know is left as it is. It is how
+// a caller drops a file that is gone for good: nothing is left to read
+// of it, and no search of the project finds it again.
 func (r *Registry) Remove(projectIDHash, path string) error {
-	if err := checkProjectIDHash(projectIDHash); err != nil {
+	e, ok, err := r.readEntry(projectIDHash, path)
+	if err != nil || !ok || !e.readable() {
 		return err
 	}
-	if _, err := os.Stat(r.dir); os.IsNotExist(err) {
+	if e.Signals != nil {
+		err := r.updateProject(projectIDHash, false, func(p *projectFile) error {
+			p.Signals = plus(p.Signals, *e.Signals)
+			return nil
+		})
+		if err != nil && !errors.Is(err, ErrNotRegistered) {
+			return err
+		}
+	}
+	err = os.Remove(r.entryPath(projectIDHash, path))
+	if os.IsNotExist(err) {
 		return nil
 	}
-	r.dropBound(projectIDHash, path)
-	return fsatomic.Update(r.path(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
-		reg, err := parse(old)
-		if err != nil {
-			return nil, err
-		}
-		i, ok := find(reg.Files, path)
-		if !ok {
-			return encode(reg)
-		}
-		reg.Files = append(reg.Files[:i], reg.Files[i+1:]...)
-		return encode(reg)
-	})
+	return err
 }
 
-// Projects lists the project id hashes that have a registry, sorted.
+// Projects lists the project id hashes that have a project file,
+// sorted.
 func (r *Registry) Projects() ([]string, error) {
 	entries, err := os.ReadDir(r.dir)
 	if os.IsNotExist(err) {
@@ -496,34 +394,117 @@ func (r *Registry) Projects() ([]string, error) {
 		if e.IsDir() {
 			continue
 		}
-		if hash, ok := strings.CutSuffix(e.Name(), registryExt); ok {
+		if hash, ok := strings.CutSuffix(e.Name(), jsonExt); ok {
 			projects = append(projects, hash)
 		}
 	}
-	sort.Strings(projects)
+	slices.Sort(projects)
 	return projects, nil
 }
 
-func (r *Registry) path(projectIDHash string) string {
-	return filepath.Join(r.dir, projectIDHash+registryExt)
+func (r *Registry) projectPath(projectIDHash string) string {
+	return filepath.Join(r.dir, projectIDHash+jsonExt)
 }
 
-func (r *Registry) read(projectIDHash string) (registry, error) {
+func (r *Registry) projectDir(projectIDHash string) string {
+	return filepath.Join(r.dir, projectIDHash)
+}
+
+// digest names a file of the project directory after s without
+// spelling s.
+func digest(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:16])
+}
+
+// readProject is projectIDHash's project file. ok is false for a
+// project that has none.
+func (r *Registry) readProject(projectIDHash string) (p projectFile, ok bool, err error) {
 	if err := checkProjectIDHash(projectIDHash); err != nil {
-		return registry{}, err
+		return projectFile{}, false, err
 	}
-	data, err := fsatomic.ReadFile(r.path(projectIDHash))
+	data, err := fsatomic.ReadFile(r.projectPath(projectIDHash))
 	if os.IsNotExist(err) {
-		return registry{Version: version}, nil
+		return projectFile{}, false, nil
 	}
 	if err != nil {
-		return registry{}, err
+		return projectFile{}, false, err
 	}
-	return parse(data)
+	p, err = parseProject(data)
+	return p, err == nil, err
+}
+
+// updateProject rewrites projectIDHash's project file with change
+// applied, under the project lock. A project with no project file gets
+// one when create is set, and is refused otherwise.
+func (r *Registry) updateProject(projectIDHash string, create bool, change func(*projectFile) error) error {
+	return fsatomic.Update(r.projectPath(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
+		p := projectFile{Version: version, NeedsBuild: needsBuild}
+		if old == nil && !create {
+			return nil, ErrNotRegistered
+		}
+		if old != nil {
+			var err error
+			if p, err = parseProject(old); err != nil {
+				return nil, err
+			}
+		}
+		err := change(&p)
+		if err != nil && (old != nil || !errors.Is(err, fsatomic.ErrUnchanged)) {
+			return nil, err
+		}
+		return encode(p)
+	})
+}
+
+func parseProject(data []byte) (projectFile, error) {
+	var p projectFile
+	if err := json.Unmarshal(data, &p); err != nil {
+		return projectFile{}, fmt.Errorf("follow: registry: %w", err)
+	}
+	switch {
+	case p.Version == version:
+		return p, nil
+	case p.Version > version && p.NeedsBuild != "":
+		return projectFile{}, fmt.Errorf("follow: registry version %d needs trajector %s or later", p.Version, p.NeedsBuild)
+	default:
+		return projectFile{}, fmt.Errorf("follow: unsupported registry version %d", p.Version)
+	}
+}
+
+// list is projectIDHash's project file and every entry of it this
+// build reads, ordered by path. An entry file that vanished since the
+// directory was listed, or that does not parse, is passed over.
+func (r *Registry) list(projectIDHash string) (projectFile, []entryFile, error) {
+	p, _, err := r.readProject(projectIDHash)
+	if err != nil {
+		return projectFile{}, nil, err
+	}
+	dir := r.projectDir(projectIDHash)
+	names, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return p, nil, nil
+	}
+	if err != nil {
+		return projectFile{}, nil, err
+	}
+	var entries []entryFile
+	for _, name := range names {
+		if name.IsDir() || filepath.Ext(name.Name()) != jsonExt {
+			continue
+		}
+		e, err := readEntryFile(filepath.Join(dir, name.Name()))
+		if err != nil || !e.readable() {
+			continue
+		}
+		entries = append(entries, e)
+	}
+	slices.SortFunc(entries, func(a, b entryFile) int { return cmp.Compare(a.Path, b.Path) })
+	return p, entries, nil
 }
 
 // checkProjectIDHash refuses a hash that could name anything but one
-// registry file directly under the directory.
+// project file and one project directory directly under the directory.
 func checkProjectIDHash(hash string) error {
 	if hash == "" || strings.HasPrefix(hash, ".") || strings.ContainsAny(hash, `/\`) {
 		return fmt.Errorf("follow: invalid project id hash %q", hash)
@@ -531,60 +512,9 @@ func checkProjectIDHash(hash string) error {
 	return nil
 }
 
-func parse(data []byte) (registry, error) {
-	if data == nil {
-		return registry{Version: version}, nil
-	}
-	var reg registry
-	if err := json.Unmarshal(data, &reg); err != nil {
-		return registry{}, fmt.Errorf("follow: registry: %w", err)
-	}
-	if reg.Version != version {
-		return registry{}, fmt.Errorf("follow: unsupported registry version %d", reg.Version)
-	}
-	// relocated is how outside is written; see File.Outside. The
-	// retirement of an agent file in a run directory is for builds
-	// that do not know the place; see nestedAgentFile. It hides the
-	// entry from this build too when this build does not know the place
-	// either: a later build may write the same value for a place it
-	// added.
-	for i := range reg.Files {
-		switch f := &reg.Files[i]; f.Retired {
-		case relocated:
-			f.Retired, f.Outside = "", true
-		case nestedAgentFile:
-			if f.KeptFromEarlierBuilds() {
-				f.Retired = ""
-			}
-		}
-	}
-	return reg, nil
-}
-
-func encode(reg registry) ([]byte, error) {
-	reg.Files = slices.Clone(reg.Files)
-	if reg.Files == nil {
-		reg.Files = []File{}
-	}
-	for i := range reg.Files {
-		if reg.Files[i].MessageIDs == nil {
-			reg.Files[i].MessageIDs = []string{}
-		}
-		switch f := &reg.Files[i]; {
-		case f.Outside:
-			f.Retired = relocated
-		case f.Retired == "" && f.KeptFromEarlierBuilds():
-			f.Retired = nestedAgentFile
-		}
-	}
-	return json.Marshal(reg)
-}
-
-func find(files []File, path string) (int, bool) {
-	for i, f := range files {
-		if f.Path == path {
-			return i, true
-		}
-	}
-	return 0, false
+// encode is the JSON form of a file of the registry. Keys tagged
+// omitempty are left out when they hold a zero, as drift's signals
+// state them.
+func encode(v any) ([]byte, error) {
+	return json.Marshal(v, jsonv1.OmitEmptyWithLegacySemantics(true))
 }

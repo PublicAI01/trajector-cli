@@ -1,6 +1,8 @@
 package sessionread
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,11 +21,12 @@ import (
 // registered session file, which holds one assistant line without a
 // message id.
 type reading struct {
-	t        *testing.T
-	reader   Reader
-	project  Project
-	path     string
-	registry string
+	t       *testing.T
+	reader  Reader
+	project Project
+	path    string
+	// entry is the entry file of path, spelled as the layout spells it.
+	entry string
 }
 
 func newReading(t *testing.T) *reading {
@@ -58,10 +61,11 @@ func newReading(t *testing.T) *reading {
 			Home:      dir,
 			Now:       time.Now,
 		},
-		project:  project,
-		path:     filepath.Join(dir, "sessions", "0f1e2d3c.jsonl"),
-		registry: filepath.Join(followDir, project.Hash+".json"),
+		project: project,
+		path:    filepath.Join(dir, "sessions", "0f1e2d3c.jsonl"),
 	}
+	sum := sha256.Sum256([]byte(r.path))
+	r.entry = filepath.Join(followDir, project.Hash, hex.EncodeToString(sum[:16])+".json")
 	if err := os.MkdirAll(filepath.Dir(r.path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +78,7 @@ func newReading(t *testing.T) *reading {
 	return r
 }
 
-func (r *reading) entry() follow.File {
+func (r *reading) registered() follow.File {
 	r.t.Helper()
 	f, ok, err := r.reader.Registry.File(r.project.Hash, r.path)
 	if err != nil || !ok {
@@ -98,15 +102,15 @@ func assistantWithoutID(root string) string {
 
 func TestRead_KeepsWhatASegmentNoticedInTheWriteThatMovesItsCursor(t *testing.T) {
 	r := newReading(t)
-	writes := registryWrites(t, r.registry)
+	writes := registryWrites(t, r.entry)
 	line := assistantWithoutID(r.project.Root)
 
 	r.reader.Read(r.project, []string{r.path})
 
-	if n := writes(); n != 1 {
-		t.Errorf("registry written %d times for one segment that noticed something, want once", n)
+	if n := writes(); n != 2 {
+		t.Errorf("entry written %d times for one segment that noticed something, want twice: its bound, then its cursor with what it noticed", n)
 	}
-	if f := r.entry(); f.Offset != int64(len(line)) || f.NextSegment != 1 {
+	if f := r.registered(); f.Offset != int64(len(line)) || f.NextSegment != 1 {
 		t.Errorf("cursor = %+v, want it past the segment", f)
 	}
 	if s := r.signals(); s.AssistantLines != 1 || s.AssistantLinesWithoutMessageID != 1 {
@@ -120,7 +124,7 @@ func TestRead_KeepsWhatASegmentNoticedInTheWriteThatMovesItsCursor(t *testing.T)
 // would hand over.
 func TestStore_KeepsWhatAReadThatPausesNoticedAndLeavesTheCursor(t *testing.T) {
 	r := newReading(t)
-	writes := registryWrites(t, r.registry)
+	writes := registryWrites(t, r.entry)
 	cut := follow.Reader{
 		Registry:      r.reader.Registry,
 		ProjectIDHash: r.project.Hash,
@@ -141,10 +145,10 @@ func TestStore_KeepsWhatAReadThatPausesNoticedAndLeavesTheCursor(t *testing.T) {
 	if got, _ := r.reader.Routes.PausedReason(); got != routing.PauseRedactionDrift {
 		t.Errorf("PausedReason = %q, want recording paused", got)
 	}
-	if n := writes(); n != 1 {
-		t.Errorf("registry written %d times for a read that paused, want once", n)
+	if n := writes(); n != 2 {
+		t.Errorf("entry written %d times for a read that paused, want twice: its bound, then what it noticed", n)
 	}
-	if f := r.entry(); f.Offset != 0 || f.NextSegment != 0 || f.ReadAt != "" {
+	if f := r.registered(); f.Offset != 0 || f.NextSegment != 0 || f.ReadAt != "" {
 		t.Errorf("cursor = %+v, want it left where it was", f)
 	}
 	if s := r.signals(); s.IncompleteSegments != 1 {

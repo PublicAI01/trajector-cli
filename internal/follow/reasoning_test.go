@@ -89,8 +89,8 @@ func TestReader_PersistsReasoningCountsWithTheCursorAndKeepsTheHooksFields(t *te
 
 	got := a.entry(path)
 	wantReasoning(t, got, sessionline.ReasoningBlocks{Empty: 2, WithText: 1}, "cli")
-	if !got.Told {
-		t.Errorf("the session's told mark was lost when the reader wrote its cursor")
+	if first, err := a.registry.Tell(project, path); err != nil || first {
+		t.Errorf("Tell after the reads = %v, %v, want the session's told mark kept", first, err)
 	}
 	stored := a.stored()
 	for key, want := range map[string]string{"empty_reasoning_blocks": "2", "reasoning_blocks_with_text": "1", "launch_surface": `"cli"`} {
@@ -141,7 +141,7 @@ func TestRegistry_TellReasoningOncePerProjectAndUTCDay(t *testing.T) {
 			t.Errorf("TellReasoning at %s = %v, %v; want %v", s.at, first, err, s.want)
 		}
 	}
-	raw, err := os.ReadFile(filepath.Join(a.dir, project+".json"))
+	raw, err := os.ReadFile(projectFileOf(a.dir))
 	if err != nil {
 		t.Fatal(err)
 	}

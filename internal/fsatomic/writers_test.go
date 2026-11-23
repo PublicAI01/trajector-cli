@@ -18,14 +18,18 @@ var plainWriteFiles = map[string]bool{
 	// and its own on the way out. A reader that finds one gone reads it
 	// as no proxy to talk to.
 	"internal/apiproxy/apiproxy.go": true,
-	// A segment bound is written through fsatomic and withdrawn by an
-	// unlink once the cursor is written past the segment: its absence
-	// is the state "no segment was handed over past the cursor", which
-	// its reader already reads.
-	"internal/follow/bound.go": true,
-	// Unregistering drops the whole registry file a project owns; a
-	// project with no registry file is an unregistered project.
+	// A new entry is staged under a name of its own and linked into
+	// place, and the staged name is unlinked: no reader opens it, and
+	// the entry is never replaced by a registration.
+	"internal/follow/entry.go": true,
+	// Unregistering drops the project file and the project directory;
+	// removing an entry drops its file. A project with no project file
+	// is an unregistered project, and a path with no entry file is not
+	// registered.
 	"internal/follow/follow.go": true,
+	// Cooling a session unlinks its heat: no heat is the state "no hook
+	// named the session", which its reader already reads.
+	"internal/follow/heat.go": true,
 	// Rolling a project file back to "it did not exist" is an unlink.
 	// The other half of the same rollback, restoring content, goes
 	// through fsatomic.
