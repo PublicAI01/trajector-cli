@@ -5,3 +5,5 @@
 {"type":"system","subtype":"local_command","content":"<command-name>/status</command-name>","isMeta":true,"cwd":"/srv/work/project-alpha","sessionId":"sid-a","uuid":"s-1","timestamp":"2026-09-01T10:00:03.000Z"}
 {"type":"attachment","attachment":{"type":"environment","snapshot":{"workingDirectory":"/srv/work/project-alpha","scratchpadDirectory":"/tmp/agent-1001/-srv-work-project-alpha/sid-a/scratchpad","isGitRepo":true}},"cwd":"/srv/work/project-alpha","sessionId":"sid-a","uuid":"t-1","timestamp":"2026-09-01T10:00:04.000Z"}
 {"parentUuid":null,"isSidechain":true,"agentId":"a1b2c3","userType":"external","cwd":"/srv/work/project-alpha","sessionId":"sid-a","version":"2.1.260","type":"user","message":{"role":"user","content":"find the widget"},"uuid":"g-1","timestamp":"2026-09-01T10:00:05.000Z"}
+{"type":"relocated","relocatedCwd":"/srv/work/project-alpha","sessionId":"sid-a"}
+{"type":"relocated","relocatedCwd":"/srv/work/project-alpha/.claude/worktrees/feature","sessionId":"sid-a"}

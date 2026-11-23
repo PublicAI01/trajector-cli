@@ -222,6 +222,16 @@ func TestSegment_StripsOnlyAnchoredPaths(t *testing.T) {
 			want: `{"attachment":{"type":"environment","snapshot":{"workingDirectory":"` + fixtureProject + `"}}}`,
 		},
 		{
+			name: "relocatedCwd is replaced on a relocated line",
+			in:   `{"type":"relocated","relocatedCwd":"` + fixtureProject + `/apps/api","sessionId":"` + fixtureSessionID + `"}`,
+			want: `{"type":"relocated","relocatedCwd":` + pathToken + `,"sessionId":"` + fixtureSessionID + `"}`,
+		},
+		{
+			name: "relocatedCwd stays on any other line",
+			in:   `{"type":"user","relocatedCwd":"` + fixtureProject + `/apps/api"}`,
+			want: `{"type":"user","relocatedCwd":"` + fixtureProject + `/apps/api"}`,
+		},
+		{
 			name: "a key spelled with an escape addresses the same field",
 			in:   `{"c\u0077d":"` + fixtureProject + `"}`,
 			want: `{"c\u0077d":` + pathToken + `}`,
@@ -472,6 +482,16 @@ func TestAbsolutePathFields_KnowsTheAnchoredList(t *testing.T) {
 			name: "a slash command kept as the last prompt is text, not a location",
 			line: `{"type":"last-prompt","lastPrompt":"/clear","sessionId":"` + fixtureSessionID + `"}`,
 			want: nil,
+		},
+		{
+			name: "relocatedCwd on a relocated line is where the session ran",
+			line: `{"type":"relocated","relocatedCwd":"` + fixtureProject + `/apps/api","sessionId":"` + fixtureSessionID + `"}`,
+			want: nil,
+		},
+		{
+			name: "relocatedCwd on any other line is reported",
+			line: `{"type":"user","relocatedCwd":"` + fixtureProject + `/apps/api"}`,
+			want: []string{"$.relocatedCwd"},
 		},
 		{
 			name: "lastPrompt on any other line is reported",

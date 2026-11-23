@@ -98,6 +98,33 @@ func TestReadSessionFiles_HoldsOnlyTheSegmentWhoseShapeIsNew(t *testing.T) {
 	}
 }
 
+func TestReadSessionFiles_StoresTheSegmentThatHoldsAMoveInsideTheProject(t *testing.T) {
+	e := newEnv(t)
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	plain := `{"type":"user","cwd":"/srv/work/sample","message":{"role":"user","content":"hi"}}` + "\n"
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", plain)
+	e.registerFile(root, main, "")
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
+
+	for _, to := range []string{root, filepath.Join(root, ".claude", "worktrees", "feature")} {
+		e.appendSessionLines(main, `{"type":"relocated","relocatedCwd":`+jsonString(t, to)+`,"sessionId":"0f1e2d3c"}`+"\n"+plain)
+		e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
+	}
+
+	if got := e.sandbox.HeldRecords(); len(got) != 0 {
+		t.Errorf("held records = %d, want none: a move inside the project is a shape this build masks", len(got))
+	}
+	if got := e.storedRecords(); len(got) != 3 {
+		t.Errorf("records = %d, want the three segments waiting for upload", len(got))
+	}
+	if s := e.signals(root); len(s.UnanchoredPathFields) != 0 {
+		t.Errorf("signals = %+v, want no field reported", s)
+	}
+}
+
 func TestStatusAndDoctorReportTheSegmentsHeldOnThisMachine(t *testing.T) {
 	e := newEnv(t)
 	e.aProxylessTarget()
