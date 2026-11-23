@@ -391,9 +391,10 @@ func (r *Registry) finish(projectIDHash string) error {
 // carryOver is step 5: it makes an entry for every element of reg, the
 // heat of every session a hook named, and the told mark of every
 // session that was told, and replaces none of them that stands
-// already. Nothing reads the project while it is halfway, so what
-// stands was made by an earlier try of this step. The files are not
-// flushed one by one; step 6 flushes them all.
+// already, but for an entry that does not parse. Nothing reads the
+// project while it is halfway, so what stands was made by an earlier
+// try of this step. The files are not flushed one by one; step 6
+// flushes them all.
 func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
 	latest := map[string]earlierEntry{}
 	for _, old := range reg.Files {
@@ -405,7 +406,7 @@ func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
 		if err != nil {
 			return err
 		}
-		if err := placeNew(r.entryPath(projectIDHash, old.Path), data, false); err != nil {
+		if err := carryEntry(r.entryPath(projectIDHash, old.Path), data); err != nil {
 			return err
 		}
 		if old.later(latest[SessionOf(old.Path)]) {
@@ -427,6 +428,28 @@ func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
 		}
 	}
 	return nil
+}
+
+// carryEntry puts data at target, the entry file of one element of the
+// copy, unless an entry that parses stands there. An earlier try of
+// step 5 that lost power before step 6 flushed it can leave an entry
+// empty or cut short; such an entry holds no state of its own while
+// the copy stands, so it is replaced whole from the copy. This is the
+// one place an entry that does not parse is rewritten; everywhere else
+// it is left as it is.
+func carryEntry(target string, data []byte) error {
+	standing, err := fsatomic.ReadFile(target)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return placeNew(target, data, false)
+	case err != nil:
+		return err
+	}
+	var e entryFile
+	if json.Unmarshal(standing, &e) == nil {
+		return nil
+	}
+	return fsatomic.WriteFile(target, data, 0o600)
 }
 
 // carried is e as an entry of this layout. Outside had the form of a
