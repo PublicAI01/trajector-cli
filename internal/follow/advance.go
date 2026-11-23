@@ -1,6 +1,7 @@
 package follow
 
 import (
+	"errors"
 	"time"
 
 	"github.com/PublicAI01/trajector-cli/internal/drift"
@@ -89,12 +90,15 @@ type Reader struct {
 // in a round from byte 0 that meets the segment bound before any
 // relocated line, one pass over the rest of the file to find one.
 //
-// No round takes the project's lock: a round writes its own entry and
-// nothing else, and only the reader that holds an entry writes it.
+// A round writes its own entry and nothing else, and only the reader
+// that holds an entry writes it. The one round that takes the
+// project's lock is the one that removes its entry, which keeps what
+// the entry noticed in the project file.
 //
-// An entry whose file vanished leaves the registry: its cursor can
-// never advance again and no search finds the file to register it a
-// second time. An entry whose session moved out of the directories
+// An entry whose file is gone for good, as gone judges it, leaves the
+// registry: its cursor can never advance again and no search finds the
+// file to register it a second time. An entry whose file is only out
+// of reach stays as it is. An entry whose session moved out of the directories
 // consent covers stays, and is read on: its cursor moves past what the
 // session writes outside, and what it writes after it comes back is
 // kept again. An agent file is outside while its session's main file
@@ -150,6 +154,11 @@ func (rd Reader) roundHeld(held *heldEntry) (next, more bool) {
 	// session's files are read.
 	st, err := StatFile(f.Path)
 	if err != nil {
+		return true, false
+	}
+	if !st.Exists && !gone(f.Path) {
+		// The file is out of reach rather than gone for good, and its
+		// entry waits for it as it is.
 		return true, false
 	}
 	outside, err := rd.sessionOutside(f.Path)
@@ -224,17 +233,27 @@ func (rd Reader) roundHeld(held *heldEntry) (next, more bool) {
 	return true, res.More || (again && st.Size > left.End)
 }
 
+// errSessionUnread reports an agent file whose main file has an entry
+// this build may not read.
+var errSessionUnread = errors.New("follow: the entry of the session's main file needs a later build")
+
 // sessionOutside reports whether the session the agent file at path
 // belongs to is outside, or was since its main file's cursor, as
 // sessionWasOutside answers it. A main file, and an agent file whose
-// main file is not registered, answer for themselves.
+// main file is not registered, answer for themselves. An agent file
+// whose main file has an entry this build cannot or may not read has
+// no answer, and is not read: whether its session is outside is in
+// that entry alone.
 func (rd Reader) sessionOutside(path string) (bool, error) {
 	if _, file := identify(path); file == "" {
 		return false, nil
 	}
 	main, ok, err := rd.Registry.readEntry(rd.ProjectIDHash, SessionOf(path)+linesExt)
-	if err != nil || !ok || !main.readable() {
+	if err != nil || !ok {
 		return false, err
+	}
+	if !main.readable() {
+		return false, errSessionUnread
 	}
 	return sessionWasOutside(main.File, rd.Options)
 }

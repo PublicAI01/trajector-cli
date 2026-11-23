@@ -236,6 +236,22 @@ func TestReader_DropsTheEntryOfAFileThatVanished(t *testing.T) {
 	}
 }
 
+func TestReader_KeepsTheEntryOfAFileWhoseDirectoryIsOutOfReach(t *testing.T) {
+	a := newAdvancing(t)
+	path := filepath.Join(t.TempDir(), "unmounted", "back-later.jsonl")
+	a.register(path, "")
+	before := snap(t, entryFileOf(a.dir, path))
+	a.answer = follow.Stored
+
+	if !a.reader.Advance(path) {
+		t.Error("Advance = false, want the project's next entry still read")
+	}
+
+	if !before.same(t, entryFileOf(a.dir, path)) {
+		t.Error("the entry was removed or rewritten, want it kept as it was: the file may come back with its directory")
+	}
+}
+
 func TestReader_KeepsTheCursorOfAFileItCouldNotRead(t *testing.T) {
 	a := newAdvancing(t)
 	path := filepath.Join(t.TempDir(), sessionID, "subagents", "agent-a.meta.json")

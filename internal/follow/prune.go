@@ -13,7 +13,7 @@ import (
 // gone reports whether the file at path is gone for good: the file is
 // not there, and the directory that holds its session's main file is.
 // It is the one judgment of that, for every caller that drops an entry
-// for it. For a main file that directory is the one that held it; an
+// for it: a reader, a prune and a migration. For a main file that directory is the one that held it; an
 // agent file lies further down, in the session's own directory, which
 // goes with the session when the session is removed. A directory of
 // main files that is gone as well says nothing about the file: a
@@ -32,8 +32,8 @@ func gone(path string) bool {
 // prunable reports whether f, with the heat of its session, is an
 // entry nothing reads again: its session is cold at now and its file
 // is gone. A hot entry is left to its reader, which drops it once it
-// finds the file gone. An entry whose file is still there is never
-// dropped: a hook that names the file again would register it from
+// finds the file gone. An entry whose file is still there, or only out
+// of reach, is never dropped: a hook that names the file again would register it from
 // byte 0, and the segments read from there would take indexes already
 // sent with other lines.
 func (f File) prunable(now time.Time, alive func(pid int) bool) bool {

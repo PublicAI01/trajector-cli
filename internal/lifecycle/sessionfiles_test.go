@@ -451,7 +451,7 @@ func TestReadSessionFiles_DropsAFileThatVanished(t *testing.T) {
 	e.enableProject()
 	e.injectWithoutBaseURL()
 	root := e.canonicalRoot()
-	e.registerFile(root, filepath.Join(e.sessionFilesRoot(), "-work-sample", "gone.jsonl"), "")
+	e.registerGone(root, "-work-sample/gone.jsonl")
 
 	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
 	if got := e.registeredFiles(root); len(got) != 0 {

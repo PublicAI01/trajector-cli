@@ -686,3 +686,33 @@ func TestLayout_NoMethodOfTheRegistryWritesAnEntryWithoutItsLock(t *testing.T) {
 		t.Error("Registry.Update is exported, want an entry written only through the entry's lock")
 	}
 }
+
+func TestLayout_AnAgentFileIsNotReadWhileItsMainEntryNeedsWhatThisBuildDoesNotKnow(t *testing.T) {
+	a := newAdvancing(t)
+	main := mainPath(t)
+	agent := agentPath(main, "subagents")
+	writeFile(t, main, userLine(1))
+	writeFile(t, agent, userLine(2))
+	a.register(main, "")
+	a.register(agent, "")
+	setKey(t, entryFileOf(a.dir, main), "needs", `["a-later-layout-feature"]`)
+	before := snap(t, entryFileOf(a.dir, agent))
+	a.answer = follow.Stored
+	handed := 0
+	store := a.reader.Store
+	a.reader.Store = func(res follow.ReadResult) (follow.Storing, drift.Signals) {
+		handed++
+		return store(res)
+	}
+
+	if !a.reader.Advance(agent) {
+		t.Error("Advance = false, want the project's next entry still read")
+	}
+
+	if handed != 0 {
+		t.Errorf("%d reads of the agent file were handed to the store, want none: whether its session is outside is in an entry this build may not read", handed)
+	}
+	if !before.same(t, entryFileOf(a.dir, agent)) {
+		t.Error("the agent file's entry was rewritten, want its cursor where it was")
+	}
+}
