@@ -775,3 +775,45 @@ func TestMigrate_LeavesBehindTheAgentEntriesOfASessionRemovedWithItsDirectory(t 
 		t.Errorf("Paths() = %q, %v\nwant the entries of the session whose main file's directory is not there: %q", paths, err, unmounted)
 	}
 }
+
+func TestMigrate_TakesAgainTheEntryLocksThatGrewOldBeforeItRewritesTheProjectFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "follow")
+	path := mainPath(t)
+	writeFile(t, path, userLine(1))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := registryv1.Write(dir, project, registryv1.Registry{Files: []registryv1.Entry{{Path: path}}}); err != nil {
+		t.Fatal(err)
+	}
+	locked := 0
+	follow.AfterMigrationSteps(t, func(step int) {
+		if step != 1 {
+			return
+		}
+		locked++
+		if locked > 1 {
+			return
+		}
+		locks, err := filepath.Glob(filepath.Join(dir, project+".*.lock"))
+		if err != nil || len(locks) != 1 {
+			t.Errorf("entry locks held after step 1 = %q, %v, want the one of the entry", locks, err)
+			return
+		}
+		old := time.Now().Add(-90 * time.Second)
+		if err := os.Chtimes(locks[0], old, old); err != nil {
+			t.Error(err)
+		}
+	})
+
+	if err := follow.Open(dir).Migrate(project); err != nil {
+		t.Fatalf("Migrate() = %v", err)
+	}
+
+	if locked != 2 {
+		t.Errorf("the entry locks were taken %d times, want twice: an earlier reader takes over a lock as old as the first ones were", locked)
+	}
+	if paths, err := follow.Open(dir).Paths(project); err != nil || !slices.Equal(paths, []string{path}) {
+		t.Errorf("Paths() = %q, %v, want the entry migrated", paths, err)
+	}
+}

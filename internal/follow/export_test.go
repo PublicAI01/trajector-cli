@@ -53,3 +53,12 @@ func BeforePruneLocks(t testing.TB, at func(path string)) {
 	beforePruneLock = at
 	t.Cleanup(func() { beforePruneLock = was })
 }
+
+// AfterMigrationSteps has every migration in this test binary call at
+// with the number of each step it has done, until t ends.
+func AfterMigrationSteps(t testing.TB, at func(step int)) {
+	t.Helper()
+	was := afterMigrationStep
+	afterMigrationStep = at
+	t.Cleanup(func() { afterMigrationStep = was })
+}

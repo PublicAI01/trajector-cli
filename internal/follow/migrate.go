@@ -39,7 +39,16 @@ const (
 	earlierVersion = 1
 	migratingName  = "migrating.v1"
 	boundExt       = ".bound"
+	// earlierLockExt is what the lock of an earlier entry adds to the
+	// name it locks.
+	earlierLockExt = ".lock"
 )
+
+// earlierLockStale is how old a reader of the earlier layout takes the
+// lock of an entry to be before it takes the entry over. It is a fact
+// of builds already released, so it stays what they do whatever
+// bound this build's readers keep.
+const earlierLockStale = 2 * time.Minute
 
 // The values of "retired" an earlier build wrote. relocated is the
 // form of outside; nestedAgentFile hid an agent file of a workflow run
@@ -53,7 +62,7 @@ const (
 // migrationLockStale bounds the hold of the lock that keeps a second
 // process from migrating a project one is migrating. It is longer than
 // a migration takes: waiting out the readers of an earlier build,
-// each of which holds an entry for at most entryLockStale, and writing
+// each of which holds an entry for at most earlierLockStale, and writing
 // every entry once and flushing it. A process that finds the lock older
 // than that takes it to be one a migration left when it died, and
 // takes the migration over.
@@ -66,8 +75,9 @@ const migrationLockStale = 5 * time.Minute
 const migrationLockWait = 50 * time.Millisecond
 
 // ErrMigrationPending reports a project whose registry is in the
-// layout before this one, or was left halfway to this one. Nothing
-// reads or writes such a project but Migrate.
+// layout before this one, or was left halfway to this one. No entry
+// of such a project is read, registered or written until Migrate has
+// brought it to this layout.
 var ErrMigrationPending = errors.New("follow: the registry is not migrated to this build's layout yet")
 
 // errMigrationBusy reports a migration another process holds the lock
@@ -240,6 +250,26 @@ func (r *Registry) earlierPaths(projectIDHash string) ([]string, error) {
 // taken.
 var errMoreEntries = errors.New("follow: entries were registered since their locks were taken")
 
+// errLocksAged reports entry locks held so long that an earlier
+// build's reader may take one over before the project file is
+// rewritten.
+var errLocksAged = fmt.Errorf("%w (its entry locks grew old before the project file could be rewritten)", ErrMigrationPending)
+
+// earlierLocksStand reports whether every lock in held is still this
+// process's to rely on until the project file is rewritten: each is
+// there, and none is older than half of earlierLockStale. Locks are
+// not renewed, so a process that slept, or waited long for the last of
+// them, holds the first ones only in name.
+func (r *Registry) earlierLocksStand(projectIDHash string, held map[string]func()) bool {
+	for path := range held {
+		info, err := os.Lstat(r.earlierLockTarget(projectIDHash, path) + earlierLockExt)
+		if err != nil || time.Since(info.ModTime()) > earlierLockStale/2 {
+			return false
+		}
+	}
+	return true
+}
+
 // flip is steps 1 to 4. It takes the lock of every entry an earlier
 // build's reader takes, so no such reader is between storing a segment
 // and writing its cursor; then, under the project lock, it keeps a
@@ -247,6 +277,9 @@ var errMoreEntries = errors.New("follow: entries were registered since their loc
 // left there before, and rewrites the project file in this layout.
 // From then on an earlier build reads nothing of the project. A project
 // whose project file is not of the earlier layout is left to finish.
+// Locks that grew old before the project lock was had are let go and
+// taken again, once, so the project file is only ever rewritten under
+// locks no earlier reader takes over.
 //
 // The entry locks come before the project lock: an earlier build's
 // reader holds its entry's lock while it waits for the project lock to
@@ -259,6 +292,9 @@ func (r *Registry) flip(projectIDHash string) error {
 			unlock()
 		}
 	}()
+	// aged is set once the locks have grown old and been taken again. A
+	// second time is left to the next process that migrates.
+	aged := false
 	for {
 		paths, err := r.earlierPaths(projectIDHash)
 		if err != nil || len(paths) == 0 && !r.isEarlier(projectIDHash) {
@@ -281,6 +317,9 @@ func (r *Registry) flip(projectIDHash string) error {
 					return nil, errMoreEntries
 				}
 			}
+			if !r.earlierLocksStand(projectIDHash, held) {
+				return nil, errLocksAged
+			}
 			afterMigrationStep(2)
 			if err := r.stage(projectIDHash, old); err != nil {
 				return nil, err
@@ -296,6 +335,13 @@ func (r *Registry) flip(projectIDHash string) error {
 		})
 		switch {
 		case errors.Is(err, errMoreEntries):
+			continue
+		case errors.Is(err, errLocksAged) && !aged:
+			aged = true
+			for path, unlock := range held {
+				unlock()
+				delete(held, path)
+			}
 			continue
 		case errors.Is(err, errNotEarlier):
 			return nil
@@ -335,7 +381,7 @@ func (r *Registry) lockEarlierEntries(projectIDHash string, paths []string, held
 		if _, ok := held[path]; ok {
 			continue
 		}
-		unlock, err := fsatomic.Lock(r.earlierLockTarget(projectIDHash, path), entryLockStale, entryLockStale)
+		unlock, err := fsatomic.Lock(r.earlierLockTarget(projectIDHash, path), earlierLockStale, earlierLockStale)
 		if err != nil {
 			return err
 		}
@@ -515,8 +561,9 @@ func (r *Registry) earlierBound(projectIDHash, path string) (b segmentBound, ok 
 
 // settle is step 6: every entry of the project directory is flushed,
 // whichever try of step 5 made it, and the directory after them; then
-// the copy is removed, which completes the migration; and what the
-// earlier layout kept beside the project file is removed with it.
+// what the earlier layout kept beside the project file is removed; and
+// last the copy, which completes the migration. The copy goes last
+// because a project without it is never settled again.
 func (r *Registry) settle(projectIDHash string) error {
 	dir := r.projectDir(projectIDHash)
 	names, err := os.ReadDir(dir)
@@ -532,11 +579,11 @@ func (r *Registry) settle(projectIDHash string) error {
 		}
 	}
 	flushDir(dir)
+	r.dropEarlierFiles(projectIDHash)
 	if err := os.Remove(r.migratingPath(projectIDHash)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	flushDir(dir)
-	r.dropEarlierFiles(projectIDHash)
 	return nil
 }
 
