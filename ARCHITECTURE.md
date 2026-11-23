@@ -114,7 +114,10 @@ file whose session moves to a directory consent does not cover stays
 registered: what the session writes while it is outside is passed over
 and never stored, in its main file and in its agent files alike, and a
 rewrite of the file does not change that. Reading resumes after the
-session comes back. Enabling the project again does not read the file
+session comes back. A file read from its start for the first time may
+hold a move into the project that does not say where the session came
+from; the lines before it are kept only when they state the directory
+they were written in and every such directory is covered. Enabling the project again does not read the file
 from its start, so its lines are never stored and sent a second time.
 
 ## Upgrading itself

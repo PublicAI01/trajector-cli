@@ -188,11 +188,14 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 	// cursor says the session is outside: only a relocated line into
 	// consent brings it back, whatever a rewrite left in the file. Any
 	// other pass that starts at byte 0 cannot tell until the first
-	// relocated line: when it moves the session into consent, what
-	// precedes it was written outside and is let go; when it moves the
-	// session out, what precedes it was written inside and stays.
+	// relocated line. When it moves the session out, what precedes it
+	// was written inside and stays. When it moves the session into
+	// consent, the line does not say where from, and the lines before
+	// it answer: they stay when they state a working directory and
+	// every one they state is covered, and are let go otherwise.
 	outside := f.Outside
 	settled := start > 0 || f.Outside
+	before := origin{authorized: authorized}
 
 	var kept bytes.Buffer
 	var added []string
@@ -230,6 +233,9 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 			continue
 		}
 		fields := parsed.Fields()
+		if !settled && fields.Type != typeRelocated {
+			before.see(fields.Cwd)
+		}
 		if droppedTypes[fields.Type] {
 			continue
 		}
@@ -241,10 +247,12 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 			case !into:
 				settled, outside = true, true
 				continue
-			case !settled:
+			case !settled && !before.inside():
 				letGo()
 				settled = true
 				continue
+			case !settled:
+				settled = true
 			case outside:
 				outside = false
 				continue
@@ -259,12 +267,13 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 		if kept.Len() > 0 && kept.Len()+len(line) > maxSegmentBytes {
 			if !settled {
 				// Nothing kept so far may be sent before it is known
-				// whether a move into consent follows it.
-				end, into, err := relocationAhead(lines, offset, authorized)
+				// whether a move into consent follows it, and where
+				// the session was until then.
+				end, into, err := relocationAhead(lines, offset, &before)
 				if err != nil {
 					return ReadResult{}, err
 				}
-				if into {
+				if into && !before.inside() {
 					letGo()
 					settled = true
 					offset = end
@@ -309,13 +318,45 @@ func readLines(res ReadResult, st Stat, capture envelope.Capture, opts ReadOptio
 	return res, nil
 }
 
+// origin is where a session was before its first relocated line, as
+// the lines before that line state it. A line that carries a working
+// directory was written there. The session was inside only when some
+// line says so and none says otherwise: a line that states no
+// directory is kept on the word of the lines around it, and never on
+// its own.
+type origin struct {
+	authorized func(dir string) bool
+	judged     map[string]bool
+	stated     bool
+	elsewhere  bool
+}
+
+func (o *origin) see(cwd string) {
+	if cwd == "" || o.elsewhere {
+		return
+	}
+	o.stated = true
+	covered, known := o.judged[cwd]
+	if !known {
+		covered = o.authorized(cwd)
+		if o.judged == nil {
+			o.judged = map[string]bool{}
+		}
+		o.judged[cwd] = covered
+	}
+	o.elsewhere = !covered
+}
+
+func (o *origin) inside() bool { return o.stated && !o.elsewhere }
+
 // relocationAhead reads on from offset to the first relocated line
-// within what was observed. into reports that the line moves the
+// within what was observed, and shows before every working directory
+// the lines on the way state. into reports that the line moves the
 // session into a directory consent covers, and end is the offset just
 // past it. A pass that meets no relocated line, or one that moves the
 // session out, reports into as false: what precedes it was written
 // inside.
-func relocationAhead(lines *lineScanner, offset int64, authorized func(string) bool) (end int64, into bool, err error) {
+func relocationAhead(lines *lineScanner, offset int64, before *origin) (end int64, into bool, err error) {
 	for {
 		line, n, err := lines.next()
 		if err != nil || n == 0 {
@@ -323,8 +364,9 @@ func relocationAhead(lines *lineScanner, offset int64, authorized func(string) b
 		}
 		offset += int64(n)
 		if cwd, ok := relocatedCwd(line); ok {
-			return offset, authorized(cwd), nil
+			return offset, before.authorized(cwd), nil
 		}
+		before.see(statedCwd(line))
 	}
 }
 
@@ -342,11 +384,25 @@ func relocatedCwd(line []byte) (string, bool) {
 	return fields.RelocatedCwd, fields.Type == typeRelocated
 }
 
+// statedCwd reports the working directory a line states, and "" for a
+// line that states none.
+func statedCwd(line []byte) string {
+	if line == nil || !bytes.Contains(line, []byte(`"cwd"`)) {
+		return ""
+	}
+	parsed, ok := sessionline.Parse(line)
+	if !ok {
+		return ""
+	}
+	return parsed.Fields().Cwd
+}
+
 // sessionWasOutside reports whether the session main belongs to is in
 // a directory consent does not cover, or was at any point of what its
 // main file holds past the cursor: the cursor says the session is
 // outside, or a relocated line not yet consumed moves it out, or moves
-// it in at a point before which a pass from byte 0 lets everything go.
+// it in at a point before which a pass from byte 0 lets everything go
+// because the lines before it do not place the session inside.
 //
 // It answers for the whole of what main holds unread, not for when
 // each line of another file was written, so it may call outside a line
@@ -379,16 +435,24 @@ func sessionWasOutside(main File, opts ReadOptions) (bool, error) {
 	if _, err := src.Seek(start, io.SeekStart); err != nil {
 		return false, err
 	}
-	authorized := opts.authorized()
-	fromCursor := start > 0
+	settled := start > 0
+	before := origin{authorized: opts.authorized()}
 	lines := &lineScanner{r: bufio.NewReaderSize(io.LimitReader(src, st.Size-start), 64<<10)}
 	for {
 		line, n, err := lines.next()
 		if err != nil || n == 0 {
 			return false, err
 		}
-		if cwd, ok := relocatedCwd(line); ok && (!fromCursor || !authorized(cwd)) {
+		cwd, relocated := relocatedCwd(line)
+		switch {
+		case !relocated:
+			if !settled {
+				before.see(statedCwd(line))
+			}
+		case !before.authorized(cwd), !settled && !before.inside():
 			return true, nil
+		default:
+			settled = true
 		}
 	}
 }

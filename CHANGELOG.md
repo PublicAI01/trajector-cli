@@ -34,6 +34,13 @@ All notable changes to trajector are documented here. The format follows
   directory in that line is now replaced with the placeholder, like
   `cwd`. Parts already held for this reason are uploaded the next time
   `trajector doctor` runs.
+- The opening lines of a session are no longer left out when its file
+  is first read after Claude Code wrote a move into the project. Such a
+  line does not say where the session came from, so everything before
+  it was passed over, also for a session that had been in the project
+  all along. The lines before it state the directory they were written
+  in; they are now kept when every such directory is in the project,
+  and passed over as before when one is not or when none is stated.
 
 ## [0.7.1] - 2026-11-21
 
