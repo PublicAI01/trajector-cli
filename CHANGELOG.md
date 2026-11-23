@@ -25,6 +25,15 @@ All notable changes to trajector are documented here. The format follows
   along. A move to a directory outside the root is still not recorded,
   also when a link below the root leads there. A session an earlier
   release counted as moved out stays so until its next move.
+- A part of a session file that holds a move inside the project is
+  uploaded. Claude Code writes a line for such a move, and its desktop
+  app writes the line again every turn. The line names the directory in
+  a field this redaction did not know, so trajector held the whole part
+  on your machine, as it does for any shape it cannot mask, and the
+  session reached the service with a part missing for every turn. The
+  directory in that line is now replaced with the placeholder, like
+  `cwd`. Parts already held for this reason are uploaded the next time
+  `trajector doctor` runs.
 
 ## [0.7.1] - 2026-11-21
 

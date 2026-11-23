@@ -137,6 +137,13 @@ var anchoredPaths = []pathField{
 		path:   keyPath{"attachment", "snapshot", "scratchpadDirectory"},
 		guards: []valueGuard{{path: keyPath{"attachment", "type"}, want: "environment"}},
 	},
+	// relocatedCwd on a relocated line is the directory the session
+	// moved to. The reader keeps the line only when that directory is
+	// the project root or below it.
+	{
+		path:   keyPath{"relocatedCwd"},
+		guards: []valueGuard{{path: keyPath{"type"}, want: "relocated"}},
+	},
 }
 
 // acknowledgedPaths lists the fields AbsolutePathFields has already
