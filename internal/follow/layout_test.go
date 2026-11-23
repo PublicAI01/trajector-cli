@@ -569,7 +569,7 @@ func TestLayout_ARoundWritesTheBoundBeforeTheStoreAndTheCursorWithWhatItNoticedA
 	if string(after["offset"]) != jsonInt(len(line)) || after["bound"] != nil || string(after["signals"]) != `{"assistant_lines":1,"assistant_lines_without_message_id":1}` {
 		t.Errorf("entry after the round = %v, want the cursor moved with what it noticed and no bound", after)
 	}
-	if n := writes(); n != 2 {
+	if n, counted := writes(); counted && n != 2 {
 		t.Errorf("entry written %d times in one round, want twice", n)
 	}
 }

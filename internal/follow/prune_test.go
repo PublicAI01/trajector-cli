@@ -138,7 +138,7 @@ func TestPrune_WritesTheProjectFileOnceAndKeepsTheSumOfTheSignals(t *testing.T) 
 		t.Errorf("Prune() removed %d entries, want 8", removed)
 	}
 
-	if n := writes(); n != 1 {
+	if n, counted := writes(); counted && n != 1 {
 		t.Errorf("project file written %d times for 8 entries removed, want once", n)
 	}
 	if after, err := r.Signals(project); err != nil || !reflect.DeepEqual(after, before) {
@@ -147,7 +147,7 @@ func TestPrune_WritesTheProjectFileOnceAndKeepsTheSumOfTheSignals(t *testing.T) 
 	if removed := prune(t, r); removed != 0 {
 		t.Errorf("Prune() again removed %d entries, want none", removed)
 	}
-	if n := writes(); n != 1 {
+	if n, counted := writes(); counted && n != 1 {
 		t.Errorf("project file written %d times after a prune that removed nothing, want still once", n)
 	}
 }

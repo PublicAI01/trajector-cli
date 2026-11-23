@@ -76,7 +76,7 @@ func TestReader_KeepsWhatASegmentNoticedInTheWriteThatMovesItsCursor(t *testing.
 
 	a.reader.Advance(path)
 
-	if n := writes(); n != 2 {
+	if n, counted := writes(); counted && n != 2 {
 		t.Errorf("entry written %d times for one segment, want twice: the bound, then the cursor with what was noticed", n)
 	}
 	if f := a.entry(path); f.Offset != int64(len(line)) || f.NextSegment != 1 {
@@ -100,7 +100,7 @@ func TestReader_KeepsWhatAPausedReadNoticedAndLeavesTheCursor(t *testing.T) {
 		t.Error("Advance of a paused read = true, want the project's reading stopped")
 	}
 
-	if n := writes(); n != 2 {
+	if n, counted := writes(); counted && n != 2 {
 		t.Errorf("entry written %d times for a paused read, want twice: the bound, then what was noticed", n)
 	}
 	if f := a.entry(path); f.Offset != 0 || f.NextSegment != 0 || f.ReadAt != "" {
@@ -123,7 +123,7 @@ func TestReader_DropsWhatAReadNoticedWhenItsRecordsAreNotStored(t *testing.T) {
 
 		a.reader.Advance(path)
 
-		if n := writes(); n != 1 {
+		if n, counted := writes(); counted && n != 1 {
 			t.Errorf("entry written %d times for a read answered %d, want once, for the bound alone: the read that stores these lines notices them", n, answer)
 		}
 		if got, _ := a.registry.Signals(project); got.Any() {

@@ -4,10 +4,12 @@ package sessionread
 
 import "testing"
 
-// registryWrites counts the writes that replace the file at path. Only
-// Linux reports them to a test, through inotify.
-func registryWrites(t *testing.T, _ string) func() int {
+// registryWrites counts the writes that replace the file at path, and
+// reports whether it could count them. Only Linux reports them to a
+// test, through inotify: elsewhere nothing is counted, and the test
+// checks the rest of what it is for.
+func registryWrites(t *testing.T, _ string) func() (n int, counted bool) {
 	t.Helper()
-	t.Skip("counting the writes of a file needs inotify, which only Linux has")
-	return nil
+	t.Log("the writes of a file are not counted here: that needs inotify, which only Linux has")
+	return func() (int, bool) { return 0, false }
 }

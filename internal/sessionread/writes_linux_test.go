@@ -12,9 +12,10 @@ import (
 )
 
 // registryWrites counts, from now on, the writes that replace the file
-// at path: a write through fsatomic renames a finished file onto the
-// name. The directory must exist.
-func registryWrites(t *testing.T, path string) func() int {
+// at path, and reports that it could count them: a write through
+// fsatomic renames a finished file onto the name. The directory must
+// exist.
+func registryWrites(t *testing.T, path string) func() (n int, counted bool) {
 	t.Helper()
 	fd, err := syscall.InotifyInit1(syscall.IN_NONBLOCK | syscall.IN_CLOEXEC)
 	if err != nil {
@@ -27,12 +28,12 @@ func registryWrites(t *testing.T, path string) func() int {
 	name := filepath.Base(path)
 	count := 0
 	buf := make([]byte, 64<<10)
-	return func() int {
+	return func() (int, bool) {
 		t.Helper()
 		for {
 			n, err := syscall.Read(fd, buf)
 			if errors.Is(err, syscall.EAGAIN) {
-				return count
+				return count, true
 			}
 			if err != nil {
 				t.Fatal(err)
