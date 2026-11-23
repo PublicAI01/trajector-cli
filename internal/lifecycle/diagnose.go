@@ -322,17 +322,18 @@ func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFile
 }
 
 // readProjectTree takes the second reading: it walks the project's tree
-// once and holds what it found against every entry the registry keeps,
-// the retired ones included. An entry whose reading stopped for good is
-// registered, and a search that called its path unregistered would ask
-// the user to register what is registered already. The counts above
-// come from what is still read, which is a different question.
+// once and holds what it found against the path of every entry the
+// registry keeps, those this build does not read included. Such an
+// entry is registered, and a search that called its path unregistered
+// would ask the user to register what is registered already. The
+// counts above come from what this build reads, which is a different
+// question.
 //
 // It registers nothing — registering is enable's and the session hooks'
 // alone, and a run that diagnoses must leave the state it diagnosed as
 // it found it.
 func (m *Machine) readProjectTree(state report.SessionFilesState, st report.ProjectStatus) report.SessionFilesState {
-	entries, err := m.registry.Entries(st.Hash)
+	paths, err := m.registry.Paths(st.Hash)
 	if err != nil {
 		state.Err = err
 		return state
@@ -342,9 +343,9 @@ func (m *Machine) readProjectTree(state report.SessionFilesState, st report.Proj
 		state.WalkErr = err
 		return state
 	}
-	held := make(map[string]bool, len(entries))
-	for _, f := range entries {
-		held[f.Path] = true
+	held := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		held[path] = true
 	}
 	state.Walked = true
 	state.Gaps = found.Gaps

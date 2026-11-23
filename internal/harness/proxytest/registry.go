@@ -1,6 +1,9 @@
 package proxytest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -178,4 +181,32 @@ func (s *Sandbox) Signals(projectIDHash string) Signals {
 		s.t.Fatal(err)
 	}
 	return got
+}
+
+// entryFile is the file a project's registry keeps path's entry in.
+func (s *Sandbox) entryFile(projectIDHash, path string) string {
+	sum := sha256.Sum256([]byte(path))
+	return filepath.Join(s.layout.FollowDir(), projectIDHash, hex.EncodeToString(sum[:16])+".json")
+}
+
+// NeedALaterBuild marks path's entry as one only a build that knows
+// need can read, as a later build that writes such an entry would.
+func (s *Sandbox) NeedALaterBuild(projectIDHash, path, need string) {
+	s.t.Helper()
+	file := s.entryFile(projectIDHash, path)
+	data, err := fsatomic.ReadFile(file)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(data, &entry); err != nil {
+		s.t.Fatal(err)
+	}
+	entry["needs"] = []string{need}
+	if data, err = json.Marshal(entry); err != nil {
+		s.t.Fatal(err)
+	}
+	if err := fsatomic.WriteFile(file, data, 0o600); err != nil {
+		s.t.Fatal(err)
+	}
 }

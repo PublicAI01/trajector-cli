@@ -264,13 +264,22 @@ func (r *Registry) Files(projectIDHash string) ([]File, error) {
 	return files, nil
 }
 
-// Entries lists every entry projectIDHash's registry holds that this
-// build reads, ordered by path. It is what a caller holding a search
-// of the project's tree against the registry asks for. This layout
-// keeps no entry this build reads and does not list, so it is the same
-// set as Files.
-func (r *Registry) Entries(projectIDHash string) ([]File, error) {
-	return r.Files(projectIDHash)
+// Paths lists the path of every entry projectIDHash's registry holds,
+// ordered, the entries this build does not read included. It is what a
+// caller holding a search of the project's tree against the registry
+// asks for: an entry a later build needs is registered, and calling its
+// path unregistered would ask the user to register what is registered
+// already.
+func (r *Registry) Paths(projectIDHash string) ([]string, error) {
+	_, entries, err := r.listAll(projectIDHash)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		paths = append(paths, e.Path)
+	}
+	return paths, nil
 }
 
 // File is the entry projectIDHash reads for path. ok is false for a
@@ -473,9 +482,16 @@ func parseProject(data []byte) (projectFile, error) {
 }
 
 // list is projectIDHash's project file and every entry of it this
-// build reads, ordered by path. An entry file that vanished since the
-// directory was listed, or that does not parse, is passed over.
+// build reads, ordered by path.
 func (r *Registry) list(projectIDHash string) (projectFile, []entryFile, error) {
+	p, entries, err := r.listAll(projectIDHash)
+	return p, slices.DeleteFunc(entries, func(e entryFile) bool { return !e.readable() }), err
+}
+
+// listAll is projectIDHash's project file and every entry of it,
+// ordered by path. An entry file that vanished since the directory was
+// listed, or that does not parse, is passed over.
+func (r *Registry) listAll(projectIDHash string) (projectFile, []entryFile, error) {
 	p, _, err := r.readProject(projectIDHash)
 	if err != nil {
 		return projectFile{}, nil, err
@@ -494,7 +510,7 @@ func (r *Registry) list(projectIDHash string) (projectFile, []entryFile, error) 
 			continue
 		}
 		e, err := readEntryFile(filepath.Join(dir, name.Name()))
-		if err != nil || !e.readable() {
+		if err != nil {
 			continue
 		}
 		entries = append(entries, e)

@@ -446,11 +446,10 @@ func (m *Machine) confirmHooksWillRun(streams IO, root string, shape routing.Sha
 // these files without ever reading them left exactly such entries
 // behind.
 //
-// A file the reader retired keeps its entry and stays retired: enable
-// finds it again, because it is still on disk, but running enable a
-// second time is not an answer to why its reading stopped. Such a
-// path is counted as registered already, which is what it is: the
-// registration this run would make of it changes nothing.
+// An entry this build does not read — one a later build needs — keeps
+// its entry as it is: enable finds its file again, because it is still
+// on disk, but registering it again changes nothing. Such a path is
+// counted as registered already, which is what it is.
 func (m *Machine) registerEarlierSessions(st report.ProjectStatus, found discover.Result, ledger *enableLedger) (registered int, toRead []string, err error) {
 	projectIDHash := st.Hash
 	projects, err := m.registry.Projects()
@@ -460,13 +459,13 @@ func (m *Machine) registerEarlierSessions(st report.ProjectStatus, found discove
 	if ledger != nil && !slices.Contains(projects, projectIDHash) {
 		ledger.record(func() error { return m.registry.Unregister(projectIDHash) })
 	}
-	held, err := m.registry.Entries(projectIDHash)
+	held, err := m.registry.Paths(projectIDHash)
 	if err != nil {
 		return 0, nil, err
 	}
 	before := make(map[string]bool, len(held))
-	for _, f := range held {
-		before[f.Path] = true
+	for _, path := range held {
+		before[path] = true
 	}
 	if err := discover.Register(m.registry, projectIDHash, found); err != nil {
 		return 0, nil, err
@@ -490,9 +489,8 @@ func (m *Machine) registerEarlierSessions(st report.ProjectStatus, found discove
 // which is the fallback under every ask made afterwards. The file
 // must still be on disk with something in it: an entry whose file is
 // gone or empty has nothing to read, so it asks for nothing and is
-// not made to look like a session that just reported. A retired entry
-// is none of these — the registry does not list it, which is what
-// retirement means.
+// not made to look like a session that just reported. An entry this
+// build does not read is none of these: the registry does not list it.
 //
 // A project enabled with its earlier session files left alone keeps
 // that answer here, and only for the files it is about: an entry
