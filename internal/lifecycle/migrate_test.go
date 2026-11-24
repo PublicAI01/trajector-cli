@@ -308,3 +308,27 @@ func TestFinishUpgradeLeavesAnEarlierRegistryToAReaderItStarts(t *testing.T) {
 		t.Errorf("the finish started %q, want the one-shot reader of the project, which migrates it", args)
 	}
 }
+
+func TestStatusMigratingARegistryKeepsTheEntryOfASessionHotByTheMachinesClock(t *testing.T) {
+	e := newEnv(t)
+	e.enableProject()
+	e.injectWithProxy()
+	root := e.canonicalRoot()
+	running := e.putSessionFile("-work-sample/running.jsonl", firstLine)
+	if err := os.Remove(running); err != nil {
+		t.Fatal(err)
+	}
+	named := e.deps.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	e.sandbox.LeaveEarlierRegistry(proxytest.ProjectIDHash(root), proxytest.EarlierRegistry{
+		Files: []proxytest.EarlierEntry{{Path: running, LastEvent: named}},
+	})
+
+	e.statusOutput()
+
+	if v := e.registryVersion(root); v != 2 {
+		t.Fatalf("registry version = %d, want it migrated to 2", v)
+	}
+	if paths := e.sandbox.RegisteredPaths(proxytest.ProjectIDHash(root)); !slices.Equal(paths, []string{running}) {
+		t.Errorf("registered = %q, want the entry of a session a hook named a minute ago kept, its file gone or not", paths)
+	}
+}

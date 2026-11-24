@@ -232,7 +232,7 @@ func (t *tailer) project(hash string) (sessionread.Project, bool) {
 	}
 	for _, g := range grants {
 		if g.ProjectIDHash == hash && !g.Revoked {
-			if t.reader.Registry.Migrate(hash) != nil {
+			if t.reader.Registry.Migrate(hash, t.reader.Now(), t.alive) != nil {
 				return sessionread.Project{}, false
 			}
 			return sessionread.ProjectOf(g), true

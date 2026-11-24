@@ -35,7 +35,7 @@ func migrateAndDie(args []string) int {
 		return 2
 	}
 	follow.DieAfterMigrationStep(step)
-	fmt.Fprintln(os.Stderr, "migration was not stopped:", follow.Open(args[0]).Migrate(args[1]))
+	fmt.Fprintln(os.Stderr, "migration was not stopped:", follow.Open(args[0]).Migrate(args[1], time.Now(), follow.ProcessAlive))
 	return 3
 }
 
@@ -46,7 +46,7 @@ func migrateOnce(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: migrate <registry-dir> <project>")
 		return 2
 	}
-	err := follow.Open(args[0]).Migrate(args[1])
+	err := follow.Open(args[0]).Migrate(args[1], time.Now(), follow.ProcessAlive)
 	switch {
 	case errors.Is(err, follow.ErrMigrationPending):
 		return 4
@@ -172,7 +172,7 @@ func migratedTree(t *testing.T, fx earlierFixture) map[string]string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "follow")
 	fx.writeTo(t, dir)
-	if err := follow.Open(dir).Migrate(project); err != nil {
+	if err := follow.Open(dir).Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
 	return tree(t, dir)
@@ -201,7 +201,7 @@ func TestMigrate_CarriesEachEarlierFieldToItsPlaceInThisLayout(t *testing.T) {
 	fx.writeTo(t, dir)
 	r := follow.Open(dir)
 
-	if err := r.Migrate(project); err != nil {
+	if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
 
@@ -316,7 +316,7 @@ func TestMigrate_AMigrationKilledBetweenTwoStepsEndsAsOneThatRanThrough(t *testi
 		if regErr, _ := hook(t, r); !errors.Is(regErr, follow.ErrMigrationPending) {
 			t.Fatalf("RegisterAll() before the migration = %v, want ErrMigrationPending", regErr)
 		}
-		if err := r.Migrate(project); err != nil {
+		if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 			t.Fatalf("Migrate() = %v", err)
 		}
 		return tree(t, dir)
@@ -361,7 +361,7 @@ func TestMigrate_AMigrationKilledBetweenTwoStepsEndsAsOneThatRanThrough(t *testi
 			}
 
 			ageLocks(t, dir)
-			if err := r.Migrate(project); err != nil {
+			if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 				t.Fatalf("Migrate() again = %v", err)
 			}
 			if diff := treeDiff(tree(t, dir), want); diff != "" {
@@ -385,7 +385,7 @@ func TestMigrate_OnlyOneOfTwoProcessesMigratesAProject(t *testing.T) {
 		releases = append(releases, release)
 	}
 	done := make(chan error, 1)
-	go func() { done <- follow.Open(dir).Migrate(project) }()
+	go func() { done <- follow.Open(dir).Migrate(project, time.Now(), follow.ProcessAlive) }()
 	if !appears(filepath.Join(projectDirOf(dir), "migrating.v1.lock")) {
 		t.Fatal("the first migration never took its lock")
 	}
@@ -430,7 +430,7 @@ func TestMigrate_AnEarlierReaderInTheMiddleOfARoundKeepsTheSegmentItStored(t *te
 	kept.store(follow.ReadResult{Segments: []envelope.Segment{{SegmentIndex: 0, Lines: first}}})
 
 	done := make(chan error, 1)
-	go func() { done <- follow.Open(dir).Migrate(project) }()
+	go func() { done <- follow.Open(dir).Migrate(project, time.Now(), follow.ProcessAlive) }()
 	if !appears(filepath.Join(projectDirOf(dir), "migrating.v1.lock")) {
 		t.Fatal("the migration never took its lock")
 	}
@@ -497,7 +497,7 @@ func TestMigrate_EveryEntryOfALargeRegistryKeepsItsCursor(t *testing.T) {
 	r := follow.Open(dir)
 
 	start := time.Now()
-	if err := r.Migrate(project); err != nil {
+	if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
 	t.Logf("migrated %d entries in %v", n, time.Since(start))
@@ -536,7 +536,7 @@ func TestMigrate_EmptiesAProjectDirectoryLeftBesideAnEarlierProjectFile(t *testi
 		t.Fatal(err)
 	}
 
-	if err := r.Migrate(project); err != nil {
+	if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
 
@@ -564,7 +564,7 @@ func TestMigrate_RewritesFromItsCopyOnlyTheEntriesAnEarlierTryLeftUnreadable(t *
 	writeFile(t, entryFileOf(dir, whole), standing)
 	r := follow.Open(dir)
 
-	if err := r.Migrate(project); err != nil {
+	if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
 
@@ -616,7 +616,7 @@ func TestMigrate_LeavesAnEarlierProjectFileThatDoesNotParse(t *testing.T) {
 	}
 	r := follow.Open(dir)
 
-	err := r.Migrate(project)
+	err := r.Migrate(project, time.Now(), follow.ProcessAlive)
 
 	if err == nil || errors.Is(err, follow.ErrMigrationPending) {
 		t.Errorf("Migrate() = %v, want the parse error", err)
@@ -639,10 +639,10 @@ func TestMigrate_LeavesAProjectInThisLayoutAsItIs(t *testing.T) {
 	mustRegister(t, r, project, main)
 	before := tree(t, dir)
 
-	if err := r.Migrate(project); err != nil {
+	if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
-	if err := r.Migrate("ffff0000"); err != nil {
+	if err := r.Migrate("ffff0000", time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() of a project with no registry = %v", err)
 	}
 
@@ -688,7 +688,7 @@ func TestMigrate_LeavesBehindTheColdEntriesWhoseFileIsGone(t *testing.T) {
 	}
 	r := follow.Open(dir)
 
-	if err := r.Migrate(project); err != nil {
+	if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
 
@@ -722,7 +722,7 @@ func TestMigrate_KeepsEveryEntryOfALargeRegistryWhoseFileIsThere(t *testing.T) {
 	}
 	r := follow.Open(dir)
 
-	if err := r.Migrate(project); err != nil {
+	if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
 
@@ -785,7 +785,7 @@ func TestMigrate_LeavesBehindTheAgentEntriesOfASessionRemovedWithItsDirectory(t 
 	}
 	r := follow.Open(dir)
 
-	if err := r.Migrate(project); err != nil {
+	if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
 
@@ -824,7 +824,7 @@ func TestMigrate_TakesAgainTheEntryLocksThatGrewOldBeforeItRewritesTheProjectFil
 		}
 	})
 
-	if err := follow.Open(dir).Migrate(project); err != nil {
+	if err := follow.Open(dir).Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
 
@@ -865,7 +865,7 @@ func TestMigrate_MakesNoEntryOnceItsCopyIsGone(t *testing.T) {
 		left = tree(t, projectDirOf(dir))
 	})
 
-	if err := follow.Open(dir).Migrate(project); err != nil {
+	if err := follow.Open(dir).Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v, want a copy another process removed taken as a migration it finished", err)
 	}
 
@@ -905,7 +905,7 @@ func TestMigrate_MakesAnEntryOfAFileRegisteredWhileTheRegistryWaitedAndKeepsAnEa
 	if err := r.RegisterAll(project, []string{earlier, named}, "sub"); !errors.Is(err, follow.ErrMigrationPending) {
 		t.Fatalf("RegisterAll() while the registry waits = %v, want ErrMigrationPending", err)
 	}
-	if err := r.Migrate(project); err != nil {
+	if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
 
@@ -956,7 +956,7 @@ func TestMigrate_MakesAnEntryOfAPendingRegistrationPlacedAfterItsCopyIsRemoved(t
 	})
 	r := follow.Open(dir)
 
-	if err := r.Migrate(project); err != nil {
+	if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatalf("Migrate() = %v", err)
 	}
 

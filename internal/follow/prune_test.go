@@ -220,7 +220,7 @@ func TestPrune_KeepsEveryEntryOfALargeRegistryWhoseFileIsThere(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := follow.Open(dir)
-	if err := r.Migrate(project); err != nil {
+	if err := r.Migrate(project, time.Now(), follow.ProcessAlive); err != nil {
 		t.Fatal(err)
 	}
 	removeAll(t, gone)

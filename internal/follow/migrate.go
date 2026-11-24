@@ -133,8 +133,9 @@ func parseEarlier(data []byte) (earlierRegistry, error) {
 // project it can read: a hook never migrates and never waits for one.
 // A path a hook registered while the project waited is made an entry,
 // unless the earlier layout kept one for it.
-// An entry whose session is cold and whose file is gone is not
-// carried over: nothing would read it again.
+// An entry whose session is cold at now and whose file is gone is not
+// carried over: nothing would read it again. alive answers whether a
+// process id names a running process, as it does for Prune.
 //
 // One process migrates a project at a time. A project another process
 // is migrating is refused with ErrMigrationPending, for the caller to
@@ -142,7 +143,7 @@ func parseEarlier(data []byte) (earlierRegistry, error) {
 // it until its lock is older than migrationLockStale. A project file of
 // the earlier layout that does not parse is not migrated: the error is
 // the one reading it would give, and the project stays as it is.
-func (r *Registry) Migrate(projectIDHash string) error {
+func (r *Registry) Migrate(projectIDHash string, now time.Time, alive func(pid int) bool) error {
 	_, at, _, err := r.projectAt(projectIDHash)
 	if err != nil || at == settled {
 		return err
@@ -166,7 +167,7 @@ func (r *Registry) Migrate(projectIDHash string) error {
 	if err := r.flip(projectIDHash); err != nil {
 		return err
 	}
-	return r.finish(projectIDHash)
+	return r.finish(projectIDHash, now, alive)
 }
 
 // layout is how far a project is on the way to this build's layout.
@@ -456,7 +457,7 @@ func (r *Registry) stage(projectIDHash string, earlier []byte) error {
 // registrations are made entries once the copy's entries stand, so an
 // entry the earlier layout kept wins over them, and again once the
 // copy is removed, for those a hook placed in between.
-func (r *Registry) finish(projectIDHash string) error {
+func (r *Registry) finish(projectIDHash string, now time.Time, alive func(pid int) bool) error {
 	_, at, _, err := r.projectAt(projectIDHash)
 	if err != nil || at != halfway {
 		return err
@@ -469,7 +470,7 @@ func (r *Registry) finish(projectIDHash string) error {
 	if err != nil {
 		return err
 	}
-	switch err := r.carryOver(projectIDHash, reg); {
+	switch err := r.carryOver(projectIDHash, reg, now, alive); {
 	case errors.Is(err, errCopyGone):
 		return nil
 	case err != nil:
@@ -487,7 +488,7 @@ func (r *Registry) finish(projectIDHash string) error {
 }
 
 // carryOver is step 5: it makes an entry for every element of reg but
-// the cold ones whose file is gone, the heat of every session a hook
+// the ones whose session is cold at now and whose file is gone, the heat of every session a hook
 // named, and the told mark of every session that was told, and
 // replaces none of them that stands already, but for an entry that
 // does not parse. A session none of whose entries is made gets neither
@@ -500,7 +501,7 @@ func (r *Registry) finish(projectIDHash string) error {
 // migration, and readers may have removed entries since, or the
 // project was unregistered. Making any file from the copy then would
 // put back what was removed.
-func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
+func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry, now time.Time, alive func(pid int) bool) error {
 	latest := map[string]earlierEntry{}
 	told := map[string]bool{}
 	for _, old := range reg.Files {
@@ -512,7 +513,6 @@ func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
 			told[session] = true
 		}
 	}
-	now := time.Now()
 	carried := map[string]string{}
 	for _, old := range reg.Files {
 		beforeCarry(old.Path)
@@ -523,7 +523,7 @@ func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
 		e := old.carried()
 		warm := e.File
 		warm.LastEvent, warm.PID = latest[session].LastEvent, latest[session].PID
-		if e.readable() && warm.prunable(now, ProcessAlive) {
+		if e.readable() && warm.prunable(now, alive) {
 			continue
 		}
 		if b, ok := r.earlierBound(projectIDHash, old.Path); ok {

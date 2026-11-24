@@ -253,7 +253,7 @@ func (m *Machine) VerifyUpgrade(ctx context.Context) error {
 // project, and a registry left unpruned costs only time.
 func (m *Machine) settleRegistries() {
 	for _, g := range m.enabledGrants() {
-		_ = m.registry.Migrate(g.ProjectIDHash)
+		_ = m.registry.Migrate(g.ProjectIDHash, m.deps.Now(), follow.ProcessAlive)
 		_, _ = m.registry.Prune(g.ProjectIDHash, m.deps.Now(), follow.ProcessAlive)
 	}
 }

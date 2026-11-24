@@ -214,7 +214,7 @@ const (
 // that cannot be read, this time.
 func (m *Machine) sessionFiles(projectIDHash string, migration registryMigration) registryContents {
 	if migration == migrateFirst {
-		if err := m.registry.Migrate(projectIDHash); err != nil {
+		if err := m.registry.Migrate(projectIDHash, m.deps.Now(), follow.ProcessAlive); err != nil {
 			return registryContents{Err: err}
 		}
 	}
