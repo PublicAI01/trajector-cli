@@ -84,6 +84,14 @@ All notable changes to trajector are documented here. The format follows
   all along. The lines before it state the directory they were written
   in; they are now kept when every such directory is in the project,
   and passed over as before when one is not or when none is stated.
+- A session started, or a prompt sent, right after an upgrade no longer
+  waits 20 seconds and then fails with "could not start the capture
+  proxy: previous proxy ... did not release the port". Before, when two
+  trajector processes replaced the proxy of the older release at the
+  same moment, only one of them started the new proxy. The other kept
+  waiting for the port to come free while the new proxy already held
+  it, and gave up after 20 seconds. Now it sees that the new proxy is
+  serving and leaves it in place.
 
 ## [0.7.1] - 2026-11-21
 

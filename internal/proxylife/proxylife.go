@@ -270,8 +270,9 @@ func For(layout userdirs.Layout, version, execPath, addr string, start Starter) 
 func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/" + token }
 
 // Ensure makes sure the proxy is up: a holder this build leaves
-// serving is a no-op, a replaceable one is asked to drain and is taken
-// over, and nothing listening is started. Up means listening, or
+// serving is a no-op, a replaceable one is asked to drain and its port
+// is taken, by this caller or by a concurrent one, and nothing
+// listening is started. Up means listening, or
 // recorded as started — a starter that starts no process puts nothing
 // on the port, and Ensure then answers on the record alone. A
 // differing-version reuse is noted in the proxy log. Concurrent
@@ -296,11 +297,7 @@ func (p *Proxy) Ensure(ctx context.Context) error {
 			return err
 		}
 	case v.Serving(p.version):
-		if v.Health.Version != p.version {
-			p.noteReuse(v.Health.Version)
-			return nil
-		}
-		p.clearCannotStart()
+		p.leaveServing(v)
 		return nil
 	case v.Replaceable(p.version):
 		// A strictly older release holds the port. Left alone it could
@@ -308,14 +305,19 @@ func (p *Proxy) Ensure(ctx context.Context) error {
 		// over. The drain says it is a handover, so the older proxy lets
 		// replies still streaming through it finish rather than cutting
 		// them for the client to resend; it still closes its listener at
-		// once, so the wait below is for the port alone. A drain that
+		// once, so the port does not wait for them. A drain that
 		// already failed names what stands in the way; waiting out the
 		// port would bury that cause under a timeout that cannot succeed.
 		if err := p.drain(ctx, apiproxy.DrainCauseHandover); err != nil {
 			return fmt.Errorf("asking the previous proxy to drain: %w", err)
 		}
-		if err := p.waitPortFree(ctx, drainTimeout); err != nil {
+		winner, won, err := p.waitHandover(ctx, drainTimeout)
+		if err != nil {
 			return err
+		}
+		if won {
+			p.leaveServing(winner)
+			return nil
 		}
 		tookOver = true
 	}
@@ -340,6 +342,17 @@ func (p *Proxy) Ensure(ctx context.Context) error {
 	}
 	p.clearCannotStart()
 	return nil
+}
+
+// leaveServing is what Ensure does about a holder this build leaves
+// serving: a proxy of another version is noted in the proxy log, and
+// one of this version withdraws the record that the build cannot start.
+func (p *Proxy) leaveServing(v Verdict) {
+	if v.Health.Version != p.version {
+		p.noteReuse(v.Health.Version)
+		return
+	}
+	p.clearCannotStart()
 }
 
 // CannotStart reports that this build is on record as unable to start
@@ -399,8 +412,9 @@ func (p *Proxy) replaceHungProxy(ctx context.Context, v Verdict) error {
 // Observe reads the port as it stands and pays no startup grace: it is
 // what report-only surfaces call, so a diagnosis answers at once. A
 // holder that only proves itself a moment from now is reported as it
-// is right now; callers about to act on the verdict want Settled
-// instead, and the method name is the whole difference.
+// is right now. A caller about to act on a holder it could not prove
+// wants Settled instead, and the method name is the whole difference;
+// a holder proven ours is the same in both.
 func (p *Proxy) Observe(ctx context.Context) Verdict {
 	token, holder, why := p.verify(ctx)
 	if holder != HolderOurs {
@@ -485,8 +499,8 @@ func (p *Proxy) settledVerify(ctx context.Context) (string, Holder, error) {
 }
 
 // settle retries a HolderForeign verdict until the startup grace runs
-// out. Every caller about to act on a verdict reads it through here;
-// nothing else does.
+// out. Every caller about to act on a holder that may be unproven
+// reads the verdict through here; nothing else does.
 func settle[T any](verdict func() (T, Holder, error)) (T, Holder, error) {
 	deadline := time.Now().Add(foreignSettle)
 	for {
@@ -507,7 +521,8 @@ func settle[T any](verdict func() (T, Holder, error)) (T, Holder, error) {
 // reporting ErrPortOccupied does not do. Only callers about to act on
 // the verdict pay it — Ensure, a serve process that just lost the
 // bind, the wait for a freshly started proxy, and the drain and flush
-// requests aimed at the holder. Report-only surfaces call Observe.
+// requests aimed at the holder. Report-only surfaces call Observe, and
+// so does a wait that acts on nothing but a holder proven ours.
 func (p *Proxy) Settled(ctx context.Context) Verdict {
 	v, _, _ := settle(func() (Verdict, Holder, error) {
 		v := p.Observe(ctx)
@@ -738,7 +753,38 @@ func (p *Proxy) waitPortFree(ctx context.Context, within time.Duration) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("previous proxy at %s did not release the port within %s", p.addr, within)
+			return p.portKept(within)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// portKept is the failure of every wait for a proxy to leave the port.
+func (p *Proxy) portKept(within time.Duration) error {
+	return fmt.Errorf("previous proxy at %s did not release the port within %s", p.addr, within)
+}
+
+// waitHandover waits for the proxy that was asked to drain to leave
+// the port. The port may never be seen free: a concurrent caller that
+// asked the same proxy to drain starts its own the moment the port
+// comes free. A holder this build leaves serving is that caller's
+// proxy, and won reports it, with its verdict, for Ensure to defer to.
+// The holder is read as it stands: one still publishing its admin
+// token proves itself on a later look. No look outlasts the wait, so a
+// holder that stopped answering does not stretch it.
+func (p *Proxy) waitHandover(ctx context.Context, within time.Duration) (winner Verdict, won bool, err error) {
+	deadline := time.Now().Add(within)
+	looks, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	for {
+		if !listening(ctx, p.addr, 100*time.Millisecond) {
+			return Verdict{}, false, nil
+		}
+		if v := p.Observe(looks); v.Serving(p.version) {
+			return v, true, nil
+		}
+		if time.Now().After(deadline) {
+			return Verdict{}, false, p.portKept(within)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
