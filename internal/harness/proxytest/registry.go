@@ -138,11 +138,13 @@ func (s *Sandbox) RegistryDirNames(projectIDHash string) []string {
 // RewindCursor puts one entry back to where a reader that kept no
 // segment bound left it when it was killed after it stored a segment
 // but before it advanced the cursor: the file is still registered,
-// under the subpath it had, and nothing counts as read from it.
+// under the subpath it had, and nothing counts as read from it. The
+// entry file is removed and the path registered again, which is how a
+// cursor from byte 0 comes to stand.
 func (s *Sandbox) RewindCursor(projectIDHash, path string) {
 	s.t.Helper()
 	was := s.registered(projectIDHash, path)
-	if err := s.registry().Remove(projectIDHash, path); err != nil {
+	if err := os.Remove(s.entryFile(projectIDHash, path)); err != nil {
 		s.t.Fatal(err)
 	}
 	if err := s.registry().RegisterAll(projectIDHash, []string{path}, was.Subpath); err != nil {
@@ -196,8 +198,10 @@ func (s *Sandbox) ProjectsWithRegistry() []string {
 // AddSignals accumulates what a reading run noticed, as the run itself
 // would have recorded it: a reader keeps what its store noticed with
 // the cursor of the file it read. The file read here is a stand-in,
-// empty and registered only for this read, and its entry is removed
-// afterwards, so the project's entries are as they were.
+// empty and registered only for this read. It is then removed, and a
+// second read drops its entry as a reader drops the entry of every file
+// gone for good, which keeps what it noticed in the project file; the
+// project's entries are as they were.
 func (s *Sandbox) AddSignals(projectIDHash string, more Signals) {
 	s.t.Helper()
 	dir := s.t.TempDir()
@@ -215,8 +219,12 @@ func (s *Sandbox) AddSignals(projectIDHash string, more Signals) {
 		Store:         func(follow.ReadResult) (follow.Storing, Signals) { return follow.Stored, more },
 	}
 	reader.Advance(standIn)
-	if err := s.registry().Remove(projectIDHash, standIn); err != nil {
+	if err := os.Remove(standIn); err != nil {
 		s.t.Fatal(err)
+	}
+	reader.Advance(standIn)
+	if slices.Contains(s.RegisteredPaths(projectIDHash), standIn) {
+		s.t.Fatal("proxytest: the stand-in's entry outlived its file")
 	}
 	if !s.Signals(projectIDHash).Any() && more.Any() {
 		s.t.Fatal("proxytest: the stand-in read kept no signals")

@@ -211,7 +211,7 @@ func (rd Reader) roundHeld(held *heldEntry) (next, more bool) {
 	case Stored:
 	}
 	if res.Reaction == Vanished {
-		_ = rd.Registry.Remove(rd.ProjectIDHash, f.Path)
+		_ = rd.Registry.leave(held)
 		return true, false
 	}
 	if !f.changedBy(res.File) && !noticed.Any() {

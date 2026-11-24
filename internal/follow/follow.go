@@ -381,20 +381,21 @@ func (r *Registry) Unregister(projectIDHash string) error {
 	return err
 }
 
-// Remove drops one file's entry from projectIDHash's registry, leaving
-// the project's other entries in place, and keeps what reading the
-// file noticed in the project file. A path that is not registered, or
-// a project with no registry, is already in the wanted state; an entry
-// that needs what this build does not know is left as it is. It is how
-// a caller drops a file that is gone for good: nothing is left to read
-// of it, and no search of the project finds it again.
-func (r *Registry) Remove(projectIDHash, path string) error {
-	e, ok, err := r.readEntry(projectIDHash, path)
+// leave removes the entry held, whose lock the caller holds, from its
+// project's registry, leaving the project's other entries in place,
+// and keeps what reading the file noticed in the project file. An entry
+// removed already, or a project with no registry, is already in the
+// wanted state; an entry that needs what this build does not know is
+// left as it is. It is how an entry whose file is gone for good leaves:
+// nothing is left to read of it, and no search of the project finds it
+// again.
+func (r *Registry) leave(held *heldEntry) error {
+	e, ok, err := held.read()
 	if err != nil || !ok || !e.readable() {
 		return err
 	}
 	if e.Signals != nil {
-		err := r.updateProject(projectIDHash, false, func(p *projectFile) error {
+		err := r.updateProject(held.projectIDHash, false, func(p *projectFile) error {
 			p.Signals = plus(p.Signals, *e.Signals)
 			return nil
 		})
@@ -402,7 +403,7 @@ func (r *Registry) Remove(projectIDHash, path string) error {
 			return err
 		}
 	}
-	return r.dropEntry(projectIDHash, path)
+	return r.dropEntry(held.projectIDHash, held.path)
 }
 
 // dropEntry removes the entry file of path. An entry removed already is

@@ -303,10 +303,14 @@ func TestLayout_AKeyThisBuildDoesNotKnowOutlivesEveryWriter(t *testing.T) {
 		{"RegisterAll", func() error {
 			return a.registry.RegisterAll(project, []string{main, filepath.Join(filepath.Dir(main), "sid-new.jsonl")}, "")
 		}},
-		{"Remove of another entry with signals", func() error {
+		{"a read that drops another entry with signals", func() error {
 			a.answer, a.noticed = follow.Stored, drift.Signals{AssistantLines: 2, AssistantLinesWithoutMessageID: 2}
 			a.reader.Advance(other)
-			return a.registry.Remove(project, other)
+			if err := os.Remove(other); err != nil {
+				return err
+			}
+			a.reader.Advance(other)
+			return nil
 		}},
 	}
 	for _, w := range writers {
@@ -353,9 +357,8 @@ func TestLayout_AnEntryThatNeedsWhatThisBuildDoesNotKnowIsLeftAlone(t *testing.T
 	if err := a.registry.RegisterAll(project, []string{marked}, "sub"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.registry.Remove(project, marked); err != nil {
-		t.Fatal(err)
-	}
+	removeAll(t, []string{marked})
+	a.reader.Advance(marked)
 
 	if !slices.Equal(handed, []string{other}) {
 		t.Errorf("reads handed to the store = %q, want only the other entry read", handed)
@@ -610,20 +613,20 @@ func TestLayout_ACursorMovesWhileAnotherProcessHoldsTheProjectLock(t *testing.T)
 	}
 }
 
-func TestLayout_RemoveKeepsWhatTheEntryNoticedInTheProjectFile(t *testing.T) {
+func TestLayout_AnEntryThatLeavesKeepsWhatItNoticedInTheProjectFile(t *testing.T) {
 	a := newAdvancing(t)
 	main := mainPath(t)
 	writeFile(t, main, userLine(1))
 	a.register(main, "")
 	a.answer, a.noticed = follow.Stored, drift.Signals{AssistantLines: 3, AssistantLinesWithoutMessageID: 1}
 	a.reader.Advance(main)
+	removeAll(t, []string{main})
+	a.answer, a.noticed = follow.Stored, drift.Signals{}
 
-	if err := a.registry.Remove(project, main); err != nil {
-		t.Fatal(err)
-	}
+	a.reader.Advance(main)
 
 	if _, err := os.Stat(entryFileOf(a.dir, main)); !os.IsNotExist(err) {
-		t.Errorf("entry file after Remove: stat = %v, want it gone", err)
+		t.Errorf("entry file after its file was found gone: stat = %v, want it gone", err)
 	}
 	if got := string(keysOf(t, projectFileOf(a.dir))["signals"]); got != `{"assistant_lines":3,"assistant_lines_without_message_id":1}` {
 		t.Errorf("project file signals = %s, want what the removed entry noticed", got)
