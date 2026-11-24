@@ -89,11 +89,11 @@ func (r *reading) registered() follow.File {
 
 func (r *reading) signals() drift.Signals {
 	r.t.Helper()
-	s, err := r.reader.Registry.Signals(r.project.Hash)
+	c, err := r.reader.Registry.Contents(r.project.Hash)
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	return s
+	return c.Signals
 }
 
 func assistantWithoutID(root string) string {

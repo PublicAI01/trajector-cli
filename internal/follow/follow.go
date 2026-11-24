@@ -222,17 +222,6 @@ func (r *Registry) SetGaps(projectIDHash string, gaps Gaps) error {
 	})
 }
 
-// Gaps reports what the latest search for projectIDHash's earlier
-// files left uncovered. A project with no registry, or one whose
-// search covered everything, has no gaps.
-func (r *Registry) Gaps(projectIDHash string) (Gaps, error) {
-	p, _, err := r.readProject(projectIDHash)
-	if err != nil || p.Gaps == nil {
-		return Gaps{}, err
-	}
-	return *p.Gaps, nil
-}
-
 // plus is what sum holds with more added, and nil when that is nothing.
 // What a signal holds is drift's to name; the registry only keeps the
 // sum.
@@ -306,12 +295,6 @@ func (r *Registry) Contents(projectIDHash string) (Contents, error) {
 		c.Signals = *sum
 	}
 	return c, nil
-}
-
-// Signals is what Contents states about projectIDHash's signals.
-func (r *Registry) Signals(projectIDHash string) (drift.Signals, error) {
-	c, err := r.Contents(projectIDHash)
-	return c.Signals, err
 }
 
 // Files is what Contents states about the files projectIDHash reads.

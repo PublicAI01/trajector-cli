@@ -556,11 +556,11 @@ func TestRegister_RecordsWhatTheWalkCouldNotCover(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gaps, err := r.Gaps("hash")
+	c, err := r.Contents("hash")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(gaps, res.Gaps) {
+	if gaps := c.Gaps; !reflect.DeepEqual(gaps, res.Gaps) {
 		t.Errorf("Gaps = %+v, want %+v", gaps, res.Gaps)
 	}
 }
