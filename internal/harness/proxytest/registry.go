@@ -285,11 +285,11 @@ func (s *Sandbox) AddSignals(projectIDHash string, more Signals) {
 // Signals reports what a project's registry accumulated.
 func (s *Sandbox) Signals(projectIDHash string) Signals {
 	s.t.Helper()
-	got, err := s.registry().Signals(projectIDHash)
+	got, err := s.registry().Contents(projectIDHash)
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	return got
+	return got.Signals
 }
 
 // EarlierRegistry and EarlierEntry are a project's registry and one of

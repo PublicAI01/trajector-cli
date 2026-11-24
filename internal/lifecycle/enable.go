@@ -456,8 +456,9 @@ func (m *Machine) confirmHooksWillRun(streams IO, root string, shape routing.Sha
 // registered in it until that migration is done.
 func (m *Machine) registerEarlierSessions(st report.ProjectStatus, found discover.Result, ledger *enableLedger) (registered int, toRead []string, err error) {
 	projectIDHash := st.Hash
-	if err := m.registry.Migrate(projectIDHash); err != nil {
-		return 0, nil, err
+	held := m.sessionFiles(projectIDHash)
+	if held.Err != nil {
+		return 0, nil, held.Err
 	}
 	projects, err := m.registry.Projects()
 	if err != nil {
@@ -466,12 +467,8 @@ func (m *Machine) registerEarlierSessions(st report.ProjectStatus, found discove
 	if ledger != nil && !slices.Contains(projects, projectIDHash) {
 		ledger.record(func() error { return m.registry.Unregister(projectIDHash) })
 	}
-	held, err := m.registry.Paths(projectIDHash)
-	if err != nil {
-		return 0, nil, err
-	}
-	before := make(map[string]bool, len(held))
-	for _, path := range held {
+	before := make(map[string]bool, len(held.Paths))
+	for _, path := range held.Paths {
 		before[path] = true
 	}
 	if err := discover.Register(m.registry, projectIDHash, found); err != nil {
@@ -507,13 +504,13 @@ func (m *Machine) registerEarlierSessions(st report.ProjectStatus, found discove
 // that never happened is asked for again.
 func (m *Machine) unreadSessions(st report.ProjectStatus) ([]string, error) {
 	projectIDHash := st.Hash
-	files, err := m.registry.Files(projectIDHash)
-	if err != nil {
-		return nil, err
+	registered := m.sessionFiles(projectIDHash)
+	if registered.Err != nil {
+		return nil, registered.Err
 	}
 	now := m.deps.Now()
 	var sessions []string
-	for _, f := range files {
+	for _, f := range registered.Files {
 		if !f.NeverRead() {
 			continue
 		}

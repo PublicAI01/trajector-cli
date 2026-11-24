@@ -248,61 +248,74 @@ func plus(sum *drift.Signals, more drift.Signals) *drift.Signals {
 	return &total
 }
 
-// Signals reports everything the reader noticed about projectIDHash's
-// files so far: what each entry this build reads noticed, and what the
-// entries removed since noticed. A project with no registry, or one
-// whose reads noticed nothing, has none.
-func (r *Registry) Signals(projectIDHash string) (drift.Signals, error) {
-	p, entries, err := r.list(projectIDHash)
+// Contents is one project's registry as a caller that states or acts
+// on the project as a whole reads it. Every field comes from one
+// listing of the project directory, so no two of them describe
+// different moments.
+type Contents struct {
+	// Files is every file the project reads, ordered by path, each with
+	// the heat of its session. An entry that needs what this build does
+	// not know is not among them, and neither is an entry file that does
+	// not parse.
+	Files []File
+	// Paths is the path of every entry the registry holds, ordered, the
+	// entries this build does not read included. It is what a search of
+	// the project's tree is held against: an entry a later build needs is
+	// registered, and calling its path unregistered would ask the user to
+	// register what is registered already. An entry file that does not
+	// parse names no path.
+	Paths []string
+	// Signals is everything the reader noticed about the project's files
+	// so far: what each file in Files noticed, and what the entries
+	// removed since noticed.
+	Signals drift.Signals
+	// Gaps is what the latest search for the project's earlier files left
+	// uncovered.
+	Gaps Gaps
+}
+
+// Contents reads projectIDHash's registry once. A project with no
+// registry has empty contents.
+func (r *Registry) Contents(projectIDHash string) (Contents, error) {
+	p, entries, _, err := r.listAll(projectIDHash)
 	if err != nil {
-		return drift.Signals{}, err
+		return Contents{}, err
+	}
+	c := Contents{Files: make([]File, 0, len(entries)), Paths: make([]string, 0, len(entries))}
+	if p.Gaps != nil {
+		c.Gaps = *p.Gaps
 	}
 	sum := p.Signals
+	heats := map[string]heat{}
 	for _, e := range entries {
+		c.Paths = append(c.Paths, e.Path)
+		if !e.readable() {
+			continue
+		}
+		c.Files = append(c.Files, r.warmed(projectIDHash, e.File, heats))
 		if e.Signals != nil {
 			sum = plus(sum, *e.Signals)
 		}
 	}
-	if sum == nil {
-		return drift.Signals{}, nil
+	if sum != nil {
+		c.Signals = *sum
 	}
-	return *sum, nil
+	return c, nil
 }
 
-// Files lists the files projectIDHash reads, ordered by path, each with
-// the heat of its session. A project with no registry has no files. An
-// entry that needs what this build does not know is not listed, and
-// neither is an entry file that does not parse.
+// Signals is what Contents states about projectIDHash's signals.
+func (r *Registry) Signals(projectIDHash string) (drift.Signals, error) {
+	c, err := r.Contents(projectIDHash)
+	return c.Signals, err
+}
+
+// Files is what Contents states about the files projectIDHash reads.
 func (r *Registry) Files(projectIDHash string) ([]File, error) {
-	_, entries, err := r.list(projectIDHash)
+	c, err := r.Contents(projectIDHash)
 	if err != nil {
 		return nil, err
 	}
-	files := make([]File, 0, len(entries))
-	heats := map[string]heat{}
-	for _, e := range entries {
-		files = append(files, r.warmed(projectIDHash, e.File, heats))
-	}
-	return files, nil
-}
-
-// Paths lists the path of every entry projectIDHash's registry holds,
-// ordered, the entries this build does not read included. It is what a
-// caller holding a search of the project's tree against the registry
-// asks for: an entry a later build needs is registered, and calling its
-// path unregistered would ask the user to register what is registered
-// already. An entry file that does not parse names no path; Unreadable
-// counts it.
-func (r *Registry) Paths(projectIDHash string) ([]string, error) {
-	_, entries, _, err := r.listAll(projectIDHash)
-	if err != nil {
-		return nil, err
-	}
-	paths := make([]string, 0, len(entries))
-	for _, e := range entries {
-		paths = append(paths, e.Path)
-	}
-	return paths, nil
+	return c.Files, nil
 }
 
 // Unreadable counts the entry files of projectIDHash's registry that
@@ -569,13 +582,6 @@ func parseProject(data []byte) (projectFile, error) {
 	default:
 		return projectFile{}, fmt.Errorf("follow: unsupported registry version %d", p.Version)
 	}
-}
-
-// list is projectIDHash's project file and every entry of it this
-// build reads, ordered by path.
-func (r *Registry) list(projectIDHash string) (projectFile, []entryFile, error) {
-	p, entries, _, err := r.listAll(projectIDHash)
-	return p, slices.DeleteFunc(entries, func(e entryFile) bool { return !e.readable() }), err
 }
 
 // listAll is projectIDHash's project file and every entry of it,

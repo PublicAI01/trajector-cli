@@ -286,8 +286,8 @@ func TestMigrate_CarriesEachEarlierFieldToItsPlaceInThisLayout(t *testing.T) {
 	if want := slices.Sorted(slices.Values([]string{fx.main, fx.agent, fx.inRun, fx.moved})); !slices.Equal(listed, want) {
 		t.Errorf("Files() = %q, want %q: every entry but the one retired for a reason no build wrote", listed, want)
 	}
-	if paths, err := r.Paths(project); err != nil || len(paths) != 5 {
-		t.Errorf("Paths() = %q, %v, want all five entries", paths, err)
+	if paths, err := registeredPaths(r, project); err != nil || len(paths) != 5 {
+		t.Errorf("Contents().Paths = %q, %v, want all five entries", paths, err)
 	}
 
 	for _, gone := range []string{
@@ -540,8 +540,8 @@ func TestMigrate_EmptiesAProjectDirectoryLeftBesideAnEarlierProjectFile(t *testi
 		t.Fatalf("Migrate() = %v", err)
 	}
 
-	if paths, err := r.Paths(project); err != nil || !slices.Equal(paths, []string{kept}) {
-		t.Errorf("Paths() = %q, %v, want only the entry of the project file", paths, err)
+	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, []string{kept}) {
+		t.Errorf("Contents().Paths = %q, %v, want only the entry of the project file", paths, err)
 	}
 	if _, err := os.Stat(sessionFileOf(dir, left, ".heat")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("heat left in the directory: stat = %v, want it gone", err)
@@ -603,8 +603,8 @@ func TestRegisterAll_EmptiesAProjectDirectoryLeftWithoutAProjectFile(t *testing.
 
 	mustRegister(t, r, project, registered)
 
-	if paths, err := r.Paths(project); err != nil || !slices.Equal(paths, []string{registered}) {
-		t.Errorf("Paths() = %q, %v, want only the path registered after the project file was gone", paths, err)
+	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, []string{registered}) {
+		t.Errorf("Contents().Paths = %q, %v, want only the path registered after the project file was gone", paths, err)
 	}
 }
 
@@ -693,8 +693,8 @@ func TestMigrate_LeavesBehindTheColdEntriesWhoseFileIsGone(t *testing.T) {
 	}
 
 	want := slices.Sorted(slices.Values([]string{kept, keptAgent, agentKept, unmounted, hot, later}))
-	if paths, err := r.Paths(project); err != nil || !slices.Equal(paths, want) {
-		t.Errorf("Paths() = %q, %v\nwant %q: every entry but the cold ones whose file is gone from a directory still there", paths, err, want)
+	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, want) {
+		t.Errorf("Contents().Paths = %q, %v\nwant %q: every entry but the cold ones whose file is gone from a directory still there", paths, err, want)
 	}
 	for _, mark := range []string{".heat", ".told"} {
 		if _, err := os.Stat(sessionFileOf(dir, gone, mark)); !errors.Is(err, fs.ErrNotExist) {
@@ -726,8 +726,8 @@ func TestMigrate_KeepsEveryEntryOfALargeRegistryWhoseFileIsThere(t *testing.T) {
 		t.Fatalf("Migrate() = %v", err)
 	}
 
-	if paths, err := r.Paths(project); err != nil || !slices.Equal(paths, kept) {
-		t.Errorf("Paths() lists %d entries, %v, want the %d of %d whose file is there", len(paths), err, len(kept), n)
+	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, kept) {
+		t.Errorf("Contents().Paths lists %d entries, %v, want the %d of %d whose file is there", len(paths), err, len(kept), n)
 	}
 }
 
@@ -789,8 +789,8 @@ func TestMigrate_LeavesBehindTheAgentEntriesOfASessionRemovedWithItsDirectory(t 
 		t.Fatalf("Migrate() = %v", err)
 	}
 
-	if paths, err := r.Paths(project); err != nil || !slices.Equal(paths, unmounted) {
-		t.Errorf("Paths() = %q, %v\nwant the entries of the session whose main file's directory is not there: %q", paths, err, unmounted)
+	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, unmounted) {
+		t.Errorf("Contents().Paths = %q, %v\nwant the entries of the session whose main file's directory is not there: %q", paths, err, unmounted)
 	}
 }
 
@@ -831,8 +831,8 @@ func TestMigrate_TakesAgainTheEntryLocksThatGrewOldBeforeItRewritesTheProjectFil
 	if locked != 2 {
 		t.Errorf("the entry locks were taken %d times, want twice: an earlier reader takes over a lock as old as the first ones were", locked)
 	}
-	if paths, err := follow.Open(dir).Paths(project); err != nil || !slices.Equal(paths, []string{path}) {
-		t.Errorf("Paths() = %q, %v, want the entry migrated", paths, err)
+	if paths, err := registeredPaths(follow.Open(dir), project); err != nil || !slices.Equal(paths, []string{path}) {
+		t.Errorf("Contents().Paths = %q, %v, want the entry migrated", paths, err)
 	}
 }
 

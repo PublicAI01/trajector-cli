@@ -12,7 +12,6 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/apiproxy"
 	"github.com/PublicAI01/trajector-cli/internal/claudesettings"
 	"github.com/PublicAI01/trajector-cli/internal/consent"
-	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/follow/discover"
 )
@@ -173,14 +172,11 @@ func (m *Machine) followSession(ctx context.Context, cwd string, hook HookInput,
 func sessionPID() int { return os.Getppid() }
 
 // registryContents is one project's registry as everything here reads
-// it: which files are registered, what the one search for earlier
-// files could not cover, and what reading noticed about their shape.
+// it, from one reading of it.
 type registryContents struct {
-	Files   []follow.File
-	Gaps    follow.Gaps
-	Signals drift.Signals
+	follow.Contents
 	// Err, when non-nil, is why the registry could not be read. The
-	// other fields are then zero.
+	// contents are then empty.
 	Err error
 }
 
@@ -199,19 +195,11 @@ func (m *Machine) sessionFiles(projectIDHash string) registryContents {
 	if err := m.registry.Migrate(projectIDHash); err != nil {
 		return registryContents{Err: err}
 	}
-	files, err := m.registry.Files(projectIDHash)
+	c, err := m.registry.Contents(projectIDHash)
 	if err != nil {
 		return registryContents{Err: err}
 	}
-	gaps, err := m.registry.Gaps(projectIDHash)
-	if err != nil {
-		return registryContents{Err: err}
-	}
-	signals, err := m.registry.Signals(projectIDHash)
-	if err != nil {
-		return registryContents{Err: err}
-	}
-	return registryContents{Files: files, Gaps: gaps, Signals: signals}
+	return registryContents{Contents: c}
 }
 
 // projectSubpath reports where a session ran relative to the project

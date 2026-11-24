@@ -321,12 +321,12 @@ func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFile
 	if reading == fromRegistry || state.Err != nil || st.WindowsSideClaude {
 		return state
 	}
-	return m.readProjectTree(state, st)
+	return m.readProjectTree(state, st, registered.Paths)
 }
 
 // readProjectTree takes the second reading: it walks the project's tree
-// once and holds what it found against the path of every entry the
-// registry keeps, those this build does not read included. Such an
+// once and holds what it found against paths, the path of every entry
+// the registry keeps, those this build does not read included. Such an
 // entry is registered, and a search that called its path unregistered
 // would ask the user to register what is registered already. The
 // counts above come from what this build reads, which is a different
@@ -336,12 +336,7 @@ func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFile
 // alone. Where it found sessions the registry does not hold, it places
 // one file the way a registration does and removes it again, to learn
 // whether the registry takes a new entry at all.
-func (m *Machine) readProjectTree(state report.SessionFilesState, st report.ProjectStatus) report.SessionFilesState {
-	paths, err := m.registry.Paths(st.Hash)
-	if err != nil {
-		state.Err = err
-		return state
-	}
+func (m *Machine) readProjectTree(state report.SessionFilesState, st report.ProjectStatus, paths []string) report.SessionFilesState {
 	found, err := discover.Walk(st.Root, m.claude().ConfigDir)
 	if err != nil {
 		state.WalkErr = err
