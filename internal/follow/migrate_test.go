@@ -817,3 +817,47 @@ func TestMigrate_TakesAgainTheEntryLocksThatGrewOldBeforeItRewritesTheProjectFil
 		t.Errorf("Paths() = %q, %v, want the entry migrated", paths, err)
 	}
 }
+
+func TestMigrate_MakesNoEntryOnceItsCopyIsGone(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "follow")
+	sessions := t.TempDir()
+	first, second, third := filepath.Join(sessions, "sid-1.jsonl"), filepath.Join(sessions, "sid-2.jsonl"), filepath.Join(sessions, "sid-3.jsonl")
+	for _, path := range []string{first, second, third} {
+		writeFile(t, path, userLine(1))
+	}
+	recent := time.Now().UTC().Format(time.RFC3339)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := registryv1.Write(dir, project, registryv1.Registry{Files: []registryv1.Entry{
+		{Path: first, Offset: 1, NextSegment: 1},
+		{Path: second, Offset: 2, NextSegment: 1, LastEvent: recent, Told: true},
+		{Path: third, Offset: 3, NextSegment: 1, LastEvent: recent, Told: true},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	var left map[string]string
+	follow.BeforeCarries(t, func(path string) {
+		if path != second || left != nil {
+			return
+		}
+		if err := os.Remove(filepath.Join(projectDirOf(dir), "migrating.v1")); err != nil {
+			t.Error(err)
+		}
+		left = tree(t, projectDirOf(dir))
+	})
+
+	if err := follow.Open(dir).Migrate(project); err != nil {
+		t.Fatalf("Migrate() = %v, want a copy another process removed taken as a migration it finished", err)
+	}
+
+	if left == nil {
+		t.Fatal("the migration never came to the second entry")
+	}
+	after := tree(t, projectDirOf(dir))
+	maps.DeleteFunc(after, func(name, _ string) bool { return strings.HasSuffix(name, ".lock") })
+	maps.DeleteFunc(left, func(name, _ string) bool { return strings.HasSuffix(name, ".lock") })
+	if diff := treeDiff(after, left); diff != "" {
+		t.Errorf("project directory after the copy was removed in the middle of step 5 changed:\n%s", diff)
+	}
+}

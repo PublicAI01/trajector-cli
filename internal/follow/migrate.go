@@ -89,6 +89,11 @@ var errMigrationBusy = fmt.Errorf("%w (another process is migrating it)", ErrMig
 // a process killed there would.
 var afterMigrationStep = func(int) {}
 
+// beforeCarry runs as step 5 is about to make the entry of path. It is
+// a variable only so a test can change the project in between, as
+// another process may.
+var beforeCarry = func(string) {}
+
 // earlierEntry is one element of "files" in the layout before this one.
 type earlierEntry struct {
 	File
@@ -411,7 +416,8 @@ func (r *Registry) stage(projectIDHash string, earlier []byte) error {
 }
 
 // finish is steps 5 and 6 of a project that is halfway, and does
-// nothing to any other.
+// nothing to any other. A project whose copy another process removed
+// meanwhile is left as that process finished it.
 func (r *Registry) finish(projectIDHash string) error {
 	at, err := r.layoutOf(projectIDHash)
 	if err != nil || at != halfway {
@@ -425,7 +431,10 @@ func (r *Registry) finish(projectIDHash string) error {
 	if err != nil {
 		return err
 	}
-	if err := r.carryOver(projectIDHash, reg); err != nil {
+	switch err := r.carryOver(projectIDHash, reg); {
+	case errors.Is(err, errCopyGone):
+		return nil
+	case err != nil:
 		return err
 	}
 	afterMigrationStep(5)
@@ -444,6 +453,12 @@ func (r *Registry) finish(projectIDHash string) error {
 // heat nor a told mark. Nothing reads the project while it is halfway,
 // so what stands was made by an earlier try of this step. The files are
 // not flushed one by one; step 6 flushes them all.
+//
+// Before each file it makes, it looks for the copy, and stops with
+// errCopyGone when the copy is gone: another process finished the
+// migration, and readers may have removed entries since, or the
+// project was unregistered. Making any file from the copy then would
+// put back what was removed.
 func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
 	latest := map[string]earlierEntry{}
 	told := map[string]bool{}
@@ -459,6 +474,10 @@ func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
 	now := time.Now()
 	carried := map[string]string{}
 	for _, old := range reg.Files {
+		beforeCarry(old.Path)
+		if err := r.copyStands(projectIDHash); err != nil {
+			return err
+		}
 		session := SessionOf(old.Path)
 		e := old.carried()
 		warm := e.File
@@ -479,6 +498,9 @@ func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
 		carried[session] = old.Path
 	}
 	for session, path := range carried {
+		if err := r.copyStands(projectIDHash); err != nil {
+			return err
+		}
 		if told[session] {
 			if _, err := r.tell(projectIDHash, path); err != nil {
 				return err
@@ -492,9 +514,29 @@ func (r *Registry) carryOver(projectIDHash string, reg earlierRegistry) error {
 		if err != nil {
 			return err
 		}
+		if err := r.copyStands(projectIDHash); err != nil {
+			return err
+		}
 		if err := placeNew(r.sessionPath(projectIDHash, path, heatExt), data, false); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// errCopyGone reports a migration whose copy was removed while it made
+// entries from it.
+var errCopyGone = errors.New("follow: the copy of the earlier registry is gone")
+
+// copyStands refuses with errCopyGone once projectIDHash's copy is
+// gone.
+func (r *Registry) copyStands(projectIDHash string) error {
+	at, err := r.halfwayOrSettled(projectIDHash)
+	if err != nil {
+		return err
+	}
+	if at != halfway {
+		return errCopyGone
 	}
 	return nil
 }

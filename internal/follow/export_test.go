@@ -54,6 +54,15 @@ func BeforePruneLocks(t testing.TB, at func(path string)) {
 	t.Cleanup(func() { beforePruneLock = was })
 }
 
+// BeforeCarries has every migration in this test binary call at with
+// the path of each entry it is about to make, until t ends.
+func BeforeCarries(t testing.TB, at func(path string)) {
+	t.Helper()
+	was := beforeCarry
+	beforeCarry = at
+	t.Cleanup(func() { beforeCarry = was })
+}
+
 // AfterMigrationSteps has every migration in this test binary call at
 // with the number of each step it has done, until t ends.
 func AfterMigrationSteps(t testing.TB, at func(step int)) {
