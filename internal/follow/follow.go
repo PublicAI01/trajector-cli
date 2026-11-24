@@ -43,7 +43,7 @@
 // while the segment waits to be stored. An entry
 // is created whole or not at all, and a registration never replaces
 // one. An entry file that does not parse is passed over, and never read
-// from its start again; Unreadable counts such files.
+// from its start again; Contents counts such files.
 //
 // A pending registration is {"path":…,"subpath":…}: a file a hook
 // registered while the project's registry waited for its migration. It
@@ -265,6 +265,11 @@ type Contents struct {
 	// register what is registered already. An entry file that does not
 	// parse names no path.
 	Paths []string
+	// Unreadable counts the entry files that could not be read or do not
+	// parse. Such a file is passed over by every other reading, and the
+	// file it is the entry of is not read, so a surface states the count;
+	// nothing it holds is shown.
+	Unreadable int
 	// Signals is everything the reader noticed about the project's files
 	// so far: what each file in Files noticed, and what the entries
 	// removed since noticed.
@@ -277,11 +282,11 @@ type Contents struct {
 // Contents reads projectIDHash's registry once. A project with no
 // registry has empty contents.
 func (r *Registry) Contents(projectIDHash string) (Contents, error) {
-	p, entries, _, err := r.listAll(projectIDHash)
+	p, entries, unreadable, err := r.listAll(projectIDHash)
 	if err != nil {
 		return Contents{}, err
 	}
-	c := Contents{Files: make([]File, 0, len(entries)), Paths: make([]string, 0, len(entries))}
+	c := Contents{Files: make([]File, 0, len(entries)), Paths: make([]string, 0, len(entries)), Unreadable: unreadable}
 	if p.Gaps != nil {
 		c.Gaps = *p.Gaps
 	}
@@ -316,15 +321,6 @@ func (r *Registry) Files(projectIDHash string) ([]File, error) {
 		return nil, err
 	}
 	return c.Files, nil
-}
-
-// Unreadable counts the entry files of projectIDHash's registry that
-// could not be read or do not parse. Such a file is passed over by
-// every other reading, and the file it is the entry of is not read, so
-// a surface states the count; nothing it holds is shown.
-func (r *Registry) Unreadable(projectIDHash string) (int, error) {
-	_, _, unreadable, err := r.listAll(projectIDHash)
-	return unreadable, err
 }
 
 // File is the entry projectIDHash reads for path. ok is false for a

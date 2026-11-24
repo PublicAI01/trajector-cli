@@ -587,8 +587,8 @@ func TestMigrate_RewritesFromItsCopyOnlyTheEntriesAnEarlierTryLeftUnreadable(t *
 	if data, err := os.ReadFile(entryFileOf(dir, whole)); err != nil || string(data) != standing {
 		t.Errorf("entry of whole.jsonl = %q, %v, want the one that stood left as it was", data, err)
 	}
-	if n, err := r.Unreadable(project); err != nil || n != 0 {
-		t.Errorf("Unreadable() = %d, %v, want 0", n, err)
+	if n, err := unreadable(r, project); err != nil || n != 0 {
+		t.Errorf("Contents().Unreadable = %d, %v, want 0", n, err)
 	}
 }
 

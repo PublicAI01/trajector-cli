@@ -70,8 +70,8 @@ func TestPrune_RemovesOnlyTheColdEntriesWhoseFileIsGoneFromADirectoryStillThere(
 			t.Errorf("entry file of %s was rewritten, want it left as it was", filepath.Base(path))
 		}
 	}
-	if n, err := r.Unreadable(project); err != nil || n != 1 {
-		t.Errorf("Unreadable() = %d, %v, want the entry file that does not parse still there", n, err)
+	if n, err := unreadable(r, project); err != nil || n != 1 {
+		t.Errorf("Contents().Unreadable = %d, %v, want the entry file that does not parse still there", n, err)
 	}
 }
 

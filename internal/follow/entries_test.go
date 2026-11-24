@@ -12,6 +12,13 @@ import (
 	"github.com/PublicAI01/trajector-cli/internal/harness/registryv1"
 )
 
+// unreadable is what Contents counts of the entry files of project's
+// registry that cannot be read.
+func unreadable(r *follow.Registry, project string) (int, error) {
+	c, err := r.Contents(project)
+	return c.Unreadable, err
+}
+
 // registeredPaths is what Contents states about the paths project's
 // registry holds.
 func registeredPaths(r *follow.Registry, project string) ([]string, error) {
@@ -24,23 +31,23 @@ func TestRegistry_CountsTheEntryFilesThatCannotBeRead(t *testing.T) {
 	r := follow.Open(dir)
 	broken, other := abs(t, "broken.jsonl"), abs(t, "other.jsonl")
 	mustRegister(t, r, project, broken, other)
-	if n, err := r.Unreadable(project); err != nil || n != 0 {
-		t.Fatalf("Unreadable() = %d, %v, want 0 before any entry file breaks", n, err)
+	if n, err := unreadable(r, project); err != nil || n != 0 {
+		t.Fatalf("Contents().Unreadable = %d, %v, want 0 before any entry file breaks", n, err)
 	}
 	if err := os.WriteFile(entryFileOf(dir, broken), []byte(`{"path":`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	n, err := r.Unreadable(project)
+	n, err := unreadable(r, project)
 
 	if err != nil || n != 1 {
-		t.Errorf("Unreadable() = %d, %v, want the one entry file that does not parse", n, err)
+		t.Errorf("Contents().Unreadable = %d, %v, want the one entry file that does not parse", n, err)
 	}
 	if files, err := r.Files(project); err != nil || len(files) != 1 || files[0].Path != other {
 		t.Errorf("Files() = %+v, %v, want the other entry still listed", files, err)
 	}
-	if n, err := r.Unreadable("ffff0000"); err != nil || n != 0 {
-		t.Errorf("Unreadable() of a project with no registry = %d, %v, want 0", n, err)
+	if n, err := unreadable(r, "ffff0000"); err != nil || n != 0 {
+		t.Errorf("Contents().Unreadable of a project with no registry = %d, %v, want 0", n, err)
 	}
 }
 

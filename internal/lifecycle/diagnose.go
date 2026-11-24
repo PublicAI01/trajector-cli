@@ -296,9 +296,11 @@ func injectionAgrees(st report.ProjectStatus, onFile routing.Shape) bool {
 // still reads, so one run can never hold two accounts of that.
 func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFileReading) report.SessionFilesState {
 	registered := m.sessionFiles(st.Hash)
-	state := report.SessionFilesState{Err: registered.Err, Gaps: registered.Gaps, Signals: registered.Signals}
-	if registered.Err == nil {
-		state.UnreadableEntries, state.Err = m.registry.Unreadable(st.Hash)
+	state := report.SessionFilesState{
+		Err:               registered.Err,
+		Gaps:              registered.Gaps,
+		Signals:           registered.Signals,
+		UnreadableEntries: registered.Unreadable,
 	}
 	for _, f := range registered.Files {
 		if f.MainSession() {
