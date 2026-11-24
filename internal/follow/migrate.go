@@ -117,13 +117,11 @@ type earlierRegistry struct {
 // of the layout before this one.
 var errNotEarlier = errors.New("follow: the registry is not version 1")
 
+// parseEarlier is data, a project file of the layout before this one.
 func parseEarlier(data []byte) (earlierRegistry, error) {
 	var reg earlierRegistry
 	if err := json.Unmarshal(data, &reg); err != nil {
 		return earlierRegistry{}, fmt.Errorf("follow: registry: %w", err)
-	}
-	if reg.Version != earlierVersion {
-		return earlierRegistry{}, errNotEarlier
 	}
 	return reg, nil
 }
@@ -145,7 +143,7 @@ func parseEarlier(data []byte) (earlierRegistry, error) {
 // the earlier layout that does not parse is not migrated: the error is
 // the one reading it would give, and the project stays as it is.
 func (r *Registry) Migrate(projectIDHash string) error {
-	at, err := r.layoutOf(projectIDHash)
+	_, at, _, err := r.projectAt(projectIDHash)
 	if err != nil || at == settled {
 		return err
 	}
@@ -153,7 +151,7 @@ func (r *Registry) Migrate(projectIDHash string) error {
 		// The copy of the earlier file is staged at step 3 only, but a
 		// file that does not parse must be refused before the project
 		// directory is touched.
-		if _, err := r.earlierPaths(projectIDHash); err != nil {
+		if _, _, err := r.earlierPaths(projectIDHash); err != nil {
 			return err
 		}
 	}
@@ -184,30 +182,67 @@ const (
 	halfway
 )
 
-func (r *Registry) layoutOf(projectIDHash string) (layout, error) {
+// pending is what a reading or a write of a project at l meets: nothing
+// for a settled project, and ErrMigrationPending for one whose
+// migration is not finished.
+func (l layout) pending() error {
+	switch l {
+	case earlier:
+		return fmt.Errorf("%w (registry version %d)", ErrMigrationPending, earlierVersion)
+	case halfway:
+		return fmt.Errorf("%w (its migration is not finished)", ErrMigrationPending)
+	default:
+		return nil
+	}
+}
+
+// projectAt is projectIDHash's project file and the layout the project
+// is in. ok is false for a project that has none, which is settled.
+func (r *Registry) projectAt(projectIDHash string) (p projectFile, at layout, ok bool, err error) {
 	if err := checkProjectIDHash(projectIDHash); err != nil {
-		return settled, err
+		return projectFile{}, settled, false, err
 	}
 	data, err := fsatomic.ReadFile(r.projectPath(projectIDHash))
 	if os.IsNotExist(err) {
-		return settled, nil
+		return projectFile{}, settled, false, nil
 	}
 	if err != nil {
-		return settled, err
+		return projectFile{}, settled, false, err
 	}
+	p, at, err = r.layoutIn(projectIDHash, data)
+	return p, at, err == nil, err
+}
+
+// layoutIn is the layout data, projectIDHash's project file, puts the
+// project in, and the project file when that layout is this one. It is
+// the one place a project's layout is judged: a version this build
+// does not know is refused, and names the build it needs when the file
+// says.
+func (r *Registry) layoutIn(projectIDHash string, data []byte) (projectFile, layout, error) {
 	var head struct {
-		Version int `json:"version"`
+		Version    int    `json:"version"`
+		NeedsBuild string `json:"needs_build"`
 	}
 	if err := json.Unmarshal(data, &head); err != nil {
-		return settled, fmt.Errorf("follow: registry: %w", err)
+		return projectFile{}, settled, fmt.Errorf("follow: registry: %w", err)
 	}
-	if head.Version == earlierVersion {
-		return earlier, nil
+	switch {
+	case head.Version == earlierVersion:
+		return projectFile{}, earlier, nil
+	case head.Version > version && head.NeedsBuild != "":
+		return projectFile{}, settled, fmt.Errorf("follow: registry version %d needs trajector %s or later", head.Version, head.NeedsBuild)
+	case head.Version != version:
+		return projectFile{}, settled, fmt.Errorf("follow: unsupported registry version %d", head.Version)
 	}
-	if _, err := parseProject(data); err != nil {
-		return settled, err
+	var p projectFile
+	if err := json.Unmarshal(data, &p); err != nil {
+		return projectFile{}, settled, fmt.Errorf("follow: registry: %w", err)
 	}
-	return r.halfwayOrSettled(projectIDHash)
+	at, err := r.halfwayOrSettled(projectIDHash)
+	if err != nil {
+		return projectFile{}, settled, err
+	}
+	return p, at, nil
 }
 
 // halfwayOrSettled tells a project in this layout whose migration is
@@ -230,28 +265,29 @@ func (r *Registry) migratingPath(projectIDHash string) string {
 }
 
 // earlierPaths lists the paths the earlier project file holds now,
-// read without its lock. A project file that is no longer of the
-// earlier layout, or is gone, holds none.
-func (r *Registry) earlierPaths(projectIDHash string) ([]string, error) {
+// read without its lock. isEarlier is false for a project file that is
+// no longer of the earlier layout, or is gone, which holds none; an
+// earlier file that holds no entry still has a migration to make.
+func (r *Registry) earlierPaths(projectIDHash string) (paths []string, isEarlier bool, err error) {
 	data, err := fsatomic.ReadFile(r.projectPath(projectIDHash))
 	if os.IsNotExist(err) {
-		return nil, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	if _, at, err := r.layoutIn(projectIDHash, data); err != nil || at != earlier {
+		return nil, false, err
 	}
 	reg, err := parseEarlier(data)
-	if errors.Is(err, errNotEarlier) {
-		return nil, nil
-	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	paths := make([]string, 0, len(reg.Files))
+	paths = make([]string, 0, len(reg.Files))
 	for _, e := range reg.Files {
 		paths = append(paths, e.Path)
 	}
-	return paths, nil
+	return paths, true, nil
 }
 
 // errMoreEntries reports entries registered since their locks were
@@ -304,8 +340,8 @@ func (r *Registry) flip(projectIDHash string) error {
 	// second time is left to the next process that migrates.
 	aged := false
 	for {
-		paths, err := r.earlierPaths(projectIDHash)
-		if err != nil || len(paths) == 0 && !r.isEarlier(projectIDHash) {
+		paths, isEarlier, err := r.earlierPaths(projectIDHash)
+		if err != nil || !isEarlier {
 			return err
 		}
 		if err := r.lockEarlierEntries(projectIDHash, paths, held); err != nil {
@@ -315,6 +351,9 @@ func (r *Registry) flip(projectIDHash string) error {
 		err = fsatomic.Update(r.projectPath(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
 			if old == nil {
 				return nil, errNotEarlier
+			}
+			if _, at, err := r.layoutIn(projectIDHash, old); err != nil || at != earlier {
+				return nil, cmp.Or(err, errNotEarlier)
 			}
 			reg, err := parseEarlier(old)
 			if err != nil {
@@ -363,14 +402,6 @@ func (r *Registry) flip(projectIDHash string) error {
 		afterMigrationStep(4)
 		return nil
 	}
-}
-
-// isEarlier reports whether the project file is of the earlier layout
-// now: an earlier file that holds no entry still has a migration to
-// make.
-func (r *Registry) isEarlier(projectIDHash string) bool {
-	at, err := r.layoutOf(projectIDHash)
-	return err == nil && at == earlier
 }
 
 // earlierLockTarget is the name an earlier build's reader of path
@@ -426,7 +457,7 @@ func (r *Registry) stage(projectIDHash string, earlier []byte) error {
 // entry the earlier layout kept wins over them, and again once the
 // copy is removed, for those a hook placed in between.
 func (r *Registry) finish(projectIDHash string) error {
-	at, err := r.layoutOf(projectIDHash)
+	_, at, _, err := r.projectAt(projectIDHash)
 	if err != nil || at != halfway {
 		return err
 	}

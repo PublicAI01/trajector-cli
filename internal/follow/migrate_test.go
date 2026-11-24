@@ -968,3 +968,25 @@ func TestMigrate_MakesAnEntryOfAPendingRegistrationPlacedAfterItsCopyIsRemoved(t
 		t.Errorf("pending registration after the migration: stat = %v, want it taken", err)
 	}
 }
+
+func TestRegistry_RefusesToRecordInTheProjectFileOfAProjectHalfwayMigrated(t *testing.T) {
+	dir := t.TempDir()
+	if err := registryv1.LeaveHalfway(dir, project, registryv1.Registry{Files: []registryv1.Entry{{Path: abs(t, "s.jsonl")}}}); err != nil {
+		t.Fatal(err)
+	}
+	r := follow.Open(dir)
+	before := tree(t, dir)
+
+	gapsErr := r.SetGaps(project, follow.Gaps{Truncated: true})
+	first, toldErr := r.TellReasoning(project, time.Now())
+
+	if !errors.Is(gapsErr, follow.ErrMigrationPending) {
+		t.Errorf("SetGaps() = %v, want ErrMigrationPending", gapsErr)
+	}
+	if first || !errors.Is(toldErr, follow.ErrMigrationPending) {
+		t.Errorf("TellReasoning() = %v, %v, want false and ErrMigrationPending", first, toldErr)
+	}
+	if diff := treeDiff(tree(t, dir), before); diff != "" {
+		t.Errorf("the refused writes changed the registry:\n%s", diff)
+	}
+}

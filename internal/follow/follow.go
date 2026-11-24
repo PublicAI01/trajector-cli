@@ -513,31 +513,24 @@ func digest(s string) string {
 // project that has none. A project whose migration is not finished is
 // refused with ErrMigrationPending.
 func (r *Registry) readProject(projectIDHash string) (p projectFile, ok bool, err error) {
-	if err := checkProjectIDHash(projectIDHash); err != nil {
-		return projectFile{}, false, err
-	}
-	data, err := fsatomic.ReadFile(r.projectPath(projectIDHash))
-	if os.IsNotExist(err) {
-		return projectFile{}, false, nil
+	p, at, ok, err := r.projectAt(projectIDHash)
+	if err == nil {
+		err = at.pending()
 	}
 	if err != nil {
 		return projectFile{}, false, err
 	}
-	if p, err = parseProject(data); err != nil {
-		return projectFile{}, false, err
-	}
-	if at, err := r.halfwayOrSettled(projectIDHash); err != nil || at == halfway {
-		return projectFile{}, false, cmp.Or(err, fmt.Errorf("%w (its migration is not finished)", ErrMigrationPending))
-	}
-	return p, true, nil
+	return p, ok, nil
 }
 
 // updateProject rewrites projectIDHash's project file with change
 // applied, under the project lock. A project with no project file gets
-// one when create is set, and is refused otherwise. A project directory
-// that stands without a project file is what an earlier build's
-// disable left; it is emptied before the project file is created, so
-// nothing in it is read as an entry of the new registration.
+// one when create is set, and is refused otherwise; a project whose
+// migration is not finished is refused with ErrMigrationPending. A
+// project directory that stands without a project file is what an
+// earlier build's disable left; it is emptied before the project file
+// is created, so nothing in it is read as an entry of the new
+// registration.
 func (r *Registry) updateProject(projectIDHash string, create bool, change func(*projectFile) error) error {
 	return fsatomic.Update(r.projectPath(projectIDHash), 0o600, func(old []byte) ([]byte, error) {
 		p := projectFile{Version: version, NeedsBuild: needsBuild}
@@ -550,8 +543,12 @@ func (r *Registry) updateProject(projectIDHash string, create bool, change func(
 			}
 		}
 		if old != nil {
+			var at layout
 			var err error
-			if p, err = parseProject(old); err != nil {
+			if p, at, err = r.layoutIn(projectIDHash, old); err == nil {
+				err = at.pending()
+			}
+			if err != nil {
 				return nil, err
 			}
 		}
@@ -561,23 +558,6 @@ func (r *Registry) updateProject(projectIDHash string, create bool, change func(
 		}
 		return encode(p)
 	})
-}
-
-func parseProject(data []byte) (projectFile, error) {
-	var p projectFile
-	if err := json.Unmarshal(data, &p); err != nil {
-		return projectFile{}, fmt.Errorf("follow: registry: %w", err)
-	}
-	switch {
-	case p.Version == version:
-		return p, nil
-	case p.Version == earlierVersion:
-		return projectFile{}, fmt.Errorf("%w (registry version %d)", ErrMigrationPending, p.Version)
-	case p.Version > version && p.NeedsBuild != "":
-		return projectFile{}, fmt.Errorf("follow: registry version %d needs trajector %s or later", p.Version, p.NeedsBuild)
-	default:
-		return projectFile{}, fmt.Errorf("follow: unsupported registry version %d", p.Version)
-	}
 }
 
 // listAll is projectIDHash's project file and every entry of it,
