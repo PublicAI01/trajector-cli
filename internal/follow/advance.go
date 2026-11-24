@@ -93,7 +93,8 @@ type Reader struct {
 // A round writes its own entry and nothing else, and only the reader
 // that holds an entry writes it. The one round that takes the
 // project's lock is the one that removes its entry, which keeps what
-// the entry noticed in the project file.
+// the entry noticed in the project file, and takes the heat and the
+// told mark of its session when it was the session's last entry.
 //
 // An entry whose file is gone for good, as gone judges it, leaves the
 // registry: its cursor can never advance again and no search finds the
@@ -211,7 +212,7 @@ func (rd Reader) roundHeld(held *heldEntry) (next, more bool) {
 	case Stored:
 	}
 	if res.Reaction == Vanished {
-		_ = rd.Registry.leave(held)
+		_, _ = rd.Registry.leave(rd.ProjectIDHash, []*heldEntry{held})
 		return true, false
 	}
 	if !f.changedBy(res.File) && !noticed.Any() {

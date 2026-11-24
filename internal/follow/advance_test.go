@@ -3,6 +3,7 @@ package follow_test
 import (
 	"encoding/json/jsontext"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -233,6 +234,43 @@ func TestReader_DropsTheEntryOfAFileThatVanished(t *testing.T) {
 	}
 	if stored := a.stored(); len(stored) != 0 {
 		t.Errorf("project directory holds %v, want the entry gone with the file", stored)
+	}
+}
+
+func TestReader_TakesTheHeatAndTheToldMarkOfASessionWithItsLastEntry(t *testing.T) {
+	a := newAdvancing(t)
+	main := mainPath(t)
+	agent := agentOf(main, "agent-a1.jsonl")
+	writeFile(t, main, userLine(1))
+	writeFile(t, agent, userLine(1))
+	a.register(main, "")
+	a.register(agent, "")
+	if err := a.registry.Warm(project, main, 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.registry.Tell(project, main); err != nil {
+		t.Fatal(err)
+	}
+	a.answer = follow.Stored
+	marks := func() (heat, told bool) {
+		_, heatErr := os.Stat(sessionFileOf(a.dir, main, ".heat"))
+		_, toldErr := os.Stat(sessionFileOf(a.dir, main, ".told"))
+		return heatErr == nil, toldErr == nil
+	}
+
+	removeAll(t, []string{agent})
+	a.reader.Advance(agent)
+	if heat, told := marks(); !heat || !told {
+		t.Errorf("heat, told mark after the reader dropped one entry of two = %v, %v, want both kept", heat, told)
+	}
+
+	removeAll(t, []string{main})
+	a.reader.Advance(main)
+	if stored := a.stored(); len(stored) != 0 {
+		t.Errorf("project directory holds %v, want the last entry of the session gone with its file", stored)
+	}
+	if heat, told := marks(); heat || told {
+		t.Errorf("heat, told mark after the reader dropped the session's last entry = %v, %v, want both gone with it", heat, told)
 	}
 }
 

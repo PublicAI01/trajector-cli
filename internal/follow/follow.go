@@ -381,29 +381,62 @@ func (r *Registry) Unregister(projectIDHash string) error {
 	return err
 }
 
-// leave removes the entry held, whose lock the caller holds, from its
-// project's registry, leaving the project's other entries in place,
-// and keeps what reading the file noticed in the project file. An entry
-// removed already, or a project with no registry, is already in the
-// wanted state; an entry that needs what this build does not know is
-// left as it is. It is how an entry whose file is gone for good leaves:
-// nothing is left to read of it, and no search of the project finds it
-// again.
-func (r *Registry) leave(held *heldEntry) error {
-	e, ok, err := held.read()
-	if err != nil || !ok || !e.readable() {
-		return err
-	}
-	if e.Signals != nil {
-		err := r.updateProject(held.projectIDHash, false, func(p *projectFile) error {
-			p.Signals = plus(p.Signals, *e.Signals)
-			return nil
-		})
-		if err != nil && !errors.Is(err, ErrNotRegistered) {
-			return err
+// leave removes the entries of held, whose locks the caller holds,
+// from projectIDHash's registry, leaving the project's other entries in
+// place, and reports how many it removed. What reading their files
+// noticed is kept in the project file, in one write for them all,
+// before any of them is removed, and a session whose last entry is
+// removed loses its heat and its told mark with it. An entry removed
+// already is in the wanted state; an entry that needs what this build
+// does not know, or whose file does not parse, is left as it is. It is
+// the one way an entry leaves: the reader of a file gone for good drops
+// its entry, and a prune the cold ones; nothing is left to read of
+// them, and no search of the project finds them again.
+func (r *Registry) leave(projectIDHash string, held []*heldEntry) (removed int, err error) {
+	var noticed *drift.Signals
+	var leaving []*heldEntry
+	for _, h := range held {
+		e, ok, err := h.read()
+		if err != nil || !ok || !e.readable() {
+			continue
+		}
+		leaving = append(leaving, h)
+		if e.Signals != nil {
+			noticed = plus(noticed, *e.Signals)
 		}
 	}
-	return r.dropEntry(held.projectIDHash, held.path)
+	if noticed != nil {
+		err := r.updateProject(projectIDHash, false, func(p *projectFile) error {
+			p.Signals = plus(p.Signals, *noticed)
+			return nil
+		})
+		if err != nil {
+			return 0, err
+		}
+	}
+	sessions := map[string]string{}
+	for _, h := range leaving {
+		if err := r.dropEntry(projectIDHash, h.path); err != nil {
+			return removed, err
+		}
+		removed++
+		sessions[SessionOf(h.path)] = h.path
+	}
+	if len(sessions) == 0 {
+		return removed, nil
+	}
+	_, rest, _, err := r.listAll(projectIDHash)
+	if err != nil {
+		return removed, err
+	}
+	for _, e := range rest {
+		delete(sessions, SessionOf(e.Path))
+	}
+	var errs []error
+	for _, path := range sessions {
+		errs = append(errs, r.dropSessionMarks(projectIDHash, path))
+	}
+	return removed, errors.Join(errs...)
 }
 
 // dropEntry removes the entry file of path. An entry removed already is

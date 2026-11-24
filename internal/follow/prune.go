@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/PublicAI01/trajector-cli/internal/drift"
 )
 
 // gone reports whether the file at path is gone for good: the file is
@@ -52,7 +50,8 @@ var beforePruneLock = func(string) {}
 // entry file that does not parse, are left as they are. What the
 // removed entries noticed is kept in the project file, in one write
 // for them all, before any of them is removed. A session whose last
-// entry is removed loses its heat and its told mark with it.
+// entry is removed loses its heat and its told mark with it, as it does
+// when a reader removes that entry.
 //
 // Each entry is judged again under its lock, since its file may have
 // come back or its session been named meanwhile, and one another
@@ -71,7 +70,6 @@ func (r *Registry) Prune(projectIDHash string, now time.Time, alive func(pid int
 			h.unlock()
 		}
 	}()
-	var noticed *drift.Signals
 	for _, e := range entries {
 		if !e.readable() || !r.warmed(projectIDHash, e.File, heats).prunable(now, alive) {
 			continue
@@ -87,40 +85,6 @@ func (r *Registry) Prune(projectIDHash string, now time.Time, alive func(pid int
 			continue
 		}
 		held = append(held, h)
-		if e.Signals != nil {
-			noticed = plus(noticed, *e.Signals)
-		}
 	}
-	if noticed != nil {
-		err := r.updateProject(projectIDHash, false, func(p *projectFile) error {
-			p.Signals = plus(p.Signals, *noticed)
-			return nil
-		})
-		if err != nil {
-			return 0, err
-		}
-	}
-	sessions := map[string]string{}
-	for _, h := range held {
-		if err := r.dropEntry(projectIDHash, h.path); err != nil {
-			return removed, err
-		}
-		removed++
-		sessions[SessionOf(h.path)] = h.path
-	}
-	if len(sessions) == 0 {
-		return 0, nil
-	}
-	_, rest, _, err := r.listAll(projectIDHash)
-	if err != nil {
-		return removed, err
-	}
-	for _, e := range rest {
-		delete(sessions, SessionOf(e.Path))
-	}
-	var errs []error
-	for _, path := range sessions {
-		errs = append(errs, r.dropSessionMarks(projectIDHash, path))
-	}
-	return removed, errors.Join(errs...)
+	return r.leave(projectIDHash, held)
 }
