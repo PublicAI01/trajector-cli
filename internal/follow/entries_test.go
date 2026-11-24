@@ -1,11 +1,15 @@
 package follow_test
 
 import (
+	"errors"
+	"io/fs"
 	"os"
+	"runtime"
 	"slices"
 	"testing"
 
 	"github.com/PublicAI01/trajector-cli/internal/follow"
+	"github.com/PublicAI01/trajector-cli/internal/harness/registryv1"
 )
 
 func TestRegistry_CountsTheEntryFilesThatCannotBeRead(t *testing.T) {
@@ -48,4 +52,88 @@ func TestRegistry_PathsCountAnEntryThatNeedsWhatThisBuildDoesNotKnowAsRegistered
 	if files, err := r.Files(project); err != nil || len(files) != 1 || files[0].Path != read {
 		t.Errorf("Files() = %+v, %v, want only the entry this build reads", files, err)
 	}
+}
+
+func TestRegistry_TakesNewEntriesPlacesOneAndLeavesNothingBehind(t *testing.T) {
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	mustRegister(t, r, project, abs(t, "one.jsonl"))
+	before := namesIn(t, projectDirOf(dir))
+
+	asked, refused := r.TakesNewEntries(project)
+
+	if refused != nil || !asked {
+		t.Errorf("TakesNewEntries() = %v, %v, want the entry taken", asked, refused)
+	}
+	if after := namesIn(t, projectDirOf(dir)); !slices.Equal(after, before) {
+		t.Errorf("project directory = %v after the check, want %v", after, before)
+	}
+}
+
+func TestRegistry_TakesNewEntriesRefusesWithWhatTheSystemSaidAsARegistrationDoes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits do not block writes on windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into every directory")
+	}
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	mustRegister(t, r, project, abs(t, "one.jsonl"))
+	before := namesIn(t, projectDirOf(dir))
+	if err := os.Chmod(projectDirOf(dir), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(projectDirOf(dir), 0o700) })
+
+	asked, refused := r.TakesNewEntries(project)
+
+	if !errors.Is(refused, fs.ErrPermission) || !asked {
+		t.Errorf("TakesNewEntries() = %v, %v, want the entry refused for permission", asked, refused)
+	}
+	if err := r.RegisterAll(project, []string{abs(t, "two.jsonl")}, ""); !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("RegisterAll() = %v, want it refused for the same reason", err)
+	}
+	if after := namesIn(t, projectDirOf(dir)); !slices.Equal(after, before) {
+		t.Errorf("project directory = %v after the check, want %v", after, before)
+	}
+}
+
+func TestRegistry_TakesNewEntriesDoesNotAskAProjectWithoutASettledRegistry(t *testing.T) {
+	dir := t.TempDir()
+	r := follow.Open(dir)
+	if asked, refused := r.TakesNewEntries(project); refused != nil || asked {
+		t.Errorf("TakesNewEntries() of a project with no registry = %v, %v, want it not asked", asked, refused)
+	}
+	if err := registryv1.LeaveHalfway(dir, project, registryv1.Registry{Files: []registryv1.Entry{
+		{Path: abs(t, "one.jsonl"), Offset: 11},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Files(project); !errors.Is(err, follow.ErrMigrationPending) {
+		t.Fatalf("Files() = %v, want the project waiting for its migration", err)
+	}
+	before := namesIn(t, projectDirOf(dir))
+
+	asked, refused := r.TakesNewEntries(project)
+
+	if refused != nil || asked {
+		t.Errorf("TakesNewEntries() of a project waiting for its migration = %v, %v, want it not asked", asked, refused)
+	}
+	if after := namesIn(t, projectDirOf(dir)); !slices.Equal(after, before) {
+		t.Errorf("project directory = %v, want %v", after, before)
+	}
+}
+
+func namesIn(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
 }

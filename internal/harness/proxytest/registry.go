@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -97,6 +98,41 @@ func (s *Sandbox) RegistryOnDisk(projectIDHash string) string {
 		add(filepath.Join(projectIDHash, e.Name()))
 	}
 	return dump.String()
+}
+
+// RefuseNewEntries makes a project's registry directory refuse every
+// new file until the test ends, so a registration fails as one on a
+// file system that cannot place an entry does; what is there stays
+// readable. Permission bits are what refuses, so the test is skipped
+// where they do not: on Windows, and for root.
+func (s *Sandbox) RefuseNewEntries(projectIDHash string) {
+	s.t.Helper()
+	if runtime.GOOS == "windows" {
+		s.t.Skip("permission bits do not block writes on windows")
+	}
+	if os.Geteuid() == 0 {
+		s.t.Skip("root writes into every directory")
+	}
+	dir := filepath.Join(s.layout.FollowDir(), projectIDHash)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		s.t.Fatal(err)
+	}
+	s.t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+}
+
+// RegistryDirNames lists the names in a project's registry directory,
+// so a test can show that a check left nothing there.
+func (s *Sandbox) RegistryDirNames(projectIDHash string) []string {
+	s.t.Helper()
+	entries, err := os.ReadDir(filepath.Join(s.layout.FollowDir(), projectIDHash))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
 }
 
 // RewindCursor puts one entry back to where a reader that kept no

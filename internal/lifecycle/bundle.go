@@ -40,7 +40,8 @@ var doctorBundleIgnoreRules = []string{
 // reasons. Captured record data, credentials, and clear-text tokens
 // never enter it. It is read-only: a bug report preserves the state
 // being diagnosed, so nothing is repaired on the way — that is
-// doctor's job.
+// doctor's job. The one file the second reading may place in the
+// registry, to learn whether it takes a new entry, is removed again.
 func (m *Machine) DoctorBundle(ctx context.Context, projectDir string, streams IO) (string, error) {
 	// The bundle takes the second reading too: the question doctor
 	// reports — sessions written without a hook — is one whoever reads

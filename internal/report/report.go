@@ -154,6 +154,12 @@ type SessionFilesState struct {
 	// the only one of the two that has a way out. It is zero when
 	// nothing walked and when the grant records no time.
 	Earlier int
+	// NewEntryRefused, when non-nil, is what the system said when a new
+	// entry could not be placed in the project's registry: every
+	// registration of the project fails the same way, so no session file
+	// of it is registered or read. Only the second reading asks, and
+	// only when it found sessions the registry does not hold.
+	NewEntryRefused error
 }
 
 // unreported counts the unregistered sessions this device cannot

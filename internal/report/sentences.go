@@ -75,6 +75,12 @@ const (
 	emptyReasoningWayOut = claudesettings.KeyShowThinkingSummaries +
 		" is off for this project; run `trajector enable` " + routing.ReEnableCaveat + " to turn it on."
 
+	// newEntryRefusedHeadline is what doctor says when the project's
+	// registry refused a new entry. What the system said follows it as
+	// it was said: which file systems refuse what is not this build's
+	// to guess.
+	newEntryRefusedHeadline = "new session files of this project cannot be registered, so they are not read"
+
 	// earlierSessionsFix is what doctor says under its count of the
 	// session files a project had before it was enabled: the one way
 	// those files are registered. status states the same way back in

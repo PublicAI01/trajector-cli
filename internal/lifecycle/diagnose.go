@@ -333,7 +333,9 @@ func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFile
 // question.
 //
 // It registers nothing: registering is enable's and the session hooks'
-// alone.
+// alone. Where it found sessions the registry does not hold, it places
+// one file the way a registration does and removes it again, to learn
+// whether the registry takes a new entry at all.
 func (m *Machine) readProjectTree(state report.SessionFilesState, st report.ProjectStatus) report.SessionFilesState {
 	paths, err := m.registry.Paths(st.Hash)
 	if err != nil {
@@ -358,6 +360,17 @@ func (m *Machine) readProjectTree(state report.SessionFilesState, st report.Proj
 		state.Unregistered++
 		if earlierThanGrant(path, st.GrantedAt) {
 			state.Earlier++
+		}
+	}
+	// A registry that refuses a new entry leaves every session written
+	// since unregistered, and a hook that fails to register one goes on
+	// without saying so; the refusal is said nowhere but here. Only
+	// sessions the registry does not hold pay for asking, and a
+	// question that could not be asked leaves the reading that failed
+	// to say why.
+	if state.Unregistered > 0 {
+		if asked, refused := m.registry.TakesNewEntries(st.Hash); asked {
+			state.NewEntryRefused = refused
 		}
 	}
 	return state

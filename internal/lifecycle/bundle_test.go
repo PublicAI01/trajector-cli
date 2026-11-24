@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -299,5 +301,40 @@ func TestDoctorBundleRestoresIgnoreRulesWhenMissing(t *testing.T) {
 		if !strings.Contains(string(ignore), rule) {
 			t.Errorf(".gitignore = %q, want it to contain %q", ignore, rule)
 		}
+	}
+}
+
+func TestDoctorBundleCarriesWhatTheSystemSaidWhenTheRegistryRefusesANewEntry(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.enabledWithOneSessionAndOneUnreported(res.handler())
+	hash := proxytest.ProjectIDHash(e.canonicalRoot())
+	e.sandbox.RefuseNewEntries(hash)
+	before := e.sandbox.RegistryDirNames(hash)
+
+	t.Chdir(t.TempDir())
+	path, err := e.machine().DoctorBundle(t.Context(), e.project, e.io())
+	if err != nil {
+		t.Fatalf("bundle: %v\nstdout: %s", err, e.stdout)
+	}
+
+	var diagnosis struct {
+		Project struct {
+			SessionFiles struct {
+				Unregistered    int    `json:"unregistered"`
+				NewEntryRefused string `json:"new_entry_refused"`
+			} `json:"session_files"`
+		} `json:"project"`
+	}
+	raw := readBundle(t, path)["diagnosis.json"]
+	if err := json.Unmarshal([]byte(raw), &diagnosis); err != nil {
+		t.Fatalf("diagnosis.json = %s: %v", raw, err)
+	}
+	got := diagnosis.Project.SessionFiles
+	if got.Unregistered != 1 || !strings.HasSuffix(got.NewEntryRefused, fs.ErrPermission.Error()) {
+		t.Errorf("session_files = %+v, want 1 unregistered and new_entry_refused ending in what the system said (%q)", got, fs.ErrPermission.Error())
+	}
+	if after := e.sandbox.RegistryDirNames(hash); !slices.Equal(after, before) {
+		t.Errorf("registry directory = %v after the bundle, want %v", after, before)
 	}
 }

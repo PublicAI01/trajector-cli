@@ -1,6 +1,7 @@
 package lifecycle_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -136,6 +137,72 @@ func TestDoctorWalksTheProjectWithoutRegistering(t *testing.T) {
 		}
 	}
 	e.checkNoCursorMovedAndNothingRegistered("doctor", before)
+}
+
+func TestDoctorSaysWithTheSystemsReasonThatARegistryRefusingNewEntriesLeavesSessionFilesUnread(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.enabledWithOneSessionAndOneUnreported(res.handler())
+	hash := proxytest.ProjectIDHash(e.canonicalRoot())
+	e.sandbox.RefuseNewEntries(hash)
+	before := e.sandbox.RegistryDirNames(hash)
+
+	problems, out := e.doctor()
+
+	if problems != 1 {
+		t.Errorf("problems = %d, want the refused entry counted as one", problems)
+	}
+	want := "error: new session files of this project cannot be registered, so they are not read: "
+	line, ok := lineWith(out, want)
+	if !ok {
+		t.Fatalf("doctor = %q, want a line starting %q", out, want)
+	}
+	if !strings.HasSuffix(line, fs.ErrPermission.Error()) {
+		t.Errorf("line = %q, want it to end in what the system said (%q)", line, fs.ErrPermission.Error())
+	}
+	for _, unwanted := range []string{"could not determine why", workspaceTrustLine} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("doctor = %q, want no %q once the refusal explains the session", out, unwanted)
+		}
+	}
+	if after := e.sandbox.RegistryDirNames(hash); !slices.Equal(after, before) {
+		t.Errorf("registry directory = %v after doctor, want %v", after, before)
+	}
+}
+
+func TestDoctorSaysNothingAboutNewEntriesWhenTheRegistryTakesThem(t *testing.T) {
+	e := newEnv(t)
+	var res resident
+	e.enabledWithOneSessionAndOneUnreported(res.handler())
+	hash := proxytest.ProjectIDHash(e.canonicalRoot())
+	before := e.sandbox.RegistryDirNames(hash)
+
+	problems, out := e.doctor()
+
+	if problems != 0 {
+		t.Errorf("problems = %d, want none", problems)
+	}
+	if strings.Contains(out, "cannot be registered") {
+		t.Errorf("doctor = %q, want no refusal of new entries", out)
+	}
+	if !strings.Contains(out, "warning: could not determine why the hooks did not report 1 session(s) of this project") {
+		t.Errorf("doctor = %q, want the unreported session still reported", out)
+	}
+	if after := e.sandbox.RegistryDirNames(hash); !slices.Equal(after, before) {
+		t.Errorf("registry directory = %v after doctor, want %v", after, before)
+	}
+}
+
+// lineWith is the line of out that starts with prefix, once the
+// indentation is dropped.
+func lineWith(out, prefix string) (string, bool) {
+	for line := range strings.Lines(out) {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) {
+			return line, true
+		}
+	}
+	return "", false
 }
 
 func TestDoctorRegistersTheSessionsThatPredateTheGrantAndHasThemRead(t *testing.T) {

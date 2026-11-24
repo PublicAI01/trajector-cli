@@ -203,7 +203,9 @@ func doctorHookPolicy(f *Findings, d Diagnosis) {
 // it went past a hook that reported nothing. Only the second is a
 // fault, and its cause is not this device's to name — several
 // unreadable ones produce it, so it is stated as what it is, a state
-// this device cannot explain. Everything the reading could not cover
+// this device cannot explain. A registry that refuses a new entry
+// explains both halves, and is said in their place. Everything the
+// reading could not cover
 // is stated as it is, never counted as a fault. A diagnosis that took
 // no second reading says nothing here: the registry's own account is
 // status's to print, not a finding.
@@ -226,6 +228,11 @@ func doctorSessionFiles(f *Findings, d Diagnosis) {
 	switch {
 	case s.Unregistered == 0:
 		f.OKf("every session file of this project is registered (%d session(s))", s.Sessions)
+	case s.NewEntryRefused != nil:
+		// Every registration fails, so the sessions found unregistered
+		// need no other explanation, and neither way of registering them
+		// the lines below would name works.
+		f.Problemf("%s: %v", newEntryRefusedHeadline, s.NewEntryRefused)
 	case d.HookPolicy != nil && !d.HookPolicy.Runs:
 		doctorEarlierSessions(f, d)
 		if s.unreported() > 0 {

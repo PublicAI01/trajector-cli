@@ -199,6 +199,12 @@ type sessionFilesWire struct {
 	// UnreadableEntries counts the registry's entry files that could
 	// not be read.
 	UnreadableEntries int `json:"unreadable_entries"`
+	// NewEntryRefused is what the system said when the second reading
+	// could not place a new entry in the registry. Every registration
+	// fails the same way, which is why the sessions above are
+	// unregistered whatever the hooks did. The paths it names are of
+	// the file the check placed, never of a session's file.
+	NewEntryRefused string `json:"new_entry_refused,omitempty"`
 }
 
 type proxyWire struct {
@@ -353,6 +359,7 @@ func DiagnosisJSON(d Diagnosis) []byte {
 				Outside:      d.SessionFiles.Outside,
 
 				UnreadableEntries: d.SessionFiles.UnreadableEntries,
+				NewEntryRefused:   errString(d.SessionFiles.NewEntryRefused),
 			},
 		},
 		Proxy: proxy,

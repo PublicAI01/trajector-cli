@@ -1,6 +1,7 @@
 package follow
 
 import (
+	"crypto/rand"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -77,6 +78,36 @@ func (r *Registry) create(projectIDHash string, e entryFile) error {
 		return err
 	}
 	return placeNew(r.entryPath(projectIDHash, e.Path), data, true)
+}
+
+// checkExt names the file TakesNewEntries places. No reading of the
+// registry takes it for an entry, a heat or a told mark.
+const checkExt = ".check"
+
+// TakesNewEntries places one file in projectIDHash's registry the way a
+// registration places a new entry, and removes it again. refused is
+// what the system said when placing failed, as it said it: a
+// registration of this project fails the same way. asked is false when
+// the question could not be asked: the project has no registry, its
+// migration is not finished, and its migration places entries of its
+// own, or its project file cannot be read.
+func (r *Registry) TakesNewEntries(projectIDHash string) (asked bool, refused error) {
+	if _, ok, _ := r.readProject(projectIDHash); !ok {
+		return false, nil
+	}
+	// A registration creates the project directory before its first
+	// entry; where there is none yet, the directory it is created in is
+	// asked instead.
+	dir := r.projectDir(projectIDHash)
+	if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
+		dir = r.dir
+	}
+	target := filepath.Join(dir, rand.Text()+checkExt)
+	if refused := placeNew(target, nil, true); refused != nil {
+		return true, refused
+	}
+	_ = os.Remove(target)
+	return true, nil
 }
 
 // placeNew puts data at target unless a file stands there already. The
