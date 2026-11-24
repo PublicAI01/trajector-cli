@@ -21,6 +21,7 @@ type Imposter struct {
 	listener net.Listener
 
 	mu         sync.Mutex
+	body       []byte
 	proof      string
 	token      string
 	unproven   int
@@ -44,16 +45,13 @@ func StartImposter(t *testing.T, health Health) *Imposter {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := json.Marshal(health)
-	if err != nil {
-		t.Fatal(err)
-	}
 	im := &Imposter{addr: l.Addr().String(), carried: map[net.Conn]bool{}}
+	im.AnswerAs(health)
 	im.listener = l
 	srv := &http.Server{ConnState: im.noteConn, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		im.mu.Lock()
 		im.seen = append(im.seen, imposterRequest{method: r.Method, path: r.URL.Path, header: r.Header.Clone()})
-		proof := im.proof
+		proof, body := im.proof, im.body
 		if nonce := r.Header.Get(apiproxy.ChallengeHeader); nonce != "" && im.token != "" {
 			if im.unproven > 0 {
 				im.unproven--
@@ -88,6 +86,19 @@ func StartImposter(t *testing.T, health Health) *Imposter {
 
 // Addr is the squatted address.
 func (im *Imposter) Addr() string { return im.addr }
+
+// AnswerAs makes health the body of every GET from now on, the way the
+// answers at an address change when another proxy takes it. It may be
+// called from any goroutine.
+func (im *Imposter) AnswerAs(health Health) {
+	body, err := json.Marshal(health)
+	if err != nil {
+		panic(err) // a Health holds nothing that fails to encode
+	}
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	im.body = body
+}
 
 // ReplayProof makes the imposter answer every challenge with a fixed,
 // previously collected proof — the strongest answer available to a

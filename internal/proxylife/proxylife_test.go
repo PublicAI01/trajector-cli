@@ -253,6 +253,88 @@ func TestEnsureReplacesAStrictlyOlderReleaseViaDrain(t *testing.T) {
 	}
 }
 
+// takenOverByASibling is an older proxy whose port, from the moment it
+// accepts a drain, is held by a proxy of version sibling: what a caller
+// sees when a concurrent caller wins the takeover. The sibling has a
+// token of its own, and leaves unproven challenges unanswered first,
+// as a proxy does between binding the port and publishing its token.
+func takenOverByASibling(t *testing.T, sibling string, unproven int) (userdirs.Layout, string) {
+	t.Helper()
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	const olderToken, siblingToken = "0123456789abcdef0123456789abcdef", "feedfacefeedfacefeedfacefeedface"
+	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "0.0.9"})
+	proxytest.PublishLegacyAdminToken(t, layout, olderToken)
+	proxytest.PublishAdminToken(t, layout, im.Addr(), siblingToken)
+	im.ProveAfter(0, olderToken)
+	im.AfterDrain(func() {
+		im.AnswerAs(proxytest.Health{Service: apiproxy.ServiceName, Version: sibling})
+		im.ProveAfter(unproven, siblingToken)
+	})
+	return layout, im.Addr()
+}
+
+func TestEnsureLeavesTheProxyAConcurrentTakeoverStarted(t *testing.T) {
+	layout, addr := takenOverByASibling(t, "1.0.0", 0)
+
+	p := proxylife.For(layout, "1.0.0", "/nonexistent/trajector", addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+	if err := p.Ensure(t.Context()); err != nil {
+		t.Fatalf("Ensure = %v, want the proxy a concurrent takeover started left serving", err)
+	}
+	if starts, err := proxylife.LoggedStarts(layout.ProxyLog()); err != nil || len(starts) != 0 {
+		t.Errorf("starts = %v, %v, want none beside the proxy that already serves", starts, err)
+	}
+	if p.CannotStart() {
+		t.Error("CannotStart = true for a build whose proxy serves")
+	}
+}
+
+func TestEnsureNotesANewerProxyAConcurrentTakeoverStarted(t *testing.T) {
+	layout, addr := takenOverByASibling(t, "1.0.1", 0)
+
+	p := proxylife.For(layout, "1.0.0", "/nonexistent/trajector", addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+	if err := p.Ensure(t.Context()); err != nil {
+		t.Fatalf("Ensure = %v, want the newer proxy left serving", err)
+	}
+	if starts, err := proxylife.LoggedStarts(layout.ProxyLog()); err != nil || len(starts) != 0 {
+		t.Errorf("starts = %v, %v, want none beside the proxy that already serves", starts, err)
+	}
+	if log := proxyLogContents(t, layout); !strings.Contains(log, "reuses the version 1.0.1 proxy") {
+		t.Errorf("proxy log = %q, want the reuse decision on record", log)
+	}
+}
+
+func TestEnsureWaitsForTheProxyAConcurrentTakeoverStartedToProveItself(t *testing.T) {
+	layout, addr := takenOverByASibling(t, "1.0.0", 2)
+
+	p := proxylife.For(layout, "1.0.0", "/nonexistent/trajector", addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+	if err := p.Ensure(t.Context()); err != nil {
+		t.Fatalf("Ensure = %v, want the proxy that proves itself a moment later left serving", err)
+	}
+	if starts, err := proxylife.LoggedStarts(layout.ProxyLog()); err != nil || len(starts) != 0 {
+		t.Errorf("starts = %v, %v, want none beside the proxy that already serves", starts, err)
+	}
+}
+
+func TestEnsureReportsAnOlderProxyThatAcceptsTheDrainAndKeepsThePort(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	const token = "feedfacefeedfacefeedfacefeedface"
+	im := proxytest.StartImposter(t, proxytest.Health{Service: apiproxy.ServiceName, Version: "0.0.9"})
+	proxytest.PublishAdminToken(t, layout, im.Addr(), token)
+	im.ProveAfter(0, token)
+
+	p := proxylife.For(layout, "1.0.0", "/nonexistent/trajector", im.Addr(), proxylife.RecordStartsIn(layout.ProxyLog()))
+	err := p.Ensure(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "did not release the port") {
+		t.Fatalf("Ensure = %v, want it to say the previous proxy kept the port", err)
+	}
+	if starts, err := proxylife.LoggedStarts(layout.ProxyLog()); err != nil || len(starts) != 0 {
+		t.Errorf("starts = %v, %v, want none while the older proxy holds the port", starts, err)
+	}
+	if p.CannotStart() {
+		t.Error("CannotStart = true after a takeover that never got the port, want no record")
+	}
+}
+
 // streamingThrough sends a request through the proxy at e whose reply
 // streams for about two seconds — longer than the harness's one-second
 // drain budget — and returns once the first block has arrived, so the
