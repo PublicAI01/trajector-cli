@@ -335,6 +335,243 @@ func TestEnsureReportsAnOlderProxyThatAcceptsTheDrainAndKeepsThePort(t *testing.
 	}
 }
 
+// portHolder is one process on the proxy port, as a caller meets it.
+type portHolder struct {
+	// token is the admin token the holder proves and takes requests
+	// under. A holder with none is a stranger: it proves nothing.
+	token string
+	// version is the version a holder with a token reports.
+	version string
+	// unproven is how many challenges the holder leaves unanswered
+	// first, as a proxy does between binding the port and publishing.
+	unproven int
+	// onDrain is what the holder does with a drain under its token.
+	// The zero value accepts it and goes on serving.
+	onDrain drainAnswer
+
+	health []byte
+}
+
+type drainAnswer int
+
+const (
+	// leavesPort accepts the drain and closes the listener.
+	leavesPort drainAnswer = iota + 1
+	// cutsRequest closes the listener and the connection unanswered,
+	// as the port answers a request that arrives while it closes.
+	cutsRequest
+)
+
+// handedPort is a port that changes hands between two requests of one
+// caller. The first holder has it until it has answered one whole look
+// (the health read under its token), and each later holder likewise,
+// down to the last, which keeps it.
+type handedPort struct {
+	addr     string
+	listener net.Listener
+
+	mu       sync.Mutex
+	holders  []portHolder
+	drained  []string
+	tokenOut bool
+}
+
+// handPort serves holders at a fresh address, and publishes the token
+// of the first under the fixed name older proxies used and the token
+// of a second under the address.
+func handPort(t *testing.T, layout userdirs.Layout, holders ...portHolder) *handedPort {
+	t.Helper()
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hp := &handedPort{addr: l.Addr().String(), listener: l, holders: holders}
+	for i := range hp.holders {
+		h := &hp.holders[i]
+		if h.health, err = json.Marshal(proxytest.Health{Service: apiproxy.ServiceName, Version: h.version}); err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case h.token == "":
+		case i == 0:
+			proxytest.PublishLegacyAdminToken(t, layout, h.token)
+		default:
+			proxytest.PublishAdminToken(t, layout, hp.addr, h.token)
+		}
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(hp.answer)}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+	return hp
+}
+
+func (hp *handedPort) answer(w http.ResponseWriter, r *http.Request) {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+	h := &hp.holders[0]
+	admin := r.Header.Get(apiproxy.AdminHeader)
+	if h.token == "" {
+		if admin != "" {
+			hp.tokenOut = true
+		}
+		http.NotFound(w, r)
+		return
+	}
+	if nonce := r.Header.Get(apiproxy.ChallengeHeader); nonce != "" {
+		if h.unproven > 0 {
+			h.unproven--
+		} else {
+			w.Header().Set(apiproxy.ProofHeader, apiproxy.Proof(h.token, nonce, r.Host))
+		}
+	}
+	if admin != h.token {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if r.Method == http.MethodPost {
+		if h.onDrain == cutsRequest {
+			hp.listener.Close()
+			if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+				conn.Close()
+			}
+			return
+		}
+		hp.drained = append(hp.drained, h.version)
+		w.WriteHeader(http.StatusAccepted)
+		if h.onDrain == leavesPort {
+			hp.listener.Close()
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(h.health)
+	if len(hp.holders) > 1 {
+		hp.holders = hp.holders[1:]
+	}
+}
+
+// drainedVersions is the version of every holder that accepted a drain.
+func (hp *handedPort) drainedVersions() []string {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+	return slices.Clone(hp.drained)
+}
+
+// tokenReachedAStranger reports that a holder without a token received
+// a request carrying an admin token.
+func (hp *handedPort) tokenReachedAStranger() bool {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+	return hp.tokenOut
+}
+
+const (
+	olderToken   = "0123456789abcdef0123456789abcdef"
+	siblingToken = "feedfacefeedfacefeedfacefeedface"
+)
+
+func startsBeside(t *testing.T, layout userdirs.Layout) []proxylife.LoggedStart {
+	t.Helper()
+	starts, err := proxylife.LoggedStarts(layout.ProxyLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return starts
+}
+
+func TestEnsureDoesNotDrainTheProxyThatReplacedTheOlderOne(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	port := handPort(t, layout,
+		portHolder{token: olderToken, version: "0.0.9"},
+		portHolder{token: siblingToken, version: "1.0.0"})
+
+	p := proxylife.For(layout, "1.0.0", "/nonexistent/trajector", port.addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+	if err := p.Ensure(t.Context()); err != nil {
+		t.Fatalf("Ensure = %v, want the proxy that replaced the older one left serving", err)
+	}
+	if drained := port.drainedVersions(); len(drained) != 0 {
+		t.Errorf("drained = %v, want the proxy that replaced the older one left serving", drained)
+	}
+	if starts := startsBeside(t, layout); len(starts) != 0 {
+		t.Errorf("starts = %v, want none beside the proxy that already serves", starts)
+	}
+}
+
+func TestEnsureWaitsForTheProxyThatReplacedTheOlderOneToProveItself(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	port := handPort(t, layout,
+		portHolder{token: olderToken, version: "0.0.9"},
+		portHolder{token: siblingToken, version: "1.0.0", unproven: 2})
+
+	p := proxylife.For(layout, "1.0.0", "/nonexistent/trajector", port.addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+	if err := p.Ensure(t.Context()); err != nil {
+		t.Fatalf("Ensure = %v, want the proxy that proves itself a moment later left serving", err)
+	}
+	if drained := port.drainedVersions(); len(drained) != 0 {
+		t.Errorf("drained = %v, want no drain accepted", drained)
+	}
+	if starts := startsBeside(t, layout); len(starts) != 0 {
+		t.Errorf("starts = %v, want none beside the proxy that already serves", starts)
+	}
+}
+
+func TestEnsureSendsNoAdminTokenToAStrangerThatTookThePortOfTheOlderProxy(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	port := handPort(t, layout,
+		portHolder{token: olderToken, version: "0.0.9"},
+		portHolder{})
+
+	p := proxylife.For(layout, "1.0.0", "/nonexistent/trajector", port.addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+	if err := p.Ensure(t.Context()); !errors.Is(err, proxylife.ErrPortOccupied) {
+		t.Errorf("Ensure = %v, want the stranger on the port reported as what it is", err)
+	}
+	if port.tokenReachedAStranger() {
+		t.Error("the admin token reached a holder that had not proven itself")
+	}
+	if starts := startsBeside(t, layout); len(starts) != 0 {
+		t.Errorf("starts = %v, want none while a stranger holds the port", starts)
+	}
+}
+
+// Two builds of different versions may take over one older proxy at
+// the same moment. The proxy the older build started is itself older
+// than the newer build, which takes it over in turn.
+func TestEnsureTakesOverAnOlderProxyThatReplacedTheOlderOne(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	port := handPort(t, layout,
+		portHolder{token: olderToken, version: "0.0.9"},
+		portHolder{token: siblingToken, version: "0.5.0", onDrain: leavesPort})
+
+	p := proxylife.For(layout, "1.0.0", "/nonexistent/trajector", port.addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+	if err := p.Ensure(t.Context()); err != nil {
+		t.Fatalf("Ensure = %v, want the proxy that replaced the older one taken over in turn", err)
+	}
+	if drained := port.drainedVersions(); !slices.Equal(drained, []string{"0.5.0"}) {
+		t.Errorf("drained = %v, want the 0.5.0 proxy asked to leave under its own token", drained)
+	}
+	want := []proxylife.LoggedStart{{Command: proxylife.Command, Target: port.addr}}
+	if starts := startsBeside(t, layout); !slices.Equal(starts, want) {
+		t.Errorf("starts = %v, want %v", starts, want)
+	}
+}
+
+// The older proxy closes its listener once it accepts a drain, so a
+// second caller's drain request can find the port closing. That is
+// the takeover under way, not a proxy that would not drain.
+func TestEnsureTakesThePortOfAnOlderProxyThatLeftBeforeItsDrainArrived(t *testing.T) {
+	layout := proxytest.SandboxLayout(t, t.TempDir())
+	port := handPort(t, layout, portHolder{token: olderToken, version: "0.0.9", onDrain: cutsRequest})
+
+	p := proxylife.For(layout, "1.0.0", "/nonexistent/trajector", port.addr, proxylife.RecordStartsIn(layout.ProxyLog()))
+	if err := p.Ensure(t.Context()); err != nil {
+		t.Fatalf("Ensure = %v, want the port taken once the older proxy left it", err)
+	}
+	want := []proxylife.LoggedStart{{Command: proxylife.Command, Target: port.addr}}
+	if starts := startsBeside(t, layout); !slices.Equal(starts, want) {
+		t.Errorf("starts = %v, want %v", starts, want)
+	}
+}
+
 // streamingThrough sends a request through the proxy at e whose reply
 // streams for about two seconds — longer than the harness's one-second
 // drain budget — and returns once the first block has arrived, so the
