@@ -55,7 +55,21 @@ const (
 	// cover supersedes the registry's older record of the same. Only a
 	// caller that acts on the difference asks for it.
 	fromTree
+	// fromTreeAsItStands is fromTree of a registry left as it stands: one
+	// that waits for its migration is stated so, and not migrated.
+	fromTreeAsItStands
 )
+
+// walks reports whether the reading walks the project's tree.
+func (r sessionFileReading) walks() bool { return r != fromRegistry }
+
+// migration is whether the reading migrates the registry it reads.
+func (r sessionFileReading) migration() registryMigration {
+	if r == fromTreeAsItStands {
+		return asItStands
+	}
+	return migrateFirst
+}
 
 // diagnose resolves the device's full state, the one value status,
 // doctor, and the bundle each render. Stores that fail to open or read
@@ -295,7 +309,7 @@ func injectionAgrees(st report.ProjectStatus, onFile routing.Shape) bool {
 // and opens none of them. Every count here is of what the project
 // still reads, so one run can never hold two accounts of that.
 func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFileReading) report.SessionFilesState {
-	registered := m.sessionFiles(st.Hash)
+	registered := m.sessionFiles(st.Hash, reading.migration())
 	state := report.SessionFilesState{
 		Err:               registered.Err,
 		Gaps:              registered.Gaps,
@@ -320,7 +334,7 @@ func (m *Machine) sessionFilesState(st report.ProjectStatus, reading sessionFile
 	// held against, and a project Claude Code opens from the Windows
 	// side keeps its session files on that side, where this process
 	// cannot reach; the diagnosis already says so.
-	if reading == fromRegistry || state.Err != nil || st.WindowsSideClaude {
+	if !reading.walks() || state.Err != nil || st.WindowsSideClaude {
 		return state
 	}
 	return m.readProjectTree(state, st, registered.Paths)

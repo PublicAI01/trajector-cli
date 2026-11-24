@@ -126,7 +126,7 @@ func (m *Machine) ReadSessionFiles(ctx context.Context, projectDir string, strea
 	}
 	project := sessionread.Project{Token: st.Token, Hash: st.Hash, Root: st.Root, Shape: st.Shape}
 	var paths []string
-	for _, f := range m.sessionFiles(st.Hash).Files {
+	for _, f := range m.sessionFiles(st.Hash, migrateFirst).Files {
 		paths = append(paths, f.Path)
 	}
 	m.reader(sp).Read(project, paths)

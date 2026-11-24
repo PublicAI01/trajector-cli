@@ -223,9 +223,8 @@ func (t *tailer) readLeftBehind(project sessionread.Project, files []follow.File
 
 // project is the enabled project a registry belongs to, by hash. A
 // project with no standing grant has nothing read for it. A registry
-// in the layout before this build's is migrated first, as every reader
-// but a session hook does; one this process could not migrate, or that
-// another process is migrating, is not read this time.
+// this process could not migrate, or that another process is
+// migrating, is not read this time.
 func (t *tailer) project(hash string) (sessionread.Project, bool) {
 	grants, err := t.routes.All()
 	if err != nil {

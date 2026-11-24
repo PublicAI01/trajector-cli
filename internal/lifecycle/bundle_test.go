@@ -338,3 +338,37 @@ func TestDoctorBundleCarriesWhatTheSystemSaidWhenTheRegistryRefusesANewEntry(t *
 		t.Errorf("registry directory = %v after the bundle, want %v", after, before)
 	}
 }
+
+func TestDoctorBundleLeavesARegistryWaitingForItsMigrationAsItIsAndSaysSo(t *testing.T) {
+	e := newEnv(t)
+	e.enableProject()
+	e.injectWithProxy()
+	root := e.canonicalRoot()
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", firstLine)
+	e.leaveEarlierRegistry(root, main, int64(len(firstLine)))
+	before := e.sandbox.RegistryOnDisk(proxytest.ProjectIDHash(root))
+
+	t.Chdir(t.TempDir())
+	path, err := e.machine().DoctorBundle(t.Context(), e.project, e.io())
+	if err != nil {
+		t.Fatalf("bundle: %v\nstdout: %s", err, e.stdout)
+	}
+
+	if after := e.sandbox.RegistryOnDisk(proxytest.ProjectIDHash(root)); after != before {
+		t.Errorf("registry after the bundle =\n%s\nwant it as it was:\n%s", after, before)
+	}
+	var diagnosis struct {
+		Project struct {
+			SessionFiles struct {
+				Err string `json:"err"`
+			} `json:"session_files"`
+		} `json:"project"`
+	}
+	raw := readBundle(t, path)["diagnosis.json"]
+	if err := json.Unmarshal([]byte(raw), &diagnosis); err != nil {
+		t.Fatalf("diagnosis.json = %s: %v", raw, err)
+	}
+	if got := diagnosis.Project.SessionFiles.Err; !strings.Contains(got, "not migrated to this build's layout yet") {
+		t.Errorf("session_files.err = %q, want it to say the registry waits for its migration", got)
+	}
+}

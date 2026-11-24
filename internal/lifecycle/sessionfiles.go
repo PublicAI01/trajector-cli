@@ -134,17 +134,12 @@ func (m *Machine) registerSessionFile(cwd string, hook HookInput) (registered bo
 // here: the session must not learn what the hook did, and the
 // registry is where the outcome is read afterwards.
 //
-// A project whose registry is waiting for its migration is neither
-// registered in nor marked: a hook never migrates and never waits for
-// a migration. The one-shot reader is started for it instead, which
-// migrates the project if nobody else is, and reads it.
+// A project whose registry is waiting for its migration is not marked,
+// and its file is kept as a pending registration: the hook leaves the
+// migration to the one-shot reader.
 func (m *Machine) followSession(ctx context.Context, cwd string, hook HookInput, ended bool) {
 	registered, err := m.registerSessionFile(cwd, hook)
-	if errors.Is(err, follow.ErrMigrationPending) {
-		_ = m.spawnReader(ctx, cwd)
-		return
-	}
-	if err != nil || !registered {
+	if m.leaveMigrationToReader(ctx, cwd, err) || err != nil || !registered {
 		return
 	}
 	st, err := m.Project(cwd)
@@ -164,6 +159,18 @@ func (m *Machine) followSession(ctx context.Context, cwd string, hook HookInput,
 	}
 }
 
+// leaveMigrationToReader starts the one-shot reader for the project at
+// dir when err says the project's registry waits for its migration, and
+// reports whether it did. It is for a caller that may not wait for a
+// migration: the reader migrates the project and reads it.
+func (m *Machine) leaveMigrationToReader(ctx context.Context, dir string, err error) bool {
+	if !errors.Is(err, follow.ErrMigrationPending) {
+		return false
+	}
+	_ = m.spawnReader(ctx, dir)
+	return true
+}
+
 // sessionPID is the process the session runs in, as seen from a hook
 // it started: the hook's parent. A shell between the two makes this
 // the shell's id, which is gone by the next sweep; the file then stays
@@ -180,6 +187,20 @@ type registryContents struct {
 	Err error
 }
 
+// registryMigration says whether a reading of a project's registry
+// migrates a registry that waits for its migration, or reads it as it
+// stands, as one that cannot be read until then.
+type registryMigration bool
+
+const (
+	// migrateFirst is for status, doctor, enable and the one-shot
+	// reader.
+	migrateFirst registryMigration = true
+	// asItStands is for the diagnostic bundle, which changes nothing it
+	// diagnoses.
+	asItStands registryMigration = false
+)
+
 // sessionFiles reads one project's registry, and is the one place this
 // package says what a registry that cannot be read means: no files and
 // a stated reason. A surface then prints the reason rather than an
@@ -188,12 +209,14 @@ type registryContents struct {
 // exception and keeps its own failure: it changes the registry, so it
 // must not report that it took back what it could not reach.
 //
-// A registry in the layout before this build's is migrated first, as
-// every reader but a session hook does. One another process is
-// migrating is read as one that cannot be read, this time.
-func (m *Machine) sessionFiles(projectIDHash string) registryContents {
-	if err := m.registry.Migrate(projectIDHash); err != nil {
-		return registryContents{Err: err}
+// migration says whether the registry is migrated before it is read.
+// When it is, a registry another process is migrating is read as one
+// that cannot be read, this time.
+func (m *Machine) sessionFiles(projectIDHash string, migration registryMigration) registryContents {
+	if migration == migrateFirst {
+		if err := m.registry.Migrate(projectIDHash); err != nil {
+			return registryContents{Err: err}
+		}
 	}
 	c, err := m.registry.Contents(projectIDHash)
 	if err != nil {

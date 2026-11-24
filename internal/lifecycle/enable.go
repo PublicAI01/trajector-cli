@@ -451,12 +451,11 @@ func (m *Machine) confirmHooksWillRun(streams IO, root string, shape routing.Sha
 // on disk, but registering it again changes nothing. Such a path is
 // counted as registered already, which is what it is.
 //
-// A registry in the layout before this build's is migrated first, and
-// one another process is migrating fails the run: nothing can be
-// registered in it until that migration is done.
+// A registry another process is migrating fails the run: nothing can
+// be registered in it until that migration is done.
 func (m *Machine) registerEarlierSessions(st report.ProjectStatus, found discover.Result, ledger *enableLedger) (registered int, toRead []string, err error) {
 	projectIDHash := st.Hash
-	held := m.sessionFiles(projectIDHash)
+	held := m.sessionFiles(projectIDHash, migrateFirst)
 	if held.Err != nil {
 		return 0, nil, held.Err
 	}
@@ -504,7 +503,7 @@ func (m *Machine) registerEarlierSessions(st report.ProjectStatus, found discove
 // that never happened is asked for again.
 func (m *Machine) unreadSessions(st report.ProjectStatus) ([]string, error) {
 	projectIDHash := st.Hash
-	registered := m.sessionFiles(projectIDHash)
+	registered := m.sessionFiles(projectIDHash, migrateFirst)
 	if registered.Err != nil {
 		return nil, registered.Err
 	}
