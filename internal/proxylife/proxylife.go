@@ -284,7 +284,7 @@ func (p *Proxy) BaseURL(token string) string { return "http://" + p.addr + "/t/"
 // proxy is gone, and each session of every project is failing until
 // the build is reinstalled. Every other failure keeps its own words.
 func (p *Proxy) Ensure(ctx context.Context) error {
-	v := p.Settled(ctx)
+	v, token := p.settled(ctx)
 	tookOver := false
 	switch {
 	case v.Holder == HolderForeign:
@@ -305,13 +305,8 @@ func (p *Proxy) Ensure(ctx context.Context) error {
 		// over. The drain says it is a handover, so the older proxy lets
 		// replies still streaming through it finish rather than cutting
 		// them for the client to resend; it still closes its listener at
-		// once, so the port does not wait for them. A drain that
-		// already failed names what stands in the way; waiting out the
-		// port would bury that cause under a timeout that cannot succeed.
-		if err := p.drain(ctx, apiproxy.DrainCauseHandover); err != nil {
-			return fmt.Errorf("asking the previous proxy to drain: %w", err)
-		}
-		winner, won, err := p.waitHandover(ctx, drainTimeout)
+		// once, so the port does not wait for them.
+		winner, won, err := p.takeOver(ctx, token)
 		if err != nil {
 			return err
 		}
@@ -416,18 +411,26 @@ func (p *Proxy) replaceHungProxy(ctx context.Context, v Verdict) error {
 // wants Settled instead, and the method name is the whole difference;
 // a holder proven ours is the same in both.
 func (p *Proxy) Observe(ctx context.Context) Verdict {
+	v, _ := p.observe(ctx)
+	return v
+}
+
+// observe is Observe with the admin token a holder proven ours proved
+// it knows, empty for every other holder. The token stays inside this
+// package: a verdict is rendered and serialized, a credential is not.
+func (p *Proxy) observe(ctx context.Context) (Verdict, string) {
 	token, holder, why := p.verify(ctx)
 	if holder != HolderOurs {
-		return Verdict{Addr: p.addr, Holder: holder, Reason: why}
+		return Verdict{Addr: p.addr, Holder: holder, Reason: why}, ""
 	}
 	var h Health
 	if err := p.get(ctx, apiproxy.HealthzPath, token, &h, "a health request"); err != nil {
-		return Verdict{Addr: p.addr, Holder: HolderForeign, Reason: err}
+		return Verdict{Addr: p.addr, Holder: HolderForeign, Reason: err}, ""
 	}
 	if h.Service != apiproxy.ServiceName {
-		return Verdict{Addr: p.addr, Holder: HolderForeign, Reason: fmt.Errorf("proxy at %s calls itself %q", p.addr, h.Service)}
+		return Verdict{Addr: p.addr, Holder: HolderForeign, Reason: fmt.Errorf("proxy at %s calls itself %q", p.addr, h.Service)}, ""
 	}
-	return Verdict{Addr: p.addr, Holder: HolderOurs, Health: h}
+	return Verdict{Addr: p.addr, Holder: HolderOurs, Health: h}, token
 }
 
 // verify establishes who holds the port before anything is trusted or
@@ -519,16 +522,27 @@ func settle[T any](verdict func() (T, Holder, error)) (T, Holder, error) {
 // moment ago is by far the likelier of the two: concurrent starts
 // converge only because losers defer to the winner, which a loser
 // reporting ErrPortOccupied does not do. Only callers about to act on
-// the verdict pay it — Ensure, a serve process that just lost the
-// bind, the wait for a freshly started proxy, and the drain and flush
-// requests aimed at the holder. Report-only surfaces call Observe, and
-// so does a wait that acts on nothing but a holder proven ours.
+// the verdict pay it — Ensure, a takeover whose drain request was not
+// accepted, a serve process that just lost the bind, the wait for a
+// freshly started proxy, and the drain and flush requests aimed at
+// whoever holds the port. Report-only surfaces call Observe, and so
+// does a wait that acts on nothing but a holder proven ours.
 func (p *Proxy) Settled(ctx context.Context) Verdict {
-	v, _, _ := settle(func() (Verdict, Holder, error) {
-		v := p.Observe(ctx)
-		return v, v.Holder, v.Reason
-	})
+	v, _ := p.settled(ctx)
 	return v
+}
+
+// settled is Settled with the admin token observe reports.
+func (p *Proxy) settled(ctx context.Context) (Verdict, string) {
+	type proven struct {
+		verdict Verdict
+		token   string
+	}
+	got, _, _ := settle(func() (proven, Holder, error) {
+		v, token := p.observe(ctx)
+		return proven{v, token}, v.Holder, v.Reason
+	})
+	return got.verdict, got.token
 }
 
 // Selfcheck asks the proxy what it would do with token, over the exact
@@ -570,6 +584,12 @@ func (p *Proxy) drain(ctx context.Context, cause string) error {
 		return why
 	case HolderOurs:
 	}
+	return p.sendDrain(ctx, token, cause)
+}
+
+// sendDrain sends the drain request under token. The caller has just
+// verified that the holder knows token, as authorize requires.
+func (p *Proxy) sendDrain(ctx context.Context, token, cause string) error {
 	target := "http://" + p.addr + apiproxy.DrainPath
 	if cause != "" {
 		target += "?" + url.Values{apiproxy.DrainCauseParam: {cause}}.Encode()
@@ -653,8 +673,9 @@ func (p *Proxy) StopGone(ctx context.Context) error {
 }
 
 // authorize attaches the admin token the holder proved it knows.
-// Every caller runs behind a successful verify: the raw token must
-// never probe a holder that has not proven it already knows it.
+// Every caller runs behind a successful verify of that same token,
+// with no other request in between: the raw token must never probe a
+// holder that has not proven it already knows it.
 func authorize(req *http.Request, token string) {
 	req.Header.Set(apiproxy.AdminHeader, token)
 }
@@ -762,6 +783,59 @@ func (p *Proxy) waitPortFree(ctx context.Context, within time.Duration) error {
 // portKept is the failure of every wait for a proxy to leave the port.
 func (p *Proxy) portKept(within time.Duration) error {
 	return fmt.Errorf("previous proxy at %s did not release the port within %s", p.addr, within)
+}
+
+// errHolderChanged reports that the proxy a drain was meant for does
+// not hold the port any more, so nothing was sent.
+var errHolderChanged = errors.New("the proxy does not hold the port any more")
+
+// takeOver asks the older proxy that proved token to leave, and waits
+// for the port. Concurrent callers ask the same proxy, and the first
+// request it accepts closes its listener, so a later caller can find
+// the port closing, or held already by the proxy the first caller
+// started. Neither is a proxy that would not drain.
+//
+// The request goes only to the proxy it is meant for: the holder
+// proves a token again right before, and a holder that proves another
+// token, or none, is sent nothing. A request that was not sent or not
+// accepted is judged by who holds the port after it. Nobody, and a
+// holder this build leaves serving, are the takeover of a concurrent
+// caller under way. Another proxy this build replaces — one a
+// concurrent caller of an older build started — is asked to leave in
+// its turn. A holder that is not proven ours is reported as that. The
+// proxy the request was meant for, still there, is what the failure is
+// about, and it is reported at once: waiting out the port would bury
+// it under a timeout that cannot succeed.
+func (p *Proxy) takeOver(ctx context.Context, token string) (winner Verdict, won bool, err error) {
+	for {
+		failed := p.drainProven(ctx, token)
+		if failed == nil {
+			return p.waitHandover(ctx, drainTimeout)
+		}
+		now, proved := p.settled(ctx)
+		switch {
+		case now.Holder == HolderNone:
+			return p.waitHandover(ctx, drainTimeout)
+		case now.Serving(p.version):
+			return now, true, nil
+		case now.Holder == HolderForeign:
+			return Verdict{}, false, now.Reason
+		case proved == token:
+			return Verdict{}, false, fmt.Errorf("asking the previous proxy to drain: %w", failed)
+		}
+		token = proved
+	}
+}
+
+// drainProven sends the handover drain to the holder if the holder
+// proves token now, and reports errHolderChanged, with nothing sent,
+// if it does not. The holder is read as it stands: one that is not
+// there to prove token is not waited for.
+func (p *Proxy) drainProven(ctx context.Context, token string) error {
+	if proved, holder, _ := p.verify(ctx); holder != HolderOurs || proved != token {
+		return errHolderChanged
+	}
+	return p.sendDrain(ctx, token, apiproxy.DrainCauseHandover)
 }
 
 // waitHandover waits for the proxy that was asked to drain to leave

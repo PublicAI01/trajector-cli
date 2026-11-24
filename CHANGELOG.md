@@ -85,13 +85,20 @@ All notable changes to trajector are documented here. The format follows
   in; they are now kept when every such directory is in the project,
   and passed over as before when one is not or when none is stated.
 - A session started, or a prompt sent, right after an upgrade no longer
-  waits 20 seconds and then fails with "could not start the capture
-  proxy: previous proxy ... did not release the port". Before, when two
-  trajector processes replaced the proxy of the older release at the
-  same moment, only one of them started the new proxy. The other kept
-  waiting for the port to come free while the new proxy already held
-  it, and gave up after 20 seconds. Now it sees that the new proxy is
-  serving and leaves it in place.
+  fails with "could not start the capture proxy" while the proxy is in
+  fact running. Before, when two trajector processes replaced the proxy
+  of the older release at the same moment, only one of them started the
+  new proxy, and the other could fail in two ways. It kept waiting for
+  the port to come free while the new proxy already held it, and gave
+  up after 20 seconds with "previous proxy ... did not release the
+  port". Or its request to the older proxy arrived while that proxy was
+  already leaving, and it failed at once with "asking the previous
+  proxy to drain". Now it sees that the new proxy is serving and leaves
+  it in place.
+- The proxy started by an upgrade is no longer stopped and started a
+  second time a moment later. Before, a trajector process that was
+  replacing the proxy of the older release at the same moment could
+  send its request to stop to the new proxy.
 
 ## [0.7.1] - 2026-11-21
 
