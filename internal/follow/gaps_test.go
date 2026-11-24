@@ -21,7 +21,7 @@ func TestRegistry_GapsAreKeptWithTheRegistry(t *testing.T) {
 	if err := r.SetGaps(project, gaps); err != nil {
 		t.Fatal(err)
 	}
-	got, err := r.Gaps(project)
+	got, err := gapsOf(r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestRegistry_GapsAreKeptWithTheRegistry(t *testing.T) {
 	if err := r.SetGaps(project, follow.Gaps{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := r.Gaps(project); got.Any() {
+	if got, _ := gapsOf(r); got.Any() {
 		t.Errorf("Gaps after a search that covered everything = %+v, want none", got)
 	}
 	raw, _ = os.ReadFile(projectFileOf(dir))
@@ -56,7 +56,7 @@ func TestRegistry_GapsAreKeptWithTheRegistry(t *testing.T) {
 }
 
 func TestRegistry_GapsOfAnUnknownProjectAreNone(t *testing.T) {
-	got, err := follow.Open(t.TempDir()).Gaps(project)
+	got, err := gapsOf(follow.Open(t.TempDir()))
 	if err != nil || got.Any() {
 		t.Errorf("Gaps = %+v, %v; want none and no error", got, err)
 	}

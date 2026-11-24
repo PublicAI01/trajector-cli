@@ -37,7 +37,7 @@ func TestReader_SignalsAccumulateAcrossReads(t *testing.T) {
 	}
 	a.reader.Advance(path)
 
-	got, err := a.registry.Signals(project)
+	got, err := signalsOf(a.registry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestReader_KeepsWhatASegmentNoticedInTheWriteThatMovesItsCursor(t *testing.
 	if f := a.entry(path); f.Offset != int64(len(line)) || f.NextSegment != 1 {
 		t.Errorf("cursor = %+v, want it past the segment", f)
 	}
-	if got, _ := a.registry.Signals(project); !reflect.DeepEqual(got, a.noticed) {
+	if got, _ := signalsOf(a.registry); !reflect.DeepEqual(got, a.noticed) {
 		t.Errorf("Signals = %+v, want what the segment noticed", got)
 	}
 }
@@ -106,7 +106,7 @@ func TestReader_KeepsWhatAPausedReadNoticedAndLeavesTheCursor(t *testing.T) {
 	if f := a.entry(path); f.Offset != 0 || f.NextSegment != 0 || f.ReadAt != "" {
 		t.Errorf("cursor = %+v, want it left where it was", f)
 	}
-	if got, _ := a.registry.Signals(project); got.IncompleteSegments != 1 {
+	if got, _ := signalsOf(a.registry); got.IncompleteSegments != 1 {
 		t.Errorf("Signals = %+v, want the incomplete segment counted", got)
 	}
 }
@@ -126,14 +126,14 @@ func TestReader_DropsWhatAReadNoticedWhenItsRecordsAreNotStored(t *testing.T) {
 		if n, counted := writes(); counted && n != 1 {
 			t.Errorf("entry written %d times for a read answered %d, want once, for the bound alone: the read that stores these lines notices them", n, answer)
 		}
-		if got, _ := a.registry.Signals(project); got.Any() {
+		if got, _ := signalsOf(a.registry); got.Any() {
 			t.Errorf("Signals after a read answered %d = %+v, want none", answer, got)
 		}
 	}
 }
 
 func TestRegistry_SignalsOfAnUnknownProjectAreNone(t *testing.T) {
-	got, err := follow.Open(t.TempDir()).Signals(project)
+	got, err := signalsOf(follow.Open(t.TempDir()))
 	if err != nil || got.Any() {
 		t.Errorf("Signals = %+v, %v; want none and no error", got, err)
 	}
@@ -168,7 +168,7 @@ func TestRegistry_UnregisterDropsTheSignals(t *testing.T) {
 	if err := a.registry.Unregister(project); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := a.registry.Signals(project); got.Any() {
+	if got, _ := signalsOf(a.registry); got.Any() {
 		t.Errorf("Signals after Unregister = %+v, want none", got)
 	}
 }

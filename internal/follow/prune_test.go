@@ -62,7 +62,7 @@ func TestPrune_RemovesOnlyTheColdEntriesWhoseFileIsGoneFromADirectoryStillThere(
 		t.Errorf("Prune() removed %d entries, want 2: the cold one and the one outside", removed)
 	}
 	want := slices.Sorted(slices.Values([]string{kept, unmounted, hot, later}))
-	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, want) {
+	if paths, err := registeredPaths(r); err != nil || !slices.Equal(paths, want) {
 		t.Errorf("Contents().Paths = %q, %v\nwant %q", paths, err, want)
 	}
 	for path, s := range untouched {
@@ -108,7 +108,7 @@ func TestPrune_DropsTheHeatAndTheToldMarkWithTheLastEntryOfASession(t *testing.T
 			t.Errorf("%s of the session whose agent entry stays: stat = %v, want it there", mark, err)
 		}
 	}
-	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, []string{leftAgent}) {
+	if paths, err := registeredPaths(r); err != nil || !slices.Equal(paths, []string{leftAgent}) {
 		t.Errorf("Contents().Paths = %q, %v, want only the agent file that is there", paths, err)
 	}
 }
@@ -129,7 +129,7 @@ func TestPrune_WritesTheProjectFileOnceAndKeepsTheSumOfTheSignals(t *testing.T) 
 	for _, path := range paths {
 		setKey(t, entryFileOf(dir, path), "signals", `{"assistant_lines":3,"assistant_lines_without_message_id":1}`)
 	}
-	before, err := r.Signals(project)
+	before, err := signalsOf(r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,8 +142,8 @@ func TestPrune_WritesTheProjectFileOnceAndKeepsTheSumOfTheSignals(t *testing.T) 
 	if n, counted := writes(); counted && n != 1 {
 		t.Errorf("project file written %d times for 8 entries removed, want once", n)
 	}
-	if after, err := r.Signals(project); err != nil || !reflect.DeepEqual(after, before) {
-		t.Errorf("Signals() = %+v, %v, want the sum before: %+v", after, err, before)
+	if after, err := signalsOf(r); err != nil || !reflect.DeepEqual(after, before) {
+		t.Errorf("Contents().Signals = %+v, %v, want the sum before: %+v", after, err, before)
 	}
 	if removed := prune(t, r); removed != 0 {
 		t.Errorf("Prune() again removed %d entries, want none", removed)
@@ -202,7 +202,7 @@ func TestPrune_JudgesAnEntryAgainOnceItHoldsItsLock(t *testing.T) {
 			if removed := prune(t, r); removed != 0 {
 				t.Errorf("Prune() removed %d entries, want none", removed)
 			}
-			if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, []string{gone}) {
+			if paths, err := registeredPaths(r); err != nil || !slices.Equal(paths, []string{gone}) {
 				t.Errorf("Contents().Paths = %q, %v, want the entry kept", paths, err)
 			}
 		})
@@ -232,7 +232,7 @@ func TestPrune_KeepsEveryEntryOfALargeRegistryWhoseFileIsThere(t *testing.T) {
 	if removed != len(gone) {
 		t.Errorf("Prune() removed %d entries, want %d", removed, len(gone))
 	}
-	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, kept) {
+	if paths, err := registeredPaths(r); err != nil || !slices.Equal(paths, kept) {
 		t.Errorf("Contents().Paths lists %d entries, %v, want the %d whose file is there", len(paths), err, len(kept))
 	}
 }
@@ -296,7 +296,7 @@ func TestPrune_RemovesTheAgentEntriesOfASessionRemovedWithItsDirectory(t *testin
 	if n := prune(t, r); n != len(removed) {
 		t.Errorf("Prune() removed %d entries, want the %d of the session removed", n, len(removed))
 	}
-	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, unmounted) {
+	if paths, err := registeredPaths(r); err != nil || !slices.Equal(paths, unmounted) {
 		t.Errorf("Contents().Paths = %q, %v\nwant the entries of the session whose main file's directory is not there: %q", paths, err, unmounted)
 	}
 }

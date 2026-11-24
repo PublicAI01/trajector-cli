@@ -265,11 +265,11 @@ func TestMigrate_CarriesEachEarlierFieldToItsPlaceInThisLayout(t *testing.T) {
 	if string(projectKeys["version"]) != "2" || len(projectKeys["needs_build"]) < 3 || string(projectKeys["reasoning_told_on"]) != `"2026-11-21"` {
 		t.Errorf("project file = %v, want version 2 naming its build and the day reasoning was told", projectKeys)
 	}
-	if gaps, err := r.Gaps(project); err != nil || !slices.Equal(gaps.Unreadable, fx.gaps.Unreadable) {
-		t.Errorf("Gaps() = %+v, %v, want %+v", gaps, err, fx.gaps)
+	if gaps, err := gapsOf(r); err != nil || !slices.Equal(gaps.Unreadable, fx.gaps.Unreadable) {
+		t.Errorf("Contents().Gaps = %+v, %v, want %+v", gaps, err, fx.gaps)
 	}
-	if signals, err := r.Signals(project); err != nil || signals.AssistantLines != 5 || signals.AssistantLinesWithoutMessageID != 1 {
-		t.Errorf("Signals() = %+v, %v, want %+v", signals, err, fx.signals)
+	if signals, err := signalsOf(r); err != nil || signals.AssistantLines != 5 || signals.AssistantLinesWithoutMessageID != 1 {
+		t.Errorf("Contents().Signals = %+v, %v, want %+v", signals, err, fx.signals)
 	}
 
 	files, err := r.Files(project)
@@ -286,7 +286,7 @@ func TestMigrate_CarriesEachEarlierFieldToItsPlaceInThisLayout(t *testing.T) {
 	if want := slices.Sorted(slices.Values([]string{fx.main, fx.agent, fx.inRun, fx.moved})); !slices.Equal(listed, want) {
 		t.Errorf("Files() = %q, want %q: every entry but the one retired for a reason no build wrote", listed, want)
 	}
-	if paths, err := registeredPaths(r, project); err != nil || len(paths) != 5 {
+	if paths, err := registeredPaths(r); err != nil || len(paths) != 5 {
 		t.Errorf("Contents().Paths = %q, %v, want all five entries", paths, err)
 	}
 
@@ -540,7 +540,7 @@ func TestMigrate_EmptiesAProjectDirectoryLeftBesideAnEarlierProjectFile(t *testi
 		t.Fatalf("Migrate() = %v", err)
 	}
 
-	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, []string{kept}) {
+	if paths, err := registeredPaths(r); err != nil || !slices.Equal(paths, []string{kept}) {
 		t.Errorf("Contents().Paths = %q, %v, want only the entry of the project file", paths, err)
 	}
 	if _, err := os.Stat(sessionFileOf(dir, left, ".heat")); !errors.Is(err, fs.ErrNotExist) {
@@ -603,7 +603,7 @@ func TestRegisterAll_EmptiesAProjectDirectoryLeftWithoutAProjectFile(t *testing.
 
 	mustRegister(t, r, project, registered)
 
-	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, []string{registered}) {
+	if paths, err := registeredPaths(r); err != nil || !slices.Equal(paths, []string{registered}) {
 		t.Errorf("Contents().Paths = %q, %v, want only the path registered after the project file was gone", paths, err)
 	}
 }
@@ -693,7 +693,7 @@ func TestMigrate_LeavesBehindTheColdEntriesWhoseFileIsGone(t *testing.T) {
 	}
 
 	want := slices.Sorted(slices.Values([]string{kept, keptAgent, agentKept, unmounted, hot, later}))
-	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, want) {
+	if paths, err := registeredPaths(r); err != nil || !slices.Equal(paths, want) {
 		t.Errorf("Contents().Paths = %q, %v\nwant %q: every entry but the cold ones whose file is gone from a directory still there", paths, err, want)
 	}
 	for _, mark := range []string{".heat", ".told"} {
@@ -704,8 +704,8 @@ func TestMigrate_LeavesBehindTheColdEntriesWhoseFileIsGone(t *testing.T) {
 			t.Errorf("%s of a session whose agent file is carried: stat = %v, want it there", mark, err)
 		}
 	}
-	if got, err := r.Signals(project); err != nil || got.AssistantLines != signals.AssistantLines {
-		t.Errorf("Signals() = %+v, %v, want the project's %+v", got, err, signals)
+	if got, err := signalsOf(r); err != nil || got.AssistantLines != signals.AssistantLines {
+		t.Errorf("Contents().Signals = %+v, %v, want the project's %+v", got, err, signals)
 	}
 }
 
@@ -726,7 +726,7 @@ func TestMigrate_KeepsEveryEntryOfALargeRegistryWhoseFileIsThere(t *testing.T) {
 		t.Fatalf("Migrate() = %v", err)
 	}
 
-	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, kept) {
+	if paths, err := registeredPaths(r); err != nil || !slices.Equal(paths, kept) {
 		t.Errorf("Contents().Paths lists %d entries, %v, want the %d of %d whose file is there", len(paths), err, len(kept), n)
 	}
 }
@@ -789,7 +789,7 @@ func TestMigrate_LeavesBehindTheAgentEntriesOfASessionRemovedWithItsDirectory(t 
 		t.Fatalf("Migrate() = %v", err)
 	}
 
-	if paths, err := registeredPaths(r, project); err != nil || !slices.Equal(paths, unmounted) {
+	if paths, err := registeredPaths(r); err != nil || !slices.Equal(paths, unmounted) {
 		t.Errorf("Contents().Paths = %q, %v\nwant the entries of the session whose main file's directory is not there: %q", paths, err, unmounted)
 	}
 }
@@ -831,7 +831,7 @@ func TestMigrate_TakesAgainTheEntryLocksThatGrewOldBeforeItRewritesTheProjectFil
 	if locked != 2 {
 		t.Errorf("the entry locks were taken %d times, want twice: an earlier reader takes over a lock as old as the first ones were", locked)
 	}
-	if paths, err := registeredPaths(follow.Open(dir), project); err != nil || !slices.Equal(paths, []string{path}) {
+	if paths, err := registeredPaths(follow.Open(dir)); err != nil || !slices.Equal(paths, []string{path}) {
 		t.Errorf("Contents().Paths = %q, %v, want the entry migrated", paths, err)
 	}
 }

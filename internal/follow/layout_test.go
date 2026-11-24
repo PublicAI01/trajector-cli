@@ -379,8 +379,8 @@ func TestLayout_AnEntryThatNeedsWhatThisBuildDoesNotKnowIsLeftAlone(t *testing.T
 	if _, ok, err := a.registry.File(project, marked); err != nil || ok {
 		t.Errorf("File() = %v, %v, want not found", ok, err)
 	}
-	if s, err := a.registry.Signals(project); err != nil || s.AssistantLines != 0 {
-		t.Errorf("Signals() = %+v, %v, want nothing of the entry left alone", s, err)
+	if s, err := signalsOf(a.registry); err != nil || s.AssistantLines != 0 {
+		t.Errorf("Contents().Signals = %+v, %v, want nothing of the entry left alone", s, err)
 	}
 
 	if err := a.registry.Unregister(project); err != nil {
@@ -631,8 +631,8 @@ func TestLayout_AnEntryThatLeavesKeepsWhatItNoticedInTheProjectFile(t *testing.T
 	if got := string(keysOf(t, projectFileOf(a.dir))["signals"]); got != `{"assistant_lines":3,"assistant_lines_without_message_id":1}` {
 		t.Errorf("project file signals = %s, want what the removed entry noticed", got)
 	}
-	if s, err := a.registry.Signals(project); err != nil || s.AssistantLines != 3 {
-		t.Errorf("Signals() = %+v, %v, want the count kept", s, err)
+	if s, err := signalsOf(a.registry); err != nil || s.AssistantLines != 3 {
+		t.Errorf("Contents().Signals = %+v, %v, want the count kept", s, err)
 	}
 }
 

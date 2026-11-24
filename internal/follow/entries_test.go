@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/PublicAI01/trajector-cli/internal/drift"
 	"github.com/PublicAI01/trajector-cli/internal/follow"
 	"github.com/PublicAI01/trajector-cli/internal/harness/registryv1"
 )
@@ -19,9 +20,22 @@ func unreadable(r *follow.Registry, project string) (int, error) {
 	return c.Unreadable, err
 }
 
+// signalsOf is what Contents states about the signals of project's
+// registry.
+func signalsOf(r *follow.Registry) (drift.Signals, error) {
+	c, err := r.Contents(project)
+	return c.Signals, err
+}
+
+// gapsOf is what Contents states about the gaps of project's registry.
+func gapsOf(r *follow.Registry) (follow.Gaps, error) {
+	c, err := r.Contents(project)
+	return c.Gaps, err
+}
+
 // registeredPaths is what Contents states about the paths project's
 // registry holds.
-func registeredPaths(r *follow.Registry, project string) ([]string, error) {
+func registeredPaths(r *follow.Registry) ([]string, error) {
 	c, err := r.Contents(project)
 	return c.Paths, err
 }
@@ -58,7 +72,7 @@ func TestRegistry_ContentsCountAnEntryThatNeedsWhatThisBuildDoesNotKnowAsRegiste
 	mustRegister(t, r, project, read, needs)
 	setKey(t, entryFileOf(dir, needs), "needs", `["a-later-build"]`)
 
-	paths, err := registeredPaths(r, project)
+	paths, err := registeredPaths(r)
 
 	if want := slices.Sorted(slices.Values([]string{read, needs})); err != nil || !slices.Equal(paths, want) {
 		t.Errorf("Contents().Paths = %q, %v, want %q: the entry a later build needs is registered", paths, err, want)
