@@ -76,8 +76,9 @@ const migrationLockWait = 50 * time.Millisecond
 
 // ErrMigrationPending reports a project whose registry is in the
 // layout before this one, or was left halfway to this one. No entry
-// of such a project is read, registered or written until Migrate has
-// brought it to this layout.
+// of such a project is read or written until Migrate has brought it to
+// this layout; a path registered meanwhile is kept as a pending
+// registration, which the migration makes an entry of.
 var ErrMigrationPending = errors.New("follow: the registry is not migrated to this build's layout yet")
 
 // errMigrationBusy reports a migration another process holds the lock
@@ -132,6 +133,8 @@ func parseEarlier(data []byte) (earlierRegistry, error) {
 // halfway, and does nothing to a project already in this layout or
 // with no registry. It is how every reader but a session hook gets a
 // project it can read: a hook never migrates and never waits for one.
+// A path a hook registered while the project waited is made an entry,
+// unless the earlier layout kept one for it.
 // An entry whose session is cold and whose file is gone is not
 // carried over: nothing would read it again.
 //
@@ -396,8 +399,9 @@ func (r *Registry) lockEarlierEntries(projectIDHash string, paths []string, held
 }
 
 // stage is step 3: it empties the project directory of everything but
-// the migration's own lock, and keeps earlier there, flushed, as the
-// copy the entries are made from.
+// the migration's own lock and the pending registrations, those placed
+// and those being placed, and keeps earlier there, flushed, as the copy
+// the entries are made from.
 func (r *Registry) stage(projectIDHash string, earlier []byte) error {
 	dir := r.projectDir(projectIDHash)
 	names, err := os.ReadDir(dir)
@@ -405,7 +409,7 @@ func (r *Registry) stage(projectIDHash string, earlier []byte) error {
 		return err
 	}
 	for _, name := range names {
-		if strings.HasPrefix(name.Name(), migratingName+".lock") {
+		if strings.HasPrefix(name.Name(), migratingName+".lock") || strings.Contains(name.Name(), pendingExt) {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, name.Name())); err != nil {
@@ -417,7 +421,10 @@ func (r *Registry) stage(projectIDHash string, earlier []byte) error {
 
 // finish is steps 5 and 6 of a project that is halfway, and does
 // nothing to any other. A project whose copy another process removed
-// meanwhile is left as that process finished it.
+// meanwhile is left as that process finished it. The pending
+// registrations are made entries once the copy's entries stand, so an
+// entry the earlier layout kept wins over them, and again once the
+// copy is removed, for those a hook placed in between.
 func (r *Registry) finish(projectIDHash string) error {
 	at, err := r.layoutOf(projectIDHash)
 	if err != nil || at != halfway {
@@ -437,12 +444,15 @@ func (r *Registry) finish(projectIDHash string) error {
 	case err != nil:
 		return err
 	}
+	if err := r.takePending(projectIDHash); err != nil {
+		return err
+	}
 	afterMigrationStep(5)
 	if err := r.settle(projectIDHash); err != nil {
 		return err
 	}
 	afterMigrationStep(6)
-	return nil
+	return r.takePending(projectIDHash)
 }
 
 // carryOver is step 5: it makes an entry for every element of reg but
@@ -588,6 +598,93 @@ func (e earlierEntry) later(than earlierEntry) bool {
 	}
 	was, err := time.Parse(readAtLayout, than.LastEvent)
 	return err != nil || at.After(was)
+}
+
+// pendingExt names a pending registration: a path a hook registered
+// while the project waited for its migration.
+const pendingExt = ".pending"
+
+// pendingRegistration is what a pending registration holds: the path,
+// and where the session ran. It holds nothing about reading.
+type pendingRegistration struct {
+	Path    string `json:"path"`
+	Subpath string `json:"subpath,omitempty"`
+}
+
+func (r *Registry) pendingPath(projectIDHash, path string) string {
+	return filepath.Join(r.projectDir(projectIDHash), digest(path)+pendingExt)
+}
+
+// registerPending keeps each of paths as a pending registration of
+// projectIDHash, whose registry waits for its migration, and leaves one
+// that stands as it is. Each is placed whole, as an entry is. pending
+// is the refusal the registration met, and is what it gets while the
+// project still waits.
+//
+// The layout is judged again once they are placed, and a project
+// settled by then has them made entries here: a migration makes
+// entries of them after it removes its copy, and this judges after it
+// placed them, so whichever comes last finds what the other did.
+func (r *Registry) registerPending(projectIDHash string, paths []string, subpath string, pending error) error {
+	if err := userdirs.EnsureOwnerDir(r.projectDir(projectIDHash)); err != nil {
+		return err
+	}
+	for _, path := range paths {
+		data, err := encode(pendingRegistration{Path: path, Subpath: subpath})
+		if err != nil {
+			return err
+		}
+		if err := placeNew(r.pendingPath(projectIDHash, path), data, true); err != nil {
+			return err
+		}
+	}
+	if _, ok, err := r.readProject(projectIDHash); err != nil || !ok {
+		return cmp.Or(err, pending)
+	}
+	return r.takePending(projectIDHash)
+}
+
+// takePending makes an entry of every pending registration of
+// projectIDHash, and removes it. An entry that stands for its path is
+// left as it is, whatever it holds: what the earlier layout kept about
+// the file wins over a registration that knows nothing about reading
+// it. A pending registration that cannot be read is left where it is.
+func (r *Registry) takePending(projectIDHash string) error {
+	dir := r.projectDir(projectIDHash)
+	names, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if name.IsDir() || filepath.Ext(name.Name()) != pendingExt {
+			continue
+		}
+		file := filepath.Join(dir, name.Name())
+		p, ok := readPending(file)
+		if !ok {
+			continue
+		}
+		if err := r.create(projectIDHash, entryFile{Path: p.Path, Subpath: p.Subpath}); err != nil {
+			return err
+		}
+		if err := os.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+// readPending is the pending registration in file. ok is false for one
+// that cannot be read, does not parse, or names no absolute path.
+func readPending(file string) (p pendingRegistration, ok bool) {
+	data, err := fsatomic.ReadFile(file)
+	if err != nil || json.Unmarshal(data, &p) != nil || !filepath.IsAbs(p.Path) {
+		return pendingRegistration{}, false
+	}
+	return p, true
 }
 
 // earlierBound is the bound a build that kept bounds left beside the

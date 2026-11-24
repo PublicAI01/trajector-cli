@@ -656,9 +656,12 @@ func TestLayout_FilesOfAKindThisBuildDoesNotKnowAreIgnored(t *testing.T) {
 func TestLayout_AProjectOfAnotherLayoutIsRefused(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, says string
+		// pending is whether the registry waits for its migration, which
+		// keeps a registration as a pending one and nothing else.
+		pending bool
 	}{
-		{"version 1", `{"version":1,"files":[]}`, "version 1"},
-		{"a later version", `{"version":3,"needs_build":"9.9.9"}`, "9.9.9"},
+		{"version 1", `{"version":1,"files":[]}`, "version 1", true},
+		{"a later version", `{"version":3,"needs_build":"9.9.9"}`, "9.9.9", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -673,8 +676,20 @@ func TestLayout_AProjectOfAnotherLayoutIsRefused(t *testing.T) {
 			if err := r.RegisterAll(project, []string{path}, ""); err == nil {
 				t.Error("RegisterAll() = nil, want refused")
 			}
-			if _, err := os.Stat(projectDirOf(dir)); !os.IsNotExist(err) {
-				t.Errorf("project directory: stat = %v, want none created", err)
+			var want []string
+			if tc.pending {
+				want = []string{digestOf(path) + ".pending"}
+			}
+			names, err := os.ReadDir(projectDirOf(dir))
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, name := range names {
+				got = append(got, name.Name())
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("project directory holds %q, want %q", got, want)
 			}
 			if got, err := os.ReadFile(projectFileOf(dir)); err != nil || string(got) != tc.raw {
 				t.Errorf("project file = %q, %v, want left as %q", got, err, tc.raw)

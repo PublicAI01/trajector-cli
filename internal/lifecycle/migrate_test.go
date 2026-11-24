@@ -3,6 +3,7 @@ package lifecycle_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -52,7 +53,7 @@ const (
 	secondLine = `{"type":"user","message":{"role":"user","content":"two"},"uuid":"u-2"}` + "\n"
 )
 
-func TestAHookLeavesARegistryWaitingForItsMigrationAndStartsAReader(t *testing.T) {
+func TestAHookLeavesARegistryWaitingForItsMigrationToAReaderItStartsAndKeepsTheFileItNamed(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	for _, tc := range []struct {
 		name  string
@@ -75,7 +76,7 @@ func TestAHookLeavesARegistryWaitingForItsMigrationAndStartsAReader(t *testing.T
 			main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", firstLine)
 			tc.leave(e, root, earlier)
 			e.sandbox.MigratingElsewhere(proxytest.ProjectIDHash(root))
-			before := e.sandbox.RegistryOnDisk(proxytest.ProjectIDHash(root))
+			before := e.sandbox.RegistryOnDiskButPending(proxytest.ProjectIDHash(root))
 
 			start := time.Now()
 			e.machine().SessionProgressed(t.Context(), e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "Stop"})
@@ -84,8 +85,11 @@ func TestAHookLeavesARegistryWaitingForItsMigrationAndStartsAReader(t *testing.T
 			if took > time.Second {
 				t.Errorf("the hook took %v, want it back without waiting on any lock of the migration", took)
 			}
-			if after := e.sandbox.RegistryOnDisk(proxytest.ProjectIDHash(root)); after != before {
+			if after := e.sandbox.RegistryOnDiskButPending(proxytest.ProjectIDHash(root)); after != before {
 				t.Errorf("registry after the hook =\n%s\nwant it as it was, nothing registered or marked hot:\n%s", after, before)
+			}
+			if pending := e.sandbox.PendingRegistrations(proxytest.ProjectIDHash(root)); !slices.Equal(pending, []string{main}) {
+				t.Errorf("pending registrations = %q, want the session file the hook named, kept for the migration", pending)
 			}
 			if args, _ := trajector.AwaitRun(10 * time.Second); args != oneShotReaderOf(e.project) {
 				t.Errorf("the hook started %q, want the one-shot reader of the project", args)
@@ -94,7 +98,40 @@ func TestAHookLeavesARegistryWaitingForItsMigrationAndStartsAReader(t *testing.T
 	}
 }
 
-func TestTheReaderAHookStartsMigratesTheRegistryAndReadsIt(t *testing.T) {
+func TestASessionFileAHookNamedWhileAnotherProcessMigratedIsReadOnceTheMigrationIsDone(t *testing.T) {
+	proxytest.RequireSessionSources(t)
+	e := newEnv(t)
+	trajector := proxytest.InstalledTrajector(t, e.deps.Home)
+	installed := e.deps.ExecPath
+	e.deps.ExecPath = trajector.Path()
+	e.aProxylessTarget()
+	e.enableProject()
+	e.injectWithoutBaseURL()
+	root := e.canonicalRoot()
+	earlier := e.putSessionFile("-work-sample/earlier.jsonl", firstLine)
+	main := e.putSessionFile("-work-sample/0f1e2d3c.jsonl", secondLine)
+	e.leaveEarlierRegistry(root, earlier, int64(len(firstLine)))
+	release := e.sandbox.MigratingElsewhere(proxytest.ProjectIDHash(root))
+
+	e.machine().SessionProgressed(t.Context(), e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project, HookEvent: "Stop"})
+	if args, _ := trajector.AwaitRun(10 * time.Second); args != oneShotReaderOf(e.project) {
+		t.Fatalf("the hook started %q, want the one-shot reader of the project", args)
+	}
+	release()
+	e.deps.ExecPath = installed
+	e.machine().ReadSessionFiles(t.Context(), e.project, discardIO())
+
+	files := e.registeredFiles(root)
+	if len(files) != 2 || files[0].Path != main || files[0].Offset != int64(len(secondLine)) || files[1].Path != earlier {
+		t.Errorf("registered = %+v, want the file the hook named read to its end beside the earlier entry", files)
+	}
+	recs := e.storedRecords()
+	if len(recs) != 1 || !strings.Contains(string(recs[0].Raw), "two") {
+		t.Errorf("records = %+v, want one segment of the file the hook named", recs)
+	}
+}
+
+func TestTheReaderAHookStartsMigratesTheRegistryAndReadsItWithTheFileTheHookNamed(t *testing.T) {
 	proxytest.RequireSessionSources(t)
 	e := newEnv(t)
 	e.isolateForSpawn()
@@ -108,17 +145,30 @@ func TestTheReaderAHookStartsMigratesTheRegistryAndReadsIt(t *testing.T) {
 	e.machine().SessionEnded(t.Context(), e.project, lifecycle.HookInput{SessionPath: main, Cwd: e.project})
 
 	deadline := time.Now().Add(15 * time.Second)
-	for len(e.storedRecords()) == 0 {
+	for len(e.storedRecords()) < 2 {
 		if time.Now().After(deadline) {
-			t.Fatal("the spawned reader never stored a segment")
+			t.Fatalf("the spawned reader stored %+v, want a segment of each file", e.storedRecords())
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	waitHealthy(t, e, e.deps.ProxyAddr)
-	e.wantMigratedWithItsCursor(root, earlier, int64(len(firstLine+secondLine)))
-	recs := e.storedRecords()
-	if len(recs) != 1 || !strings.Contains(string(recs[0].Raw), "two") || strings.Contains(string(recs[0].Raw), "one") {
-		t.Errorf("records = %+v, want one segment of the line past the earlier cursor", recs)
+	if v := e.registryVersion(root); v != 2 {
+		t.Fatalf("registry version = %d, want it migrated to 2", v)
+	}
+	files := e.registeredFiles(root)
+	if len(files) != 2 || files[0].Path != main || files[0].Offset != int64(len(firstLine)) ||
+		files[1].Path != earlier || files[1].Offset != int64(len(firstLine+secondLine)) {
+		t.Errorf("registered = %+v, want the earlier entry read on from its cursor and the file the hook named read from byte 0", files)
+	}
+	bySession := map[string]string{}
+	for _, rec := range e.storedRecords() {
+		bySession[rec.SessionID] += string(rec.Raw)
+	}
+	if got := bySession["earlier"]; !strings.Contains(got, "two") || strings.Contains(got, "one") {
+		t.Errorf("records of the earlier file = %s, want one segment of the line past the earlier cursor", got)
+	}
+	if got := bySession["0f1e2d3c"]; !strings.Contains(got, "one") {
+		t.Errorf("records of the file the hook named = %s, want its line", got)
 	}
 }
 

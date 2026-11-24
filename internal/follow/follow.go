@@ -9,6 +9,7 @@
 //	    <path-digest>.lock              held while that file is read
 //	    <session-digest>.heat           when a hook last named the session
 //	    <session-digest>.told           the session was told recording stopped
+//	    <path-digest>.pending           a registration waiting for a migration
 //
 // A path digest is the first 16 bytes of the SHA-256 of the file's
 // path, in hex, and a session digest is the same of the session's name
@@ -43,6 +44,12 @@
 // is created whole or not at all, and a registration never replaces
 // one. An entry file that does not parse is passed over, and never read
 // from its start again; Unreadable counts such files.
+//
+// A pending registration is {"path":…,"subpath":…}: a file a hook
+// registered while the project's registry waited for its migration. It
+// is placed whole and never replaced, as an entry is, and the migration
+// makes an entry of it and removes it; an entry the earlier layout kept
+// for the same path wins over it.
 //
 // A heat file is {"last_event":"<RFC 3339>","pid":<n>}, rewritten whole
 // when a hook or the resident process names the session, and no more
@@ -150,7 +157,10 @@ type projectFile struct {
 // already, nothing is written. Each path must be absolute: it is the
 // entry's identity across processes with different working
 // directories. The first registration of a project creates its project
-// file.
+// file. A project whose registry waits for its migration keeps each
+// path as a pending registration, which the migration makes an entry
+// of, and the registration is refused with ErrMigrationPending: nothing
+// here waits for a migration.
 func (r *Registry) RegisterAll(projectIDHash string, paths []string, subpath string) error {
 	for _, path := range paths {
 		if !filepath.IsAbs(path) {
@@ -163,7 +173,10 @@ func (r *Registry) RegisterAll(projectIDHash string, paths []string, subpath str
 	if len(paths) == 0 {
 		return nil
 	}
-	if err := r.ensureProject(projectIDHash); err != nil {
+	switch err := r.ensureProject(projectIDHash); {
+	case errors.Is(err, ErrMigrationPending):
+		return r.registerPending(projectIDHash, paths, subpath, err)
+	case err != nil:
 		return err
 	}
 	if err := userdirs.EnsureOwnerDir(r.projectDir(projectIDHash)); err != nil {

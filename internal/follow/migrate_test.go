@@ -304,7 +304,23 @@ func TestMigrate_CarriesEachEarlierFieldToItsPlaceInThisLayout(t *testing.T) {
 
 func TestMigrate_AMigrationKilledBetweenTwoStepsEndsAsOneThatRanThrough(t *testing.T) {
 	fx := newEarlierFixture(t)
-	want := migratedTree(t, fx)
+	named := []string{fx.main, abs(t, "new.jsonl")}
+	hook := func(t *testing.T, r *follow.Registry) (regErr, warmErr error) {
+		t.Helper()
+		return r.RegisterAll(project, named, ""), r.Warm(project, fx.main, 1, time.Now())
+	}
+	want := func() map[string]string {
+		dir := filepath.Join(t.TempDir(), "follow")
+		fx.writeTo(t, dir)
+		r := follow.Open(dir)
+		if regErr, _ := hook(t, r); !errors.Is(regErr, follow.ErrMigrationPending) {
+			t.Fatalf("RegisterAll() before the migration = %v, want ErrMigrationPending", regErr)
+		}
+		if err := r.Migrate(project); err != nil {
+			t.Fatalf("Migrate() = %v", err)
+		}
+		return tree(t, dir)
+	}()
 	for step := 1; step <= 5; step++ {
 		t.Run(fmt.Sprintf("after step %d", step), func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "follow")
@@ -327,8 +343,7 @@ func TestMigrate_AMigrationKilledBetweenTwoStepsEndsAsOneThatRanThrough(t *testi
 			r := follow.Open(dir)
 			before := tree(t, dir)
 			start := time.Now()
-			regErr := r.RegisterAll(project, []string{fx.main, abs(t, "new.jsonl")}, "")
-			warmErr := r.Warm(project, fx.main, 1, time.Now())
+			regErr, warmErr := hook(t, r)
 			_, listErr := r.Files(project)
 			if took := time.Since(start); took > time.Second {
 				t.Errorf("a hook's registration and warming took %v, want them refused without waiting", took)
@@ -338,8 +353,11 @@ func TestMigrate_AMigrationKilledBetweenTwoStepsEndsAsOneThatRanThrough(t *testi
 					t.Errorf("%s() = %v, want ErrMigrationPending", name, err)
 				}
 			}
+			for _, path := range named {
+				before[filepath.ToSlash(filepath.Join(project, digestOf(path)+".pending"))] = `{"path":` + strconv.Quote(path) + `}`
+			}
 			if diff := treeDiff(tree(t, dir), before); diff != "" {
-				t.Errorf("a refused hook changed the registry:\n%s", diff)
+				t.Errorf("a refused hook changed the registry but for its pending registrations:\n%s", diff)
 			}
 
 			ageLocks(t, dir)
@@ -859,5 +877,94 @@ func TestMigrate_MakesNoEntryOnceItsCopyIsGone(t *testing.T) {
 	maps.DeleteFunc(left, func(name, _ string) bool { return strings.HasSuffix(name, ".lock") })
 	if diff := treeDiff(after, left); diff != "" {
 		t.Errorf("project directory after the copy was removed in the middle of step 5 changed:\n%s", diff)
+	}
+}
+
+// pendingFileOf is the pending registration of path.
+func pendingFileOf(dir, path string) string {
+	return filepath.Join(projectDirOf(dir), digestOf(path)+".pending")
+}
+
+func TestMigrate_MakesAnEntryOfAFileRegisteredWhileTheRegistryWaitedAndKeepsAnEarlierCursor(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "follow")
+	sessions := t.TempDir()
+	earlier, named := filepath.Join(sessions, "sid-1.jsonl"), filepath.Join(sessions, "sid-2.jsonl")
+	for _, path := range []string{earlier, named} {
+		writeFile(t, path, userLine(1))
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := registryv1.Write(dir, project, registryv1.Registry{Files: []registryv1.Entry{
+		{Path: earlier, Offset: 9, NextSegment: 2, MessageIDs: []string{"m1"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	r := follow.Open(dir)
+
+	if err := r.RegisterAll(project, []string{earlier, named}, "sub"); !errors.Is(err, follow.ErrMigrationPending) {
+		t.Fatalf("RegisterAll() while the registry waits = %v, want ErrMigrationPending", err)
+	}
+	if err := r.Migrate(project); err != nil {
+		t.Fatalf("Migrate() = %v", err)
+	}
+
+	files, err := r.Files(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []follow.File{
+		{Path: earlier, Offset: 9, NextSegment: 2, MessageIDs: []string{"m1"}},
+		{Path: named, Subpath: "sub"},
+	}
+	if len(files) != len(want) {
+		t.Fatalf("Files() = %+v, want %+v", files, want)
+	}
+	for i, f := range files {
+		if !sameFile(f, want[i]) || f.Subpath != want[i].Subpath {
+			t.Errorf("entry of %s = %+v, want %+v", filepath.Base(f.Path), f, want[i])
+		}
+	}
+	for _, path := range []string{earlier, named} {
+		if _, err := os.Stat(pendingFileOf(dir, path)); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("pending registration of %s after the migration: stat = %v, want it taken", filepath.Base(path), err)
+		}
+	}
+}
+
+func TestMigrate_MakesAnEntryOfAPendingRegistrationPlacedAfterItsCopyIsRemoved(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "follow")
+	sessions := t.TempDir()
+	earlier, late := filepath.Join(sessions, "sid-1.jsonl"), filepath.Join(sessions, "sid-2.jsonl")
+	for _, path := range []string{earlier, late} {
+		writeFile(t, path, userLine(1))
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := registryv1.Write(dir, project, registryv1.Registry{Files: []registryv1.Entry{{Path: earlier, Offset: 9, NextSegment: 2}}}); err != nil {
+		t.Fatal(err)
+	}
+	follow.AfterMigrationSteps(t, func(step int) {
+		if step != 6 {
+			return
+		}
+		if _, err := os.Stat(filepath.Join(projectDirOf(dir), "migrating.v1")); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("copy after step 6: stat = %v, want it removed", err)
+		}
+		writeFile(t, pendingFileOf(dir, late), `{"path":`+strconv.Quote(late)+`,"subpath":"sub"}`)
+	})
+	r := follow.Open(dir)
+
+	if err := r.Migrate(project); err != nil {
+		t.Fatalf("Migrate() = %v", err)
+	}
+
+	f, ok, err := r.File(project, late)
+	if err != nil || !ok || f.Offset != 0 || f.Subpath != "sub" {
+		t.Errorf("File() of the path a hook named as the copy was removed = %+v, %v, %v, want it registered from byte 0", f, ok, err)
+	}
+	if _, err := os.Stat(pendingFileOf(dir, late)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("pending registration after the migration: stat = %v, want it taken", err)
 	}
 }

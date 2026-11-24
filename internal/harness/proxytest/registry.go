@@ -81,6 +81,24 @@ func (s *Sandbox) RegisteredPaths(projectIDHash string) []string {
 // writes the heat of a session.
 func (s *Sandbox) RegistryOnDisk(projectIDHash string) string {
 	s.t.Helper()
+	return s.registryOnDisk(projectIDHash, false)
+}
+
+// pendingExt names a pending registration in a project's registry
+// directory: a session file a hook named while the project waited for
+// its migration.
+const pendingExt = ".pending"
+
+// RegistryOnDiskButPending is RegistryOnDisk without the pending
+// registrations, so a test can show that a hook which met a project
+// waiting for its migration left nothing else.
+func (s *Sandbox) RegistryOnDiskButPending(projectIDHash string) string {
+	s.t.Helper()
+	return s.registryOnDisk(projectIDHash, true)
+}
+
+func (s *Sandbox) registryOnDisk(projectIDHash string, butPending bool) string {
+	s.t.Helper()
 	var dump strings.Builder
 	add := func(name string) {
 		data, err := fsatomic.ReadFile(filepath.Join(s.layout.FollowDir(), name))
@@ -95,9 +113,42 @@ func (s *Sandbox) RegistryOnDisk(projectIDHash string) string {
 		s.t.Fatal(err)
 	}
 	for _, e := range entries {
+		if butPending && filepath.Ext(e.Name()) == pendingExt {
+			continue
+		}
 		add(filepath.Join(projectIDHash, e.Name()))
 	}
 	return dump.String()
+}
+
+// PendingRegistrations lists, sorted, the session files a project's
+// pending registrations name.
+func (s *Sandbox) PendingRegistrations(projectIDHash string) []string {
+	s.t.Helper()
+	dir := filepath.Join(s.layout.FollowDir(), projectIDHash)
+	entries, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
+		s.t.Fatal(err)
+	}
+	var paths []string
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) != pendingExt {
+			continue
+		}
+		data, err := fsatomic.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			s.t.Fatal(err)
+		}
+		var pending struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(data, &pending); err != nil {
+			s.t.Fatalf("pending registration %s: %v", data, err)
+		}
+		paths = append(paths, pending.Path)
+	}
+	slices.Sort(paths)
+	return paths
 }
 
 // RefuseNewEntries makes a project's registry directory refuse every
